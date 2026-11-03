@@ -59,6 +59,7 @@ const AGENT_FIELDS: &[&str] = &["name", "argv"];
 const LAUNCH_FIELDS: &[&str] = &["kind", "preset"];
 
 const NOTIFY_ABOUT: &[&str] = &[
+    "Shows a desktop banner when a response is ready or a session needs input.",
     "Turning this on may show an OS notification permission prompt.",
     #[cfg(target_os = "macos")]
     "macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or opens System Settings when denied; choose Notifications → OVRCR.",
@@ -81,7 +82,12 @@ const ITERM_ABOUT: &[&str] = &[
 ];
 
 const QUOTA_ABOUT: &[&str] = &[
-    "On by default while a Dashboard is attached. The readers do not rewrite auth files. Set false to turn Codex, Grok and the opt-in Cursor reader off.",
+    "Reads Codex and Grok allowance while a Dashboard is attached. The readers never rewrite auth files.",
+    "Off also stops the opt-in Cursor reader.",
+];
+
+const SAVE_UNCOMMITTED_WORK_ABOUT: &[&str] = &[
+    "Pushes uncommitted workspace work to origin/wip/<branch> when a workspace is removed or the server shuts down.",
 ];
 
 const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessions."];
@@ -326,7 +332,7 @@ const CATALOG: [Entry; 32] = [
         group: "Workspaces",
         label: "Save uncommitted work",
         off_state: Some(SAVE_UNCOMMITTED_WORK_OFF),
-        about: &[SAVE_UNCOMMITTED_WORK_OFF],
+        about: SAVE_UNCOMMITTED_WORK_ABOUT,
         value: |settings| display(&settings.save_uncommitted_work),
         show_off: |settings| !settings.save_uncommitted_work,
     },

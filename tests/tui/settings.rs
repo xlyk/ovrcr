@@ -92,7 +92,7 @@ fn select(dashboard: &mut Dashboard, words: &str) {
 }
 
 fn open(dashboard: &Dashboard) -> bool {
-    screen(dashboard).contains("Settings · Enter edit")
+    screen(dashboard).contains("Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close")
 }
 
 #[test]
@@ -342,11 +342,16 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     // A bad value defaults only itself and its finding shows on its row.
     assert!(at("! line 3: ") > at("Ready sound"), "{text}");
     assert!(line("Title model").contains("unset  default"));
-    assert!(text.contains("Automatic titles off: set `title_model"));
-    // Consent settings carry their side effect; turning one on asks nothing.
-    assert!(text.contains("Setting a model makes paid calls to title sessions."));
+    // In here an off consent setting says what Enter does, not which key to write.
+    assert!(
+        text.contains("Off · Enter to set the title model"),
+        "{text}"
+    );
+    assert!(!text.contains("set `"), "{text}");
+    // Each row shows one description line; the selected row (the first) shows all.
     assert!(text.contains("may show an OS notification permission prompt."));
-    assert!(text.contains("On by default while a Dashboard is attached."));
+    assert!(text.contains("Reads Codex and Grok allowance while a Dashboard is attached."));
+    assert!(!text.contains("Setting a model makes paid calls"), "{text}");
     assert!(line("Cursor dashboard usage").contains("off  default"));
     assert!(line("Cursor state database").contains("unset  default"));
     // Collections expand into child rows with an Add row.
@@ -361,6 +366,14 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     let text = screen(&dashboard);
     assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
     assert!(text.contains("+ Add project"));
+    // Selecting a consent setting shows its side effect before Enter turns it on.
+    select(&mut dashboard, "title model");
+    let text = screen(&dashboard);
+    assert!(
+        text.contains("Setting a model makes paid calls to title sessions."),
+        "{text}"
+    );
+    assert!(text.contains("key: title_model"), "{text}");
 }
 
 #[test]

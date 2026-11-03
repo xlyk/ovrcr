@@ -748,12 +748,17 @@ every setting in one scrolling list under the group headers **Alerts**
 (`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`) and
 **Delegation** (`delegation.*`).
 
+The view's title lists `↑/↓ move · Enter edit · r reset · / filter · Esc close`.
 Each row shows its label, effective value (`unset` for an empty optional value)
 and source badge, `default` or `set`; a value the document sets also shows the
 default beside it, for example `kh/  set  (default: feature/)`. A setting's
-finding shows under its row. A consent setting carries its one-sentence side
-effect and, while off, the line that says how to turn it on: turning it on asks
-for no confirmation.
+finding shows under its row. Each row shows one line of description; the
+selected row shows all of it, its `key:` and, on a collection element, the keys
+that act on it (`[ ] move · x remove` on a picker root, `x remove` elsewhere).
+A consent setting that is off says `Off · Enter to turn on` (`Off · Enter to set
+the title model` for the title model) rather than the TOML key that `ovrcr
+settings` names. Selecting it shows its side effect; turning it on asks for no
+confirmation.
 
 | Key | Action |
 | --- | --- |
