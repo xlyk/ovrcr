@@ -570,6 +570,10 @@ Choose a branch and what to start: **Agent**, **Terminal**, or
 Only the selected program starts; an Agent launch does not also open a shell.
 Nothing yet creates an empty workspace.
 
+The worktree folder under the project's workspace root is named after the branch:
+`feature/Login-Form` becomes `feature-login-form`, and a name already in use gets
+`-2`, `-3`, ….
+
 Each project remembers its last successfully launched Agent and preset, or
 Terminal choice, across dashboard restarts. One-off command text is never saved.
 Nothing yet leaves the preference unchanged. A project without a preference

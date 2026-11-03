@@ -70,6 +70,12 @@ SQLite owns identity, path, and root-setup metadata. The stored
 default-branch detection is only a HEAD fallback or fails), and a feature
 workspace's branch at creation or last explicit mutation—not a promise that
 later checkout changes are written back.
+The stored `path` is the only record of the checkout directory; never derive it
+from `id`. Dashboard and CLI creation name the folder after a slug of the branch,
+skipping names used on disk, by the project's records or by Git
+(`git::WorktreeDir::Branch`). Task runs and coding delegation save
+`<workspace root>/<id>` as intent before Git, so they keep that folder
+(`WorktreeDir::Id`).
 Live checkout labels are derived observations; Git is the authority for the
 current branch. `observe_registry` overlays those labels on a returned clone
 for inventory and offline inspection and is not written back. Retained sessions
