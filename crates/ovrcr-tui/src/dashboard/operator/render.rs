@@ -688,8 +688,7 @@ pub(super) fn transcript_rows(
     let mut rows: Vec<_> = logical_lines(chat)
         .into_iter()
         .flat_map(|entry| {
-            let width = width.saturating_sub(2).max(1);
-            let limit = if entry.prose { width.min(88) } else { width };
+            let limit = width.saturating_sub(2).max(1);
             let line = if !entry.prose && entry.part == 0 {
                 Line::styled(
                     clip_text(&entry.line.to_string(), usize::from(limit)),
