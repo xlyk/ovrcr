@@ -106,8 +106,8 @@ ordinal, logical part and byte anchor
 across streaming, receipt expansion, conversation switches and resize. Styled
 graphemes survive wrapping; the Working journal reserves a two-cell gutter before
 wrapping and decorates only after source-byte anchor calculation. User prompts
-have a mauve cue; assistant/tool activity shares a muted guide. Prose is bounded
-to 88 cells after the gutter while command/output details use the remaining width.
+have a mauve cue; assistant/tool activity shares a muted guide. Prose and
+command/output details use the available transcript width after the gutter.
 Adjacent tool calls and outputs stay separate disclosures under their original
 ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs. Successful completion
 Unread comes from the exact durable turn summary; SDK model history stays private.

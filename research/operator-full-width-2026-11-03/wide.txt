@@ -1,0 +1,10 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! WIDTH CHECK — This conversation sh… │❯ You                                                                                                                         
+ CONSIGINT
+~		18 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! WIDTH CHECK — This conversation sh… │❯ You                                                                                                                         
+ CONSIGINT

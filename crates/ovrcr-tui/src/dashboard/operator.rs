@@ -2478,6 +2478,43 @@ mod tests {
             .collect()
     }
     #[test]
+    fn operator_prose_uses_available_width_after_resize() {
+        let (mut d, _) = setup();
+        let text = "x".repeat(240);
+        d.operator.chats.get_mut(&1).unwrap().messages = vec![
+            message(
+                1,
+                OperatorMessageContent::User {
+                    text: text.clone(),
+                    context: OperatorContext::default(),
+                },
+            ),
+            delta(2, &text),
+        ];
+        for cols in [180, 80, 140] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, 40)).unwrap();
+            d.install_area(Rect::new(0, 0, cols, 40));
+            d.draw(&mut terminal).unwrap();
+            let area = d.operator_layout(d.outer_area).transcript;
+            let width = usize::from(area.width - 2);
+            let rows = transcript_rows(&d.operator.chats[&1], area.width, 0);
+            for ordinal in [1, 2] {
+                let row = rows
+                    .iter()
+                    .position(|(_, anchor)| *anchor == Some((ordinal, 3, 0)))
+                    .unwrap();
+                assert_eq!(rows[row].0.width(), usize::from(area.width));
+                assert_eq!(rows[row + 1].1, Some((ordinal, 3, width)));
+                let y = area.y + row as u16;
+                assert_eq!(
+                    terminal.backend().buffer()[(area.right() - 1, y)].symbol(),
+                    "x"
+                );
+            }
+        }
+    }
+    #[test]
     fn operator_journal_theme_geometry_and_receipts() {
         use crate::theme::ThemeTokens;
         use ovrcr_protocol::{Settings, ThemeId};
