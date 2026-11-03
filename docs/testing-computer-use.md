@@ -22,7 +22,7 @@ Read the returned tool documentation before continuing. Then inspect the window:
 await app.getAXStateAndScreenshot();
 ```
 
-Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
+Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. A click that activates the window only focuses it and never reaches the dashboard; click again to act. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
 
 ### Driving the window
 

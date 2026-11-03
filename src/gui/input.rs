@@ -274,8 +274,22 @@ pub fn encode_event(
 /// macOS composes Option with a letter into a glyph egui delivers as `Text`
 /// right after the `Key` press. [`encode_event`] answers that press with the
 /// meta form, so forwarding the composed text as well would type twice.
+///
+/// winit accepts the first mouse, so the click that activates the window
+/// arrives in the same frame, after the focus change. That press only
+/// focuses the window: the Dashboard never sees it, and with nothing held
+/// [`encode_event`] drops its release too.
 pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
-    events.iter().enumerate().filter_map(|(index, event)| {
+    let activation = events
+        .iter()
+        .position(|event| matches!(event, Event::WindowFocused(true)))
+        .and_then(|focus| {
+            events[focus..]
+                .iter()
+                .position(|event| matches!(event, Event::PointerButton { pressed: true, .. }))
+                .map(|offset| focus + offset)
+        });
+    events.iter().enumerate().filter_map(move |(index, event)| {
         let composed = matches!(event, Event::Text(_))
             && index.checked_sub(1).is_some_and(|previous| {
                 matches!(
@@ -284,7 +298,7 @@ pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
                         if meta_key(*key, *modifiers).is_some()
                 )
             });
-        (!composed).then_some(event)
+        (!composed && Some(index) != activation).then_some(event)
     })
 }
 
@@ -541,6 +555,47 @@ mod tests {
                 &mut mouse
             ),
             Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn the_click_that_activates_the_window_only_focuses_it() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1000h\x1b[?1006h");
+        let screen = parser.screen();
+        let mut mouse = Mouse::default();
+        let mut forward = |events: &[Event]| -> Vec<u8> {
+            terminal_events(events)
+                .flat_map(|event| encode_pointer(event, screen, &mut mouse))
+                .collect()
+        };
+        let at = egui::pos2(4.0, 8.0);
+        // winit reports the focus change, then the motion and press of the
+        // activating click, in one frame.
+        let activation = [
+            Event::WindowFocused(true),
+            Event::PointerMoved(at),
+            pointer_button(at, true, egui::Modifiers::NONE),
+        ];
+        assert_eq!(forward(&activation), Vec::<u8>::new());
+        // Its release in a later frame has no press to end.
+        assert_eq!(
+            forward(&[pointer_button(at, false, egui::Modifiers::NONE)]),
+            Vec::<u8>::new()
+        );
+        // The next click in the focused window reaches the terminal.
+        assert_eq!(
+            forward(&[
+                pointer_button(at, true, egui::Modifiers::NONE),
+                pointer_button(at, false, egui::Modifiers::NONE),
+            ]),
+            b"\x1b[<0;1;1M\x1b[<0;1;1m"
+        );
+        // Focus regained without a click (Cmd-Tab) leaves the next frame's click alone.
+        assert_eq!(forward(&[Event::WindowFocused(true)]), Vec::<u8>::new());
+        assert_eq!(
+            forward(&[pointer_button(at, true, egui::Modifiers::NONE)]),
+            b"\x1b[<0;1;1M"
         );
     }
 
