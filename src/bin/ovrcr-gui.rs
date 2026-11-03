@@ -866,7 +866,11 @@ fn wait_for_test_dashboard(terminal: &mut Terminal) -> anyhow::Result<()> {
     let mut declined = std::collections::HashSet::new();
     loop {
         let screen = terminal.screen();
-        if screen.alternate_screen() && screen.contents().contains("BROWSE") {
+        let contents = screen.contents();
+        // A declined status offer leaves a one-time note where the mode name shows.
+        if screen.alternate_screen()
+            && (contents.contains("BROWSE") || contents.contains("status off — :connect"))
+        {
             return Ok(());
         }
         anyhow::ensure!(
