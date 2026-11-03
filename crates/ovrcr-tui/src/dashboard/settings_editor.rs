@@ -65,6 +65,11 @@ impl Editor {
         self.preview_theme = None;
         self.preview_request = None;
     }
+
+    /// Select row `id`, as the palette's setting entries do on opening.
+    pub(super) fn select(&mut self, id: &str) {
+        self.selected = Some(id.to_owned());
+    }
 }
 
 /// What Enter does on a row, and how its value is written.

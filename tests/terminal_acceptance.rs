@@ -1594,7 +1594,8 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     dashboard.wait_until(|screen| screen.contains("waiting"), wait_deadline())?;
     dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
-    dashboard.send(b"v")?;
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"\rMOUSE_TOKEN\r")?;
     dashboard.wait_for(b"MOUSE_ACK", wait_deadline())?;
@@ -1698,7 +1699,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
     assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
 
-    reattached.send(b"v")?;
+    reattached.send(b"v\r")?;
     reattached.wait_until(|screen| screen.contains("MOUSE_READY"), wait_deadline())?;
     reattached.send(b"\rMOUSE_TOKEN\r")?;
     reattached.wait_for(b"MOUSE_ACK", wait_deadline())?;
@@ -2368,7 +2369,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         },
         wait_deadline(),
     )?;
-    dashboard.send(b" tx")?;
+    dashboard.send(b" tX")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Close terminal?")

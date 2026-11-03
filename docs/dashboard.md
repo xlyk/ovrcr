@@ -8,7 +8,7 @@ the full contract.
 
 The terminal workspace view has four input modes. The footer names the current one. In
 Browse it shows only the three keys that open everything else, `Space Menu`,
-`: Search` and `? Help`; every other action is listed in the menu and the
+`: Commands` and `? Help`; every other action is listed in the menu and the
 palette. Copy and History show their own prioritized shortcuts, and hints that
 do not fit remain available through `?` or `Space`. History shows `Esc Cancel
 copy` while a copy is pending and `Esc Back` otherwise.
@@ -63,7 +63,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
-| `v` | Open a second pane showing the next different visible session |
+| `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Create a terminal (form) |
@@ -77,12 +77,12 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
-| `:` | Open the command palette |
+| `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
-| `N` | Toggle the Server-saved desktop notification setting |
+| `N` | Toggle the Server-saved desktop notification setting; also in Settings |
 | `O` | Check unresolved macOS notification permission or open Settings when denied |
-| `S` | Toggle the Server-saved ready sound setting |
+| `S` | Toggle the Server-saved ready sound setting; also in Settings |
 | `q` | Detach; the server and every session keep running |
 
 `N`, `O`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
@@ -293,8 +293,11 @@ preserved.
 
 ## Panes
 
-`v` opens a second pane with the next different visible session. Sidebar
-navigation replaces the focused pane's session; selecting the session already
+`v` opens a second pane on the next different visible session and, over it, a
+session chooser with that suggestion highlighted. `Enter` shows the highlighted
+session in the new pane, typing filters by project, branch and title, and `Esc`
+keeps the suggestion. The chooser does not offer the session the other pane
+already shows. Sidebar navigation replaces the focused pane's session; selecting the session already
 shown in the other pane moves focus there instead. `x` closes the focused pane
 and expands the survivor, leaving its session running. If the window becomes too
 narrow for both panes, only the focused pane is drawn; widening it restores both.
@@ -432,10 +435,14 @@ the hook-owned activity state.
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
 and `v` View. Only groups relevant to the selected row appear. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
-`q` detaches from the top level, including when the hierarchy is empty.
+`q` detaches from the top level, including when the hierarchy is empty. Nothing
+else sits beside the groups: desktop notifications and the ready sound are
+settings, toggled in Settings or with their Browse keys `N` and `S`.
 
-Choose a group, then an action: `Space t x` closes the selected terminal,
+Choose a group, then an action: `Space t X` closes the selected terminal,
 `Space w x` removes its workspace, and `Space p x` unregisters its project.
+Lowercase `x` never closes a session: in Browse and in `Space v` it hides the
+focused pane and the session keeps running.
 Workspace and project removal open a searchable picker with the current target
 highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
@@ -481,20 +488,28 @@ shortcuts.
 
 ## Command palette
 
-Terminal search rows show the session name and ID. The selected result shows
-its project and workspace below the list. Long text ends with an ellipsis;
-filtering still searches the full identity. Creation forms use their task name
-as the window title.
+Session rows read `<project> / <branch> / <title>`. Two sessions that would read
+the same also show their ID, `(#id)`, which clipping keeps visible. Long text
+ends with an ellipsis; filtering still searches the full identity, including a
+session's ID (`#7`) that is not drawn. Creation forms use their task name as the
+window title.
 
 `:` in Browse, or `Ctrl-g` then `:` from a terminal, opens the palette. If the
 dashboard has detached it reconnects first. Type to filter actions or to search a
-terminal by project, workspace, and name. Arrows select a result, `Enter`
+terminal by project, branch, and title. Arrows select a result, `Enter`
 continues, and `Esc` cancels.
 
-Entries are `Create terminal (n)`, `Create workspace (w)`,
-`Register project (a)`, `Close terminal`, `Remove workspace`, `Remove project`,
-one `Switch terminal: <project> / <workspace> / <name> (#id)` per session, and
-the remaining key-popup actions by name.
+Entries are, in order: `Create terminal (n)`, `Create workspace (w)`,
+`Register project (a)`, the selected session's actions (`Rename terminal`,
+resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
+Settings, Events, quota actions, `Archived sessions`, one row per session, and
+the remaining key-popup actions by name. The palette lists only actions the
+current target can run; the key popup keeps the dimmed row and its reason.
+
+Searching also finds every setting by its label or its `dashboard.toml` key, as
+`Settings: <label>` with the group and key below it (`theme`, `notifications`,
+`sound`, `branch_prefix`, …). `Enter` opens Settings on that row. Setting rows
+appear only for a search, not in the unfiltered list.
 
 Within a form: on a pick list, Up/Down move the highlight and `Tab` or `Enter`
 accepts. On a text field, `Tab`, Up, and Down move between fields, and
@@ -735,7 +750,9 @@ Server's document whatever its own environment says.
 ### Settings view
 
 Open **Settings** from the menu (`Space v ,`) or search the command palette for
-**settings**; it has no Browse key of its own. The view is the settings editor.
+**settings**; it has no Browse key of its own. Searching the palette for one
+setting's label or key, such as `theme`, opens Settings on that row. The view is
+the settings editor.
 It shows the document path and when the Server read it, then findings that belong
 to no setting (unknown keys and document-level problems, each with its line), then
 every setting in one scrolling list under the group headers **Alerts**
@@ -1153,7 +1170,7 @@ accept one of those messages.
 
 ### Archived sessions
 
-Closing a live session (`X` or `Space t x`) asks for confirmation, stops its
+Closing a live session (`X` or `Space t X`) asks for confirmation, stops its
 currently owned processes, then archives its record. A failed stop leaves the
 active row available. Closing an exited row archives immediately. Hiding a pane
 or detaching never archives a session.

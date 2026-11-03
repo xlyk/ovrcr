@@ -67,7 +67,7 @@ Check Unicode in the same shell:
 rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
 ```
 
-Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
+Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, Enter (keeps the suggested session in the new pane), then Enter again to type, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
 Check modified, composed, and dead keys in the same shell. Put the PTY in raw
 mode so the line editor cannot consume the escapes:
@@ -123,12 +123,27 @@ running session and Resume is absent. Disabled actions should show a reason.
 Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
 the selected `consigint / gui-consigint-auth-handoff` and omits the
 repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
-Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
-terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
+Escape cancels. Repeat with `Space p x` for projects, then `Space t X` for direct
+terminal-close confirmation, cancelling both; confirm `Space t x` closes nothing. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
+Confirm the Space group list holds only the groups, Register project and Detach,
+with no notification or sound toggles.
+Press `:` and type `theme`; confirm a `Settings: Theme` row with
+`Appearance · theme` below it, press Return, and confirm Settings opens on the
+Theme row; press Escape. In the unfiltered palette confirm session rows read
+`project / branch / title` and that Take control, Resume and Mark reviewed are
+absent while they cannot run. Press `v`; confirm the second pane opens behind a
+`New pane · choose its session` list that highlights its session and omits the
+left pane's session. Type part of another session's branch, press Return, and
+confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the Operator
+view closes at once, the terminal panes return and the footer reads
+`BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the draft remains,
+and press `Ctrl-g` again. Click another application, then click a running
+terminal pane once: the footer must stay BROWSE; a second click focuses the pane
+for typing.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
 On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 

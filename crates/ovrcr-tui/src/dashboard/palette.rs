@@ -59,6 +59,8 @@ enum Command {
     SwitchAgent(SessionId, SessionRunId),
     Hint(Action),
     Settings,
+    /// Open Settings on this row.
+    Setting(&'static ovrcr_protocol::Entry),
     Events,
     RefreshQuota,
     EnableQuota,
@@ -117,6 +119,33 @@ fn running_agent(session: &SessionSummary) -> bool {
         && matches!(session.kind, SessionKind::Agent { .. })
 }
 
+/// The key action a palette entry duplicates.
+fn command_action(command: &Command) -> Option<Action> {
+    match command {
+        Command::CreateTerminal => Some(Action::CreateTerminal),
+        Command::CreateWorkspace => Some(Action::CreateWorkspace),
+        Command::RegisterProject => Some(Action::RegisterProject),
+        Command::CloseTerminal(_) => Some(Action::CloseTerminal),
+        Command::Hint(action) => Some(*action),
+        _ => None,
+    }
+}
+
+/// Keep the entries that contain every word of `query`. Session IDs and
+/// setting keys stay searchable without crowding the row.
+fn retain_matching(entries: &mut Vec<Entry>, query: &str) {
+    let query = query.to_lowercase();
+    entries.retain(|entry| {
+        let text = match &entry.command {
+            Command::Switch(id) => format!("{} #{}", entry.label, id.0),
+            Command::Setting(setting) => format!("{} {}", entry.label, setting.path),
+            _ => entry.label.clone(),
+        }
+        .to_lowercase();
+        query.split_whitespace().all(|word| text.contains(word))
+    });
+}
+
 impl AgentCandidate {
     fn reason(&self, dashboard: &Dashboard) -> Option<&'static str> {
         if self.unavailable.is_some() {
@@ -155,6 +184,8 @@ pub(super) struct Palette {
     submit_when_ready: Option<bool>,
     cursor: super::text_cursor::TextCursor,
     scroll: Option<usize>,
+    /// The Search page chooses the new split pane's session.
+    split: bool,
 }
 
 impl Dashboard {
@@ -533,6 +564,7 @@ impl Palette {
             submit_when_ready: None,
             cursor: Default::default(),
             scroll: None,
+            split: false,
         }
     }
 
@@ -746,7 +778,6 @@ impl Dashboard {
         palette: &'a Palette,
     ) -> Option<&'a SessionSummary> {
         match *command {
-            Command::Switch(id) => find_session(self, id),
             Command::SwitchAgent(id, run) => {
                 find_session(self, id).filter(|s| s.run == run).or_else(|| {
                     palette
@@ -783,6 +814,69 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    /// `v`: open the second pane on the next visible session, then let the
+    /// user choose its session. Enter places the highlighted one; Esc keeps
+    /// the suggestion.
+    pub(super) fn open_split_chooser(&mut self) -> DashboardAction {
+        if !self.split_pane() {
+            return DashboardAction::Redraw;
+        }
+        let suggestion = self.focused_session();
+        let selected = self
+            .session_entries(self.other_pane_session())
+            .iter()
+            .position(
+                |entry| matches!(entry.command, Command::Switch(id) if Some(id) == suggestion),
+            )
+            .unwrap_or(0);
+        let mut palette = Palette::new();
+        palette.split = true;
+        palette.page = Page::Search {
+            query: String::new(),
+            selected,
+        };
+        self.palette = Some(palette);
+        DashboardAction::Redraw
+    }
+
+    fn other_pane_session(&self) -> Option<SessionId> {
+        self.panes
+            .iter()
+            .enumerate()
+            .find(|(index, _)| *index != self.focused_pane)
+            .and_then(|(_, pane)| pane.session)
+    }
+
+    /// One `project / branch / title` entry per session. The ID is added only
+    /// when two entries would otherwise read the same.
+    fn session_entries(&self, exclude: Option<SessionId>) -> Vec<Entry> {
+        let mut entries: Vec<Entry> = self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| workspace.sessions.iter().map(move |s| (workspace, s)))
+            .filter(|(_, session)| Some(session.id) != exclude)
+            .map(|(workspace, session)| Entry {
+                label: format!(
+                    "{} / {}",
+                    workspace_heading(self, workspace),
+                    session.display_name()
+                ),
+                command: Command::Switch(session.id),
+            })
+            .collect();
+        let labels: Vec<String> = entries.iter().map(|entry| entry.label.clone()).collect();
+        for entry in &mut entries {
+            if let Command::Switch(id) = entry.command
+                && labels.iter().filter(|label| **label == entry.label).count() > 1
+            {
+                entry.label.push_str(&format!(" (#{})", id.0));
+            }
+        }
+        entries
+    }
+
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
         if let Some(warning) = self
             .current_workspace()
@@ -812,6 +906,7 @@ impl Dashboard {
             submit_when_ready: None,
             cursor: Default::default(),
             scroll: None,
+            split: false,
         });
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
@@ -1445,14 +1540,7 @@ impl Dashboard {
     /// The key binding a palette entry duplicates, so the list can print its key
     /// and its reason instead of restating them.
     fn command_hint(&self, command: &Command) -> Option<KeyBinding> {
-        let action = match command {
-            Command::CreateTerminal => Action::CreateTerminal,
-            Command::CreateWorkspace => Action::CreateWorkspace,
-            Command::RegisterProject => Action::RegisterProject,
-            Command::CloseTerminal(_) => Action::CloseTerminal,
-            Command::Hint(action) => *action,
-            _ => return None,
-        };
+        let action = command_action(command)?;
         keymap(self)
             .into_iter()
             .flat_map(|g| g.keys)
@@ -1474,7 +1562,13 @@ impl Dashboard {
         archive: Option<&[crate::protocol::SessionSummary]>,
         agents: Option<&[AgentCandidate]>,
         workflows: Option<&[crate::protocol::WorkflowTransfer]>,
+        split: bool,
     ) -> Vec<Entry> {
+        if split {
+            let mut entries = self.session_entries(self.other_pane_session());
+            retain_matching(&mut entries, query);
+            return entries;
+        }
         if let Some(transfers) = workflows {
             let query = query.to_lowercase();
             return transfers
@@ -1585,24 +1679,17 @@ impl Dashboard {
                 })
                 .collect();
         }
-        let mut entries = vec![
-            Entry {
-                label: "Archived sessions".into(),
-                command: Command::Archives,
-            },
-            Entry {
-                label: "Create terminal (n)".into(),
-                command: Command::CreateTerminal,
-            },
-            Entry {
-                label: "Create workspace (w)".into(),
-                command: Command::CreateWorkspace,
-            },
-            Entry {
-                label: "Register project (a)".into(),
-                command: Command::RegisterProject,
-            },
-        ];
+        let mut entries: Vec<Entry> = [
+            ("Create terminal (n)", Command::CreateTerminal),
+            ("Create workspace (w)", Command::CreateWorkspace),
+            ("Register project (a)", Command::RegisterProject),
+        ]
+        .into_iter()
+        .map(|(label, command)| Entry {
+            label: label.into(),
+            command,
+        })
+        .collect();
         if let Some(id) = self
             .action_session()
             .filter(|id| find_session(self, *id).is_some())
@@ -1721,23 +1808,13 @@ impl Dashboard {
                 command: Command::EnableQuota,
             });
         }
-        for project in &self.hierarchy.projects {
-            for workspace in &project.workspaces {
-                for session in &workspace.sessions {
-                    entries.push(Entry {
-                        label: format!(
-                            "Switch terminal: {} / {} / {} (#{})",
-                            project.name,
-                            workspace_label(self, workspace),
-                            session.display_name(),
-                            session.id.0
-                        ),
-                        command: Command::Switch(session.id),
-                    });
-                }
-            }
-        }
-        for hint in keymap(self).into_iter().flat_map(|g| g.keys) {
+        entries.push(Entry {
+            label: "Archived sessions".into(),
+            command: Command::Archives,
+        });
+        entries.extend(self.session_entries(None));
+        let bindings: Vec<KeyBinding> = keymap(self).into_iter().flat_map(|g| g.keys).collect();
+        for hint in &bindings {
             if matches!(hint.key, "n" | "w" | "a" | "X" | ":" | "Space") {
                 continue;
             }
@@ -1746,12 +1823,33 @@ impl Dashboard {
                 command: Command::Hint(hint.action),
             });
         }
-        let query = query.to_lowercase();
+        // The key popup dims an unavailable row and says why; the palette lists
+        // only what the current target can run.
         entries.retain(|entry| {
-            query
-                .split_whitespace()
-                .all(|word| entry.label.to_lowercase().contains(word))
+            command_action(&entry.command).is_none_or(|action| {
+                bindings
+                    .iter()
+                    .find(|binding| binding.action == action)
+                    .is_none_or(KeyBinding::enabled)
+            })
         });
+        // Settings rows are found by searching, not listed.
+        if !query.trim().is_empty() {
+            entries.extend(
+                ovrcr_protocol::entries()
+                    .iter()
+                    // The editor offers the sound choice only on macOS.
+                    .filter(|setting| {
+                        cfg!(target_os = "macos")
+                            || setting.path != ovrcr_protocol::ReadySoundChoice::KEY
+                    })
+                    .map(|setting| Entry {
+                        label: format!("Settings: {}", setting.label),
+                        command: Command::Setting(setting),
+                    }),
+            );
+        }
+        retain_matching(&mut entries, query);
         entries
     }
 
@@ -2118,6 +2216,7 @@ impl Dashboard {
                                 palette.archive.as_deref(),
                                 palette.agents.as_deref(),
                                 palette.workflows.as_deref(),
+                                palette.split,
                             )
                             .len();
                         if count > 0 {
@@ -2183,6 +2282,7 @@ impl Dashboard {
                         palette.archive.as_deref(),
                         palette.agents.as_deref(),
                         palette.workflows.as_deref(),
+                        palette.split,
                     );
                     *selected = (*selected).min(entries.len().saturating_sub(1));
                     if let Some(entry) = entries.get(*selected) {
@@ -2248,6 +2348,14 @@ impl Dashboard {
                                     self.ignored_responses.insert(request_id);
                                 }
                                 return self.open_details(super::quota::Details::Settings);
+                            }
+                            Command::Setting(setting) => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                let action = self.open_details(super::quota::Details::Settings);
+                                self.settings_editor.select(setting.path);
+                                return action;
                             }
                             Command::Events => {
                                 if let Some(request_id) = palette.suggestions.inspect {
@@ -3410,6 +3518,7 @@ impl Dashboard {
                     palette.archive.as_deref(),
                     palette.agents.as_deref(),
                     palette.workflows.as_deref(),
+                    palette.split,
                 );
                 if entries.is_empty() {
                     lines.push(Line::from(if palette.archive.is_some() {
@@ -3420,6 +3529,8 @@ impl Dashboard {
                         } else {
                             "No matching agents"
                         }
+                    } else if palette.split {
+                        "No matching sessions"
                     } else {
                         "No matching actions or terminals"
                     }));
@@ -3451,6 +3562,15 @@ impl Dashboard {
                         } else {
                             clip_text(&format!("#{}", id.0), available)
                         }
+                    } else if let Command::Switch(id) = entry.command
+                        && let Some(place) = entry.label.strip_suffix(&format!(" (#{})", id.0))
+                    {
+                        // Clip the title, not the ID that tells two equal rows apart.
+                        let suffix = format!(" (#{})", id.0);
+                        format!(
+                            "{}{suffix}",
+                            clip_text(place, available.saturating_sub(suffix.width()))
+                        )
                     } else {
                         clip_text(&entry.label, available)
                     };
@@ -3524,6 +3644,11 @@ impl Dashboard {
                     } else if let Some(hint) = self.command_hint(&entry.command) {
                         lines.push(Line::styled(
                             format!("  {} — {}", hint.key, hint.description),
+                            Style::default().fg(MUTED()),
+                        ));
+                    } else if let Command::Setting(setting) = entry.command {
+                        lines.push(Line::styled(
+                            format!("  {} · {}", setting.group, setting.path),
                             Style::default().fg(MUTED()),
                         ));
                     } else {
@@ -3761,6 +3886,7 @@ impl Dashboard {
         let title = match &palette.page {
             Page::Search { .. } if palette.agents.is_some() => "Agents",
             Page::Search { .. } if palette.archive.is_some() => "Archived sessions",
+            Page::Search { .. } if palette.split => "New pane · choose its session",
             Page::Search { .. } => "Command palette",
             Page::Form { command, .. } => match command {
                 Command::CreateTerminal => "Create terminal",
@@ -3817,6 +3943,7 @@ impl Dashboard {
                 palette.archive.as_deref(),
                 palette.agents.as_deref(),
                 palette.workflows.as_deref(),
+                palette.split,
             );
             let selected = (*selected).min(entries.len().saturating_sub(1));
             entries
@@ -3856,6 +3983,13 @@ impl Dashboard {
                         format!(
                             "{} — {}\n↑/↓ select · Enter continue · Esc cancel",
                             hint.key, hint.description
+                        )
+                    } else if palette.split {
+                        format!(
+                            "↑/↓ select · Enter show in new pane · Esc keep {}",
+                            self.focused_session()
+                                .and_then(|id| find_session(self, id))
+                                .map_or("suggestion", |session| session.display_name())
                         )
                     } else {
                         "↑/↓ select · Enter continue · Esc cancel".into()
@@ -5461,7 +5595,7 @@ mod launch_tests {
         d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
         d.select_session(SessionId(1));
         assert!(
-            d.palette_entries("", None, None, None)
+            d.palette_entries("", None, None, None, false)
                 .iter()
                 .any(|entry| entry.label == "Retry resume conversation")
         );
@@ -5848,7 +5982,7 @@ mod launch_tests {
         row.scope = ovrcr_protocol::SessionScope::OperatorConversation {
             conversation: ovrcr_protocol::OperatorConversationId(3),
         };
-        let entries = d.palette_entries("", Some(&[row]), None, None);
+        let entries = d.palette_entries("", Some(&[row]), None, None, false);
         assert_eq!(entries.len(), 1);
         assert!(entries[0].label.starts_with("Unarchive: Operator / "));
         assert!(matches!(
@@ -5874,7 +6008,7 @@ mod launch_tests {
         let mut certain = summary(10);
         certain.archived = true;
         certain.phase = SessionPhase::Stopped;
-        let entries = d.palette_entries("", Some(&[filed, certain]), None, None);
+        let entries = d.palette_entries("", Some(&[filed, certain]), None, None, false);
         let acknowledge: Vec<_> = entries
             .iter()
             .filter(|entry| entry.label.starts_with("Acknowledge stopped: "))

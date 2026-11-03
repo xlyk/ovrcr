@@ -44,6 +44,8 @@ fn try_request_view(
 
 fn split(dashboard: &mut Dashboard) {
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(dashboard, action);
 }
 
@@ -105,6 +107,66 @@ fn split_state_focus_and_close_preserve_sessions() {
     split(&mut single);
     assert_eq!(single.pane_rects(Rect::new(0, 0, 88, 38)).len(), 1);
     assert!(banner(&single).contains("No other visible session to split"));
+}
+
+#[test]
+fn v_offers_the_new_pane_a_session_chooser_with_the_suggestion_highlighted() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    assert_eq!(dashboard.key(KeyCode::Char('v')), DashboardAction::Redraw);
+    // The second pane opens on the next visible session at once.
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    let text = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(text.contains("New pane · choose its session"), "{text}");
+    assert!(text.contains("› consigint / lifecycle / local"), "{text}");
+    assert!(text.contains("Esc keep local"), "{text}");
+    // The left pane's session is not offered.
+    dashboard.event_action(Event::Paste("review".into()));
+    assert!(drawn_contains(&dashboard, 120, 40, "No matching sessions"));
+    // Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
+    assert!(!drawn_contains(&dashboard, 120, 40, "New pane"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+
+    // Enter places the highlighted suggestion without asking again.
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    dashboard.key(KeyCode::Char('v'));
+    dashboard.key(KeyCode::Enter);
+    assert!(!drawn_contains(&dashboard, 120, 40, "New pane"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+
+    // Typing filters; Enter shows the chosen session in the new pane only.
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    dashboard.key(KeyCode::Char('v'));
+    dashboard.event_action(Event::Paste("progress".into()));
+    assert!(drawn_contains(
+        &dashboard,
+        120,
+        40,
+        "› spacelift-agent / progress / local"
+    ));
+    dashboard.key(KeyCode::Enter);
+    assert!(!drawn_contains(&dashboard, 120, 40, "New pane"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+    let requests = dashboard.drain_outbox();
+    let view = requests
+        .iter()
+        .find(|message| matches!(message.request, Request::SetView { .. }))
+        .map(set_view)
+        .expect("placing a session requests its view");
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        [SessionId(1), SessionId(3)]
+    );
+    assert_eq!(view.focused, Some(SessionId(3)));
 }
 
 #[test]
@@ -771,7 +833,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
         .collect::<String>();
     assert!(
-        browse_footer.starts_with("BROWSE  Space Menu  : Search  ? Help"),
+        browse_footer.starts_with("BROWSE  Space Menu  : Commands  ? Help"),
         "{browse_footer}"
     );
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -965,7 +1027,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
     assert!(
-        ordinary_footer.starts_with("BROWSE  Space Menu  : Search  ? Help"),
+        ordinary_footer.starts_with("BROWSE  Space Menu  : Commands  ? Help"),
         "{ordinary_footer}"
     );
 

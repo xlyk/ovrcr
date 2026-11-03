@@ -3209,7 +3209,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('t', "p", Action::Pause),
         ('t', "r", Action::Resume),
         ('t', "R", Action::MarkReviewed),
-        ('t', "x", Action::CloseTerminal),
+        ('t', "X", Action::CloseTerminal),
         ('t', "c", Action::CopyScreen),
         ('t', "h", Action::History),
         ('w', "n", Action::CreateTerminal),
@@ -3224,21 +3224,38 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         );
     }
     // A group row answers to the group's key, and the bare key keeps its own action.
-    let close = bindings
-        .into_iter()
-        .find(|binding| binding.action == Action::CloseTerminal)
-        .unwrap();
-    let bare = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE);
-    let grouped = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-    assert!(close.matches(bare) && !close.matches(grouped));
-    let close = close.with_group_key("x");
-    assert!(close.matches(grouped) && !close.matches(bare));
+    let binding = |action: Action| {
+        keymap(&dashboard)
+            .into_iter()
+            .flat_map(|group| group.keys)
+            .find(|binding| binding.action == action)
+            .unwrap()
+    };
+    let shifted = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT);
+    let lower = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    // `x` never closes a session: Browse `x` and `Space v x` hide a pane, and
+    // the session closes only on `X`, bare or as `Space t X`.
+    let close = binding(Action::CloseTerminal);
+    let slot = close.group.expect("Space t lists Close terminal").key;
+    assert_eq!(slot, "X");
+    let close = close.with_group_key(slot);
+    assert!(close.matches(shifted) && !close.matches(lower));
     assert_eq!(close.action, Action::CloseTerminal);
+    let pane = binding(Action::ClosePane);
+    let slot = pane.group.expect("Space v lists Close pane").key;
+    let pane = pane.with_group_key(slot);
+    assert!(pane.matches(lower) && !pane.matches(shifted));
     assert_eq!(
         dashboard
-            .key_binding_for(grouped)
+            .key_binding_for(lower)
             .map(|binding| binding.action),
         Some(Action::ClosePane)
+    );
+    assert_eq!(
+        dashboard
+            .key_binding_for(shifted)
+            .map(|binding| binding.action),
+        Some(Action::CloseTerminal)
     );
 }
 
@@ -3856,12 +3873,12 @@ fn root_workspace_sorts_first_regardless_of_name() {
 }
 
 #[test]
-fn browse_footer_lists_only_the_menu_search_and_help_keys() {
+fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     use crate::protocol::SessionPhase;
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Search  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help"
     );
     // Hints drop from the right when the footer is narrow.
     assert_eq!(super::hints::footer(&dashboard, 20), "BROWSE  Space Menu");
@@ -3874,7 +3891,7 @@ fn browse_footer_lists_only_the_menu_search_and_help_keys() {
     assert_eq!(binding_named(&dashboard, "v").reason, Some("already split"));
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Search  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help"
     );
     dashboard.mode = InputMode::Terminal;
     assert_eq!(

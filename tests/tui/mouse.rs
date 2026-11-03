@@ -335,6 +335,8 @@ fn split_ready(area: Rect) -> Dashboard {
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let left = SessionId(1);
     let right = dashboard.focused_session().expect("split focus");

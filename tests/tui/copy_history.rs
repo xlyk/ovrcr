@@ -1535,7 +1535,7 @@ fn pause_resume_dense_status_has_priority() {
             .lines()
             .last()
             .unwrap()
-            .starts_with("BROWSE  Space Menu  : Search  ? Help")
+            .starts_with("BROWSE  Space Menu  : Commands  ? Help")
     );
     // The paused state shows in the terminal menu: Resume is offered, Pause is not.
     dashboard.key(KeyCode::Char(' '));
@@ -1551,6 +1551,8 @@ fn pause_resume_dense_status_has_priority() {
 fn history_waits_for_coalesced_focus_view_before_capture() {
     let mut dashboard = dashboard_fixture();
     let split = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, split);
     assert_eq!(dashboard.key(KeyCode::PageUp), DashboardAction::Redraw);
     assert!(footer(&dashboard, 120, 40).contains("Pane is loading; retry history"));

@@ -258,16 +258,13 @@ impl Dashboard {
                 ));
             }
         }
-        // Registration remains reachable even before a project exists.
-        hints.extend(groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
-            matches!(
-                binding.action,
-                Action::RegisterProject
-                    | Action::Detach
-                    | Action::ToggleNotifications
-                    | Action::ToggleSound
-            )
-        }));
+        // Registration remains reachable even before a project exists. Toggles
+        // stay off the group list: Settings and their Browse keys own them.
+        hints.extend(
+            groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
+                matches!(binding.action, Action::RegisterProject | Action::Detach)
+            }),
+        );
         vec![KeyGroup {
             title: "Groups".into(),
             keys: hints,

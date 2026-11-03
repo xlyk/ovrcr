@@ -1344,6 +1344,8 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let retained = dashboard.focused_session().expect("split session");
     dashboard.install_screen(SessionId(1), &[]);
@@ -1436,6 +1438,8 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let split_view = dashboard
         .request_view_at(area)
@@ -1543,6 +1547,8 @@ fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let retained = dashboard.focused_session().expect("split session");
     dashboard.install_screen(SessionId(1), &[]);
@@ -2058,6 +2064,8 @@ fn container_selection_does_not_close_or_switch_a_split() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let retained = dashboard.focused_session().expect("split session");
     dashboard.install_screen(SessionId(1), &[]);
@@ -2390,6 +2398,8 @@ fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     let split = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, split);
     dashboard.key(KeyCode::Tab);
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
