@@ -170,7 +170,10 @@ impl TaskEditor {
             "main".into(),
             "interval".into(),
             "1h".into(),
-            "UTC".into(),
+            default_timezone(
+                std::env::var("TZ").ok(),
+                std::fs::read_link("/etc/localtime").ok(),
+            ),
             "".into(),
             "off".into(),
             "1h".into(),
@@ -207,7 +210,7 @@ impl TaskEditor {
                 Schedule::Once { at } => {
                     fields[5] = "once".into();
                     fields[6] = chrono::DateTime::from_timestamp(*at, 0)
-                        .map(|t| t.to_rfc3339())
+                        .map(|t| t.with_timezone(&chrono::Local).to_rfc3339())
                         .unwrap_or_else(|| at.to_string());
                 }
             }
@@ -431,19 +434,19 @@ impl TaskEditor {
                         .insert(&mut self.projects.query, &text.replace(['\r', '\n'], " "));
                     self.projects.selected = 0;
                 }
-                Event::Key(key) => match key.code {
+                Event::Key(key) => match line_edge(key) {
                     KeyCode::Up => self.projects.move_selection(-1),
                     KeyCode::Down => self.projects.move_selection(1),
-                    KeyCode::Backspace
+                    code @ (KeyCode::Backspace
                     | KeyCode::Delete
                     | KeyCode::Left
                     | KeyCode::Right
                     | KeyCode::Home
-                    | KeyCode::End => {
-                        self.project_cursor.key(&mut self.projects.query, key.code);
+                    | KeyCode::End) => {
+                        self.project_cursor.key(&mut self.projects.query, code);
                         self.projects.selected = 0;
                     }
-                    KeyCode::Char('a' | 'u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         self.projects.query.clear();
                         self.project_cursor = TextCursor::default();
                         self.projects.selected = 0;
@@ -484,13 +487,13 @@ impl TaskEditor {
                 text.insert_str(self.cursor, &value);
                 self.cursor += value.len();
             }
-            Event::Key(key) => match key.code {
+            Event::Key(key) => match line_edge(&key) {
                 KeyCode::Tab | KeyCode::BackTab => {
                     self.field =
                         (self.field + if key.code == KeyCode::BackTab { 11 } else { 1 }) % 12;
                     self.cursor = self.fields[self.field].len();
                 }
-                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     text.clear();
                     self.cursor = 0;
                 }
@@ -620,8 +623,10 @@ impl TasksView {
         } else if let Some(editor) = &self.editor {
             if editor.field == 2 {
                 "Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear"
+            } else if editor.field == 11 {
+                "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-u clear  Enter newline"
             } else {
-                "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline"
+                "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-u clear"
             }
         } else if self.history {
             if self.runs.get(self.selected_run).is_some() {
@@ -681,7 +686,6 @@ impl TasksView {
             let (code, modifiers) = match hint.split(' ').next().unwrap_or("") {
                 "Esc" | "Enter/Esc" => (KeyCode::Esc, KeyModifiers::NONE),
                 "Ctrl-s" => (KeyCode::Char('s'), KeyModifiers::CONTROL),
-                "Ctrl-a" => (KeyCode::Char('a'), KeyModifiers::CONTROL),
                 "Ctrl-u" => (KeyCode::Char('u'), KeyModifiers::CONTROL),
                 "Tab/Enter" | "Enter" => (KeyCode::Enter, KeyModifiers::NONE),
                 "Tab/Shift-Tab" => (KeyCode::Tab, KeyModifiers::NONE),
@@ -1151,10 +1155,43 @@ fn block(title: &str) -> Block<'_> {
         .title(title)
         .border_style(Style::default().fg(SURFACE2()))
 }
+/// Local time, like everything else the Tasks view shows.
 fn timestamp(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
         .unwrap_or_else(|| at.to_string())
+}
+
+/// The zone a new cron task starts with: `TZ` when it names an IANA zone, else the
+/// zone the system's `/etc/localtime` links to, else UTC.
+fn default_timezone(tz: Option<String>, localtime: Option<std::path::PathBuf>) -> String {
+    let linked =
+        localtime.and_then(|link| Some(link.to_str()?.split_once("zoneinfo/")?.1.to_owned()));
+    tz.map(|zone| zone.trim_start_matches(':').to_owned())
+        .into_iter()
+        .chain(linked)
+        .find(|zone| {
+            Schedule::Cron {
+                expression: "0 0 * * *".into(),
+                timezone: zone.clone(),
+            }
+            .validate()
+            .is_ok()
+        })
+        .unwrap_or_else(|| "UTC".into())
+}
+
+/// Ctrl-a and Ctrl-e go to the line's start and end, as Home and End do.
+fn line_edge(key: &KeyEvent) -> KeyCode {
+    match key.code {
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyCode::Home,
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyCode::End,
+        code => code,
+    }
 }
 fn schedule_text(s: &Schedule) -> String {
     match s {
@@ -1390,7 +1427,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         );
     } else {
         let mut rows = vec![Line::raw(
-            "   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)",
+            "   ID  STATE    NAME                 SCHEDULE / NEXT",
         )];
         rows.extend(
             view.tasks
@@ -1457,5 +1494,38 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             Paragraph::new(format!("Concurrency: {value}")).style(Style::default().fg(SKY())),
             concurrency,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_timezone;
+    use std::path::PathBuf;
+
+    #[test]
+    fn new_cron_tasks_default_to_the_local_zone() {
+        let link = |path: &str| Some(PathBuf::from(path));
+        assert_eq!(
+            default_timezone(Some("America/New_York".into()), None),
+            "America/New_York"
+        );
+        assert_eq!(
+            default_timezone(Some(":Europe/Berlin".into()), None),
+            "Europe/Berlin"
+        );
+        // macOS and Linux both link /etc/localtime into a zoneinfo tree.
+        assert_eq!(
+            default_timezone(None, link("/var/db/timezone/zoneinfo/Asia/Tokyo")),
+            "Asia/Tokyo"
+        );
+        assert_eq!(
+            default_timezone(
+                Some("not a zone".into()),
+                link("../usr/share/zoneinfo/Europe/Paris")
+            ),
+            "Europe/Paris"
+        );
+        assert_eq!(default_timezone(None, link("/etc/custom-zone")), "UTC");
+        assert_eq!(default_timezone(None, None), "UTC");
     }
 }
