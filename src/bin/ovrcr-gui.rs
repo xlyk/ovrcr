@@ -794,35 +794,70 @@ fn decline_test_startup_prompt(
         return Ok(());
     }
     let contents = screen.contents();
-    let Some((body, answer)) = contents.rsplit_once("[y/n]") else {
-        return Ok(());
+    if let Some(title) = waiting_startup_decision(&contents)?
+        && declined.insert(title.to_owned())
+    {
+        terminal.send(b"n\r")?;
+    }
+    Ok(())
+}
+
+/// The title of the optional startup offer waiting for its answer on `contents`, which
+/// tests decline. An unknown decision is an error and stays unanswered.
+#[cfg(test)]
+fn waiting_startup_decision(contents: &str) -> anyhow::Result<Option<&str>> {
+    let Some((_, prompt)) = contents.rsplit_once("OVRCR · startup") else {
+        return Ok(None);
     };
+    let mut lines = prompt
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let title = lines.next().unwrap_or("");
+    let answer = lines.next_back().unwrap_or("");
     let answer = answer.split_whitespace().collect::<Vec<_>>().join(" ");
     if !matches!(
         answer.as_str(),
-        "Enter skips · default n ›" | "Enter skips · default n >"
+        "[y/n] Enter skips · default n ›"
+            | "[y/n] Enter skips · default n >"
+            | "[y] Connect [n] Not now ›"
+            | "[y] Connect [n] Not now >"
     ) {
-        return Ok(());
+        return Ok(None);
     }
-    let title = body
-        .rsplit_once("OVRCR · startup")
-        .and_then(|(_, prompt)| prompt.lines().map(str::trim).find(|line| !line.is_empty()))
-        .unwrap_or("");
     anyhow::ensure!(
         matches!(
             title,
-            "Claude reporting hooks"
-                | "Codex reporting hooks"
+            "Connect agent status"
                 | "Install OVRCR Bridge"
                 | "Repair or update OVRCR Bridge"
                 | "Install OVRCR Local"
         ),
         "unexpected startup decision; left unanswered:\n{contents}"
     );
-    if declined.insert(title.to_owned()) {
-        terminal.send(b"n\r")?;
-    }
-    Ok(())
+    Ok(Some(title))
+}
+
+#[test]
+fn startup_offers_are_recognised_only_while_waiting_for_their_answer() {
+    let connect = "\n OVRCR · startup\n\n  Connect agent status\n  Lets OVRCR show when your Claude sessions are working, need you or are done.\n  Adds OVRCR hooks to:\n    /home/settings.json\n\n  [y] Connect  [n] Not now  ›";
+    assert_eq!(
+        waiting_startup_decision(connect).unwrap(),
+        Some("Connect agent status")
+    );
+    let bridge = "\n OVRCR · startup\n\n  Install OVRCR Bridge\n  Shows desktop alerts.\n\n  [y/n] Enter skips · default n  ›";
+    assert_eq!(
+        waiting_startup_decision(bridge).unwrap(),
+        Some("Install OVRCR Bridge")
+    );
+    // Answered, or not drawn yet: nothing to decline.
+    assert_eq!(
+        waiting_startup_decision(&format!("{connect} n\n")).unwrap(),
+        None
+    );
+    assert_eq!(waiting_startup_decision("Starting OVRCR").unwrap(), None);
+    let unknown = "\n OVRCR · startup\n\n  Restart OVRCR server\n  All running sessions will stop.\n\n  [y/n] Enter skips · default n  >";
+    assert!(waiting_startup_decision(unknown).is_err());
 }
 
 #[cfg(test)]

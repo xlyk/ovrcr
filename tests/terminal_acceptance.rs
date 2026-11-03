@@ -485,7 +485,8 @@ impl OuterDashboard {
                 continue;
             };
             if declined_prompt == Some(before.len())
-                || !prompt.contains("[y/n] Enter skips · default n")
+                || !(prompt.contains("[y/n] Enter skips · default n")
+                    || prompt.contains("[y] Connect  [n] Not now"))
             {
                 continue;
             }
@@ -493,8 +494,7 @@ impl OuterDashboard {
             if !matches!(
                 title,
                 Some(
-                    "Claude reporting hooks"
-                        | "Codex reporting hooks"
+                    "Connect agent status"
                         | "Install OVRCR Bridge"
                         | "Repair or update OVRCR Bridge"
                         | "Install OVRCR Local"

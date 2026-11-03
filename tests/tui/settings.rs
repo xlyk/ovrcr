@@ -128,9 +128,9 @@ fn settings_footer_reports_findings_at_attach_and_when_the_count_changes() {
     assert!(rendered_footer(&dashboard, 120).contains("No settings findings"));
 }
 
-/// A startup warning is applied after hello's settings reading and takes the
-/// footer. The findings line must wait behind that banner, including across a
-/// key press, and show once the banner is dismissed.
+/// An error banner raised after hello's settings reading takes the footer. The
+/// findings line must wait behind that banner, including across a key press, and
+/// show once the banner is dismissed.
 #[test]
 fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
     let root = tempfile::tempdir().unwrap();
@@ -144,7 +144,7 @@ fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
         rendered_footer(&dashboard, 120)
     );
 
-    // Same banner `run_dashboard` writes for a startup warning: `set_error`.
+    // An error the Server returns writes the banner through `set_error`.
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 9_000,
         response: Response::Error {
@@ -181,6 +181,102 @@ fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
     assert!(
         footer.contains("2 settings findings; see Settings"),
         "queued findings notice must show once the banner is dismissed, got {footer:?}"
+    );
+}
+
+const STATUS_OFF: &str = "Claude status off — :connect to set up";
+
+fn no_connect() -> Result<String, String> {
+    panic!("nothing chose Connect agent status")
+}
+
+/// "Not now" at startup is not an error: `run_dashboard` hands the note to
+/// `status_off`, which shows it as a plain notice, once, behind a notice already
+/// in the footer.
+#[test]
+fn startup_status_off_is_a_calm_one_time_note_behind_the_findings_notice() {
+    let mut quiet = dashboard_fixture();
+    quiet.status_off(STATUS_OFF.into(), no_connect);
+    assert_eq!(rendered_footer(&quiet, 120), STATUS_OFF);
+
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    std::fs::write(&document, "unknown_0 = 1\n").unwrap();
+    let mut dashboard = dashboard_fixture();
+    publish(&mut dashboard, &document);
+    dashboard.status_off(STATUS_OFF.into(), no_connect);
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(
+        footer.contains("1 settings finding; see Settings"),
+        "{footer}"
+    );
+    assert_eq!(dashboard.key(KeyCode::F(12)), DashboardAction::None);
+    assert_eq!(rendered_footer(&dashboard, 120), STATUS_OFF);
+    assert_eq!(dashboard.key(KeyCode::F(12)), DashboardAction::None);
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(
+        !footer.contains("status off") && !footer.contains("ERROR"),
+        "{footer}"
+    );
+}
+
+/// The palette lists Connect agent status only while startup left status off. A
+/// failure is reported and keeps the entry; success replaces that banner with a
+/// notice and removes the entry.
+#[test]
+fn palette_connects_agent_status_until_it_succeeds() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn connect() -> Result<String, String> {
+        match CALLS.fetch_add(1, Ordering::SeqCst) {
+            0 => Err("Couldn't connect Claude status: native settings file is read-only in /p/settings.json; fix the file and try again".into()),
+            _ => Ok("Claude status connected for new sessions".into()),
+        }
+    }
+    fn listed(dashboard: &mut Dashboard) -> bool {
+        dashboard.key(KeyCode::Char(':'));
+        let inspect = only_request(dashboard.drain_outbox());
+        assert_eq!(inspect.request, Request::Inspect);
+        dashboard.event_action(Event::Paste("connect".into()));
+        let shown = screen(dashboard).contains("Connect agent status");
+        dashboard.key(KeyCode::Esc);
+        shown
+    }
+    fn choose(dashboard: &mut Dashboard) {
+        dashboard.key(KeyCode::Char(':'));
+        only_request(dashboard.drain_outbox());
+        dashboard.event_action(Event::Paste("connect agent status".into()));
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        assert!(
+            dashboard.drain_outbox().is_empty(),
+            "connecting is local, not a Server request"
+        );
+        assert!(!screen(dashboard).contains("Connect agent status"));
+    }
+
+    let mut dashboard = dashboard_fixture();
+    assert!(!listed(&mut dashboard), "nothing to connect");
+    dashboard.status_off(STATUS_OFF.into(), connect);
+    assert!(listed(&mut dashboard));
+
+    choose(&mut dashboard);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    let footer = rendered_footer(&dashboard, 200);
+    assert!(
+        footer.starts_with("ERROR: Couldn't connect Claude status:"),
+        "{footer}"
+    );
+    assert!(listed(&mut dashboard), "a failed attempt can be retried");
+
+    choose(&mut dashboard);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        rendered_footer(&dashboard, 200),
+        "Claude status connected for new sessions"
+    );
+    assert!(
+        !listed(&mut dashboard),
+        "connected status has nothing to offer"
     );
 }
 

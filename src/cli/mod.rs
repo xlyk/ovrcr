@@ -74,7 +74,8 @@ fn run(cli: Cli) -> AppResult<()> {
         let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
         return run_dashboard(
             startup::run(&paths).map_err(RuntimeError::internal)?,
-            agent_setup::boot_hook_warning(),
+            startup_hooks::status_off(),
+            startup_hooks::connect,
         )
         .map_err(RuntimeError::internal);
     };

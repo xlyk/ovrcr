@@ -4,42 +4,57 @@ use ovrcr::server::ServerPaths;
 use std::io::{BufRead, IsTerminal, Read, Write};
 use std::os::unix::net::UnixStream;
 
+/// What `y` and `n` mean on one startup screen; `None` is the plain y/n question.
+type Answers = Option<(&'static str, &'static str)>;
+
+/// The agent-status screen's answers. Enter, like any answer but `y`, is Not now.
+const CONNECT: Answers = Some(("Connect", "Not now"));
+
 pub(super) fn run(paths: &ServerPaths) -> Result<UnixStream> {
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     let mut can_prompt = interactive;
-    let mut confirm = |message: &str| -> Result<bool> {
-        if !can_prompt {
-            return Ok(false);
-        }
-        write_prompt(&mut std::io::stderr(), message, use_color())?;
-        std::io::stderr().flush()?;
-        let mut answer = String::new();
-        let count = std::io::stdin().lock().take(128).read_line(&mut answer)?;
-        if count == 128 && !answer.ends_with('\n') {
-            can_prompt = false;
-            eprintln!("Answer too long; leaving remaining repairs unchanged.");
-            return Ok(false);
-        }
-        Ok(matches!(
-            answer.trim().to_ascii_lowercase().as_str(),
-            "y" | "yes"
-        ))
-    };
     if interactive {
-        if super::startup_hooks::run(&mut confirm).is_err() {
+        if super::startup_hooks::run(&mut |message: &str| ask(&mut can_prompt, message, CONNECT))
+            .is_err()
+        {
             notice(
-                "Hook setup could not complete; inspect native configuration and run `ovrcr agent doctor`.",
+                "Agent status setup could not complete; inspect native configuration and run `ovrcr agent doctor`.",
                 false,
             );
         }
-        if super::startup_bridge::run(&mut confirm).is_err() {
+        if super::startup_bridge::run(&mut |message: &str| ask(&mut can_prompt, message, None))
+            .is_err()
+        {
             notice(
                 "Bridge setup could not complete; Dashboard will continue. Check the selected Bridge installation and ~/Applications/.ovrcr-bridge-install.* recovery folders before retrying.",
                 false,
             );
         }
     }
-    ovrcr::client::connect_dashboard(paths, &mut confirm)
+    ovrcr::client::connect_dashboard(paths, &mut |message: &str| {
+        ask(&mut can_prompt, message, None)
+    })
+}
+
+/// Asks one startup question; only `y` or `yes` accepts. An overlong answer stops
+/// every later question, which then reads as declined.
+fn ask(can_prompt: &mut bool, message: &str, answers: Answers) -> Result<bool> {
+    if !*can_prompt {
+        return Ok(false);
+    }
+    write_prompt(&mut std::io::stderr(), message, use_color(), answers)?;
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    let count = std::io::stdin().lock().take(128).read_line(&mut answer)?;
+    if count == 128 && !answer.ends_with('\n') {
+        *can_prompt = false;
+        eprintln!("Answer too long; leaving remaining repairs unchanged.");
+        return Ok(false);
+    }
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }
 
 fn use_color() -> bool {
@@ -55,7 +70,12 @@ fn terminal_color(color: ovrcr_tui::theme::Color) -> crossterm::style::Color {
     }
 }
 
-fn write_prompt(output: &mut impl Write, message: &str, color: bool) -> std::io::Result<()> {
+fn write_prompt(
+    output: &mut impl Write,
+    message: &str,
+    color: bool,
+    answers: Answers,
+) -> std::io::Result<()> {
     use crossterm::style::{Stylize, style};
     use ovrcr_tui::theme;
     let clean: String = message
@@ -114,18 +134,28 @@ fn write_prompt(output: &mut impl Write, message: &str, color: bool) -> std::io:
             writeln!(output, "  {line}")?;
         }
     }
-    if color {
-        write!(
+    let chip = |key: &'static str| {
+        style(key)
+            .with(terminal_color(theme::BLUE()))
+            .on(terminal_color(theme::SURFACE0()))
+            .bold()
+    };
+    match (answers, color) {
+        (Some((yes, no)), true) => write!(
+            output,
+            "\n  {} {yes}  {} {no}  {} ",
+            chip("[y]"),
+            chip("[n]"),
+            style("›").with(terminal_color(theme::SUBTEXT()))
+        )?,
+        (Some((yes, no)), false) => write!(output, "\n  [y] {yes}  [n] {no}  > ")?,
+        (None, true) => write!(
             output,
             "\n  {} {} ",
-            style("[y/n]")
-                .with(terminal_color(theme::BLUE()))
-                .on(terminal_color(theme::SURFACE0()))
-                .bold(),
+            chip("[y/n]"),
             style("Enter skips · default n  ›").with(terminal_color(theme::SUBTEXT()))
-        )?;
-    } else {
-        write!(output, "\n  [y/n] Enter skips · default n  > ")?;
+        )?,
+        (None, false) => write!(output, "\n  [y/n] Enter skips · default n  > ")?,
     }
     Ok(())
 }
@@ -219,6 +249,7 @@ mod tests {
             &mut output,
             "Restart OVRCR server\nSocket: /tmp/\x1b[2Jprivate\nAll running sessions will stop.",
             false,
+            None,
         )
         .unwrap();
         let text = String::from_utf8(output).unwrap();
@@ -226,6 +257,32 @@ mod tests {
         assert!(text.contains("All running sessions will stop."));
         assert!(text.contains("[y/n]"));
         assert!(text.contains("default n"));
+    }
+
+    #[test]
+    fn agent_status_screen_names_its_answers_instead_of_y_n() {
+        let message = "Connect agent status\n  /tmp/\x1b]0;x\x07settings.json";
+        let mut output = Vec::new();
+        write_prompt(&mut output, message, false, CONNECT).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(!text.contains('\x1b') && !text.contains('\x07'), "{text:?}");
+        assert!(
+            text.ends_with("\n  [y] Connect  [n] Not now  > "),
+            "{text:?}"
+        );
+        assert!(!text.contains("[y/n]") && !text.contains("Enter skips"));
+        let mut output = Vec::new();
+        write_prompt(&mut output, message, true, CONNECT).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(
+            text.contains("[y]") && text.contains(" Connect  "),
+            "{text:?}"
+        );
+        assert!(
+            text.contains("[n]") && text.contains(" Not now  "),
+            "{text:?}"
+        );
+        assert!(!text.contains("[y/n]") && !text.contains("Enter skips"));
     }
 
     #[test]

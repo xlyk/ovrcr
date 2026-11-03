@@ -40,7 +40,8 @@ pub fn run_dashboard(
     mut stream: UnixStream,
     task_request: TaskRequestFn,
     configuration_paths: (PathBuf, PathBuf),
-    startup_warning: Option<String>,
+    status_off: Option<String>,
+    connect_status: crate::ConnectStatusFn,
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
@@ -54,8 +55,8 @@ pub fn run_dashboard(
     // Hello and geometry reserve IDs 1 and 2, including while events arrive.
     dashboard.next_request_id = 3;
     initialize_dashboard(&mut stream, &mut dashboard, pane_size)?;
-    if let Some(warning) = startup_warning {
-        dashboard.set_error(warning);
+    if let Some(note) = status_off {
+        dashboard.status_off(note, connect_status);
     }
     let first_session = dashboard
         .visible_rows()

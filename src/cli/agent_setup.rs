@@ -516,39 +516,6 @@ fn configuration_issues(value: &Value, executable: &str) -> Vec<String> {
     issues
 }
 
-/// Dashboard boot check: Claude or Codex on PATH whose settings lack the synchronous
-/// OVRCR reporters. Configuration presence is not delivery or trust; doctor keeps those
-/// unverified until evidence arrives. Warnings persist in the Dashboard banner.
-pub(super) fn boot_hook_warning() -> Option<String> {
-    let mut warnings = Vec::new();
-    if let Some(warning) = claude_boot_hook_warning() {
-        warnings.push(warning);
-    }
-    if let Some(warning) = super::codex_setup::boot_hook_warning() {
-        warnings.push(warning);
-    }
-    (!warnings.is_empty()).then(|| warnings.join(" · "))
-}
-
-fn claude_boot_hook_warning() -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find(|dir| dir.join("claude").is_file())?;
-    let settings_path = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(std::path::PathBuf::from)
-        .or_else(|| Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(".claude")))?
-        .join("settings.json");
-    let issues = match settings(Some(&settings_path)) {
-        Ok(value) => configuration_issues(&value, &binary().ok()?),
-        Err(_) => vec!["settings_unreadable_or_invalid".into()],
-    };
-    (!issues.is_empty()).then(|| {
-        let shown = settings_path.display();
-        format!(
-            "Claude reporting hooks missing in {shown}: run `ovrcr agent setup claude --print --settings {shown}` and merge the result"
-        )
-    })
-}
-
 // Health reasons are arbitrary provider text on the wire. Doctor must expose
 // only known diagnostic codes, never private provider strings or identities.
 pub(super) fn public_health_reason(reason: Option<&str>) -> Option<&str> {
@@ -752,68 +719,5 @@ mod tests {
         assert!(next.contains("echo keep /tmp/old/ovrcr"));
         assert!(!next.contains("exec '/tmp/old/ovrcr'"));
         assert_eq!(retarget_reporter_text(&next, installed), next);
-    }
-    #[test]
-    fn boot_hook_warning_names_missing_claude_hooks_with_setup_command() {
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        let claude = bin.join("claude");
-        std::fs::write(&claude, []).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(&claude).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&claude, permissions).unwrap();
-        }
-        let config = root.path().join("claude-config");
-        std::fs::create_dir(&config).unwrap();
-        std::fs::write(config.join("settings.json"), b"{}").unwrap();
-        let home = root.path().join("home");
-        std::fs::create_dir(&home).unwrap();
-        // Isolate from the real Codex home so a local codex config cannot join the banner.
-        let codex_home = root.path().join("codex-home-empty");
-        std::fs::create_dir(&codex_home).unwrap();
-        let previous_path = std::env::var_os("PATH");
-        let previous_claude = std::env::var_os("CLAUDE_CONFIG_DIR");
-        let previous_codex = std::env::var_os("CODEX_HOME");
-        let previous_home = std::env::var_os("HOME");
-        unsafe {
-            std::env::set_var("PATH", &bin);
-            std::env::set_var("CLAUDE_CONFIG_DIR", &config);
-            std::env::set_var("CODEX_HOME", &codex_home);
-            std::env::set_var("HOME", &home);
-        }
-        let warning = boot_hook_warning();
-        match previous_path {
-            Some(value) => unsafe { std::env::set_var("PATH", value) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-        match previous_claude {
-            Some(value) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", value) },
-            None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
-        }
-        match previous_codex {
-            Some(value) => unsafe { std::env::set_var("CODEX_HOME", value) },
-            None => unsafe { std::env::remove_var("CODEX_HOME") },
-        }
-        match previous_home {
-            Some(value) => unsafe { std::env::set_var("HOME", value) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        let warning = warning.expect("missing Claude hooks should warn");
-        assert!(
-            warning.contains("Claude reporting hooks missing"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains("ovrcr agent setup claude --print --settings"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains(config.join("settings.json").display().to_string().as_str()),
-            "{warning}"
-        );
     }
 }
