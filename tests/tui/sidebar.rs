@@ -1955,8 +1955,9 @@ fn enter_on_an_unready_session_refuses_and_stays_in_browse() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_unready(SessionId(1));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    // A loading pane is an expected limit: it says so plainly, without an error marker.
     let footer = rendered_footer(&dashboard, 120);
-    assert!(footer.contains("ERROR:"), "{footer}");
+    assert_eq!(footer, "Pane is loading; retry input");
     assert_ne!(
         dashboard.key(KeyCode::Char('z')),
         DashboardAction::PtyBytes(b"z".to_vec())

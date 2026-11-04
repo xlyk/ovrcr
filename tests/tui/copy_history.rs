@@ -563,10 +563,7 @@ fn copy_render_tiny_pane_and_footer() {
             message: "server failed".into(),
         },
     });
-    assert_eq!(
-        footer(&dashboard, 120, 40),
-        "ERROR: Internal: server failed"
-    );
+    assert_eq!(footer(&dashboard, 120, 40), "ERROR: server failed");
 
     let mut entry_notice = unready_dashboard();
     assert_eq!(
@@ -575,7 +572,7 @@ fn copy_render_tiny_pane_and_footer() {
     );
     assert_eq!(
         footer(&entry_notice, 120, 40),
-        "ERROR: Waiting for terminal screen"
+        "Waiting for terminal screen"
     );
 }
 
@@ -828,7 +825,7 @@ fn pause_resume_input_and_paste_stay_guarded() {
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         footer(&dashboard, 120, 40),
-        "ERROR: Session paused; press r to resume"
+        "Session paused; press r to resume"
     );
     assert_eq!(
         dashboard.event_action(Event::Paste("blocked".into())),
@@ -1969,4 +1966,81 @@ fn history_copy_joins_soft_wrap_without_hard_newline() {
         }
         other => panic!("expected CopyText or HistoryPage, got {other:?}"),
     }
+}
+
+/// The Server's answer to History over a program on the alternate screen.
+fn alternate_screen_refusal(dashboard: &mut Dashboard, request: &ClientMessage) {
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "History is unavailable on the alternate screen".into(),
+        },
+    });
+}
+
+#[test]
+fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel() {
+    // PageUp: a muted line that names the session, not a red error.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    alternate_screen_refusal(&mut dashboard, &begin);
+    let message = "History isn't available while review is full-screen";
+    assert_eq!(footer(&dashboard, 120, 40), message);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(0, 39)].fg,
+        Color::Rgb(166, 173, 200),
+        "muted, without a red marker"
+    );
+    let screen = draw_text(&dashboard, 120, 40);
+    for absent in ["ERROR", "Conflict", "alternate screen", "HISTORY"] {
+        assert!(!screen.contains(absent), "{absent}: {screen}");
+    }
+
+    // A wheel tick asked for nothing in particular: no banner at all, and History stays closed.
+    let mut dashboard = copy_ready();
+    let area = Rect::new(0, 0, 88, 38);
+    let pane = focused_terminal(&dashboard, area);
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::ScrollUp, pane.x + 2, pane.y + 2),
+        area,
+    );
+    let begin = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        begin.request,
+        Request::HistoryBegin {
+            session: SessionId(1)
+        }
+    ));
+    let before = footer(&dashboard, 120, 40);
+    assert!(before.starts_with("BROWSE"), "{before}");
+    alternate_screen_refusal(&mut dashboard, &begin);
+    assert_eq!(footer(&dashboard, 120, 40), before);
+    assert!(!draw_text(&dashboard, 120, 40).contains("HISTORY"));
+
+    // A begin cancelled by Copy stays silent too, and Copy keeps the keys.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    dashboard.key(KeyCode::Char('['));
+    alternate_screen_refusal(&mut dashboard, &begin);
+    assert!(footer(&dashboard, 120, 40).starts_with("COPY"));
+
+    // Any other History failure is still an error.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "history snapshot id overflow".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: history snapshot id overflow"
+    );
 }

@@ -388,6 +388,8 @@ impl Dashboard {
         &mut self,
         terminal: &mut ratatui::Terminal<B>,
     ) -> Result<(), B::Error> {
+        // The idle redraw cadence makes this the banner's clock.
+        self.expire_banner(std::time::Instant::now());
         let area = terminal.draw(|frame| draw_dashboard(frame, self))?.area;
         // Overlays may obscure the response; keep the last unobscured Presented Unread.
         if self.tasks.is_none()
@@ -636,6 +638,10 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             Line::from(Span::styled(text, Style::default().fg(TEXT())))
         },
         |error| {
+            // An expected limit is information, not a failure: no red marker.
+            if dashboard.error_is_limit {
+                return Line::from(Span::styled(error, Style::default().fg(SUBTEXT())));
+            }
             Line::from(vec![
                 Span::styled("ERROR: ", Style::default().fg(RED())),
                 Span::styled(error, Style::default().fg(TEXT())),
@@ -823,7 +829,7 @@ fn render_split_metadata(
 /// (`Working · 2m`, `shell · 16m`), and the pid muted at the far right while it fits. A
 /// narrow pane drops the pid, then the elapsed time, the model and the label, then clips
 /// the title while it stays recognisable, first beside the state and then beside its narrow
-/// form, where an Unread reply leads; below that the narrow state stands alone.
+/// form (a bare `Unread` when there is one); below that the narrow state stands alone.
 fn pane_header(
     dashboard: &Dashboard,
     session: &SessionSummary,

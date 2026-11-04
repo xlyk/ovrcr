@@ -294,6 +294,11 @@ pub struct Dashboard {
     /// Whether the banner in `error` was written by a refused view, which is the only writer a
     /// successful view completion is allowed to clear. `set_error` releases it.
     error_owned_by_view: bool,
+    /// The banner in `error` is an expected limit (`Pane is loading; retry history`), not a
+    /// failure: it reads muted, without the `ERROR:` marker.
+    error_is_limit: bool,
+    /// When the banner in `error` went up; it clears itself `state::BANNER_LIFETIME` later.
+    error_since: Option<std::time::Instant>,
     copy: Option<CopySelection>,
     copy_notice: Option<String>,
     history: Option<HistoryView>,

@@ -4564,3 +4564,125 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
         "native creation form must be visible: {text}"
     );
 }
+
+/// One project whose workspace carries a Server-generated id, for the error presenter.
+fn hashed_workspace_dashboard() -> Dashboard {
+    use crate::protocol::*;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "consigint".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "consigint".into(),
+            name: "feature/status-check".into(),
+            id: "7833bc0a230c03372aecca12545fec60".into(),
+            root: false,
+            warning: None,
+            path: "/tmp/w".into(),
+            sessions: Vec::new(),
+        }],
+    });
+    dashboard
+}
+
+/// The footer row's text and the colour of each of its cells.
+fn footer_cells(dashboard: &Dashboard) -> (String, Vec<ratatui::style::Color>) {
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| super::draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let cells = (0..120).map(|x| terminal.backend().buffer()[(x, 23)].clone());
+    (
+        cells
+            .clone()
+            .map(|cell| cell.symbol().to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string(),
+        cells.map(|cell| cell.fg).collect(),
+    )
+}
+
+#[test]
+fn server_refusals_read_in_plain_words_and_expected_limits_are_not_errors() {
+    let mut dashboard = hashed_workspace_dashboard();
+    // An expected limit: no code, the branch instead of the workspace id, muted, no marker.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 77,
+        response: Response::Error {
+            code: ErrorCode::SessionsRemain,
+            message: "sessions block removal of workspace consigint/7833bc0a230c03372aecca12545fec60: live: #13; kill or close them".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(
+        footer,
+        "sessions block removal of workspace feature/status-check: live: #13; kill or close them"
+    );
+    assert_eq!(colors[0], super::render::SUBTEXT());
+    // A failure keeps its red marker, still without the code; an id nothing names goes.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 78,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "workspace other/0123456789abcdef0123456789abcdef is gone".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(footer, "ERROR: workspace other is gone");
+    assert_eq!(colors[0], super::render::RED());
+    assert_eq!(colors["ERROR: ".len()], super::render::TEXT());
+    // Short ids and git hashes are not workspace ids and stay as written.
+    let kept = "in w/abc at 0123456789abcdef0123456789abcdef0123abcd";
+    assert_eq!(dashboard.plain_error(kept), kept);
+}
+
+#[test]
+fn footer_banners_clear_themselves_after_their_lifetime() {
+    use std::time::Instant;
+    let lifetime = super::state::BANNER_LIFETIME;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.set_error("socket hiccup");
+    dashboard.show_notice("queued notice");
+    let raised = dashboard
+        .error_since
+        .expect("the banner records when it went up");
+    dashboard.expire_banner(raised + lifetime - Duration::from_millis(1));
+    assert_eq!(dashboard.error.as_deref(), Some("socket hiccup"));
+    dashboard.expire_banner(raised + lifetime);
+    assert_eq!(dashboard.error, None);
+    assert_eq!(
+        dashboard.desktop.notice.as_deref(),
+        Some("queued notice"),
+        "the notice waiting behind the banner shows next"
+    );
+
+    // The production draw path is the banner's clock.
+    let footer = |terminal: &Terminal<ratatui::backend::TestBackend>| -> String {
+        (0..120)
+            .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+            .collect()
+    };
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    dashboard.set_limit("Pane is loading; retry history");
+    dashboard.error_since = Instant::now().checked_sub(lifetime);
+    dashboard.draw(&mut terminal).unwrap();
+    assert!(
+        !footer(&terminal).contains("Pane is loading"),
+        "{}",
+        footer(&terminal)
+    );
+    assert!(dashboard.error.is_none());
+    dashboard.set_error("fresh failure");
+    dashboard.draw(&mut terminal).unwrap();
+    assert!(
+        footer(&terminal).starts_with("ERROR: fresh failure"),
+        "{}",
+        footer(&terminal)
+    );
+}

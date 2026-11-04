@@ -2121,7 +2121,8 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: first_a_id,
         response: Response::Ok,
     });
-    assert!(banner(&dashboard).contains("Conflict: old A error"));
+    // A refused view is an expected limit: plain words, no code, no error marker.
+    assert_eq!(banner(&dashboard), "old A error");
     assert!(!drawn_contains(&dashboard, 88, 38, "stale"));
 
     let size = dashboard
@@ -2183,7 +2184,7 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
             message: "view refused".into(),
         },
     });
-    assert!(banner(&dashboard).contains("Conflict: view refused"));
+    assert_eq!(banner(&dashboard), "view refused");
     assert_view_input_blocked(&mut dashboard);
     assert!(try_request_view(&mut dashboard, area, view.revision).is_none());
     std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
@@ -2219,7 +2220,7 @@ fn view_error_on_unchanged_view_retries_once_after_backoff() {
             message: "session vanished".into(),
         },
     });
-    assert!(banner(&dashboard).contains("NotFound: session vanished"));
+    assert_eq!(banner(&dashboard), "ERROR: session vanished");
     assert_view_input_blocked(&mut dashboard);
     let area = Rect::new(0, 0, 88, 38);
     for _ in 0..3 {
@@ -2374,12 +2375,12 @@ fn split_error_survives_a_screen_dirty_refresh() {
             message: "view refused".into(),
         },
     });
-    assert!(banner(&dashboard).contains("Conflict: view refused"));
+    assert_eq!(banner(&dashboard), "view refused");
     std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
     let retry = request_view(&mut dashboard, wide_area(), set_view(&refused).revision);
     acknowledge_all_view_targets(&mut dashboard, retry);
     assert!(
-        !banner(&dashboard).contains("ERROR:"),
+        !banner(&dashboard).contains("view refused"),
         "a view failure banner is cleared by the view that succeeds"
     );
 }
@@ -2477,7 +2478,7 @@ fn split_error_survives_mouse_cleanup_ack() {
         response: Response::Ok,
     });
     assert!(
-        !banner(&dashboard).contains("ERROR:"),
+        !banner(&dashboard).contains("No other visible session to split"),
         "an acknowledged user request owns the banner and clears it"
     );
 }

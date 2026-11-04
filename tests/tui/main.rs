@@ -226,9 +226,16 @@ fn acknowledge_all_view_targets(
     });
 }
 
+/// The footer shows a banner (a failure or an expected limit) instead of its mode's hints,
+/// which a hidden split prefixes with `split hidden`.
+fn footer_has_banner(footer: &str) -> bool {
+    let hints = footer.trim_start_matches("split hidden").trim_start();
+    !hints.starts_with("BROWSE") && !hints.starts_with("Terminal mode")
+}
+
 fn assert_view_input_blocked(dashboard: &mut Dashboard) {
     let footer = rendered_footer(dashboard, 120);
-    if !footer.contains("ERROR:") {
+    if !footer_has_banner(&footer) {
         let _ = dashboard.ctrl('g');
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -237,7 +244,7 @@ fn assert_view_input_blocked(dashboard: &mut Dashboard) {
         );
         let footer = rendered_footer(dashboard, 120);
         assert!(
-            footer.contains("ERROR:"),
+            footer_has_banner(&footer),
             "refusal must show a banner, got {footer:?}"
         );
     }
@@ -467,11 +474,10 @@ fn ordinary_response_errors_remain_visible_to_dashboard() {
             message: "session 99 not found".into(),
         },
     });
+    // A failure keeps its marker; the error code itself is not shown.
     let footer = rendered_footer(&dashboard, 88);
-    assert!(
-        footer.contains("NotFound: session 99 not found"),
-        "{footer}"
-    );
+    assert!(footer.contains("ERROR: session 99 not found"), "{footer}");
+    assert!(!footer.contains("NotFound"), "{footer}");
 }
 
 #[test]

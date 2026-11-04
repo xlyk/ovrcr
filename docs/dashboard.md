@@ -24,6 +24,16 @@ Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
 only key it intercepts. Click the title bar's Actions control to open the palette
 or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
 
+### Footer messages
+
+When something cannot be done, the footer says why in place of the hints. An
+expected limit (a pane still loading, a paused session, a refresh cooldown, or a
+refusal the Server explains, such as sessions that still block a removal) reads
+muted and in plain words. A failure reads `ERROR:` in red. Neither shows the
+Server's error code (`Conflict:`) or a workspace's internal id; the workspace is
+named by its branch instead. A message clears when a later request of yours
+succeeds, or after ten seconds, and a notice that waited behind it shows next.
+
 ## Operator chat
 
 Browse `o` or the pinned Operator title-bar control opens native chat. It has its
@@ -275,8 +285,10 @@ Motion waits when a target cell still needs loading.
   does not reflow or rewrite captured rows; use horizontal navigation to reveal
   columns captured outside the viewport.
 - The history view is capped at 64 rows by 256 columns inside a larger pane.
-- Alternate-screen applications do not provide a history transcript, and History
-  stays closed while an application is on the alternate screen.
+- Alternate-screen (full-screen) applications do not provide a history transcript,
+  and History stays closed while an application is on the alternate screen. PageUp
+  there says so in a muted footer line, `History isn't available while <title> is
+  full-screen`; a wheel tick over the pane does nothing, with no error.
 - Retained history lives in memory with the session and is lost when the server
   exits. It is not persisted to disk.
 
@@ -376,8 +388,8 @@ keeps them. Recovery and control explanations follow the state after ` · `.
 
 A narrow pane gives up the process id first, then the elapsed time, the model,
 the agent label, and then clips the title, so the state stays readable. Narrower
-still, a short `Unread` leads and the activity word yields to it
-(`Unread · status off`), since the sidebar glyph still shows the activity.
+still, a bare `Unread` takes the state's place (`Unread · status off`), since the
+sidebar glyph still shows the activity.
 
 The second line shows the agent's metrics when it reports them:
 `ctx 6% · 417k tokens · ~$0.37` — context used, tokens in and out, and cost, `~`
@@ -413,7 +425,8 @@ In Browse and Terminal modes:
   hidden sidebar has no border to drag, and clicks in its former area reach
   the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
-  move one row; wheel-down at the newest row returns to the live pane.
+  move one row; wheel-down at the newest row returns to the live pane. Over a
+  full-screen application on the alternate screen the wheel does nothing.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling
@@ -582,7 +595,7 @@ replaces the earlier non-goal that managed launches would not add a trust bypass
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows
-a persistent Dashboard banner with the exact setup command; observed reporting loss
+a Dashboard banner with the exact setup command; observed reporting loss
 shows `status off` in the pane header, and the terminal's JSON row keeps the
 published reason.
 
@@ -828,7 +841,7 @@ reading changes the number of findings the footer says so again, or **No setting
 findings** once they are gone. The next key clears the line. A startup error
 banner owns that line first: the findings notice waits behind it, a key while the
 banner is up does not drop the notice, and the notice shows when the banner is
-dismissed.
+dismissed or clears itself after ten seconds.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional

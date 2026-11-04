@@ -2761,3 +2761,81 @@ fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<
     fixture.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn full_screen_program_history_is_quiet_on_wheel_and_explained_on_page_up() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "feature/acceptance",
+        "--name",
+        "fullscreen",
+        "--",
+        "sh",
+        "-c",
+        "stty -echo; printf '\\033[?1049h\\033[2J\\033[HFULLSCREEN_READY\\n'; IFS= read -r done",
+    ])?;
+    require_success(output, "full-screen session")?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.click_visible_text("fullscreen")?;
+    dashboard.wait_until(
+        |screen| screen.contains("FULLSCREEN_READY"),
+        wait_deadline(),
+    )?;
+    // Terminal mode opens only once the pane's screen is acknowledged, so the History
+    // requests below reach the Server rather than stopping at a loading pane.
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    let pane = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+        .into_iter()
+        .next()
+        .context("focused pane rect")?
+        .terminal;
+
+    // The program asked for no mouse reports: a wheel tick over it does nothing at all.
+    dashboard.send(format!("\x1b[<64;{};{}M", pane.x + 3, pane.y + 4).as_bytes())?;
+    anyhow::ensure!(
+        dashboard
+            .wait_for_screen(
+                |screen| {
+                    screen.contains("ERROR")
+                        || screen.contains("Conflict")
+                        || screen.contains("HISTORY")
+                        || screen.contains("full-screen")
+                },
+                Duration::from_secs(2),
+            )
+            .is_err(),
+        "a wheel tick over a full-screen program opened History or showed a message: {}",
+        dashboard.rendered()
+    );
+
+    // PageUp says why, muted, instead of failing.
+    dashboard.send(b"\x1b[5~")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("History isn't available while fullscreen is full-screen"),
+        wait_deadline(),
+    )?;
+    let screen = dashboard.rendered();
+    for internal in ["ERROR", "Conflict", "alternate screen", "HISTORY"] {
+        anyhow::ensure!(!screen.contains(internal), "{internal} on screen: {screen}");
+    }
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}

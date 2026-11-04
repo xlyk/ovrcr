@@ -589,6 +589,8 @@ impl Dashboard {
             error: None,
             notice_queue: VecDeque::new(),
             error_owned_by_view: false,
+            error_is_limit: false,
+            error_since: None,
             copy: None,
             copy_notice: None,
             history: None,
@@ -776,18 +778,82 @@ impl Dashboard {
         self.handshake.install_acknowledged(desired);
     }
 
-    /// Shows `message` in the error banner. A refused view is the only writer whose banner a
-    /// later view completion clears, so every other writer comes through here and releases it.
-    /// A notice already in the footer waits behind the banner instead of being covered and lost.
+    /// Shows `message` in the error banner as a failure, behind a red `ERROR:` marker. A
+    /// refused view is the only writer whose banner a later view completion clears, so every
+    /// other writer comes through here and releases it. A notice already in the footer waits
+    /// behind the banner instead of being covered and lost.
     pub(super) fn set_error(&mut self, message: impl Into<String>) {
+        self.raise_banner(message.into(), false);
+    }
+
+    /// An expected limit (`Pane is loading; retry history`): the error banner's slot and
+    /// lifetime, read muted and without the `ERROR:` marker.
+    pub(super) fn set_limit(&mut self, message: impl Into<String>) {
+        self.raise_banner(message.into(), true);
+    }
+
+    /// A Server refusal in plain words (see [`Self::plain_error`]). Codes that mean "not
+    /// now" rather than "broken" read as limits.
+    pub(super) fn set_server_error(&mut self, code: ErrorCode, message: &str) {
+        let text = self.plain_error(message);
+        match code {
+            ErrorCode::Conflict
+            | ErrorCode::AlreadyExists
+            | ErrorCode::DirtyWorktree
+            | ErrorCode::SessionRunning
+            | ErrorCode::SessionsRemain
+            | ErrorCode::WorkspacesRemain => self.set_limit(text),
+            ErrorCode::InvalidRequest
+            | ErrorCode::NotFound
+            | ErrorCode::PartialFailure
+            | ErrorCode::Internal
+            | ErrorCode::OwnershipUncertain => self.set_error(text),
+        }
+    }
+
+    /// Server and internal error text in plain words, for the footer and for any form that
+    /// shows a refusal inline: no `Conflict:`-style code in front, and a workspace's internal
+    /// id replaced by the branch the sidebar shows (any other such id dropped). The useful
+    /// message is otherwise kept as written.
+    pub(super) fn plain_error(&self, message: &str) -> String {
+        let mut text = message.to_string();
+        for project in &self.hierarchy.projects {
+            for workspace in project.workspaces.iter().filter(|w| internal_id(&w.id)) {
+                text = text
+                    .replace(
+                        &format!("{}/{}", project.name, workspace.id),
+                        &workspace.name,
+                    )
+                    .replace(&workspace.id, &workspace.name);
+            }
+        }
+        strip_internal_ids(&text)
+    }
+
+    fn raise_banner(&mut self, message: String, limit: bool) {
         if let Some(notice) = self.desktop.notice.take() {
             self.notice_queue.push_front(notice);
         }
-        self.error = Some(message.into());
+        self.error = Some(message);
+        self.error_is_limit = limit;
+        self.error_since = Some(Instant::now());
         self.error_owned_by_view = false;
         // Requests and coalesced selections predating this error cannot dismiss it.
         self.error_owning_requests.clear();
         self.handshake.note_error();
+    }
+
+    /// Drops a banner that has stood for [`BANNER_LIFETIME`], so an error never lingers; the
+    /// notice waiting behind it shows next. The production draw path calls this every frame.
+    pub(super) fn expire_banner(&mut self, now: Instant) {
+        if self.error.is_some()
+            && self
+                .error_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= BANNER_LIFETIME)
+        {
+            self.dismiss_error_banner();
+            self.error_owned_by_view = false;
+        }
     }
 
     /// Footer notice. The error banner owns the footer line, so a notice posted while it is
@@ -1607,7 +1673,7 @@ impl Dashboard {
             begin.cancelled = true;
         }
         let Some(session) = self.action_session() else {
-            self.set_error("Waiting for terminal screen");
+            self.set_limit("Waiting for terminal screen");
             return DashboardAction::Redraw;
         };
         if !self
@@ -1615,7 +1681,7 @@ impl Dashboard {
             .is_some_and(|pane| self.pane_ready(pane))
             || find_session(self, session).is_none()
         {
-            self.set_error("Waiting for terminal screen");
+            self.set_limit("Waiting for terminal screen");
             return DashboardAction::Redraw;
         }
         self.dismiss_error_banner();
@@ -1752,7 +1818,7 @@ impl Dashboard {
             .focused_pane()
             .is_some_and(|pane| self.pane_ready(pane))
         {
-            self.set_error("Pane is loading; retry history");
+            self.set_limit("Pane is loading; retry history");
             return DashboardAction::Redraw;
         }
         self.history_page_error = false;
@@ -1769,6 +1835,23 @@ impl Dashboard {
             request: Request::HistoryBegin { session },
         });
         DashboardAction::Redraw
+    }
+
+    /// History cannot freeze a program on the alternate screen, such as a full-screen agent.
+    /// A wheel tick over it asked for nothing in particular, so it does nothing; PageUp says
+    /// why in a muted line. This is the one place that decides it, which the transcript view
+    /// for full-screen agents replaces.
+    fn alternate_screen_history(&mut self, begin: &PendingHistoryBegin) {
+        if begin.cancelled || begin.at_tail {
+            return;
+        }
+        let title = find_session(self, begin.session).map_or_else(
+            || "this session".to_string(),
+            |session| self.session_display_name(session),
+        );
+        self.set_limit(format!(
+            "History isn't available while {title} is full-screen"
+        ));
     }
 
     pub(super) fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
@@ -3244,11 +3327,11 @@ impl Dashboard {
 
     pub(super) fn pause_request(&mut self, paused: bool) -> DashboardAction {
         let Some(session) = self.action_session().and_then(|id| find_session(self, id)) else {
-            self.set_error("No session selected");
+            self.set_limit("No session selected");
             return DashboardAction::Redraw;
         };
         if !session.phase.is_live() {
-            self.set_error("Session is not running");
+            self.set_limit("Session is not running");
             return DashboardAction::Redraw;
         }
         let session = session.id;
@@ -3313,14 +3396,14 @@ impl Dashboard {
             self.recovery_requests.insert((session, run), None);
             // Hierarchy events, not launch receipts, install replacement runs. A late
             // receipt cannot select a hidden pane or overwrite a newer run's error.
-            if let Response::Error { message, .. } = response
+            if let Response::Error { code, message } = response
                 && self
                     .desired_view()
                     .targets
                     .iter()
                     .any(|(id, current, _)| *id == session && *current == run)
             {
-                self.set_error(message.clone());
+                self.set_server_error(code.clone(), message);
             }
             return self.drain_outbox();
         }
@@ -3352,7 +3435,7 @@ impl Dashboard {
                 | Response::NotificationNavigationConfirmed(_)
                 | Response::ITermFocusPrepared(_)
                 | Response::BridgeOwner(_) => {}
-                Response::QuotaCooldown { remaining_ms } => self.set_error(format!(
+                Response::QuotaCooldown { remaining_ms } => self.set_limit(format!(
                     "Quota refresh cooling down: {}s left",
                     remaining_ms.div_ceil(1_000)
                 )),
@@ -3514,14 +3597,10 @@ impl Dashboard {
                         }
                     }
                     let matched_view = refused.is_some();
-                    if self
+                    let begin = self
                         .history_begin_request
-                        .as_ref()
-                        .is_some_and(|pending| pending.request_id == request_id)
-                    {
-                        self.history_begin_request = None;
-                        matched_history = true;
-                    }
+                        .take_if(|pending| pending.request_id == request_id);
+                    matched_history |= begin.is_some();
                     if matched_page.is_some() {
                         self.history_page_error = true;
                         matched_history = true;
@@ -3543,8 +3622,12 @@ impl Dashboard {
                             view.copy_completion = None;
                         }
                     }
-                    if matched_view || !was_view_request {
-                        self.set_error(format!("{code:?}: {message}"));
+                    // History cannot freeze a program on the alternate screen; the Server says
+                    // so with Conflict, a limit of that program rather than a failure.
+                    if let Some(begin) = begin.filter(|_| code == ErrorCode::Conflict) {
+                        self.alternate_screen_history(&begin);
+                    } else if matched_view || !was_view_request {
+                        self.set_server_error(code, &message);
                         // Only a refused view hands the banner to the next view completion.
                         self.error_owned_by_view = matched_view;
                     }
@@ -4101,7 +4184,7 @@ impl Dashboard {
                 }
             }
         };
-        self.set_error(refusal);
+        self.set_limit(refusal);
         DashboardAction::Redraw
     }
 
@@ -4156,6 +4239,41 @@ impl Dashboard {
         (was_view_request, owns_error)
     }
 }
+/// How long a footer banner stands before it clears itself: long enough to read, never
+/// minutes. A later success or a newer banner can end it sooner.
+pub(super) const BANNER_LIFETIME: Duration = Duration::from_secs(10);
+
+/// An id the Server generated for a workspace: 32 hexadecimal digits.
+fn internal_id(word: &str) -> bool {
+    word.len() == 32 && word.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// `text` without the internal ids no hierarchy name replaced: each one goes, with the `/`
+/// that joined it to its project.
+fn strip_internal_ids(text: &str) -> String {
+    fn flush(out: &mut String, word: &mut String) {
+        if internal_id(word) {
+            if out.ends_with('/') {
+                out.pop();
+            }
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    }
+    let (mut out, mut word) = (String::with_capacity(text.len()), String::new());
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            word.push(character);
+        } else {
+            flush(&mut out, &mut word);
+            out.push(character);
+        }
+    }
+    flush(&mut out, &mut word);
+    out
+}
+
 pub(super) fn find_workspace<'a>(
     dashboard: &'a Dashboard,
     project: &str,

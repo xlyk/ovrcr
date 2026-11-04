@@ -529,10 +529,8 @@ fn palette_refresh_quota_sends_refresh_and_shows_cooldown_in_footer() {
         },
     });
     let footer = rendered_footer(&dashboard, 120);
-    assert!(
-        footer.contains("Quota refresh cooling down: 24s left"),
-        "{footer}"
-    );
+    // A cooldown is an expected limit, not an error.
+    assert_eq!(footer, "Quota refresh cooling down: 24s left");
     // An accepted refresh clears it; the Server's next snapshot is the result.
     let message = palette_request(&mut dashboard, "refresh quota");
     dashboard.handle_server_message(ServerMessage::Response {
