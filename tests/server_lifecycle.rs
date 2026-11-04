@@ -4376,6 +4376,70 @@ fn history_reattach_reads_retained_output() {
     }
 }
 
+/// Pi and Oh My Pi repaint with `ESC[H ESC[2J ESC[3J` on every resize. History must hold
+/// the repainted transcript once, not the erased one with each repaint stacked after it.
+#[test]
+fn history_drops_saved_lines_a_repaint_erases() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, "feature/history-repaint");
+    let summary = fixture.create_session_summary(
+        "history-repaint",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "i=0; while [ \"$i\" -lt 60 ]; do printf 'ERASED_%04d\\n' \"$i\"; i=$((i+1)); done; printf 'REPAINT_READY\\n'; read gate; printf '\\033[H\\033[2J\\033[3J'; i=0; while [ \"$i\" -lt 40 ]; do printf 'REPAINTED_%04d\\n' \"$i\"; i=$((i+1)); done; printf 'REPAINT_DONE\\n'; read gate".into(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    let session = summary.id;
+    fixture.wait_terminal_contains(session, "REPAINT_READY");
+
+    // Select first: a later resize would cut rows off the bottom of the screen.
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let screen = history_request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+        },
+    );
+    assert!(matches!(screen, Response::Screen { .. }));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "go".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, "REPAINT_DONE");
+
+    let begin = history_request(&mut dashboard, 3, Request::HistoryBegin { session });
+    let Response::HistoryOpened(opened) = begin else {
+        panic!("history begin returned {begin:?}");
+    };
+    let rows = history_page_all(&mut dashboard, session, opened.snapshot, &opened, &mut 4);
+    let text = history_rows_text(&rows);
+    assert!(
+        !text.contains("ERASED_"),
+        "erased lines stayed in History: {text}"
+    );
+    assert_eq!(text.matches("REPAINTED_0000").count(), 1, "{text}");
+    assert!(text.contains("REPAINTED_0039"), "{text}");
+    assert!(text.contains("REPAINT_DONE"), "{text}");
+
+    fixture.shutdown_kill();
+    for pgid in fixture.owned_groups() {
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
+    }
+}
+
 #[test]
 fn history_frozen_page_survives_eviction_and_exit() {
     let _env_lock = env_lock();

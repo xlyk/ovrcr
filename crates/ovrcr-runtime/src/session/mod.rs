@@ -278,7 +278,31 @@ pub(crate) fn sanitize_title(title: &str) -> Option<String> {
 }
 
 // Default callbacks consume OSC titles without adopting application names.
-impl vt100::Callbacks for SessionTitles {}
+impl vt100::Callbacks for SessionTitles {
+    /// ED3 (`ESC[3J`) erases the saved lines, which vt100 ignores. Pi and Oh My Pi send
+    /// `ESC[H ESC[2J ESC[3J` before every full repaint (a resize, a new session) and `clear`
+    /// sends it too; ignored, each repaint stacked another copy of the transcript in History.
+    /// vt100 cannot drop saved lines in place, so the visible screen moves to a fresh parser.
+    /// The alternate screen has no saved lines of its own and rebuilding it would lose the
+    /// normal screen behind it, so an erase there keeps them.
+    // ponytail: the rebuild keeps cells, cursor, attributes and input modes but not a scroll
+    // region, origin mode or saved cursor; patch vt100 if a program relies on them across ED3.
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        first: Option<u8>,
+        _second: Option<u8>,
+        params: &[&[u16]],
+        code: char,
+    ) {
+        if code == 'J' && first.is_none() && params == [[3]] && !screen.alternate_screen() {
+            let (rows, cols) = screen.size();
+            let mut fresh = vt100::Parser::new(rows, cols, HISTORY_ROWS);
+            fresh.process(&screen.state_formatted());
+            *screen = fresh.screen().clone();
+        }
+    }
+}
 
 struct TerminalState {
     parser: vt100::Parser<SessionTitles>,

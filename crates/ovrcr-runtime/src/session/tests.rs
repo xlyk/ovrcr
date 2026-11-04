@@ -1466,6 +1466,70 @@ fn application_titles_are_consumed_without_changing_titles_or_output() {
     }
 }
 
+fn session_parser(rows: u16, cols: u16) -> vt100::Parser<SessionTitles> {
+    vt100::Parser::new_with_callbacks(rows, cols, HISTORY_ROWS, SessionTitles::default())
+}
+
+fn history_rows(parser: &vt100::Parser<SessionTitles>) -> u32 {
+    FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(1),
+        1,
+        parser.screen().clone(),
+    )
+    .unwrap()
+    .opened()
+    .history_rows
+}
+
+/// Pi-TUI agents (Pi, Oh My Pi) and `clear` repaint with `ESC[H ESC[2J ESC[3J`. Without ED3
+/// every repaint left the whole earlier transcript in History and stacked a fresh copy on it.
+#[test]
+fn erase_saved_lines_empties_history_and_keeps_the_screen() {
+    let mut parser = session_parser(3, 12);
+    parser.process(b"\x1b[?2004h\x1b[?1hold-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+    assert_eq!(history_rows(&parser), 2);
+
+    parser.process(b"\x1b[H\x1b[2J\x1b[3J\x1b[31mnew-1\r\nnew-");
+    assert_eq!(history_rows(&parser), 0);
+    let screen = parser.screen();
+    assert_eq!(screen.contents(), "new-1\nnew-");
+    assert_eq!(screen.cursor_position(), (1, 4));
+    assert!(screen.bracketed_paste());
+    assert!(screen.application_cursor());
+
+    // Drawing continues with the attributes and position in force before the erase, and
+    // later output scrolls into History again.
+    parser.process(b"2\r\nnew-3\r\nnew-4");
+    let screen = parser.screen();
+    assert_eq!(screen.cell(0, 4).unwrap().contents(), "2");
+    assert_eq!(screen.cell(0, 4).unwrap().fgcolor(), vt100::Color::Idx(1));
+    assert_eq!(history_rows(&parser), 1);
+    let history = FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(1),
+        1,
+        parser.screen().clone(),
+    );
+    let mut history = history.unwrap();
+    let rows = history.page(0, 4, 0, 12).unwrap().rows;
+    let text: Vec<String> = rows
+        .iter()
+        .map(|row| row.cells.iter().map(|cell| cell.text.as_str()).collect())
+        .collect();
+    assert_eq!(text, ["new-1", "new-2", "new-3", "new-4"]);
+}
+
+/// The alternate screen has no saved lines of its own; an erase there must not drop the
+/// normal screen the program returns to.
+#[test]
+fn erase_saved_lines_on_the_alternate_screen_keeps_the_normal_screen() {
+    let mut parser = session_parser(3, 12);
+    parser.process(b"keep-1\r\nkeep-2\r\nkeep-3\r\nkeep-4");
+    parser.process(b"\x1b[?1049h\x1b[H\x1b[2J\x1b[3Jfull\x1b[?1049l");
+    assert_eq!(parser.screen().contents(), "keep-2\nkeep-3\nkeep-4");
+}
+
 #[test]
 fn manual_titles_are_sanitized_and_bounded() {
     assert_eq!(

@@ -275,6 +275,10 @@ Motion waits when a target cell still needs loading.
 - The history view is capped at 64 rows by 256 columns inside a larger pane.
 - Alternate-screen applications do not provide a history transcript, and History
   stays closed while an application is on the alternate screen.
+- An application that erases the saved lines (`ESC[3J`) empties History, as a
+  terminal's scrollback would be. `clear` sends it, and Pi and Oh My Pi send it
+  before every full repaint (a resize, a new or resumed session), then write
+  their transcript again, so History holds that transcript once.
 - Retained history lives in memory with the session and is lost when the server
   exits. It is not persisted to disk.
 
