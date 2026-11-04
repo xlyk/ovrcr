@@ -58,12 +58,44 @@ pub(super) fn status_off() -> Option<String> {
     (!off.is_empty()).then(|| format!("{} status off — :connect to set up", names(&off)))
 }
 
-/// The palette's Connect agent status entry: choosing it is the answer, so it writes
-/// without asking. `Err` says what is still off and why.
-pub(super) fn connect() -> Result<String, String> {
-    let executable = super::agent_setup::binary()
-        .map_err(|error| format!("Couldn't connect agent status: {error}"))?;
-    install(targets(), &executable)
+/// The palette's Connect agent status entry. Without `apply` it only reads and returns
+/// the startup screen's text for a confirmation page; Enter there calls it again with
+/// `apply`, which writes. `Err` says what is still off and why.
+pub(super) fn connect(apply: bool) -> ovrcr_tui::ConnectStatus {
+    use ovrcr_tui::ConnectStatus;
+    let executable = match super::agent_setup::binary() {
+        Ok(executable) => executable,
+        Err(error) => {
+            return ConnectStatus::Done(Err(format!("Couldn't connect agent status: {error}")));
+        }
+    };
+    if apply {
+        return ConnectStatus::Done(install(targets(), &executable));
+    }
+    preview(targets(), &executable)
+}
+
+/// The confirmation text for `targets`, or the result at once when nothing would be
+/// written (already connected, or every file refused).
+fn preview(
+    targets: Vec<(&'static str, Result<PathBuf, String>)>,
+    executable: &str,
+) -> ovrcr_tui::ConnectStatus {
+    let (changes, refused, notes) = prepare(targets.clone(), executable);
+    if changes.is_empty() {
+        return ovrcr_tui::ConnectStatus::Done(install(targets, executable));
+    }
+    // The page's title already says "Connect agent status".
+    let screen = prompt(&changes);
+    let mut text = screen
+        .split_once('\n')
+        .map_or(screen.as_str(), |(_, body)| body)
+        .to_owned();
+    for line in refused.iter().map(|(_, line)| line).chain(&notes) {
+        text.push('\n');
+        text.push_str(line);
+    }
+    ovrcr_tui::ConnectStatus::Confirm(text)
 }
 
 fn install(
@@ -580,20 +612,92 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&historical).unwrap(), "{}");
         run(&mut |_| panic!("unchanged installed hooks must not prompt")).unwrap();
         assert_eq!(status_off(), None);
-        assert_eq!(connect(), Ok("Agent status is already connected".into()));
+        assert_eq!(
+            connect(false),
+            ovrcr_tui::ConnectStatus::Done(Ok("Agent status is already connected".into()))
+        );
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
             std::env::remove_var("CODEX_HOME");
         }
-        // The palette's Connect entry installs in the default profiles without a prompt.
+        // The real Dashboard palette: Connect agent status first shows the startup
+        // screen's text; Esc writes nothing; Enter on that page installs both.
+        let claude_default = home.join(".claude/settings.json");
+        let codex_default = home.join(".codex/config.toml");
+        std::fs::create_dir_all(claude_default.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(codex_default.parent().unwrap()).unwrap();
+        std::fs::write(&claude_default, r#"{"env":{"KEEP":"1"}}"#).unwrap();
+        std::fs::write(&codex_default, "# keep\n").unwrap();
+        let read = || {
+            (
+                std::fs::read(&claude_default).unwrap(),
+                std::fs::read(&codex_default).unwrap(),
+            )
+        };
+        let before = read();
         assert_eq!(status_off(), off);
-        let connected = connect().unwrap();
+        let ovrcr_tui::ConnectStatus::Confirm(text) = connect(false) else {
+            panic!("missing hooks must be confirmed first")
+        };
+        for path in [&claude_default, &codex_default] {
+            assert!(text.contains(path.to_str().unwrap()), "{text}");
+        }
+        assert_eq!(read(), before, "a preview reads only");
+        use crossterm::event::{Event, KeyCode};
+        let mut dashboard = ovrcr::tui::Dashboard::new(ovrcr::session::TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 40));
+        dashboard.status_off(off.clone().unwrap(), connect);
+        let screen = |dashboard: &ovrcr::tui::Dashboard| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, 0))
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..40)
+                .map(|y| {
+                    (0..120)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let open = |dashboard: &mut ovrcr::tui::Dashboard| {
+            dashboard.key(KeyCode::Char(':'));
+            dashboard.drain_outbox();
+            dashboard.event_action(Event::Paste("connect agent status".into()));
+            dashboard.key(KeyCode::Enter);
+        };
+        open(&mut dashboard);
+        let page = screen(&dashboard);
+        for expected in [
+            " Connect agent status ",
+            "Adds or updates OVRCR hooks in:",
+            "Codex asks you to trust the new hooks",
+            "Enter confirm · Esc cancel",
+        ] {
+            assert!(page.contains(expected), "{expected:?} missing:\n{page}");
+        }
+        assert_eq!(read(), before, "showing the page writes nothing");
+        dashboard.key(KeyCode::Esc);
+        assert_eq!(read(), before, "Esc cancels and writes nothing");
+        assert!(!screen(&dashboard).contains("Adds or updates OVRCR hooks in:"));
+        open(&mut dashboard);
+        dashboard.key(KeyCode::Enter);
+        let (claude_text, codex_text) = read();
+        let claude_text = String::from_utf8(claude_text).unwrap();
+        let codex_text = String::from_utf8(codex_text).unwrap();
+        assert!(claude_text.contains("KEEP") && claude_text.contains("report claude"));
+        assert!(codex_text.contains("# keep") && codex_text.contains("report codex"));
         assert!(
-            connected.starts_with("Claude and Codex status connected"),
-            "{connected}"
+            screen(&dashboard).contains("Claude and Codex status connected for new sessions"),
+            "{}",
+            screen(&dashboard)
         );
-        assert!(home.join(".claude/settings.json").is_file());
-        assert!(home.join(".codex/config.toml").is_file());
         assert_eq!(status_off(), None);
     }
 
@@ -790,6 +894,40 @@ mod tests {
             again.starts_with("Agent status is already connected · Manual migration required"),
             "{again}"
         );
+    }
+
+    /// The palette preview names the same files and lines as the startup screen and
+    /// reads only; with nothing to write it answers at once.
+    #[test]
+    fn palette_preview_shows_the_screen_text_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("settings.json");
+        let codex = root.path().join("config.toml");
+        let legacy = r#"{"statusLine":{"type":"command","command":"/opt/wrap.sh claude-context"}}"#;
+        std::fs::write(&claude, legacy).unwrap();
+        std::fs::write(&codex, "# mine\n").unwrap();
+        let targets = || vec![("Claude", Ok(claude.clone())), ("Codex", Ok(codex.clone()))];
+        let ovrcr_tui::ConnectStatus::Confirm(text) = preview(targets(), "/installed/ovrcr") else {
+            panic!("expected a confirmation page")
+        };
+        assert!(
+            text.starts_with("Lets OVRCR show when your Claude and Codex sessions"),
+            "{text}"
+        );
+        assert!(text.contains("Adds or updates OVRCR hooks in:"));
+        assert!(text.contains(claude.to_str().unwrap()) && text.contains(codex.to_str().unwrap()));
+        assert!(text.contains("Codex asks you to trust the new hooks"));
+        assert!(text.contains("Manual migration required"), "{text}");
+        assert_eq!(std::fs::read_to_string(&claude).unwrap(), legacy);
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), "# mine\n");
+        install(targets(), "/installed/ovrcr").unwrap();
+        match preview(targets(), "/installed/ovrcr") {
+            ovrcr_tui::ConnectStatus::Done(Ok(line)) => assert!(
+                line.starts_with("Agent status is already connected · Manual migration required"),
+                "{line}"
+            ),
+            other => panic!("nothing to confirm once connected: {other:?}"),
+        }
     }
 
     #[test]

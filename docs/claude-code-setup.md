@@ -66,8 +66,9 @@ installed provider that needs them (Claude and Codex): what connecting does, the
 files it changes, and `[y] Connect  [n] Not now`. Enter is Not now and changes
 nothing. While a provider's status stays off the Dashboard shows a one-time
 footer note such as `Claude status off — :connect to set up` (a notice, not an
-error), and the palette lists **Connect agent status**, which writes the same
-composition without another question. Configuration presence is not hook trust or delivery;
+error), and the palette lists **Connect agent status**. It opens a confirmation page
+with the startup screen's text (what connecting does, the files it adds or updates,
+the Codex trust line); Enter writes the same composition and Esc changes nothing. Configuration presence is not hook trust or delivery;
 `agent doctor` keeps those fields `unverified` until evidence arrives. Ready is
 available as observed root-turn response end (`completion_quality: observed`);
 Confirmed settling remains unverified. Approval Input requests are available from a
