@@ -1126,6 +1126,10 @@ fn tab_on_a_repository_checkout_moves_to_name() {
     install_picker_roots(&mut dashboard, vec![dir.path().to_path_buf()]);
     dashboard.key(KeyCode::Char('a'));
     dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
+    // The footer says what Tab will do here.
+    let words = palette_words(&dashboard);
+    assert!(words.contains("↑/↓ highlight · Tab next"), "{words}");
+    assert!(!words.contains("Tab complete"), "{words}");
     dashboard.key(KeyCode::Tab);
     dashboard.event_action(Event::Paste("-renamed".into()));
     let text = palette_words(&dashboard);
@@ -3288,6 +3292,77 @@ fn removal_blocked_by_sessions_never_offers_force() {
         let _ = dashboard.key(KeyCode::Esc);
         dashboard.drain_outbox().is_empty()
     });
+}
+
+/// Review S1: a stopped session awaiting acknowledgement would refuse the
+/// removal after the running ones were already stopped. It is named first and
+/// nothing is sent.
+#[test]
+fn removal_waits_for_acknowledgement_before_stopping_anything() {
+    let mut hierarchy = fixture_hierarchy();
+    // auth: `review` still runs, `local` stopped with ownership uncertain.
+    let local = &mut hierarchy.projects[1].workspaces[1].sessions[1];
+    local.phase = SessionPhase::Stopped;
+    local.pid = None;
+    local.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: true,
+        unavailable: None,
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains(
+            "consigint / auth has 1 stopped session that may still have processes running: local (#5)."
+        ),
+        "{text}"
+    );
+    assert!(text.contains("\"Acknowledge stopped\""), "{text}");
+    assert!(!text.contains("Stop it"), "{text}");
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "no session is stopped for a removal that would be refused"
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+}
+
+/// Review S2: the Server's `--force` advice never reaches the Dashboard.
+#[test]
+fn archived_blockers_point_at_acknowledge_stopped_not_force() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = stopped_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let removal = only_request(dashboard.drain_outbox());
+    accept(&mut dashboard, &removal);
+    lifecycle_completed(
+        &mut dashboard,
+        &removal,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::SessionsRemain,
+            message: "sessions block removal of workspace consigint/auth: unacknowledged stopped: #77 (archived); run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force".into(),
+        },
+    );
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains("stopped sessions may still have processes running: #77 (archived); once they have stopped, choose \"Acknowledge stopped\" for each"),
+        "{text}"
+    );
+    for wrong in ["--force", "ovrcr terminal", "SessionsRemain", "Force"] {
+        assert!(!text.contains(wrong), "{wrong}: {text}");
+    }
 }
 
 #[test]

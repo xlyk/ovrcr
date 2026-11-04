@@ -2127,8 +2127,9 @@ impl Dashboard {
                         let value = fields[*active].value.trim();
                         // A path that already names a Git checkout is complete:
                         // Tab moves on rather than descending into its folders.
-                        let checkout =
-                            !value.is_empty() && expand_path(value).join(".git").exists();
+                        let checkout = matches!(fields[*active].kind, FieldKind::Path(_))
+                            && !value.is_empty()
+                            && expand_path(value).join(".git").exists();
                         if matches!(key.code, KeyCode::Tab)
                             && matches!(fields[*active].kind, FieldKind::Path(_))
                             && !checkout
@@ -4047,7 +4048,14 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
             }
         }
         FieldKind::Path(_) => {
-            keys.push("↑/↓ highlight · Tab complete");
+            let value = field.value.trim();
+            keys.push(
+                if !value.is_empty() && expand_path(value).join(".git").exists() {
+                    "↑/↓ highlight · Tab next"
+                } else {
+                    "↑/↓ highlight · Tab complete"
+                },
+            );
             if !field.value.is_empty() && !recovering {
                 keys.push("Ctrl-u clear");
             }
@@ -4142,10 +4150,54 @@ impl Dashboard {
             .unwrap_or_else(|| "that workspace".into())
     }
 
+    /// A workspace's stopped sessions whose processes may still run: removal
+    /// refuses them until each is acknowledged.
+    fn unacknowledged_sessions(&self, project: &str, id: &str) -> Vec<&SessionSummary> {
+        find_workspace(self, project, id)
+            .map(|workspace| {
+                workspace
+                    .sessions
+                    .iter()
+                    .filter(|session| {
+                        !session.phase.is_live()
+                            && session
+                                .recovery
+                                .as_ref()
+                                .is_some_and(|recovery| recovery.requires_ack)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The confirmation for removing a workspace or unregistering a project.
     /// A workspace's running sessions are named, because confirming stops
     /// them first; discarding uncommitted changes is offered only on its own.
+    /// A blocker the Dashboard can already see comes first, as a notice that
+    /// sends nothing, so no session is stopped for a removal that would fail.
     fn removal_page(&self, request: Request) -> Page {
+        if let Request::RemoveWorkspace { project, name, .. } = &request {
+            let waiting = self.unacknowledged_sessions(project, name);
+            if !waiting.is_empty() {
+                let one = waiting.len() == 1;
+                return Page::Confirm {
+                    request: None,
+                    target: format!(
+                        "{} has {} stopped session{} that may still have processes running: {}. Once {} stopped, choose \"Acknowledge stopped\" for {} in : commands, then remove the workspace. Nothing was stopped or removed.",
+                        self.workspace_name(project, name),
+                        waiting.len(),
+                        if one { "" } else { "s" },
+                        waiting
+                            .iter()
+                            .map(|session| self.session_title(session))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if one { "it has" } else { "they have" },
+                        if one { "it" } else { "each" },
+                    ),
+                };
+            }
+        }
         let target = match &request {
             Request::RemoveWorkspace {
                 project,
@@ -4312,6 +4364,19 @@ impl Dashboard {
             text.replace_range(start..start + end + 3, "");
         }
         text = text.replace("fatal: ", "");
+        // The Server advises CLI commands and --force; the Dashboard has neither.
+        if let Some(start) = text.find("unacknowledged stopped: ")
+            && let Some(advice) = text[start..].find("; run `ovrcr terminal acknowledge-stopped")
+            && let Some(end) = text[start..].find("remove with --force")
+        {
+            let list = text[start + "unacknowledged stopped: ".len()..start + advice].to_owned();
+            text.replace_range(
+                start..start + end + "remove with --force".len(),
+                &format!(
+                    "stopped sessions may still have processes running: {list}; once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
+                ),
+            );
+        }
         let mut titled = String::with_capacity(text.len());
         let mut rest = text.as_str();
         while let Some(at) = rest.find('#') {
@@ -6468,6 +6533,53 @@ mod form_tests {
         assert_eq!(
             d.plain_reason("#99 (archived) blocks; issue #", None),
             "#99 (archived) blocks; issue #"
+        );
+    }
+
+    /// The Server's advice names CLI commands and --force, which the
+    /// Dashboard does not have.
+    #[test]
+    fn unacknowledged_refusals_point_at_acknowledge_stopped() {
+        let d = dashboard();
+        let reason = d.plain_reason(
+            &format!(
+                "sessions block removal of workspace consigint/{ID}: unacknowledged stopped: #13, #99 (archived); run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force"
+            ),
+            None,
+        );
+        assert_eq!(
+            reason,
+            "sessions block removal of workspace feature/status-check: stopped sessions may still have processes running: verify spinner, #99 (archived); once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
+        );
+        assert!(!reason.contains("--force") && !reason.contains("ovrcr terminal"));
+    }
+
+    /// A stopped session awaiting acknowledgement would refuse the removal
+    /// after running sessions were already stopped; it is named first instead.
+    #[test]
+    fn removal_names_unacknowledged_sessions_first_and_stops_nothing() {
+        let mut d = dashboard();
+        let waiting = &mut d.hierarchy.projects[0].workspaces[0].sessions[1];
+        waiting.phase = SessionPhase::Stopped;
+        waiting.recovery = Some(crate::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: true,
+            unavailable: None,
+            failure: None,
+        });
+        let page = d.removal_page(Request::RemoveWorkspace {
+            project: "consigint".into(),
+            name: ID.into(),
+            force: false,
+        });
+        let Page::Confirm { request, target } = page else {
+            panic!()
+        };
+        assert_eq!(request, None, "confirming sends nothing");
+        assert_eq!(
+            target,
+            "consigint / feature/status-check has 1 stopped session that may still have processes running: local (#14). Once it has stopped, choose \"Acknowledge stopped\" for it in : commands, then remove the workspace. Nothing was stopped or removed."
         );
     }
 

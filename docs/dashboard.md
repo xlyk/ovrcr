@@ -443,10 +443,17 @@ still has running sessions, the confirmation names them by title
 (`feature/status-check still has 1 running session: verify spinner. Stop it and
 remove the workspace?`); confirming closes each one, one at a time, and then
 removes the workspace. If a session refuses to stop, the confirmation returns
-saying which one and nothing is removed. Ownership-uncertain stopped sessions and
-active task runs still block removal, even when archived; the refusal names them
-and the Archived sessions page offers "Acknowledge stopped" for such rows. No
-forced removal is offered for them. A removal refused because the worktree is
+saying which one and nothing is removed. The sessions are stopped before the
+Server checks the worktree, so the uncommitted-changes question below comes after
+they have stopped. If the Dashboard detaches partway through, the sessions
+already stopped stay stopped and the workspace stays; remove it again to finish.
+A stopped session whose processes may still be running (ownership uncertain)
+blocks removal. When the Dashboard can see one, the confirmation names it first
+and stops nothing: choose "Acknowledge stopped" for it, then remove again.
+Archived ones and active task runs also block, even though the Dashboard cannot
+see them beforehand; the refusal says so in plain words and the Archived sessions
+page offers "Acknowledge stopped" for archived rows. No forced removal is offered
+for them. A removal refused because the worktree is
 dirty asks "Save uncommitted work to origin/wip/<branch>?". Enter commits the
 unignored files onto that ref, pushes it to `origin`, and then removes the
 workspace; the checkout's own branch is unchanged. Escape leaves the workspace
