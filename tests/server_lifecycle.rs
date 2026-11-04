@@ -8730,21 +8730,11 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .map(|y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n");
+    // The sidebar's last row is the one-line quota summary: Claude by its more constrained
+    // window, five-hour 58% under seven-day 82%.
     assert!(
-        sidebar.contains("QUOTA LEFT"),
-        "quota block missing: {sidebar}"
-    );
-    assert!(
-        sidebar
-            .lines()
-            .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
+        sidebar.lines().nth(30).unwrap().starts_with(" Claude 58%"),
         "five-hour remaining allowance missing: {sidebar}"
-    );
-    assert!(
-        sidebar
-            .lines()
-            .any(|row| row.contains("7d") && row.contains("82%")),
-        "seven-day remaining allowance missing: {sidebar}"
     );
     dashboard.key(crossterm::event::KeyCode::Char('u'));
     terminal
@@ -11625,6 +11615,8 @@ printf '%s\n' "$reply"
     }
 
     fn select(&mut self, name: &str, terminal_marker: &str) {
+        // Aim at a whole frame, not part of one.
+        self.settle();
         let screen = self.parser.screen().contents();
         let row = screen
             .lines()
@@ -11632,6 +11624,18 @@ printf '%s\n' "$reply"
             .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
         self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
         self.wait_screen(|screen| screen.contains(terminal_marker));
+    }
+
+    /// Apply output until the Dashboard has been quiet for 200 ms (at most 3 s), so a whole
+    /// frame is on screen rather than part of one.
+    fn settle(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            match self.received.recv_timeout(Duration::from_millis(200)) {
+                Ok(bytes) => self.parser.process(&bytes),
+                Err(_) => return,
+            }
+        }
     }
 
     fn resize(&mut self, cols: u16) {
@@ -14196,6 +14200,54 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         "review cannot revive a lost reporter or complete native work"
     );
     dashboard.detach();
+}
+
+#[test]
+fn codex_unread_is_reviewed_by_the_next_prompt_typed_in_the_real_dashboard() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let first = fixture.session_summary(summary.id);
+    assert!(first.unread.is_some(), "native Ready is unread");
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.send(b"\r");
+    dashboard.wait_screen(|screen| screen.contains("Terminal mode"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        first,
+        "viewing and focusing the response do not review it"
+    );
+    // The reply is the next prompt, typed into the session through the Dashboard.
+    dashboard.send(b"UserPromptSubmit:root:b\r");
+    fixture.wait_terminal_contains(summary.id, &format!("CODEX_CALLBACK={index}"));
+    let replied = fixture.session_summary(summary.id);
+    assert_eq!(
+        replied.activity,
+        ovrcr::protocol::AgentActivity::Busy,
+        "the typed prompt reached the agent"
+    );
+    assert_eq!(
+        replied.unread, None,
+        "the reply reviewed the response it answered"
+    );
+    dashboard.wait_screen(|screen| !screen.contains("1 ready"));
+    dashboard.send(b"\x07");
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
 }
 
 #[test]

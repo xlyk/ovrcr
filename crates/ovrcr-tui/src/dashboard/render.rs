@@ -494,6 +494,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_operator_header(frame);
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
     dashboard.draw_quota(frame, now_unix_ms);
+    dashboard.draw_attention(frame);
 
     let rects = dashboard.pane_rects(frame.area());
     let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
@@ -1309,10 +1310,21 @@ fn tree_line_text(
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
                 // With the column stacked, every label is on its own line, even one that fits.
+                // Inline, the title keeps its room first: the model goes, then the agent, and
+                // only then does the title clip.
                 let fitted = if close_mark || stacked {
                     None
                 } else {
-                    sidebar_agent_label(session)
+                    sidebar_agent_label(session).and_then(|(agent, model)| {
+                        let title = Line::raw(dashboard.session_display_name(session)).width();
+                        let room = width.saturating_sub(SESSION_NAME_COLUMN + title + 3);
+                        let agent_cells = Line::raw(agent.as_str()).width();
+                        if agent_cells + Line::raw(model.as_str()).width() <= room {
+                            Some((agent, model))
+                        } else {
+                            (agent_cells <= room).then_some((agent, String::new()))
+                        }
+                    })
                 };
                 let name_width = match &fitted {
                     Some((agent, model)) => {
@@ -1771,6 +1783,82 @@ mod harness_agent_label_tests {
         let session = session(SessionKind::Terminal, "local", "zsh");
         assert_eq!(harness_agent_name(&session), None);
         assert_eq!(sidebar_agent_label(&session), None);
+    }
+
+    #[test]
+    fn a_long_title_keeps_its_room_before_the_model_and_then_the_agent() {
+        use crate::protocol::{HierarchySnapshot, ProjectSummary, TerminalSize, WorkspaceSummary};
+        let titled = |id, name: &str| SessionSummary {
+            id: SessionId(id),
+            ..session(
+                SessionKind::Agent {
+                    name: "claude".into(),
+                },
+                name,
+                "claude / sonnet-4",
+            )
+        };
+        let names = [
+            "review",
+            "implement lifecycle",
+            "implement the lifecycle overhaul",
+            "implement the whole lifecycle overhaul now",
+        ];
+        let mut dashboard = super::super::Dashboard::new(TerminalSize {
+            rows: 30,
+            cols: 120,
+        });
+        dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 30));
+        dashboard.install_hierarchy(HierarchySnapshot {
+            projects: vec![ProjectSummary {
+                name: "p".into(),
+                workspaces: vec![WorkspaceSummary {
+                    project: "p".into(),
+                    name: "w".into(),
+                    id: "w".into(),
+                    root: false,
+                    warning: None,
+                    path: "/w".into(),
+                    sessions: (1..)
+                        .zip(names)
+                        .map(|(id, name)| titled(id, name))
+                        .collect(),
+                }],
+            }],
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        let row = |y| {
+            (0..39)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        };
+        // Title row 0, Operator heading 1, project 2, workspace 3, then the sessions.
+        assert!(
+            row(4).contains("review") && row(4).ends_with("claude:sonnet-4"),
+            "{}",
+            row(4)
+        );
+        assert!(
+            row(5).contains("implement lifecycle") && row(5).ends_with(" claude"),
+            "model first: {}",
+            row(5)
+        );
+        assert!(
+            row(6).ends_with("implement the lifecycle overhaul"),
+            "then the agent: {}",
+            row(6)
+        );
+        assert!(
+            row(7).ends_with("implement the whole lifecycle o…"),
+            "only then the title: {}",
+            row(7)
+        );
     }
 
     #[test]

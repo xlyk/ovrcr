@@ -52,9 +52,21 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
     let id = d.focused_session().unwrap();
     d.install_focus(id);
     d.key(KeyCode::Enter);
+    assert!(
+        d.drain_outbox().is_empty(),
+        "viewing and focusing review nothing"
+    );
     assert_eq!(
         d.key(KeyCode::Char('R')),
         DashboardAction::PtyBytes(b"R".to_vec())
+    );
+    // Typing into the session is a reply: it reviews the presented observation, as R does.
+    assert_eq!(
+        only_request(d.drain_outbox()).request,
+        Request::MarkReviewed {
+            session: id,
+            expected: unread.clone()
+        }
     );
     d.ctrl('g');
     for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
@@ -297,5 +309,44 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
             expected: unread,
         },
         "an open and close cycle leaves Unread and the review target alone"
+    );
+}
+
+#[test]
+fn a_paste_reviews_the_displayed_unread_once_and_an_undrawn_one_not_at_all() {
+    let mut d = screen_ready_dashboard(b"VISIBLE_RESPONSE");
+    let unread = observation("one", 2);
+    let mut summary = focused_summary(&d);
+    summary.unread = Some(unread.clone());
+    publish_session(&mut d, summary);
+    let id = d.focused_session().unwrap();
+    d.key(KeyCode::Enter);
+    assert!(matches!(
+        d.event_action(Event::Paste("early".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    assert!(
+        d.drain_outbox().is_empty(),
+        "an Unread never drawn was not displayed, so nothing is reviewed"
+    );
+    draw(&mut d, 120, 30);
+    assert!(matches!(
+        d.event_action(Event::Paste("reply".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    assert_eq!(
+        only_request(d.drain_outbox()).request,
+        Request::MarkReviewed {
+            session: id,
+            expected: unread,
+        }
+    );
+    assert!(matches!(
+        d.event_action(Event::Paste("more".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    assert!(
+        d.drain_outbox().is_empty(),
+        "once per displayed observation"
     );
 }

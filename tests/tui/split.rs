@@ -455,16 +455,12 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
     assert_eq!(pane_widths(&dashboard, area), vec![70]);
     assert_view_input_blocked(&mut dashboard);
     let rows = rendered_rows(&dashboard, 120, 40);
-    let grok = rows
+    let quota = rows
         .iter()
-        .rposition(|row| row.contains("Grok"))
-        .unwrap_or_else(|| panic!("missing Grok: {rows:?}"));
-    assert!(
-        rows[grok].contains("Grok · usage off"),
-        "row {grok}: {}",
-        rows[grok]
-    );
-    assert_eq!(rows[grok].chars().nth(49), Some('│'), "{}", rows[grok]);
+        .rposition(|row| row.starts_with(" Claude ?"))
+        .unwrap_or_else(|| panic!("missing the quota line: {rows:?}"));
+    assert_eq!(quota, 38, "the quota line is the sidebar's last row");
+    assert_eq!(rows[quota].chars().nth(49), Some('│'), "{}", rows[quota]);
     let resized = request_view(&mut dashboard, area, 0);
     assert_eq!(
         set_view(&resized).panes[0].size,

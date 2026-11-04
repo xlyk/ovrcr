@@ -1001,9 +1001,10 @@ fn assert_operator_project_selection_at_bottom(dashboard: &mut Dashboard) {
     let selected: Vec<_> = (0..24)
         .filter(|y| terminal.backend().buffer()[(0, *y)].symbol() == "▌")
         .collect();
+    // The one-line quota summary sits below the tree on row 22.
     assert_eq!(
         selected,
-        vec![16],
+        vec![21],
         "the selected terminal must remain at the filled tree viewport's bottom"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(30)));

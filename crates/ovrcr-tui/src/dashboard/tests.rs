@@ -1954,7 +1954,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
-        // the literal state and health text live on the metadata line.
+        // the literal state and health text live on the metadata line. The attention
+        // strip above the quota line counts it without moving the tree.
         let cell = &terminal.backend().buffer()[(5, 4)];
         assert_eq!(
             cell.symbol(),
@@ -1967,6 +1968,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect()
         };
+        assert_eq!(row(21).trim_end(), " ✓ 1 ready", "width {width}");
         // A label too long to share the name's line is kept on the line under it.
         assert!(
             row(5).contains("long Codex label"),

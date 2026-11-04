@@ -1591,7 +1591,10 @@ impl Dashboard {
                         .focused_pane()
                         .is_some_and(|pane| pane.parser.screen().application_cursor());
                     match encode_key(key, application_cursor) {
-                        KeyEncoding::Bytes(bytes) => DashboardAction::PtyBytes(bytes),
+                        KeyEncoding::Bytes(bytes) => {
+                            self.review_on_reply();
+                            DashboardAction::PtyBytes(bytes)
+                        }
                         KeyEncoding::Browse | KeyEncoding::Ignore => DashboardAction::None,
                     }
                 }
@@ -2317,6 +2320,7 @@ impl Dashboard {
                 if !self.input_is_allowed() {
                     self.refuse_input()
                 } else {
+                    self.review_on_reply();
                     DashboardAction::PtyBytes(encode_paste(
                         &text,
                         self.focused_pane()
@@ -2532,7 +2536,16 @@ impl Dashboard {
         {
             return None;
         }
-        let sidebar = self.sidebar_rects(area).tree;
+        let rects = self.sidebar_rects(area);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if point_in_rect(mouse, rects.attention) {
+                return Some(self.jump_to_attention());
+            }
+            if point_in_rect(mouse, rects.quota) {
+                return Some(self.open_quota_details());
+            }
+        }
+        let sidebar = rects.tree;
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside
@@ -3648,6 +3661,7 @@ impl Dashboard {
                     let summary = *summary;
                     let previous_live =
                         find_session(self, summary.id).map(|session| session.phase.is_live());
+                    let tree = self.sidebar_rects(self.outer_area).tree;
                     for session in self
                         .hierarchy
                         .projects
@@ -3659,6 +3673,10 @@ impl Dashboard {
                             *session = summary.clone();
                             break;
                         }
+                    }
+                    // The attention strip comes and goes with sessions; keep the selection shown.
+                    if tree != self.sidebar_rects(self.outer_area).tree {
+                        self.ensure_selection_visible(&self.visible_rows());
                     }
                     if self.resync_session_run(&summary, previous_live) {
                         let _ = self.request_view_at(self.outer_area);
@@ -3834,7 +3852,11 @@ impl Dashboard {
             self.assignment_control_changed(&summary);
         }
         self.observe_desktop_responses(&hierarchy);
+        let tree = self.sidebar_rects(self.outer_area).tree;
         self.hierarchy = hierarchy;
+        if tree != self.sidebar_rects(self.outer_area).tree {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
         self.sync_palette_workspace_identity();
 
         self.selected_container = self.selected_container.take().filter(|row| match row {
@@ -3933,6 +3955,24 @@ impl Dashboard {
             request: Request::MarkReviewed { session, expected },
         });
         DashboardAction::Redraw
+    }
+
+    /// A keystroke or paste into a session reviews the Unread it displays, with the request
+    /// `R` sends, queued ahead of the input. The response is ignored: a stale refusal means a
+    /// newer Ready arrived, and that one stays Unread.
+    fn review_on_reply(&mut self) {
+        let Some(session) = self.action_session() else {
+            return;
+        };
+        let Some(expected) = self.unread.reply_target(session) else {
+            return;
+        };
+        let request_id = self.next_request_id();
+        self.ignored_responses.insert(request_id);
+        self.enqueue_request(ClientMessage {
+            request_id,
+            request: Request::MarkReviewed { session, expected },
+        });
     }
 
     pub fn input_request(&mut self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {

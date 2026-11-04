@@ -1170,7 +1170,8 @@ fn long_sidebar_names_clip_to_one_screen_line() {
     let review = (0..39)
         .map(|column| buffer[(column, 5)].symbol())
         .collect::<String>();
-    assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
+    // The title keeps its room first: the agent label goes before the title clips.
+    assert_eq!(review, "▌    - review-a-very-long-session-name…");
 
     // Too narrow for a twelve-cell name beside the agent: the agent moves under the name.
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
@@ -1643,13 +1644,16 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[32],
+        rendered[37],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
-    assert!(rendered[33].contains("QUOTA LEFT"), "{:?}", rendered[33]);
-    assert!(rendered[37].contains("Cursor"), "{:?}", rendered[37]);
-    // The last tree row remains selectable; quota cells cannot select/close a session.
-    for (index, row) in [32, 33, 37].into_iter().enumerate() {
+    assert_eq!(
+        rendered[38].trim_end(),
+        " Claude ?",
+        "the one-line quota summary"
+    );
+    // The last tree row remains selectable; the quota line cannot select/close a session.
+    for (index, row) in [37, 38].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1672,6 +1676,8 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         }
         assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     }
+    // The quota line opened its details; close them.
+    dashboard.key(KeyCode::Esc);
 
     dashboard.install_focus(SessionId(1));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));

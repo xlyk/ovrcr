@@ -106,7 +106,7 @@ The accepted root observation of a completed response cycle from a supported rea
 _Avoid_: Confirmed activity as a success claim, a desktop alert
 
 **Unread**:
-The current Ready observation that has not been marked reviewed.
+The current Ready observation that has not been marked reviewed, explicitly or by replying.
 _Avoid_: treating view, selection, or notification as review
 
 **Presented**:
@@ -195,7 +195,7 @@ The one declaration of every setting path: its shape, its owner, and what the of
 _Avoid_: a second settings document, the settings snapshot, a separate path list for the editor, the writer, and the rows, a value type and an editor kind that can disagree
 
 **Allowance**:
-What a provider's subscription still permits in a window, shown in the Quota left block as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
+What a provider's subscription still permits in a window, shown in the sidebar's quota line as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
 _Avoid_: usage, tokens, cost, quota as a synonym for spend
 
 **Quota reason**:
