@@ -438,16 +438,22 @@ Workspace and project removal open a searchable picker with the current target
 highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. Confirmed workspace
-removal archives stopped records with their original paths. Live or ownership-uncertain
-sessions block removal, even when archived; the Archived sessions page offers
-"Acknowledge stopped" for such rows. A removal refused for uncertain sessions
-reopens as a forced removal: confirming it acknowledges the stopped processes,
-while live sessions and active task runs still block. A removal refused because
-the worktree is dirty asks "Save uncommitted work to origin/wip/<branch>?".
-Enter commits the unignored files onto that ref, pushes it to `origin`, and
-then removes the workspace; the checkout's own branch is unchanged. Escape
-leaves the workspace in place. The repository-root workspace is never offered
-the save. With `save_uncommitted_work` on, removal and server shutdown push
+removal archives stopped records with their original paths. When the workspace
+still has running sessions, the confirmation names them by title
+(`feature/status-check still has 1 running session: verify spinner. Stop it and
+remove the workspace?`); confirming closes each one, one at a time, and then
+removes the workspace. If a session refuses to stop, the confirmation returns
+saying which one and nothing is removed. Ownership-uncertain stopped sessions and
+active task runs still block removal, even when archived; the refusal names them
+and the Archived sessions page offers "Acknowledge stopped" for such rows. No
+forced removal is offered for them. A removal refused because the worktree is
+dirty asks "Save uncommitted work to origin/wip/<branch>?". Enter commits the
+unignored files onto that ref, pushes it to `origin`, and then removes the
+workspace; the checkout's own branch is unchanged. Escape leaves the workspace
+in place. A checkout that cannot be saved that way, such as a detached HEAD,
+asks instead whether to discard the uncommitted changes and remove it; that is
+the only forced removal the Dashboard offers. The repository-root workspace is
+never offered the save. With `save_uncommitted_work` on, removal and server shutdown push
 those refs without asking. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
@@ -494,33 +500,53 @@ Entries are `Create terminal (n)`, `Create workspace (w)`,
 one `Switch terminal: <project> / <workspace> / <name> (#id)` per session, and
 the remaining key-popup actions by name.
 
-Within a form: on a pick list, Up/Down move the highlight and `Tab` or `Enter`
-accepts. On a text field, `Tab`, Up, and Down move between fields, and
-`Enter` advances and submits at the last field. Left/Right and Home/End move
-the text cursor; Backspace and Delete remove text beside it. `Ctrl-u` clears
-a field. Click a field to focus it and position its cursor, click options or
+Within a form, `Enter` submits from any field, the same as the Submit control.
+It first checks the whole form: a required field left empty, a choice that is
+not in its list, or a branch Git would refuse keeps the form open, moves the
+focus to the first such field and says what is wrong just below it
+(`Add a name after feature/`, `Branch names can't contain spaces`). `Tab` and
+`Shift-Tab` move between fields; on a text field Up and Down do too. On a pick
+list, Up and Down change the value at once, Left and Right step through the
+choices and wrap at the ends, and typing filters the list; `Ctrl-u` clears the
+filter. The open list shows as many choices as fit, all of them when there is
+room, and always the current one. On a text field Left/Right and Home/End move
+the text cursor; Backspace and Delete remove text beside it, and `Ctrl-u` clears
+it. The footer lists only the keys that work for the form and its focused field.
+Click a field to focus it and position its cursor, click options or
 toggles to choose them, and use the wheel to scroll lists and long forms.
-Visible Submit and Cancel controls work from any field. Input stays in the
-palette while it is open.
+Input stays in the palette while it is open.
+
+Creating a workspace or terminal and removing a workspace run as Lifecycle jobs:
+the form steps aside and the sidebar shows `Creating…` or `Removing…` while the
+Server works. If the job fails before anything was created, the form comes back
+with your values and the reason in plain words (`Couldn't create the workspace:
+a branch named 'feature/x' already exists`); no failed row is left behind. When
+the form cannot come back without taking keys meant for something else, such as
+a terminal you are typing in, a short failed row stays (`Not created · Esc
+dismiss`) and the footer gives the reason; one Esc clears both.
 
 Click a search result to open it, or select it and click Open. Confirmations
 have separate Confirm and Cancel controls; clicking outside an open palette
 does not activate the terminal behind it.
 
 All existing-project and workspace fields use the same searchable picker,
-including removal forms and the scheduled-task editor. Type to filter, use
-Up/Down to choose, and Tab or Enter to accept. Workspace choices show the
+including removal forms and the scheduled-task editor. In palette forms, type to
+filter and use Up/Down to choose; the scheduled-task editor keeps Tab or Enter
+to accept. Workspace choices show the
 project and current branch, with the worktree path when those names collide.
 Removal excludes the protected repository-root workspace. Session names and
 project names remain text fields, and project registration retains its path pickers.
 
 Closing live work and deleting records show their current branch target and require confirmation.
-Closing an exited row archives it immediately. A workspace with live sessions or
-active task runs cannot be removed. A refusal for ownership-uncertain stopped
-sessions reopens as a forced confirmation that acknowledges those stopped
-processes and discards uncommitted changes. A dirty worktree asks whether to
+Closing an exited row archives it immediately. Removing a workspace with running
+sessions names them and stops them first, as described under the key popup.
+Ownership-uncertain stopped sessions and active task runs still block removal,
+and no forced removal is offered for them. A dirty worktree asks whether to
 save that work to `origin/wip/<branch>` first; declining leaves the workspace
-where it is. Errors stay in the palette with the form values retained.
+where it is. A checkout that cannot be saved there asks whether to discard the
+changes instead. Errors stay in the palette with the form values retained, in
+plain words: no error codes, branch names instead of internal workspace ids, and
+sessions by title.
 
 ### Create terminal (`n`)
 
@@ -577,10 +603,12 @@ starts with Terminal selected. If a remembered agent is unavailable, choose a
 replacement explicitly before launching.
 
 Project defaults to the selected terminal's project. Branch has initial focus
-and starts as `feature/`; typing appends to that prefix. `Enter` on Branch
-submits. `Tab` and `Shift-Tab` reach the other fields. On Branch mode, `Space` or
-Left/Right switches between `new` and `existing`. Existing mode lists local
-branches and hides Base.
+and starts as `feature/`; typing appends to that prefix. `Enter` submits from
+any field. A new branch needs a name after the prefix that Git accepts as a
+branch name (the rules of `git check-ref-format --branch`); otherwise nothing is
+sent and the reason shows under Branch. `Tab` and `Shift-Tab` reach the other
+fields. On Branch mode, `Space` or Left/Right switches between `new` and
+`existing`. Existing mode lists local branches and hides Base.
 
 Base defaults to the repository's `origin/HEAD` target, then `main`, `master`, or
 the current HEAD. A remote-only default uses its full Git ref as Base. Git
@@ -588,9 +616,12 @@ suggestions load in the background, are cached per project until the palette
 closes, and time out after two seconds. A footer note explains failures, after
 which Branch and Base accept free text. Submission waits for pending suggestions.
 
-If the workspace is created but its first program cannot launch, the workspace
-remains. Retry, choose another agent, or open a shell in that existing workspace.
-Retry does not confirm that a previous process has stopped.
+If creation fails before the workspace exists (Git refuses the branch or base),
+the form returns with its values and the reason, and submitting again reuses the
+same workspace identity. If the workspace is created but its first program
+cannot launch, the workspace remains and the form turns into its recovery
+choices: Retry, choose another agent, or open a shell in that existing
+workspace. Retry does not confirm that a previous process has stopped.
 
 If a program starts and later exits, or the server restarts, the session row
 stays. Reopen in a fresh shell is an explicit action on that same row; it does
@@ -681,7 +712,9 @@ Repository and Workspace root are path pickers: the list is one directory of
 children, directories only, filtered by fuzzy subsequence on the last path
 segment. Hidden names stay hidden unless the typed segment starts with `.`. Git
 checkouts sort first and are marked `git`. `Tab` accepts the highlight and
-appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
+appends `/`. With nothing left to complete, or once the path names a Git
+checkout, `Tab` moves to the next field instead. `Enter` keeps the typed text
+and registers the project from any field. An empty field lists
 `picker_roots` from `dashboard.toml` in document order, not sorted. Name becomes
 the repository basename once a path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
 you edit it, and is created on registration if missing. Registration creates the
