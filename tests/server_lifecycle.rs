@@ -12540,6 +12540,8 @@ fn desktop_notifications_bridge_click_focuses_existing_split_without_duplicating
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
     let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
+    // The Ready brings up the attention strip, which moves every tree row down a line.
+    dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
     dashboard.send(b"v");
     dashboard.select("setup", "HOOK_READY");
@@ -17779,6 +17781,8 @@ fn desktop_notifications_bridge_installation_failures_are_actionable_without_set
         for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
             desktop_codex_callback(&fixture, summary.id, &mut index, command);
         }
+        // The Ready brings up the attention strip, which moves every tree row down a line.
+        dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
         dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
         dashboard.select("setup", "HOOK_READY");
         assert!(!dashboard.record.exists());
