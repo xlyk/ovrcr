@@ -18,6 +18,10 @@ A plain Pi process has no delegation authority. The optional
 research, review or bounded coding without requiring Pocock stage skills. Managed
 reporting injection remains enabled and owns the single runtime initializer.
 
+Tool roots and their root `anyOf`/`oneOf` alternatives explicitly declare
+`type: "object"` to satisfy Grok's object-root schema requirement. Required
+fields and exclusivity rules still apply.
+
 ## Continue an existing parent workflow
 
 `ovrcr_recover` with `{}` discovers workflows already controlled by this exact
