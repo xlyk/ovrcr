@@ -51,7 +51,7 @@ test("question tools expose exact nested references and explicit fresh/recovery 
   assert.equal(body.properties.supersedes.anyOf[0].properties.assignment.additionalProperties, false);
   assert.equal(body.properties.supersedes.anyOf[0].properties.digest.pattern, "^[a-f0-9]{64}$");
   const answer = f.host.toolDefinition("ovrcr_answer_question").parameters;
-  assert.deepEqual(answer.anyOf, [{ required: ["handle", "request"] }, { required: ["handle", "question", "expected_control_epoch", "basis", "scope", "answer"] }]);
+  assert.deepEqual(answer.anyOf, [{ type: "object", required: ["handle", "request"] }, { type: "object", required: ["handle", "question", "expected_control_epoch", "basis", "scope", "answer"] }]);
   assert.deepEqual(answer.properties.basis.enum, ["ExistingAuthority", "ExplicitHumanDecision"]);
   assert.deepEqual(f.host.toolDefinition("ovrcr_collect_question").parameters.required, ["handle", "reference"]);
   assert.equal(f.calls().length, 0, "schema discovery has no task effect");

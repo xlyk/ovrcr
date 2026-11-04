@@ -24,9 +24,17 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     writeFileSync(join(dir, "ovrcr-pi-interrupt.ts"), readFileSync(new URL("../src/ovrcr-pi-interrupt.ts", import.meta.url)));
     host = await createHost(join(dir, "reporting.ts"));
     assert.deepEqual(host.tools(), ["ovrcr_accept", "ovrcr_answer_question", "ovrcr_archive", "ovrcr_cancel_workflow", "ovrcr_capabilities", "ovrcr_capture_fallback", "ovrcr_checkpoint", "ovrcr_collect", "ovrcr_collect_question", "ovrcr_confirm_interrupt", "ovrcr_confirm_return", "ovrcr_deliver", "ovrcr_dependencies", "ovrcr_followup", "ovrcr_inspect", "ovrcr_interrupt", "ovrcr_mark_handled", "ovrcr_parents", "ovrcr_publish", "ovrcr_publish_question", "ovrcr_recover", "ovrcr_recover_fallback", "ovrcr_retry", "ovrcr_review", "ovrcr_start", "ovrcr_transfer", "ovrcr_wait"]);
+    // Grok rejects a tool root union when an alternative has no explicit object type.
+    for (const name of host.tools()) {
+      const parameters = host.toolDefinition(name).parameters;
+      assert.equal(parameters.type, "object", `${name}: tool parameter root must be an object type`);
+      for (const branch of [...(parameters.anyOf ?? []), ...(parameters.oneOf ?? [])]) {
+        assert.equal(branch.type, "object", `${name}: root schema union has a non-object branch`);
+      }
+    }
     assert.deepEqual(host.toolDefinition("ovrcr_publish").parameters.required, ["handle", "submission"]);
     assert.deepEqual(host.toolDefinition("ovrcr_collect").parameters.required, ["handle"]);
-    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ required: ["handle"], maxProperties: 2, properties: { handle: { type: "string" }, prepare_only: { type: "boolean" } }, additionalProperties: false }, { required: ["project", "workspace", "scope", "acceptance_evidence"], not: { required: ["handle"] } }]);
+    assert.deepEqual(host.toolDefinition("ovrcr_start").parameters.anyOf, [{ type: "object", required: ["handle"], maxProperties: 2, properties: { handle: { type: "string" }, prepare_only: { type: "boolean" } }, additionalProperties: false }, { type: "object", required: ["project", "workspace", "scope", "acceptance_evidence"], not: { required: ["handle"] } }]);
     assert.equal(host.toolDefinition("ovrcr_start").parameters.properties.prepare_only.type, "boolean");
     const coding = host.toolDefinition("ovrcr_start").parameters.properties.coding;
     assert.deepEqual(coding.required,["requested_base","branch","authorized_paths","required_checks"]);
@@ -44,7 +52,7 @@ test("managed Pi exposes research assignment and explicit collection tools", asy
     assert.equal(reviewSchema.properties.target.properties.view.anyOf[0].properties.round.pattern,"^[A-Za-z0-9_-]+$");
     assert.equal(coding.properties.authorized_paths.minItems,1);
     assert.equal(coding.properties.required_checks.uniqueItems,true);
-    assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{required:["handle","request"]},{required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
+    assert.deepEqual(host.toolDefinition("ovrcr_followup").parameters.anyOf, [{type:"object",required:["handle","request"]},{type:"object",required:["handle","expected_identity","expected_result_version","expected_control_epoch","text"]}]);
     assert.deepEqual(host.toolDefinition("ovrcr_accept").parameters.required, ["handle","identity","result_version","expected_control_epoch"]);
     const malformed = await host.tool("ovrcr_followup", {handle:"assignment",expected_identity:{},expected_result_version:1,expected_control_epoch:1,text:""});
     assert.equal(malformed.details.dispatch, "Refused");
