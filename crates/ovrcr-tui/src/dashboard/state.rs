@@ -820,8 +820,8 @@ impl Dashboard {
     /// shows a refusal inline: no `Conflict:`-style code in front, `project/<workspace id>`
     /// read as `project / branch` and a bare workspace id as its branch, and `#N` as that
     /// session's title. An id that continues a path stays, since a worktree's real folder
-    /// may be named after it, and an id nothing names stays as written. Lane L1's
-    /// `plain_reason` follows the same rules.
+    /// may be named after it, and an id nothing names stays as written. Inline form
+    /// errors add their own cleanups on top in `plain_reason`.
     pub(super) fn plain_error(&self, message: &str) -> String {
         let mut text = message.to_string();
         for project in &self.hierarchy.projects {
@@ -853,22 +853,7 @@ impl Dashboard {
                 .ok()
                 .and_then(|id| find_session(self, SessionId(id)))
             {
-                // Titled as L1's `plain_reason` names sessions: the id only when shared.
-                Some(session) => {
-                    let title = session.display_name();
-                    let shared = self
-                        .hierarchy
-                        .projects
-                        .iter()
-                        .flat_map(|project| &project.workspaces)
-                        .flat_map(|workspace| &workspace.sessions)
-                        .any(|other| other.id != session.id && other.display_name() == title);
-                    if shared {
-                        titled.push_str(&format!("{title} (#{})", session.id.0));
-                    } else {
-                        titled.push_str(title);
-                    }
-                }
+                Some(session) => titled.push_str(&self.session_title(session)),
                 None => titled.push_str(&rest[at..at + 1 + digits]),
             }
             rest = &rest[at + 1 + digits..];
@@ -4378,7 +4363,7 @@ fn is_input(request: &Request) -> bool {
 /// `text` with each stand-alone `from` replaced by `to`. An occurrence inside a path (a `/`
 /// on either side) or inside a longer word stays: a worktree's real directory may be named
 /// after its internal id.
-fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
+pub(super) fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
     let joined = |c: char| c == '/' || c.is_alphanumeric() || matches!(c, '-' | '_' | '.');
     let mut out = String::with_capacity(text.len());
     let mut rest = text;

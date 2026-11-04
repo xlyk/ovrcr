@@ -6,7 +6,8 @@ use super::picker::{
 };
 use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
 use super::state::{
-    find_session, find_workspace, session_workspace_heading, workspace_heading, workspace_label,
+    find_session, find_workspace, replace_outside_paths, session_workspace_heading,
+    workspace_heading, workspace_label,
 };
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{
@@ -4195,20 +4196,6 @@ fn mark_form_edit(
         _ => {}
     }
 }
-/// `text` with `from` replaced by `to`, except where `from` continues a path:
-/// a worktree's real directory may be named after its internal id.
-fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(from) {
-        out.push_str(&rest[..at]);
-        out.push_str(if rest[..at].ends_with('/') { from } else { to });
-        rest = &rest[at + from.len()..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn unavailable_agent(name: &str) -> String {
     format!("Agent '{name}' is unavailable. Choose another agent or explicitly select Terminal.")
 }
@@ -4348,7 +4335,7 @@ impl Dashboard {
     }
 
     /// A session's title, with its id only when another session shares it.
-    fn session_title(&self, session: &SessionSummary) -> String {
+    pub(super) fn session_title(&self, session: &SessionSummary) -> String {
         let title = session.display_name();
         let shared = self
             .hierarchy
@@ -4550,9 +4537,9 @@ impl Dashboard {
         }
     }
 
-    /// The Server's reason with branch names for internal workspace ids and
-    /// titles for `#id` sessions. `created` names a workspace the hierarchy
-    /// does not have yet: project, id and branch.
+    /// The Server's reason for an inline form error: [`Self::plain_error`]'s ids and
+    /// titles, plus the form-only cleanups below. `created` names a workspace the
+    /// hierarchy does not have yet: project, id and branch.
     pub(super) fn plain_reason(
         &self,
         message: &str,
@@ -4564,23 +4551,24 @@ impl Dashboard {
             .projects
             .iter()
             .flat_map(|project| &project.workspaces)
-            .map(|workspace| {
-                (
-                    workspace.project.clone(),
-                    workspace.id.clone(),
-                    workspace_label(self, workspace),
-                )
-            })
-            .chain(created);
-        for (project, id, label) in known {
-            let qualified = format!("{project}/{id}");
+            .map(|workspace| (workspace.project.clone(), workspace.id.clone()));
+        let created_id = created
+            .as_ref()
+            .map(|(project, id, _)| (project.clone(), id.clone()));
+        for (project, id) in known.chain(created_id) {
             // Whoever shows this already says what was being created.
-            if let Some(rest) = text.strip_prefix(&format!("create workspace {qualified}: ")) {
+            if let Some(rest) = text.strip_prefix(&format!("create workspace {project}/{id}: ")) {
                 text = rest.to_owned();
             }
-            text = replace_outside_paths(&text, &qualified, &label);
+        }
+        if let Some((project, id, branch)) = &created {
+            text = replace_outside_paths(
+                &text,
+                &format!("{project}/{id}"),
+                &format!("{project} / {branch}"),
+            );
             if id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                text = replace_outside_paths(&text, &id, &label);
+                text = replace_outside_paths(&text, id, branch);
             }
         }
         // Git's own words are the useful part of the Git runner's report.
@@ -4603,27 +4591,7 @@ impl Dashboard {
                 ),
             );
         }
-        let mut titled = String::with_capacity(text.len());
-        let mut rest = text.as_str();
-        while let Some(at) = rest.find('#') {
-            titled.push_str(&rest[..at]);
-            let digits = rest[at + 1..]
-                .bytes()
-                .take_while(u8::is_ascii_digit)
-                .count();
-            let reference = &rest[at..at + 1 + digits];
-            match rest[at + 1..at + 1 + digits]
-                .parse()
-                .ok()
-                .and_then(|id| find_session(self, SessionId(id)))
-            {
-                Some(session) => titled.push_str(&self.session_title(session)),
-                None => titled.push_str(reference),
-            }
-            rest = &rest[at + 1 + digits..];
-        }
-        titled.push_str(rest);
-        titled
+        self.plain_error(&text)
     }
 
     /// The palette waiting on Lifecycle job `token`, out of view while the job
@@ -6732,7 +6700,7 @@ mod form_tests {
                 ),
                 None
             ),
-            "sessions block removal of workspace feature/status-check: live: verify spinner, local (#14); kill or close them"
+            "sessions block removal of workspace consigint / feature/status-check: live: verify spinner, local (#14); kill or close them"
         );
         let new_id = "0123456789abcdef0123456789abcdef";
         assert_eq!(
@@ -6775,7 +6743,7 @@ mod form_tests {
         );
         assert_eq!(
             reason,
-            "sessions block removal of workspace feature/status-check: stopped sessions may still have processes running: verify spinner, #99 (archived); once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
+            "sessions block removal of workspace consigint / feature/status-check: stopped sessions may still have processes running: verify spinner, #99 (archived); once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
         );
         assert!(!reason.contains("--force") && !reason.contains("ovrcr terminal"));
     }

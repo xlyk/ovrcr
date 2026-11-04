@@ -371,38 +371,6 @@ fn quota_line(quota: &QuotaSnapshot, width: usize, now: u64) -> Line<'static> {
     Line::from(spans)
 }
 
-pub(super) fn window_text(provider: &ProviderQuota, window: &QuotaWindow, now: u64) -> String {
-    if window.resets_unix_ms.is_some_and(|reset| reset <= now) {
-        return "— reset due".into();
-    }
-    let value = if window.over_limit {
-        "over limit".into()
-    } else {
-        match window.remaining_basis_points() {
-            Some(0) => "0% exhausted".into(),
-            Some(left) if left < 100 => "<1%".into(),
-            Some(left) => format!("{}%", (u32::from(left) + 50) / 100),
-            None => "—".into(),
-        }
-    };
-    if !provider.stale(now) || provider.windows.is_empty() {
-        return value;
-    }
-    let left = if !window.over_limit && window.remaining_basis_points().is_some_and(|l| l > 0) {
-        " left"
-    } else {
-        ""
-    };
-    match provider
-        .checked_unix_ms
-        .max(provider.observed_unix_ms)
-        .and_then(|stamp| ovrcr_protocol::freshness::age_ms(stamp, now))
-    {
-        Some(age) => format!("{value}{left}  stale {}", span(age / 60_000)),
-        None => format!("{value}{left}  stale"),
-    }
-}
-
 /// Whole minutes as the largest unit that keeps them short: 12m, 5h, 3d.
 pub(super) fn span(minutes: u64) -> String {
     match minutes {
