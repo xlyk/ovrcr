@@ -32,6 +32,7 @@ pub mod task_tui {
     pub use ovrcr_tui::task_tui::*;
 }
 pub mod tui {
+    pub use ovrcr_tui::{ConnectStatus, ConnectStatusFn};
     pub use ovrcr_tui::{
         DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding, PaneRects,
         Settings, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,

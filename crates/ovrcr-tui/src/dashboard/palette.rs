@@ -158,6 +158,8 @@ pub(super) struct Palette {
     submit_when_ready: bool,
     cursor: super::text_cursor::TextCursor,
     scroll: Option<usize>,
+    /// The Confirm page is the Connect agent status preview: Enter writes the hooks.
+    connect_status: bool,
 }
 
 impl Dashboard {
@@ -186,11 +188,41 @@ impl Dashboard {
         }
     }
 
-    fn connect_agent_status(&mut self) -> DashboardAction {
-        let Some((connect, note)) = self.connect_status.clone() else {
+    /// Shows the startup screen's text on a Confirm page; nothing is written until Enter.
+    /// When there is nothing to confirm (already connected, or every file refused) the
+    /// result shows at once.
+    fn preview_agent_status(&mut self, palette: &mut Palette) -> DashboardAction {
+        let Some((connect, _)) = &self.connect_status else {
             return DashboardAction::Redraw;
         };
-        match connect() {
+        match connect(false) {
+            crate::ConnectStatus::Confirm(text) => {
+                palette.page = Page::Confirm {
+                    request: None,
+                    target: text,
+                };
+                palette.connect_status = true;
+                DashboardAction::Redraw
+            }
+            crate::ConnectStatus::Done(result) => self.finish_agent_status(result),
+        }
+    }
+
+    fn connect_agent_status(&mut self) -> DashboardAction {
+        let Some((connect, _)) = &self.connect_status else {
+            return DashboardAction::Redraw;
+        };
+        match connect(true) {
+            crate::ConnectStatus::Done(result) => self.finish_agent_status(result),
+            crate::ConnectStatus::Confirm(_) => DashboardAction::Redraw,
+        }
+    }
+
+    fn finish_agent_status(&mut self, result: Result<String, String>) -> DashboardAction {
+        let Some((_, note)) = self.connect_status.clone() else {
+            return DashboardAction::Redraw;
+        };
+        match result {
             Ok(done) => {
                 self.connect_status = None;
                 // The startup note is no longer true; drop it wherever it waits.
@@ -575,6 +607,7 @@ impl Palette {
             submit_when_ready: false,
             cursor: Default::default(),
             scroll: None,
+            connect_status: false,
         }
     }
 
@@ -2314,7 +2347,11 @@ impl Dashboard {
                                 if let Some(request_id) = palette.suggestions.inspect {
                                     self.ignored_responses.insert(request_id);
                                 }
-                                return self.connect_agent_status();
+                                palette.suggestions.inspect = None;
+                                action = self.preview_agent_status(&mut palette);
+                                if !palette.connect_status {
+                                    return action;
+                                }
                             }
                             Command::Hint(action) => {
                                 if self
@@ -2642,6 +2679,9 @@ impl Dashboard {
                         {
                             row.then = steps;
                         }
+                    } else if palette.connect_status {
+                        self.palette = None;
+                        return self.connect_agent_status();
                     } else {
                         self.palette = None;
                         return DashboardAction::Redraw;
@@ -3684,7 +3724,7 @@ impl Dashboard {
                 }
             }
             Page::Confirm { target, .. } => {
-                lines.push(Line::from(target.clone()));
+                lines.extend(target.lines().map(|line| Line::from(line.to_owned())));
             }
         }
         let scroll = palette
@@ -3835,6 +3875,7 @@ impl Dashboard {
                 Command::RemoveWorkspace => "Remove workspace",
                 _ => "Remove project",
             },
+            Page::Confirm { .. } if palette.connect_status => "Connect agent status",
             Page::Confirm { .. } => "Confirm action",
         };
         let launch_banner = if let Page::Form { fields, .. } = &palette.page {

@@ -4,6 +4,7 @@
 
 use crate::*;
 use ovrcr::protocol::{ErrorCode, Request, Response, SettingsReport};
+use ovrcr::tui::ConnectStatus;
 use std::path::Path;
 
 #[cfg(target_os = "macos")]
@@ -186,7 +187,7 @@ fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
 
 const STATUS_OFF: &str = "Claude status off — :connect to set up";
 
-fn no_connect() -> Result<String, String> {
+fn no_connect(_: bool) -> ConnectStatus {
     panic!("nothing chose Connect agent status")
 }
 
@@ -226,12 +227,19 @@ fn startup_status_off_is_a_calm_one_time_note_behind_the_findings_notice() {
 #[test]
 fn palette_connects_agent_status_until_it_succeeds() {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    static PREVIEWS: AtomicUsize = AtomicUsize::new(0);
     static CALLS: AtomicUsize = AtomicUsize::new(0);
-    fn connect() -> Result<String, String> {
-        match CALLS.fetch_add(1, Ordering::SeqCst) {
+    fn connect(apply: bool) -> ConnectStatus {
+        if !apply {
+            PREVIEWS.fetch_add(1, Ordering::SeqCst);
+            return ConnectStatus::Confirm(
+                "Lets OVRCR show when your Claude sessions are working, need you or are done.\nAdds or updates OVRCR hooks in:\n  /p/settings.json\nYour other settings, status line and approvals stay as they are.".into(),
+            );
+        }
+        ConnectStatus::Done(match CALLS.fetch_add(1, Ordering::SeqCst) {
             0 => Err("Couldn't connect Claude status: native settings file is read-only in /p/settings.json; fix the file and try again".into()),
             _ => Ok("Claude status connected for new sessions".into()),
-        }
+        })
     }
     fn listed(dashboard: &mut Dashboard) -> bool {
         dashboard.key(KeyCode::Char(':'));
@@ -246,17 +254,38 @@ fn palette_connects_agent_status_until_it_succeeds() {
         dashboard.key(KeyCode::Char(':'));
         only_request(dashboard.drain_outbox());
         dashboard.event_action(Event::Paste("connect agent status".into()));
+        // The entry opens the startup screen's text; nothing is written yet.
+        let calls = CALLS.load(Ordering::SeqCst);
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        let page = screen(dashboard);
+        assert!(page.contains("Adds or updates OVRCR hooks in:"), "{page}");
+        assert!(page.contains("/p/settings.json"), "{page}");
+        assert!(page.contains("Enter confirm · Esc cancel"), "{page}");
+        assert_eq!(CALLS.load(Ordering::SeqCst), calls);
         assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
         assert!(
             dashboard.drain_outbox().is_empty(),
             "connecting is local, not a Server request"
         );
-        assert!(!screen(dashboard).contains("Connect agent status"));
+        assert!(!screen(dashboard).contains("Adds or updates OVRCR hooks in:"));
     }
 
     let mut dashboard = dashboard_fixture();
     assert!(!listed(&mut dashboard), "nothing to connect");
     dashboard.status_off(STATUS_OFF.into(), connect);
+    assert!(listed(&mut dashboard));
+
+    // Esc on the confirmation page writes nothing and keeps the entry.
+    dashboard.key(KeyCode::Char(':'));
+    only_request(dashboard.drain_outbox());
+    dashboard.event_action(Event::Paste("connect agent status".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(screen(&dashboard).contains("Adds or updates OVRCR hooks in:"));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "Esc must not connect");
+    assert_eq!(PREVIEWS.load(Ordering::SeqCst), 1);
+    assert!(!screen(&dashboard).contains("Adds or updates OVRCR hooks in:"));
+    assert!(!rendered_footer(&dashboard, 200).contains("connected"));
     assert!(listed(&mut dashboard));
 
     choose(&mut dashboard);
@@ -284,8 +313,12 @@ fn palette_connects_agent_status_until_it_succeeds() {
 /// banner, so the next key does not bring back `… status off`.
 #[test]
 fn connecting_retires_a_queued_status_off_note() {
-    fn connect() -> Result<String, String> {
-        Ok("Claude status connected for new sessions".into())
+    fn connect(apply: bool) -> ConnectStatus {
+        if apply {
+            ConnectStatus::Done(Ok("Claude status connected for new sessions".into()))
+        } else {
+            ConnectStatus::Confirm("Adds or updates OVRCR hooks in:\n  /p/settings.json".into())
+        }
     }
     let mut dashboard = dashboard_fixture();
     dashboard.status_off(STATUS_OFF.into(), connect);
@@ -302,6 +335,7 @@ fn connecting_retires_a_queued_status_off_note() {
     dashboard.key(KeyCode::Char(':'));
     only_request(dashboard.drain_outbox());
     dashboard.event_action(Event::Paste("connect agent status".into()));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         rendered_footer(&dashboard, 200),

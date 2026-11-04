@@ -582,8 +582,12 @@ deliver Ready/Unread on their supported readiness paths (Claude Ready is Observe
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows a one-time footer
 note such as `Claude and Codex status off — :connect to set up`, never an error;
-the palette's **Connect agent status**, listed until it succeeds, installs the
-hooks without another question (a failure stays in the footer and keeps the entry).
+the palette's **Connect agent status**, listed until it succeeds, opens a
+confirmation page with the startup screen's text: what connecting does, the files it
+adds or updates and the Codex trust line. Enter installs the hooks and shows the
+result line (with any manual-migration note); Esc closes it and writes nothing. When
+nothing needs writing the result shows at once. A failure stays in the footer and
+keeps the entry.
 Observed reporting loss keeps an `unavailable` status with its published reason.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
