@@ -479,7 +479,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                         KeyModifiers::NONE,
                     ),
                     native("Enter", "Open composer", Enter, KeyModifiers::NONE),
-                    native("x", "Close conversation", Char('x'), KeyModifiers::NONE),
+                    native("X", "Close conversation", Char('X'), KeyModifiers::NONE),
                     native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
                     native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
                     native("Tab", "Transcript", Tab, KeyModifiers::NONE),

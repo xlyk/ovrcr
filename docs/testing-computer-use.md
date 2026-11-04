@@ -268,7 +268,8 @@ Run these checks with the mouse for navigation; use the keyboard only to enter
 text. Save a screenshot and accessibility text after each changed view. Repeat
 the form and menu checks in a short window to exercise scrolling and clipping.
 
-1. Open the action menu with its visible control and open a second terminal pane.
+1. Open the action menu with its visible control and open a second terminal pane;
+   press Return in the chooser that opens to keep the suggested session.
    Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
    `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.

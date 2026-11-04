@@ -21,7 +21,7 @@ copy` while a copy is pending and `Esc Back` otherwise.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. Click the title bar's Actions control to open the palette
+only key it intercepts. Click the title bar's Commands control to open the palette
 or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
 
 ## Operator chat
@@ -503,8 +503,11 @@ Entries are, in order: `Create terminal (n)`, `Create workspace (w)`,
 `Register project (a)`, the selected session's actions (`Rename terminal`,
 resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
 Settings, Events, quota actions, `Archived sessions`, one row per session, and
-the remaining key-popup actions by name. The palette lists only actions the
-current target can run; the key popup keeps the dimmed row and its reason.
+the remaining key-popup actions by name. The palette follows the key popup's
+rule: it drops actions the current target cannot use, and keeps one that is
+waiting for the pane's screen or blocked (such as `Create terminal` while the
+root workspace is off its default branch) with the reason below it, so rows do
+not shift under the cursor when the action becomes available.
 
 Searching also finds every setting by its label or its `dashboard.toml` key, as
 `Settings: <label>` with the group and key below it (`theme`, `notifications`,

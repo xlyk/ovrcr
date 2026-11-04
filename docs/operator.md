@@ -158,11 +158,12 @@ that turn's model and Bash work; an OVRCR operation already accepted may finish.
 Visible partial text and command outcomes remain in history. Generic
 `terminal kill` and `terminal close` refuse Operator conversations; use native Stop.
 
-To close a conversation, focus its sidebar row and press `x`, or hover and click
+To close a conversation, focus its sidebar row and press `X`, or hover and click
 `[x]`. Confirming stops its exact retained run and archives the conversation while
 preserving model history and the journal. A nonempty draft is discarded only after
 archive is acknowledged. Cancellation or failure retains it. Closing one chat leaves
-other conversations usable. Ordinary `x` in the message or model field remains text.
+other conversations usable. Lowercase `x` never closes a conversation; in the
+message or model field it remains text.
 Archived sessions offers Unarchive for saved Operator conversations.
 
 Wait for confirmed worker stop before submitting again. **Finishing / stop

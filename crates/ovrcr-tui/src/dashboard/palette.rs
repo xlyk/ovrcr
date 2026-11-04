@@ -1823,14 +1823,15 @@ impl Dashboard {
                 command: Command::Hint(hint.action),
             });
         }
-        // The key popup dims an unavailable row and says why; the palette lists
-        // only what the current target can run.
+        // The key popup's rule: drop what the current target cannot use; keep a
+        // row that waits for the screen or is blocked, with its reason, so the
+        // list does not shift under the cursor when it becomes available.
         entries.retain(|entry| {
             command_action(&entry.command).is_none_or(|action| {
                 bindings
                     .iter()
                     .find(|binding| binding.action == action)
-                    .is_none_or(KeyBinding::enabled)
+                    .is_none_or(KeyBinding::shown_in_group)
             })
         });
         // Settings rows are found by searching, not listed.
@@ -4229,7 +4230,7 @@ mod mouse_tests {
     fn mouse_actions_search_and_confirmation_pending_guard() {
         let mut d = dashboard();
         d.mode = InputMode::Terminal;
-        click(&mut d, "[Actions]", 1, 100, 30);
+        click(&mut d, "[Commands]", 1, 100, 30);
         assert_eq!(d.drain_one_request().unwrap().request, Request::Inspect);
         click(&mut d, "Register project", 1, 100, 30);
         assert!(matches!(

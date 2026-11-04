@@ -516,7 +516,7 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
     });
     assert!(
         palette_text(&dashboard).contains("Search"),
-        "opening Actions should capture the overlay"
+        "opening Commands should capture the overlay"
     );
 }
 
@@ -2200,17 +2200,36 @@ fn palette_lists_only_the_actions_the_target_can_run() {
     palette_search(&mut dashboard, "pause");
     assert!(palette_text(&dashboard).contains("p — Pause the processes"));
     dashboard.key(KeyCode::Esc);
-    // A pane still waiting for its screen hides the action here, while the key
-    // popup keeps the dimmed row and says why.
+    // A pane still waiting for its screen keeps the action listed with its
+    // reason, as the key popup does; Enter on it does nothing yet.
     dashboard.install_unready(SessionId(1));
     palette_search(&mut dashboard, "copy screen");
-    assert!(palette_text(&dashboard).contains("No matching actions or terminals"));
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Copy screen: waiting for acknowledged screen"),
+        "{text}"
+    );
+    dashboard.key(KeyCode::Enter);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(palette_text(&dashboard).contains("Command palette"));
     dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('t'));
     let menu = whichkey_menu_text(&dashboard);
     assert!(menu.contains("c  Copy screen"), "{menu}");
     dashboard.key(KeyCode::Esc);
+    // A root workspace off its default branch keeps Create terminal listed with why.
+    let mut blocked = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].warning = Some("main is not checked out".into());
+    blocked.install_hierarchy(hierarchy);
+    palette_search(&mut blocked, "create terminal");
+    let text = palette_text(&blocked);
+    assert!(
+        text.contains("Create terminal (n)")
+            && text.contains("root workspace is not on the default branch"),
+        "{text}"
+    );
     // With no project there is nothing to create a terminal or workspace in.
     let mut empty = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
     palette_search(&mut empty, "create");
@@ -2220,6 +2239,29 @@ fn palette_lists_only_the_actions_the_target_can_run() {
     empty.key(KeyCode::Esc);
     palette_search(&mut empty, "register");
     assert!(palette_text(&empty).contains("Register project (a)"));
+}
+
+#[test]
+fn palette_row_under_the_cursor_stays_put_when_the_pane_becomes_ready() {
+    let selected = |dashboard: &Dashboard| {
+        palette_text(dashboard)
+            .lines()
+            .find_map(|line| {
+                line.split_once("│› ")
+                    .map(|(_, rest)| rest.split('│').next().unwrap().trim().to_owned())
+            })
+            .expect("a selected palette row")
+    };
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_unready(SessionId(1));
+    palette_search(&mut dashboard, "");
+    for _ in 0..200 {
+        dashboard.key(KeyCode::Down);
+    }
+    let before = selected(&dashboard);
+    // The screen acknowledgement lands while the palette is open.
+    dashboard.install_screen(SessionId(1), &[]);
+    assert_eq!(selected(&dashboard), before);
 }
 
 #[test]

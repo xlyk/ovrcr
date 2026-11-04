@@ -1005,7 +1005,7 @@ impl Dashboard {
                 KeyCode::Down | KeyCode::Char('j') => {
                     (current + 1).min(ids.len().saturating_sub(1))
                 }
-                KeyCode::Char('x') => {
+                KeyCode::Char('X') => {
                     if let Some(id) = self.operator.selected {
                         return self.open_close_operator_for(id);
                     }
@@ -3702,7 +3702,10 @@ mod tests {
             .map(|x| terminal.backend().buffer()[(x, rect.y + 1)].symbol())
             .collect();
         assert_eq!(last, "[x]");
+        // Lowercase x never closes; X asks to close the selected conversation.
         d.key(KeyCode::Char('x'));
+        assert!(d.palette.is_none());
+        d.key(KeyCode::Char('X'));
         assert!(d.palette.is_some());
         assert!(draw(&mut d, 120, 24).contains("unconfirmed"));
         d.key(KeyCode::Esc);
