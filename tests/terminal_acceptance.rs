@@ -1431,7 +1431,8 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         },
     )?;
     // One input burst also exercises submission while Inspect/Git are pending.
-    dashboard.send(b"\x07wwizard\r")?;
+    // The form opens on Task; two Tabs reach Branch.
+    dashboard.send(b"\x07w\t\twizard\r")?;
     dashboard.wait_until(
         |screen| {
             screen.contains("wizard")
@@ -1501,6 +1502,60 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     dashboard.detach()?;
     fixture.shutdown()?;
     eprintln!("workspace fixture cleanup: owned process groups and socket absent");
+    Ok(())
+}
+
+/// `w`, a task, Enter: the Server creates the branch from the task, then the
+/// first session named after it, and the Dashboard attaches to that session.
+#[test]
+fn workspace_task_names_branch_and_first_session_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    std::fs::write(
+        fixture.config.join("dashboard.toml"),
+        "branch_prefix = \"task/\"\n",
+    )?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"\x07wFix the login bug\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode") && !screen.contains("┌ Create workspace"),
+        Duration::from_secs(5),
+    )?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let hierarchy = fixture.list()?;
+    let workspace = hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == "fixture")
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == "task/fix-the-login-bug")
+        })
+        .context("workspace named after the task missing")?;
+    assert_eq!(workspace.sessions.len(), 1, "{:?}", workspace.sessions);
+    let terminal = &workspace.sessions[0];
+    assert_eq!(terminal.name, "Fix the login bug");
+    // The Terminal start only names the session: the shell got no argument.
+    dashboard.send(b"printf 'TASK_%s\\n' SHELL_OK\r")?;
+    dashboard.wait_until(|screen| screen.contains("TASK_SHELL_OK"), wait_deadline())?;
+    assert!(
+        fixture
+            .read_terminal(terminal.id)?
+            .contains("TASK_SHELL_OK"),
+        "the Dashboard attached to the task's session"
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
     Ok(())
 }
 
