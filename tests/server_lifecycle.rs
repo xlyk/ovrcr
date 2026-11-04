@@ -8757,18 +8757,25 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         details.contains("Quota details"),
         "details action missing: {details}"
     );
+    // The real session-sourced reading, in plain words: windows by length, its age, and no
+    // provenance (the session, run and Reporting generation stay on the wire).
     assert!(
-        details.contains(&format!("session #{}", summary.id.0)),
-        "source missing: {details}"
+        details.contains("5-hour  58% left") && details.contains("weekly  82% left"),
+        "windows missing: {details}"
     );
     assert!(
-        details.contains("Reporting generation"),
-        "generation missing: {details}"
+        details.contains("  as of "),
+        "reading age missing: {details}"
     );
-    assert!(
-        details.contains("last observation") && details.contains("reset:"),
-        "provenance missing: {details}"
-    );
+    for internal in [
+        format!("session #{}", summary.id.0),
+        "Reporting generation".into(),
+        "source:".into(),
+        "five_hour".into(),
+        "seven_day".into(),
+    ] {
+        assert!(!details.contains(&internal), "{internal}: {details}");
+    }
 }
 
 #[test]

@@ -4,7 +4,7 @@ use super::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ovrcr_protocol::{
-    ClientMessage, ProviderQuota, QuotaSnapshot, QuotaSource, QuotaState, QuotaWindow, Request,
+    ClientMessage, ProviderQuota, QuotaSnapshot, QuotaState, QuotaWindow, Request,
 };
 use ratatui::{
     Frame,
@@ -141,96 +141,55 @@ impl Dashboard {
         );
     }
 
+    /// The details popup in plain words: per provider its state, any reason, each window's
+    /// allowance left with its reset as local time and relative, and when the reading is
+    /// from. No window keys, sources or Reporting generations: those stay on the wire.
     fn quota_lines(&self, now: u64) -> Vec<String> {
         let quota = self.quotas.clone().unwrap_or_default();
         let mut lines = vec!["Subscription allowance only.".into(), String::new()];
-        let seen = |stamp| match ovrcr_protocol::freshness::age_ms(stamp, now) {
-            Some(age) => format!("{} ({} ago)", local_time(stamp), span(age / 60_000)),
-            None => format!("{} (unverifiable age)", local_time(stamp)),
-        };
+        let at = |stamp| when(stamp, now, &chrono::Local);
         for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
             lines.push(format!(
-                "{} — {}",
+                "{} · {}",
                 provider.provider.name(),
-                if provider.state == QuotaState::Current && !provider.windows.is_empty() {
-                    "reported"
-                } else {
-                    provider.state.label()
-                }
+                state_words(provider, now)
             ));
-            match (&provider.reason, provider.state) {
-                (Some(sentence), QuotaState::Disabled) => lines.push(sentence.clone()),
-                (Some(reason), _) => lines.push(format!("reason: {reason}")),
-                (None, _) => {}
+            if let Some(reason) = &provider.reason {
+                lines.push(format!("  {reason}"));
             }
-            lines.push(match &provider.source {
-                Some(QuotaSource::Session {
-                    session,
-                    run,
-                    binding,
-                }) => format!(
-                    "source: session #{} run #{}; Reporting generation {}",
-                    session.0, run.0, binding.generation
-                ),
-                Some(QuotaSource::NativeProfile {
-                    profile,
-                    generation,
-                }) => format!("source: {profile}; generation {generation}"),
-                Some(QuotaSource::Probe { probed_unix_ms }) => {
-                    format!("source: probe; last probe {}", seen(*probed_unix_ms))
-                }
-                None => "source: no native source selected".into(),
-            });
-            lines.push(format!(
-                "last observation: {}",
-                provider
-                    .observed_unix_ms
-                    .map(seen)
-                    .unwrap_or_else(|| "not reported".into())
-            ));
-            lines.push(format!(
-                "last account check: {}",
-                provider.checked_unix_ms.map(seen).unwrap_or_else(|| {
-                    "not reported (native callback is not a backend check)".into()
-                })
-            ));
-            lines.push(format!(
-                "next check: {}",
-                provider
-                    .next_check_unix_ms
-                    .map(|stamp| format!("{} ({})", local_time(stamp), until(stamp, now)))
-                    .unwrap_or_else(|| "not scheduled".into())
-            ));
             for window in &provider.windows {
-                let reset = window
-                    .resets_unix_ms
-                    .and_then(|stamp| i64::try_from(stamp).ok())
-                    .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
-                    .map(|stamp| stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-                    .unwrap_or_else(|| "not reported or unverifiable".into());
-                lines.push(format!(
-                    "{} [{}]: {} · reset: {reset}",
-                    window.label,
-                    window.id,
-                    window_text(provider, window, now)
-                ));
-                if provider.provider == crate::protocol::QuotaProvider::Cursor {
-                    let used = window
-                        .used_basis_points
-                        .map(|points| format!("{:.2}%", f64::from(points) / 100.0))
-                        .unwrap_or_else(|| {
-                            if window.over_limit {
-                                "over limit".into()
-                            } else {
-                                "—".into()
-                            }
-                        });
-                    let remaining = window
-                        .remaining_basis_points()
-                        .map(|points| format!("{:.2}%", f64::from(points) / 100.0))
-                        .unwrap_or_else(|| "—".into());
-                    lines.push(format!("  used: {used} · remaining: {remaining}"));
+                let mut line = format!("  {}  {}", window_name(window), left_words(window, now));
+                if let Some(reset) = window.resets_unix_ms.filter(|reset| *reset > now) {
+                    line.push_str(&format!(" · resets {}", at(reset)));
                 }
+                lines.push(line);
+                if provider.provider == crate::protocol::QuotaProvider::Cursor {
+                    let precise = |points: Option<u16>| {
+                        points.map_or_else(
+                            || "—".to_string(),
+                            |points| format!("{:.2}%", f64::from(points) / 100.0),
+                        )
+                    };
+                    lines.push(format!(
+                        "    {} used · {} left",
+                        if window.over_limit {
+                            "over limit".into()
+                        } else {
+                            precise(window.used_basis_points)
+                        },
+                        precise(window.remaining_basis_points())
+                    ));
+                }
+            }
+            let mut timing = Vec::new();
+            if let Some(stamp) = provider.checked_unix_ms.max(provider.observed_unix_ms) {
+                timing.push(format!("as of {}", at(stamp)));
+            }
+            if let Some(next) = provider.next_check_unix_ms {
+                timing.push(format!("next check {}", at(next)));
+            }
+            if !timing.is_empty() {
+                lines.push(format!("  {}", timing.join(" · ")));
             }
             lines.push(String::new());
         }
@@ -793,6 +752,93 @@ pub(super) fn local_time(stamp: u64) -> String {
         .unwrap_or_else(|| "unverifiable".into())
 }
 
+/// A provider's state in the details popup's words.
+fn state_words(provider: &ProviderQuota, now: u64) -> &'static str {
+    match provider.state {
+        QuotaState::Current if provider.windows.is_empty() => "nothing reported",
+        QuotaState::Current if provider.stale(now) => "out of date",
+        QuotaState::Current => "up to date",
+        QuotaState::Waiting => "waiting for a report",
+        QuotaState::Checking => "checking…",
+        QuotaState::Unavailable => "unavailable",
+        QuotaState::NotSignedIn => "not signed in",
+        QuotaState::Unsupported => "not supported",
+        QuotaState::Invalid => "unreadable report",
+        QuotaState::SourceConflict => "sources disagree",
+        QuotaState::Disabled => "off",
+    }
+}
+
+/// A window's length in words — `5h` as `5-hour`, `7d` and `wk` as `weekly` — or its own
+/// label when that is already a name (`plan`, `on-demand`). A bucket that is not general
+/// allowance keeps its provider identity: its length alone could not tell it from the
+/// general window of the same length.
+fn window_name(window: &QuotaWindow) -> String {
+    let label = window.label.as_str();
+    let count = |unit: char| {
+        label
+            .strip_suffix(unit)
+            .and_then(|count| count.parse::<u32>().ok())
+    };
+    let length = match label {
+        "wk" | "7d" => Some("weekly".to_string()),
+        "mo" => Some("monthly".to_string()),
+        "1d" => Some("daily".to_string()),
+        _ => count('h')
+            .map(|hours| format!("{hours}-hour"))
+            .or_else(|| count('d').map(|days| format!("{days}-day")))
+            .or_else(|| count('m').map(|minutes| format!("{minutes}-minute"))),
+    };
+    match length {
+        Some(length) if !window.general => format!("{length} ({})", window.id),
+        Some(length) => length,
+        None => label.to_string(),
+    }
+}
+
+/// The allowance a window has left, in words.
+fn left_words(window: &QuotaWindow, now: u64) -> String {
+    if window.resets_unix_ms.is_some_and(|reset| reset <= now) {
+        return "reset due".into();
+    }
+    if window.over_limit {
+        return "over limit".into();
+    }
+    match window.remaining_basis_points() {
+        Some(left) if left > 0 && left < 100 => "under 1% left".into(),
+        Some(left) => format!("{}% left", (u32::from(left) + 50) / 100),
+        None => "unknown".into(),
+    }
+}
+
+/// A moment as clock time in `zone` and its distance from now: `9:10 PM (in 8h)` today,
+/// `Mon 9:10 PM (3d ago)` within a week either way, `Nov 12, 9:10 PM (in 12d)` beyond.
+fn when<Tz: chrono::TimeZone>(stamp: u64, now: u64, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let local = |ms: u64| {
+        i64::try_from(ms)
+            .ok()
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|time| time.with_timezone(zone))
+    };
+    let (Some(time), Some(today)) = (local(stamp), local(now)) else {
+        return "at an unknown time".into();
+    };
+    let pattern = match (time.date_naive() - today.date_naive()).num_days().abs() {
+        0 => "%-I:%M %p",
+        1..=6 => "%a %-I:%M %p",
+        _ => "%b %-d, %-I:%M %p",
+    };
+    let distance = if stamp > now {
+        until(stamp, now)
+    } else {
+        format!("{} ago", span((now - stamp) / 60_000))
+    };
+    format!("{} ({distance})", time.format(pattern))
+}
+
 #[cfg(test)]
 mod bar_math_tests {
     use super::{STALE_RESERVE, bar_filled, bar_width};
@@ -814,5 +860,117 @@ mod bar_math_tests {
         assert_eq!(bar_filled(0, 10), 0);
         assert_eq!(bar_filled(5_000, 10), 5);
         assert_eq!(bar_filled(3_700, 10), 4); // 37% remaining → round(3.7)=4
+    }
+}
+
+#[cfg(test)]
+mod details_tests {
+    use super::{left_words, state_words, when, window_name};
+    use chrono::TimeZone;
+    use ovrcr_protocol::{ProviderQuota, QuotaProvider, QuotaState, QuotaWindow};
+
+    fn window(label: &str, id: &str, general: bool, used: Option<u16>) -> QuotaWindow {
+        QuotaWindow {
+            id: id.into(),
+            label: label.into(),
+            general,
+            used_basis_points: used,
+            over_limit: false,
+            resets_unix_ms: None,
+        }
+    }
+
+    #[test]
+    fn window_names_are_lengths_in_words_and_other_buckets_keep_their_identity() {
+        for (label, expected) in [
+            ("5h", "5-hour"),
+            ("7d", "weekly"),
+            ("wk", "weekly"),
+            ("mo", "monthly"),
+            ("1d", "daily"),
+            ("3d", "3-day"),
+            ("90m", "90-minute"),
+            ("plan", "plan"),
+            ("on-demand", "on-demand"),
+        ] {
+            assert_eq!(window_name(&window(label, "id", true, None)), expected);
+        }
+        // A special-model bucket of the same length as the general one stays telling.
+        assert_eq!(
+            window_name(&window("1h", "special-model/primary", false, None)),
+            "1-hour (special-model/primary)"
+        );
+        assert_eq!(
+            window_name(&window("on-demand", "cursor/onDemand", false, None)),
+            "on-demand"
+        );
+    }
+
+    #[test]
+    fn allowance_left_reads_as_words() {
+        let now = 1_000;
+        let mut five = window("5h", "five_hour", true, Some(200));
+        assert_eq!(left_words(&five, now), "98% left");
+        five.used_basis_points = Some(10_000);
+        assert_eq!(left_words(&five, now), "0% left");
+        five.used_basis_points = Some(9_950);
+        assert_eq!(left_words(&five, now), "under 1% left");
+        five.used_basis_points = None;
+        assert_eq!(left_words(&five, now), "unknown");
+        five.over_limit = true;
+        assert_eq!(left_words(&five, now), "over limit");
+        five.resets_unix_ms = Some(now);
+        assert_eq!(left_words(&five, now), "reset due");
+    }
+
+    #[test]
+    fn times_read_as_clock_time_and_distance_in_the_given_zone() {
+        // Tuesday 2026-11-03, noon UTC.
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 3, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis() as u64;
+        let (minute, hour, day) = (60_000, 3_600_000, 86_400_000);
+        let utc = chrono::Utc;
+        assert_eq!(
+            when(now + 9 * hour + 10 * minute, now, &utc),
+            "9:10 PM (in 9h)"
+        );
+        assert_eq!(when(now - 5 * minute, now, &utc), "11:55 AM (5m ago)");
+        assert_eq!(when(now + 3 * day, now, &utc), "Fri 12:00 PM (in 3d)");
+        assert_eq!(when(now - 2 * day, now, &utc), "Sun 12:00 PM (2d ago)");
+        assert_eq!(when(now + 12 * day, now, &utc), "Nov 15, 12:00 PM (in 12d)");
+        // The zone decides the day: four hours on is past midnight in Tokyo.
+        let tokyo = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
+        assert_eq!(when(now + 4 * hour, now, &tokyo), "Wed 1:00 AM (in 4h)");
+        assert_eq!(when(u64::MAX, now, &utc), "at an unknown time");
+    }
+
+    #[test]
+    fn provider_states_read_as_words() {
+        let now = 10 * 60_000;
+        let mut current = ProviderQuota {
+            windows: vec![window("5h", "five_hour", true, Some(200))],
+            observed_unix_ms: Some(now),
+            ..ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Current)
+        };
+        assert_eq!(state_words(&current, now), "up to date");
+        current.observed_unix_ms = Some(now - 6 * 60_000);
+        assert_eq!(state_words(&current, now), "out of date");
+        current.windows.clear();
+        assert_eq!(state_words(&current, now), "nothing reported");
+        for (state, expected) in [
+            (QuotaState::Waiting, "waiting for a report"),
+            (QuotaState::Checking, "checking…"),
+            (QuotaState::Unavailable, "unavailable"),
+            (QuotaState::NotSignedIn, "not signed in"),
+            (QuotaState::Unsupported, "not supported"),
+            (QuotaState::Invalid, "unreadable report"),
+            (QuotaState::SourceConflict, "sources disagree"),
+            (QuotaState::Disabled, "off"),
+        ] {
+            let provider = ProviderQuota::unknown(QuotaProvider::Grok, state);
+            assert_eq!(state_words(&provider, now), expected);
+        }
     }
 }
