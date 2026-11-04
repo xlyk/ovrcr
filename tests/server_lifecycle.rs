@@ -11610,26 +11610,14 @@ printf '%s\n' "$reply"
     }
 
     fn select(&mut self, name: &str, terminal_marker: &str) {
-        // A Ready or an input request brings the attention strip up or down and moves every
-        // tree row a line, so aim only at a settled screen and re-aim if the click missed.
-        for _ in 0..3 {
-            self.settle();
-            let screen = self.parser.screen().contents();
-            let row = screen
-                .lines()
-                .position(|line| line.chars().take(32).collect::<String>().contains(name))
-                .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
-            self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < deadline {
-                if self.parser.screen().contents().contains(terminal_marker) {
-                    return;
-                }
-                if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(20)) {
-                    self.parser.process(&bytes);
-                }
-            }
-        }
+        // Aim at a whole frame, not part of one.
+        self.settle();
+        let screen = self.parser.screen().contents();
+        let row = screen
+            .lines()
+            .position(|line| line.chars().take(32).collect::<String>().contains(name))
+            .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
+        self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
         self.wait_screen(|screen| screen.contains(terminal_marker));
     }
 
