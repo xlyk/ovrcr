@@ -2033,6 +2033,24 @@ fn pane_header_reads_in_plain_words() {
 }
 
 #[test]
+fn pane_header_names_the_selected_project_or_workspace_above_its_card() {
+    let mut dashboard = header_dashboard(header_session(
+        "local",
+        crate::protocol::SessionKind::Terminal,
+        "zsh",
+        0,
+    ));
+    dashboard.select_container(super::TreeRow::Workspace {
+        project: "p".into(),
+        id: "w".into(),
+    });
+    assert_eq!(dashboard.focused_session(), None);
+    assert_eq!(header_row(&dashboard, 120, 0).trim_end(), "p / w");
+    dashboard.select_container(super::TreeRow::Project { name: "p".into() });
+    assert_eq!(header_row(&dashboard, 120, 0).trim_end(), "p");
+}
+
+#[test]
 fn pane_header_gives_up_pid_elapsed_model_and_label_before_the_state() {
     use crate::protocol::*;
     let mut session = header_session(

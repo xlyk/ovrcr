@@ -540,10 +540,25 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         let width = usize::from(rect.metadata.width);
         let metadata = selected.map_or_else(
             || {
-                Line::from(Span::styled(
-                    "no session selected",
-                    Style::default().fg(MUTED()),
-                ))
+                // A selected project or workspace fills the pane with its card: name it.
+                let heading = match &dashboard.selected_container {
+                    Some(TreeRow::Workspace { project, id }) => {
+                        find_workspace(dashboard, project, id)
+                            .map(|workspace| workspace_heading(dashboard, workspace))
+                    }
+                    Some(TreeRow::Project { name }) => Some(name.clone()),
+                    _ => None,
+                };
+                match heading {
+                    Some(heading) => Line::from(Span::styled(
+                        clip_text(&heading, width),
+                        Style::default().fg(TEXT()),
+                    )),
+                    None => Line::from(Span::styled(
+                        "no session selected",
+                        Style::default().fg(MUTED()),
+                    )),
+                }
             },
             |session| {
                 pane_header(

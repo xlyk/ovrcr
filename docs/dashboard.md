@@ -367,7 +367,8 @@ Each pane has a two-line header. The first line reads, left to right: the
 session title, the agent and model (`claude:opus-5-5`; `shell` for a terminal
 without an agent label), the state in words and the elapsed time, for example
 `verify spinner  claude:opus-5-5  Working · 2m` or `local  shell · 16m`. The
-process id follows, muted, at the far right while the line has room.
+process id follows, muted, at the far right while the line has room. With a project
+or workspace row selected, the header names it (`consigint / feature/x`) above its card.
 
 | State | Meaning |
 | --- | --- |
