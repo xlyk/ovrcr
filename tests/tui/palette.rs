@@ -166,14 +166,32 @@ fn question_mark_popup_is_browsable() {
 }
 
 #[test]
-fn question_mark_popup_lists_ready_sound_beside_desktop_notifications() {
+fn space_top_level_lists_groups_registration_and_detach_but_no_toggles() {
     let mut dashboard = dashboard_fixture();
-    dashboard.key(KeyCode::Char('?'));
-    let text = palette_text(&dashboard);
-    assert!(text.contains("Enable desktop notifications"), "{text}");
-    assert!(text.contains("Enable ready sound"), "{text}");
+    for opener in [' ', '?'] {
+        dashboard.key(KeyCode::Char(opener));
+        let menu = whichkey_menu_text(&dashboard);
+        for row in [
+            "t  Terminal",
+            "w  Workspace",
+            "p  Project",
+            "v  View",
+            "a  Register project",
+            "q  Detach",
+        ] {
+            assert!(menu.contains(row), "{opener:?} {row}: {menu}");
+        }
+        for toggle in ["notifications", "sound", "N  ", "S  "] {
+            assert!(!menu.contains(toggle), "{opener:?} {toggle}: {menu}");
+        }
+        dashboard.key(KeyCode::Esc);
+    }
+    // The toggles keep their Browse keys and stay in the palette and Settings.
     dashboard.key(KeyCode::Char('S'));
-    assert!(!palette_text(&dashboard).contains("Which key"));
+    assert!(matches!(
+        only_request(dashboard.drain_outbox()).request,
+        Request::SetSetting { ref path, .. } if path == "ready_sound"
+    ));
     // The toggle applies when the Server's reading of the saved value arrives.
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
         Box::new(ovrcr::protocol::SettingsReport {
@@ -188,10 +206,15 @@ fn question_mark_popup_lists_ready_sound_beside_desktop_notifications() {
             unparseable: false,
         }),
     )));
-    dashboard.key(KeyCode::Char('?'));
+    palette_search(&mut dashboard, "sound");
     let text = palette_text(&dashboard);
     assert!(text.contains("Disable ready sound"), "{text}");
+    assert!(text.contains("Settings: Ready sound"), "{text}");
+    dashboard.key(KeyCode::Esc);
+    palette_search(&mut dashboard, "notifications");
+    let text = palette_text(&dashboard);
     assert!(text.contains("Enable desktop notifications"), "{text}");
+    assert!(text.contains("Settings: Desktop notifications"), "{text}");
 }
 
 #[test]
@@ -356,7 +379,7 @@ fn empty_hierarchy_shows_start_screen() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Welcome to OVRCR"));
     assert!(text.contains("a  Register project"));
-    assert!(text.contains(":  Search"));
+    assert!(text.contains(":  Commands"));
     assert!(text.contains("?  Help"));
     assert!(text.contains("Home:"));
     assert!(text.contains("Socket:"));
@@ -386,8 +409,9 @@ fn whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks() {
             let row: String = (0..width)
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect();
+            // `find` answers in bytes; the click needs the cell column.
             if let Some(x) = row.find("a  Register project") {
-                target = Some((x as u16, y));
+                target = Some((row[..x].chars().count() as u16, y));
             }
         }
         let (column, row) = target.expect("register row must be visible");
@@ -441,6 +465,8 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
         let area = Rect::new(0, 0, 120, 40);
         let mut dashboard = dashboard_fixture();
         dashboard.key(KeyCode::Char('v'));
+        // `v` offers a session for the new pane; Esc keeps the suggestion.
+        dashboard.key(KeyCode::Esc);
         dashboard.install_area(area);
         let rects = dashboard.pane_rects(area);
         assert_eq!(rects.len(), 2, "{name}");
@@ -541,7 +567,7 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
     });
     assert!(
         palette_text(&dashboard).contains("Search"),
-        "opening Actions should capture the overlay"
+        "opening Commands should capture the overlay"
     );
 }
 
@@ -1842,7 +1868,7 @@ fn created_session_enters_terminal_mode() {
 }
 
 #[test]
-fn browse_footer_lists_only_menu_search_and_help() {
+fn browse_footer_lists_only_menu_commands_and_help() {
     let dashboard = dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -1853,7 +1879,7 @@ fn browse_footer_lists_only_menu_search_and_help() {
         .collect();
     assert_eq!(
         footer.trim_end(),
-        "BROWSE  Space Menu  : Search  ? Help",
+        "BROWSE  Space Menu  : Commands  ? Help",
         "{footer}"
     );
 }
@@ -2122,11 +2148,23 @@ fn nested_whichkey_terminal_group_waits_for_action_and_backspace_returns() {
     assert!(text.contains("Terminal: review"), "{text}");
     assert!(text.contains("p  Pause"));
     assert!(!text.contains("r  Resume"));
-    assert!(text.contains("x  Close terminal"));
+    assert!(text.contains("X  Close terminal"), "{text}");
+    assert!(!text.contains("x  Close terminal"), "{text}");
+    // Lowercase x never closes a session: the menu stays open and nothing is asked.
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Space t") && !text.contains("Close terminal?"),
+        "{text}"
+    );
+    assert!(dashboard.drain_outbox().is_empty());
     dashboard.key(KeyCode::Backspace);
     let text = palette_text(&dashboard);
     assert!(text.contains("t  Terminal"));
-    assert!(!text.contains("x  Close terminal"));
+    assert!(!text.contains("X  Close terminal"));
     dashboard.key(KeyCode::Char('t'));
     assert_eq!(
         dashboard.key(KeyCode::Char('p')),
@@ -2171,7 +2209,16 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
         for confirm in [false, true] {
             dashboard.key(KeyCode::Char(' '));
             dashboard.key(KeyCode::Char(group));
+            // Every destructive group action is uppercase; lowercase x does nothing.
             assert_eq!(dashboard.key(KeyCode::Char('x')), DashboardAction::Redraw);
+            assert!(dashboard.drain_outbox().is_empty());
+            let text = palette_text(&dashboard);
+            assert!(
+                text.contains("Which key") && !text.contains("Confirm action"),
+                "{group}: {text}"
+            );
+            assert!(!text.contains("Close terminal?"), "{group}: {text}");
+            assert_eq!(dashboard.key(KeyCode::Char('X')), DashboardAction::Redraw);
             if group != 't' {
                 assert!(!palette_text(&dashboard).contains("Confirm action"));
                 assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -2292,7 +2339,7 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
         assert!(menu.contains("p  Project"));
         assert_eq!(menu.contains("w  Workspace"), group == 'w');
         dashboard.key(KeyCode::Char(group));
-        dashboard.key(KeyCode::Char('x'));
+        dashboard.key(KeyCode::Char('X'));
         assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
         assert!(palette_text(&dashboard).contains("Confirm action"));
         assert_eq!(
@@ -2398,7 +2445,7 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
 #[test]
 fn ux_browse_footer_is_stable_across_widths_and_state() {
     let mut dashboard = dashboard_fixture();
-    let full = "BROWSE  Space Menu  : Search  ? Help";
+    let full = "BROWSE  Space Menu  : Commands  ? Help";
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
     for width in [20, 40, 80, 120] {
         let text = rendered_footer(&dashboard, width);
@@ -2416,41 +2463,49 @@ fn ux_browse_footer_is_stable_across_widths_and_state() {
 fn ux_search_keeps_session_identity_and_filters_complete_context() {
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "local");
+    // Sessions read `project / branch / title`; unique rows carry no ID.
     for width in [40, 80, 120] {
         let rows = rendered_rows(&dashboard, width, 24);
-        for id in [3, 4, 5] {
-            assert!(
-                rows.iter()
-                    .any(|row| row.contains(&format!("local (#{id})"))),
-                "{rows:?}"
-            );
+        for place in [
+            "spacelift-agent / progress / local",
+            "consigint / lifecycle / local",
+            "consigint / auth / local",
+        ] {
+            assert!(rows.iter().any(|row| row.contains(place)), "{rows:?}");
         }
-        assert!(
-            rows.iter()
-                .any(|row| row.contains("Project: spacelift-agent")),
-            "{rows:?}"
-        );
+        assert!(!rows.iter().any(|row| row.contains("(#")), "{rows:?}");
     }
     dashboard.key(KeyCode::Down);
     dashboard.key(KeyCode::Enter);
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    // The ID stays searchable although it is not drawn.
     for query in ["spacelift-agent", "progress", "#3"] {
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
     }
+    // Two sessions that read the same keep their IDs, and clipping keeps them visible.
     let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[0].sessions[0].name = "local".into();
     hierarchy.projects[0].workspaces[0].sessions[0].name = "界🙂".repeat(50);
     dashboard.install_hierarchy(hierarchy);
+    palette_search(&mut dashboard, "lifecycle local");
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("consigint / lifecycle / local (#2)")
+            && text.contains("consigint / lifecycle / local (#4)"),
+        "{text}"
+    );
+    dashboard.key(KeyCode::Esc);
     palette_search(&mut dashboard, "#3");
     for width in [40, 80, 120] {
         let rows = rendered_rows(&dashboard, width, 24);
         let row = rows
             .iter()
-            .find(|row| row.contains("(#3)"))
-            .expect("visible ID");
-        assert!(row.contains("… (#3)"), "{row}");
-        assert!(row.contains('界'), "{row}");
+            .find(|row| row.contains("spacelift-agent / progress / 界"))
+            .expect("visible place");
+        assert!(row.contains('…'), "{row}");
+        assert!(!row.contains("(#3)"), "a unique row needs no ID: {row}");
         assert!(row.trim_end().ends_with('│'), "border clipped: {row}");
     }
     dashboard.event_action(Event::Paste("zzzz".into()));
@@ -2464,6 +2519,159 @@ fn ux_search_keeps_session_identity_and_filters_complete_context() {
         rows.iter().any(|row| row.contains("Backspace delete")),
         "{rows:?}"
     );
+}
+
+#[test]
+fn palette_lists_only_the_actions_the_target_can_run() {
+    let mut dashboard = dashboard_fixture();
+    // Session #1 runs, is not paused, has no unread reply and no assignment.
+    for hidden in ["take control", "return to pi", "resume", "mark reviewed"] {
+        palette_search(&mut dashboard, hidden);
+        let text = palette_text(&dashboard);
+        assert!(
+            text.contains("No matching actions or terminals"),
+            "{hidden}: {text}"
+        );
+        dashboard.key(KeyCode::Esc);
+    }
+    palette_search(&mut dashboard, "pause");
+    assert!(palette_text(&dashboard).contains("p — Pause the processes"));
+    dashboard.key(KeyCode::Esc);
+    // A pane still waiting for its screen keeps the action listed with its
+    // reason, as the key popup does; Enter on it does nothing yet.
+    dashboard.install_unready(SessionId(1));
+    palette_search(&mut dashboard, "copy screen");
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Copy screen: waiting for acknowledged screen"),
+        "{text}"
+    );
+    dashboard.key(KeyCode::Enter);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(palette_text(&dashboard).contains("Command palette"));
+    dashboard.key(KeyCode::Esc);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
+    let menu = whichkey_menu_text(&dashboard);
+    assert!(menu.contains("c  Copy screen"), "{menu}");
+    dashboard.key(KeyCode::Esc);
+    // A root workspace off its default branch keeps Create terminal listed with why.
+    let mut blocked = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].warning = Some("main is not checked out".into());
+    blocked.install_hierarchy(hierarchy);
+    palette_search(&mut blocked, "create terminal");
+    let text = palette_text(&blocked);
+    assert!(
+        text.contains("Create terminal (n)")
+            && text.contains("root workspace is not on the default branch"),
+        "{text}"
+    );
+    // With no project there is nothing to create a terminal or workspace in.
+    let mut empty = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
+    palette_search(&mut empty, "create");
+    let text = palette_text(&empty);
+    assert!(!text.contains("Create terminal (n)"), "{text}");
+    assert!(!text.contains("Create workspace (w)"), "{text}");
+    empty.key(KeyCode::Esc);
+    palette_search(&mut empty, "register");
+    assert!(palette_text(&empty).contains("Register project (a)"));
+}
+
+#[test]
+fn palette_row_under_the_cursor_stays_put_when_the_pane_becomes_ready() {
+    let selected = |dashboard: &Dashboard| {
+        palette_text(dashboard)
+            .lines()
+            .find_map(|line| {
+                line.split_once("│› ")
+                    .map(|(_, rest)| rest.split('│').next().unwrap().trim().to_owned())
+            })
+            .expect("a selected palette row")
+    };
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_unready(SessionId(1));
+    palette_search(&mut dashboard, "");
+    for _ in 0..200 {
+        dashboard.key(KeyCode::Down);
+    }
+    let before = selected(&dashboard);
+    // The screen acknowledgement lands while the palette is open.
+    dashboard.install_screen(SessionId(1), &[]);
+    assert_eq!(selected(&dashboard), before);
+}
+
+#[test]
+fn unfiltered_palette_starts_with_creation_and_keeps_settings_rows_for_search() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "");
+    let text = palette_text(&dashboard);
+    assert!(text.contains("› Create terminal (n)"), "{text}");
+    assert!(!text.contains("› Archived sessions"), "{text}");
+    // The last entries are key actions; settings rows are not listed unasked.
+    for _ in 0..200 {
+        dashboard.key(KeyCode::Down);
+    }
+    let text = palette_text(&dashboard);
+    assert!(!text.contains("Settings: "), "{text}");
+    dashboard.key(KeyCode::Esc);
+    palette_search(&mut dashboard, "archived");
+    assert!(palette_text(&dashboard).contains("› Archived sessions"));
+}
+
+#[test]
+fn palette_finds_settings_by_label_or_key_and_opens_that_row() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SettingsChanged(
+        Box::new(ovrcr::settings::parse(
+            std::path::Path::new("/srv/dashboard.toml"),
+            "",
+        )),
+    )));
+    for (query, label, detail) in [
+        ("theme", "Settings: Theme", "Appearance · theme"),
+        (
+            "notifications",
+            "Settings: Desktop notifications",
+            "Alerts · desktop_notifications",
+        ),
+        ("sound", "Settings: Ready sound", "Alerts · ready_sound"),
+        (
+            "branch_prefix",
+            "Settings: Branch prefix",
+            "Workspaces · branch_prefix",
+        ),
+    ] {
+        palette_search(&mut dashboard, query);
+        let text = palette_text(&dashboard);
+        assert!(
+            text.contains(label) && text.contains(detail),
+            "{query}: {text}"
+        );
+        dashboard.key(KeyCode::Esc);
+    }
+    palette_search(&mut dashboard, "theme");
+    dashboard.key(KeyCode::Enter);
+    let rows = rendered_rows(&dashboard, 120, 60);
+    let theme = rows
+        .iter()
+        .find(|row| row.contains("Theme") && row.contains("Catppuccin Mocha"))
+        .unwrap_or_else(|| panic!("Settings shows the Theme row: {rows:?}"));
+    assert!(
+        theme.contains('›'),
+        "Settings opens on the Theme row: {theme}"
+    );
+    dashboard.key(KeyCode::Esc);
+    // A key finds its row too, and the provider reads as people name it.
+    palette_search(&mut dashboard, "operator.provider");
+    dashboard.key(KeyCode::Enter);
+    let rows = rendered_rows(&dashboard, 120, 60);
+    let provider = rows
+        .iter()
+        .find(|row| row.contains("Provider") && row.contains('›'))
+        .unwrap_or_else(|| panic!("Settings opens on the Provider row: {rows:?}"));
+    assert!(provider.contains("ChatGPT"), "{provider}");
+    assert!(!rows.join("\n").contains("chat_gpt"), "{rows:?}");
 }
 
 #[test]
@@ -2681,7 +2889,11 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
     );
     palette_search(&mut dashboard, "Same title");
     let text = palette_text(&dashboard);
-    assert!(text.contains("(#1)") && text.contains("(#3)"), "{text}");
+    assert!(
+        text.contains("consigint / auth / Same title")
+            && text.contains("spacelift-agent / progress / Same title"),
+        "{text}"
+    );
     dashboard.key(KeyCode::Esc);
     palette_search(&mut dashboard, "Rename terminal");
     dashboard.key(KeyCode::Enter);

@@ -275,7 +275,8 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
             .collect::<Vec<_>>()
             .join("\n")
     };
-    dashboard.send(b"v")?;
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r")?;
     dashboard.wait_for_screen(
         |screen| {
             metadata(screen, split[1].metadata).starts_with(&format!("> {other_ready}"))

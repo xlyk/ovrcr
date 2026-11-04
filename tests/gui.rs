@@ -203,7 +203,8 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let pgid = unsafe { libc::getpgid(created["pid"].as_i64().unwrap() as i32) };
     assert!(pgid > 1);
     pgids.push(pgid);
-    terminal.send(b"\x07:switch terminal palette-check\r")?;
+    // Session rows read `project / branch / title`; search one by its title.
+    terminal.send(b"\x07:palette-check\r")?;
     wait_screen(&terminal, "PALETTE_LIVE")?;
     terminal.send(b":close terminal\r")?;
     wait_screen(&terminal, "Close terminal?")?;

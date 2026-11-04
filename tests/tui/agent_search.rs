@@ -405,6 +405,8 @@ fn wide_agent_pair() -> Dashboard {
     let mut dashboard = agents_dashboard();
     dashboard.key(KeyCode::Char('b'));
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     let action = confirm_agent(&mut dashboard, 3);
     pump_view(&mut dashboard, action);
@@ -698,6 +700,8 @@ fn agent_search_excludes_each_inactive_phase_and_archived_records() {
 fn agent_search_reaches_hidden_sidebar_and_reuses_other_pane() {
     let mut dashboard = agents_dashboard();
     let action = dashboard.key(KeyCode::Char('v'));
+    // `v` offers a session for the new pane; Esc keeps the suggestion.
+    dashboard.key(KeyCode::Esc);
     pump_view(&mut dashboard, action);
     // Split selects a shell, so agent #1 in the other pane is now a destination.
     dashboard.key(KeyCode::Char('b'));

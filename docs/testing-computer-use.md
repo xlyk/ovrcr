@@ -22,7 +22,7 @@ Read the returned tool documentation before continuing. Then inspect the window:
 await app.getAXStateAndScreenshot();
 ```
 
-Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
+Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. A click that activates the window only focuses it and never reaches the dashboard; click again to act. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
 
 ### Driving the window
 
@@ -67,7 +67,7 @@ Check Unicode in the same shell:
 rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
 ```
 
-Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
+Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, Enter (keeps the suggested session in the new pane), then Enter again to type, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
 Check modified, composed, and dead keys in the same shell. Put the PTY in raw
 mode so the line editor cannot consume the escapes:
@@ -120,17 +120,33 @@ list above the footer, with the surrounding dashboard still visible. Press
 `Space t`. Press Backspace and confirm the group list returns. Press Escape,
 then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
 running session and Resume is absent. Disabled actions should show a reason.
-Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
+Press Backspace, then `w`, then `X`; confirm the workspace picker highlights
 the selected `consigint / gui-consigint-auth-handoff` and omits the
 repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
 When that workspace has running sessions, the confirmation names them by title
 and offers to stop them before removing it, with no Force wording.
-Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
-terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
+Escape cancels. Repeat with `Space p X` for projects, then `Space t X` for direct
+terminal-close confirmation, cancelling both; confirm lowercase `x` in `Space t`,
+`Space w` and `Space p` does nothing. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
+Confirm the Space group list holds only the groups, Register project and Detach,
+with no notification or sound toggles.
+Press `:` and type `theme`; confirm a `Settings: Theme` row with
+`Appearance · theme` below it, press Return, and confirm Settings opens on the
+Theme row; press Escape. In the unfiltered palette confirm session rows read
+`project / branch / title` and that Take control, Resume and Mark reviewed are
+absent while they cannot run. Press `v`; confirm the second pane opens behind a
+`New pane · choose its session` list that highlights its session and omits the
+left pane's session. Type part of another session's branch, press Return, and
+confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the Operator
+view closes at once, the terminal panes return and the footer reads
+`BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the draft remains,
+and press `Ctrl-g` again. Click another application, then click a running
+terminal pane once: the footer must stay BROWSE; a second click focuses the pane
+for typing.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
 On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 
@@ -195,7 +211,7 @@ In the disposable fixture, also verify:
    same shell and confirm its output. The old branch label must not remain as
    that workspace's name.
 10. Select consigint's root workspace (`main` with the root marker). From there,
-    `w` then `x` must be unavailable (`repository-root workspace cannot be
+    `w` then `X` must be unavailable (`repository-root workspace cannot be
     removed`). In its `local` shell, run `rtk proxy git checkout -b cua-root-drift`.
     Confirm the root warning, that `n` is unavailable (`root workspace is not on
     the default branch`), and that the existing shell still accepts a unique
@@ -269,7 +285,8 @@ Run these checks with the mouse for navigation; use the keyboard only to enter
 text. Save a screenshot and accessibility text after each changed view. Repeat
 the form and menu checks in a short window to exercise scrolling and clipping.
 
-1. Open the action menu with its visible control and open a second terminal pane.
+1. Open the action menu with its visible control and open a second terminal pane;
+   press Return in the chooser that opens to keep the suggested session.
    Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
    `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.

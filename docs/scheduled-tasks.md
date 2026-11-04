@@ -156,7 +156,7 @@ times show in local time. Use h for history and PgUp/PgDn to
 scroll the transcript. Follow the on-screen key hints. Task output uses its own control
 connection and does not change terminal selection.
 
-For mouse navigation, open Tasks from the dashboard's Actions or Menu control.
+For mouse navigation, open Tasks from the dashboard's Commands or Menu control.
 Click a task or run row to select it, and click the footer actions to create,
 edit, save, pause/resume, or open history. In the editor, click a field to focus
 it and place the text cursor; project options are clickable. The Prompt field

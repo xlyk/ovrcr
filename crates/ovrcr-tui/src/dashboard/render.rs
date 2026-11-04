@@ -19,14 +19,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) fn action_controls(area: Rect) -> (Rect, Rect) {
     let title = dashboard_layout(area, None).title;
-    let x = title.right().saturating_sub(16).max(title.x);
+    let x = title.right().saturating_sub(17).max(title.x);
     let actions = Rect::new(
         x,
         title.y,
-        title.right().saturating_sub(x).min(9),
+        title.right().saturating_sub(x).min(10),
         title.height,
     );
-    let menu_x = x.saturating_add(10).min(title.right());
+    let menu_x = x.saturating_add(11).min(title.right());
     let menu = Rect::new(
         menu_x,
         title.y,
@@ -723,7 +723,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     if matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal) {
         let (actions, menu) = action_controls(frame.area());
         frame.render_widget(
-            Paragraph::new("[Actions]").style(Style::default().bg(CRUST()).fg(MAUVE())),
+            Paragraph::new("[Commands]").style(Style::default().bg(CRUST()).fg(MAUVE())),
             actions,
         );
         frame.render_widget(

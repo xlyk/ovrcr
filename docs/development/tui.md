@@ -25,7 +25,7 @@ that blocks shutdown.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph and the process, paused, activity, Unread and elapsed clauses, with an Unread replacing a header line outright — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width, and readiness itself is still decided in `dashboard::ready`. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the activity clause may still say ready. The sidebar agent label appends the current model after a colon when one is known. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
-Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard.
+Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard. The palette applies the popup's `shown_in_group` rule: it drops bindings the target cannot use and keeps waiting or protected rows with their reason, so the list never shifts under the cursor when a screen is acknowledged. The title bar's `[Commands]` control opens the palette. Split (`v`) reuses the palette's Search page as the new pane's session chooser (`Palette::split`), and palette setting rows open the editor through `Editor::select`.
 
 Palette forms have one Enter rule: Enter submits from any field after `form_problem` checks the visible fields top to bottom (required, pick value in its list, Branch after the prefix and valid under `git check-ref-format --branch` via `branch_name_problem`); the first problem takes the focus and is drawn under its field from `Palette.invalid`. A pick field's value is its highlighted option (`accept_pick` after every arrow, cycle or filter edit). An open list gets the body rows its field leaves free, through `PickList::window`, which rendering and mouse hit-testing share. `form_keys` builds the footer from the form and its focused field. New fields (a Task field, say) get these rules without per-field Enter handling.
 A Lifecycle job submitted from the palette carries that palette on its Provisional row while the job runs (`take_palette_for_job`). On failure, `fail_lifecycle_job` returns it through `return_to_form`, which replays the failure through `palette_response` exactly as a synchronous refusal, so recovery pages (RecoverLaunch, WIP save, discard) are shared. Only when the form cannot come back (another overlay, or a non-Browse mode) does a failed row stay. Workspace removal with running sessions sends CloseTerminal for each and then the removal, chaining each request from the previous `LifecycleCompleted` through `Provisional.then`.
@@ -99,7 +99,9 @@ production handshake and initial terminal attachment, without opening Operator.
 
 Browse `o` and the clickable title-bar control open the native hub. Terminal pane
 assignments survive, but the desired terminal view is empty while the hub is visible
-and native composer input never produces PTY bytes. Existing overlays retain input
+and native composer input never produces PTY bytes. Leaving the hub (Ctrl-g or Esc)
+hides it through `retarget(PaneChange::Focus)`, so the next view request
+re-subscribes the unchanged panes. Existing overlays retain input
 priority; spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
@@ -150,11 +152,12 @@ Unread review requires an unobscured, actually drawn, adequately sized transcrip
 at its confirmed durable tail; empty, new, too-small and sidebar-only views cannot
 acknowledge it.
 `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
-Ctrl-g returns to Browse retaining drafts, and Ctrl-x stops only the selected exact
-current turn. A pending submission clears only its captured draft after acceptance;
+Ctrl-g or Esc returns to the terminal panes in Browse retaining drafts, and Ctrl-x
+stops only the selected exact current turn. Provider names display through
+`OperatorProvider::label` (`ChatGPT`, `Grok`); `as_str` stays the saved identifier. A pending submission clears only its captured draft after acceptance;
 refusal or later typing preserves the draft.
 
-Sidebar `x` and `[x]` open the native confirmation for that conversation's retained
+Sidebar `X` and `[x]` open the native confirmation for that conversation's retained
 run. Confirmation explains uncertain/live work and draft discard, then sends the
 Operator Close request rather than workspace WIP-save. Only that chat is frozen
 while close is pending. Cancel or error retains its draft and row; acknowledged

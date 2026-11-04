@@ -12551,7 +12551,8 @@ fn desktop_notifications_bridge_click_focuses_existing_split_without_duplicating
     }
     let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
-    dashboard.send(b"v");
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r");
     dashboard.select("setup", "HOOK_READY");
     dashboard
         .wait_screen(|screen| screen.contains("HOOK_READY") && screen.contains("CODEX_CALLBACK=1"));
@@ -17169,7 +17170,8 @@ fn desktop_notifications_managed_completion_reaches_host_once_including_visible_
     }
     dashboard.wait_calls(4, summary.id);
 
-    dashboard.send(b"v");
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r");
     dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=13"));
     dashboard.send(b"\t");
     // Visible unfocused split pane still delivers.
