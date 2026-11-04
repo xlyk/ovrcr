@@ -149,6 +149,14 @@ acknowledgement and preserves the newer unread response. Refresh your view and
 review that response before acknowledging it. Repeating a completed
 acknowledgement is safe.
 
+Replying reviews it too. The first keystroke or paste you send to a session
+whose unread response the dashboard displays sends the same request `R` sends,
+for that displayed observation, ahead of the input; later keys of the reply
+send nothing more. A stale refusal stays out of the footer: the newer response
+it protects stays unread until you reply after seeing it, or press `R`.
+Selecting, viewing, focusing a pane for typing and mouse input forwarded to the
+application do not review.
+
 For scripts, read `unread` from the intended terminal's JSON row and pass that
 complete JSON object to the CLI:
 

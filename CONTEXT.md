@@ -106,7 +106,7 @@ The accepted root observation of a completed response cycle from a supported rea
 _Avoid_: Confirmed activity as a success claim, a desktop alert
 
 **Unread**:
-The current Ready observation that has not been marked reviewed.
+The current Ready observation that has not been marked reviewed, explicitly or by replying.
 _Avoid_: treating view, selection, or notification as review
 
 **Presented**:

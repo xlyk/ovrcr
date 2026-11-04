@@ -1592,7 +1592,10 @@ impl Dashboard {
                         .focused_pane()
                         .is_some_and(|pane| pane.parser.screen().application_cursor());
                     match encode_key(key, application_cursor) {
-                        KeyEncoding::Bytes(bytes) => DashboardAction::PtyBytes(bytes),
+                        KeyEncoding::Bytes(bytes) => {
+                            self.review_on_reply();
+                            DashboardAction::PtyBytes(bytes)
+                        }
                         KeyEncoding::Browse | KeyEncoding::Ignore => DashboardAction::None,
                     }
                 }
@@ -2318,6 +2321,7 @@ impl Dashboard {
                 if !self.input_is_allowed() {
                     self.refuse_input()
                 } else {
+                    self.review_on_reply();
                     DashboardAction::PtyBytes(encode_paste(
                         &text,
                         self.focused_pane()
@@ -3934,6 +3938,24 @@ impl Dashboard {
             request: Request::MarkReviewed { session, expected },
         });
         DashboardAction::Redraw
+    }
+
+    /// A keystroke or paste into a session reviews the Unread it displays, with the request
+    /// `R` sends, queued ahead of the input. The response is ignored: a stale refusal means a
+    /// newer Ready arrived, and that one stays Unread.
+    fn review_on_reply(&mut self) {
+        let Some(session) = self.action_session() else {
+            return;
+        };
+        let Some(expected) = self.unread.reply_target(session) else {
+            return;
+        };
+        let request_id = self.next_request_id();
+        self.ignored_responses.insert(request_id);
+        self.enqueue_request(ClientMessage {
+            request_id,
+            request: Request::MarkReviewed { session, expected },
+        });
     }
 
     pub fn input_request(&mut self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
