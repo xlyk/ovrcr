@@ -805,7 +805,7 @@ fn left_words(window: &QuotaWindow, now: u64) -> String {
         return "over limit".into();
     }
     match window.remaining_basis_points() {
-        Some(left) if left > 0 && left < 100 => "under 1% left".into(),
+        Some(1..=99) => "under 1% left".into(),
         Some(left) => format!("{}% left", (u32::from(left) + 50) / 100),
         None => "unknown".into(),
     }

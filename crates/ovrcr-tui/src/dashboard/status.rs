@@ -209,7 +209,11 @@ fn header_states(session: &SessionSummary) -> (String, String) {
     }
     // A clause that leads because nothing came before it still starts a sentence.
     let sentence = |lead: &[&str]| {
-        let mut parts = Vec::from_iter(lead.iter().filter(|part| !part.is_empty()).copied());
+        let mut parts: Vec<&str> = lead
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect();
         parts.extend(clauses.iter().map(String::as_str));
         let joined = parts.join(" · ");
         let mut chars = joined.chars();
