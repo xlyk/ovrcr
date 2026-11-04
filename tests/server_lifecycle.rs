@@ -14189,7 +14189,8 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         !screen.to_lowercase().contains("unread reply") && screen.contains("CODEX_NATIVE_EXIT=17")
     });
     dashboard.resize(180);
-    dashboard.wait_screen(|screen| screen.contains("Working · status off"));
+    // The recovery explanation sits between the state and the reporting words.
+    dashboard.wait_screen(|screen| screen.contains("Working · ") && screen.contains("status off"));
     let mut expected = lost;
     expected.unread = None;
     assert_eq!(
@@ -17938,23 +17939,23 @@ fn desktop_notifications_bridge_cancels_queued_ready_and_input_without_replay() 
         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
     }
     dashboard.select("codex-queued", "CODEX_CALLBACK=1");
-    dashboard.wait_screen(|screen| screen.contains("ready"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · "));
     desktop_codex_callback(
         &fixture,
         queued.id,
         &mut queued_index,
         "UserPromptSubmit:root:b",
     );
-    dashboard.wait_screen(|screen| screen.contains("busy"));
+    dashboard.wait_screen(|screen| screen.contains("Working"));
     desktop_codex_callback(
         &fixture,
         queued.id,
         &mut queued_index,
         "PermissionRequest:root:b",
     );
-    dashboard.wait_screen(|screen| screen.contains("input"));
+    dashboard.wait_screen(|screen| screen.contains("Waiting for"));
     desktop_codex_callback(&fixture, queued.id, &mut queued_index, "PostToolUse:root:b");
-    dashboard.wait_screen(|screen| screen.contains("busy"));
+    dashboard.wait_screen(|screen| screen.contains("Working"));
     assert!(group_exists(blocked), "the delivery barrier released early");
     std::fs::write(dashboard.record.with_extension("release"), "release").unwrap();
     dashboard.wait_named_calls(1, first.id, "codex-hooks");
