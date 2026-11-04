@@ -2880,13 +2880,18 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
     narrow
         .draw(|f| draw_dashboard_at(f, &dashboard, 0))
         .unwrap();
+    // The title leads the header's first line; the second no longer repeats it.
     let narrow_title = (40..80)
-        .map(|x| narrow.backend().buffer()[(x, 2)].symbol())
+        .map(|x| narrow.backend().buffer()[(x, 1)].symbol())
         .collect::<String>();
     assert!(
-        narrow_title.contains("Same title (#1)"),
+        narrow_title.starts_with("Same title (#1)  "),
         "title must remain visible at 80 columns: {narrow_title}"
     );
+    let second_line = (40..80)
+        .map(|x| narrow.backend().buffer()[(x, 2)].symbol())
+        .collect::<String>();
+    assert!(!second_line.contains("Same title"), "{second_line}");
     palette_search(&mut dashboard, "Same title");
     let text = palette_text(&dashboard);
     assert!(
@@ -4778,9 +4783,9 @@ fn exited_agent_with_empty_recovery_keeps_stale_activity_out_of_header() {
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(2));
     let text = rendered_rows(&dashboard, 180, 24).join("\n");
-    assert!(text.contains("pid: closed"), "{text}");
+    assert!(text.contains("implement  claude  Exited · 0m"), "{text}");
     assert!(!text.contains("busy"), "{text}");
-    assert!(!text.contains("busy"), "{text}");
+    assert!(!text.contains("Working"), "{text}");
 }
 
 #[test]

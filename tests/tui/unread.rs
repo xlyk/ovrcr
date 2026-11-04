@@ -146,8 +146,10 @@ fn unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes() {
             terminal.draw(|f| draw_dashboard_at(f, &d, 0)).unwrap();
             let buffer = terminal.backend().buffer();
             let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
+            // A narrow header lets the title and the activity word yield first: the Unread
+            // and the lost reporting stay in words at every width, loading or not.
             assert!(
-                text.contains("Unread Unavailable"),
+                text.contains("unread reply · status off") || text.contains("Unread · status off"),
                 "{width} split={split}: {text}"
             );
             assert!(text.contains('⠋'), "busy glyph remains: {text}");

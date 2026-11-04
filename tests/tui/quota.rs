@@ -389,25 +389,36 @@ fn details_text(dashboard: &Dashboard, now: u64) -> String {
         .join("\n")
 }
 
-#[test]
-fn quota_details_show_off_sentence_reason_local_times_and_next_check() {
-    let local = |stamp: u64| {
-        chrono::DateTime::from_timestamp_millis(stamp as i64)
+/// A popup clock time as `when` writes it in the local zone: the weekday joins it only when
+/// the moment falls on another local day than `NOW`.
+fn clock(stamp: u64) -> String {
+    let local = |ms: u64| {
+        chrono::DateTime::from_timestamp_millis(ms as i64)
             .unwrap()
             .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string()
     };
+    let pattern = if local(stamp).date_naive() == local(NOW).date_naive() {
+        "%-I:%M %p"
+    } else {
+        "%a %-I:%M %p"
+    };
+    local(stamp).format(pattern).to_string()
+}
+
+#[test]
+fn quota_details_show_off_sentence_reason_local_times_and_next_check() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('u'));
     let off = details_text(&dashboard, NOW);
     assert!(off.contains("Quota details"), "{off}");
+    assert!(off.contains("Codex · off"), "{off}");
     assert!(
         off.contains("Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml"),
         "{off}"
     );
+    assert!(off.contains("Claude · checking…"), "{off}");
     assert!(
-        off.contains("reason: waiting for a managed Claude session's first response"),
+        off.contains("  waiting for a managed Claude session's first response"),
         "{off}"
     );
     dashboard.key(KeyCode::Esc);
@@ -419,28 +430,38 @@ fn quota_details_show_off_sentence_reason_local_times_and_next_check() {
         1,
         "{text}"
     );
-    assert!(text.contains("reason: timed out after 20 s"), "{text}");
+    // A current reading: its window by length, how old it is and when the next check runs.
+    assert!(text.contains("Codex · up to date"), "{text}");
+    assert!(text.contains("  5-hour  37% left"), "{text}");
     assert!(
         text.contains(&format!(
-            "last observation: {} (1m ago)",
-            local(NOW - 60_000)
+            "  as of {} (1m ago) · next check {} (in 4m)",
+            clock(NOW - 60_000),
+            clock(NOW + 240_000)
         )),
         "{text}"
     );
+    // A failed read: its reason in words and the retry, with no reading to date.
+    assert!(text.contains("Grok · unavailable"), "{text}");
+    assert!(text.contains("  timed out after 20 s"), "{text}");
     assert!(
-        text.contains(&format!(
-            "last account check: {} (1m ago)",
-            local(NOW - 60_000)
-        )),
+        text.contains(&format!("  next check {} (in 3m)", clock(NOW + 170_000))),
         "{text}"
     );
-    assert!(
-        text.contains(&format!("next check: {} (in 3m)", local(NOW + 170_000))),
-        "{text}"
-    );
-    assert!(text.contains("next check: not scheduled"), "{text}");
     let lower = text.to_lowercase();
-    for banned in ["token", "spend", "cost"] {
+    for banned in [
+        "token",
+        "spend",
+        "cost",
+        "reason:",
+        "source:",
+        "generation",
+        "[5h]",
+        "last observation",
+        "last account check",
+        "native callback",
+        "not scheduled",
+    ] {
         assert!(!lower.contains(banned), "{banned}: {text}");
     }
 }
@@ -467,10 +488,8 @@ fn palette_refresh_quota_sends_refresh_and_shows_cooldown_in_footer() {
         },
     });
     let footer = rendered_footer(&dashboard, 120);
-    assert!(
-        footer.contains("Quota refresh cooling down: 24s left"),
-        "{footer}"
-    );
+    // A cooldown is an expected limit, not an error.
+    assert_eq!(footer, "Quota refresh cooling down: 24s left");
     // An accepted refresh clears it; the Server's next snapshot is the result.
     let message = palette_request(&mut dashboard, "refresh quota");
     dashboard.handle_server_message(ServerMessage::Response {
@@ -518,7 +537,7 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
 }
 
 #[test]
-fn quota_details_name_a_probe_source_with_its_time_and_age() {
+fn quota_details_show_a_probe_reading_in_words_without_its_provenance() {
     let mut dashboard = dashboard_fixture();
     let snapshot = QuotaSnapshot {
         claude: ProviderQuota {
@@ -542,15 +561,21 @@ fn quota_details_name_a_probe_source_with_its_time_and_age() {
     publish_quota(&mut dashboard, snapshot);
     dashboard.key(KeyCode::Char('u'));
     let text = details_text(&dashboard, NOW);
-    let when = chrono::DateTime::from_timestamp_millis((NOW - 60_000) as i64)
-        .unwrap()
-        .with_timezone(&chrono::Local)
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    assert!(text.contains("Claude · up to date"), "{text}");
     assert!(
-        text.contains(&format!("source: probe; last probe {when} (1m ago)")),
+        text.contains(&format!(
+            "  5-hour  88% left · resets {} (in 1h)",
+            clock(NOW + 3_600_000)
+        )),
         "{text}"
     );
+    assert!(
+        text.contains(&format!("  as of {} (1m ago)", clock(NOW - 60_000))),
+        "{text}"
+    );
+    for internal in ["source", "probe", "five_hour", "generation", "reset:"] {
+        assert!(!text.contains(internal), "{internal}: {text}");
+    }
 }
 
 #[test]
@@ -636,9 +661,18 @@ fn cursor_details_display_used_remaining_and_unknown_without_fabricated_zero() {
     }
     let details = details_text(&dashboard, NOW);
     assert!(
-        details.contains("used: 30.00% · remaining: 70.00%"),
+        details.contains(&format!(
+            "  plan  70% left · resets {} (in 1h)",
+            clock(NOW + 3_600_000)
+        )),
         "{details}"
     );
-    assert!(details.contains("used: — · remaining: —"), "{details}");
-    assert!(details.contains("reset:"), "{details}");
+    assert!(
+        details.contains("    30.00% used · 70.00% left"),
+        "{details}"
+    );
+    // Unknown allowance stays unknown: never a fabricated zero.
+    assert!(details.contains("  on-demand  unknown"), "{details}");
+    assert!(details.contains("    — used · — left"), "{details}");
+    assert!(!details.contains("cursor/"), "{details}");
 }

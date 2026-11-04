@@ -802,8 +802,23 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let right_metadata = (80..120)
         .map(|x| buffer[(x, 1)].symbol())
         .collect::<String>();
-    assert!(left_metadata.starts_with("  review 39x36"));
-    assert!(right_metadata.starts_with("> local 40x36"));
+    // Each pane header carries its own session in words; the sizes are the SetView ones.
+    assert!(
+        left_metadata.starts_with("  review  claude · 0m"),
+        "{left_metadata}"
+    );
+    assert!(
+        right_metadata.starts_with("> local  shell · 0m"),
+        "{right_metadata}"
+    );
+    assert!(
+        left_metadata.trim_end().ends_with("pid 111"),
+        "{left_metadata}"
+    );
+    assert!(
+        right_metadata.trim_end().ends_with("pid 444"),
+        "{right_metadata}"
+    );
     assert_eq!(buffer[(40, 3)].symbol(), "L");
     assert_eq!(buffer[(80, 3)].symbol(), "R");
     assert_eq!(buffer[(40, 3 + 35)].symbol(), "<");
@@ -2164,7 +2179,9 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: first_a_id,
         response: Response::Ok,
     });
-    assert!(banner(&dashboard).contains("Conflict: old A error"));
+    // A superseded view's refusal is no longer a refused view: plain words, no code, and
+    // `Conflict` reads as the Server's catch-all failure.
+    assert_eq!(banner(&dashboard), "ERROR: old A error");
     assert!(!drawn_contains(&dashboard, 88, 38, "stale"));
 
     let size = dashboard
@@ -2226,7 +2243,7 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
             message: "view refused".into(),
         },
     });
-    assert!(banner(&dashboard).contains("Conflict: view refused"));
+    assert_eq!(banner(&dashboard), "view refused");
     assert_view_input_blocked(&mut dashboard);
     assert!(try_request_view(&mut dashboard, area, view.revision).is_none());
     std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
@@ -2262,7 +2279,8 @@ fn view_error_on_unchanged_view_retries_once_after_backoff() {
             message: "session vanished".into(),
         },
     });
-    assert!(banner(&dashboard).contains("NotFound: session vanished"));
+    // A refused view is a limit of the moment (the retry follows), whatever its code.
+    assert_eq!(banner(&dashboard), "session vanished");
     assert_view_input_blocked(&mut dashboard);
     let area = Rect::new(0, 0, 88, 38);
     for _ in 0..3 {
@@ -2417,12 +2435,12 @@ fn split_error_survives_a_screen_dirty_refresh() {
             message: "view refused".into(),
         },
     });
-    assert!(banner(&dashboard).contains("Conflict: view refused"));
+    assert_eq!(banner(&dashboard), "view refused");
     std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
     let retry = request_view(&mut dashboard, wide_area(), set_view(&refused).revision);
     acknowledge_all_view_targets(&mut dashboard, retry);
     assert!(
-        !banner(&dashboard).contains("ERROR:"),
+        !banner(&dashboard).contains("view refused"),
         "a view failure banner is cleared by the view that succeeds"
     );
 }
@@ -2520,7 +2538,7 @@ fn split_error_survives_mouse_cleanup_ack() {
         response: Response::Ok,
     });
     assert!(
-        !banner(&dashboard).contains("ERROR:"),
+        !banner(&dashboard).contains("No other visible session to split"),
         "an acknowledged user request owns the banner and clears it"
     );
 }

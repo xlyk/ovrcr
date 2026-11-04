@@ -55,21 +55,27 @@ fn dashboard_layout() {
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert_eq!(buffer[(0, 5)].symbol(), "▌");
     assert!(rendered[0].contains("OVRCR Operator [o]"));
-    assert!(
-        rendered
-            .iter()
-            .any(|row| row.contains("pid: 111  elapsed: 0m"))
-    );
     assert!(!rendered.iter().any(|row| row.contains("ctx ")));
     assert!(rendered.iter().any(|row| row.contains("Space Menu")));
     assert!(rendered.iter().any(|row| row.contains("? Help")));
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     assert_eq!(buffer[(39, 10)].symbol(), "│");
     assert_eq!(buffer[(39, 1)].symbol(), "│");
-    assert!(rendered[1].contains("pid: 111  elapsed: 0m"));
+    // The header leads with the title; the pid sits muted at the far right.
+    let header = rendered[1].chars().skip(40).collect::<String>();
+    assert!(header.starts_with("review  claude · 0m"), "{header}");
+    assert!(header.trim_end().ends_with("pid 111"), "{header}");
+    assert_eq!(buffer[(119 - 6, 1)].fg, Color::Rgb(108, 112, 134));
     assert!(
-        rendered[2].contains("review"),
-        "the pane title replaces the decorative rule"
+        !header.contains("pid:") && !header.contains("agent"),
+        "{header}"
+    );
+    // Without metrics the second line is the plain rule, not the title again.
+    let second = rendered[2].chars().skip(40).collect::<String>();
+    assert_eq!(
+        second,
+        "─".repeat(80),
+        "the title is not repeated on line 2"
     );
     assert!(buffer[(8, 8)].modifier.contains(Modifier::DIM));
     assert_eq!(buffer[(0, 5)].symbol(), "▌");
@@ -82,7 +88,11 @@ fn dashboard_layout() {
     let selected_exited = (0..120)
         .map(|col| terminal.backend().buffer()[(col, 1)].symbol())
         .collect::<String>();
-    assert!(selected_exited.contains("pid: closed"));
+    assert!(
+        selected_exited.contains("implement  claude  Exited · 0m"),
+        "{selected_exited}"
+    );
+    assert!(!selected_exited.contains("pid"), "{selected_exited}");
     assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
 }
 
@@ -291,18 +301,23 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
             .to_string()
     };
 
+    // The pane is 80 columns: the words lead, the pid closes the line at the far right.
+    let with_pid = |words: &str| {
+        format!(
+            "{words}{}pid 111",
+            " ".repeat(80 - 7 - words.chars().count())
+        )
+    };
     for (activity, expected) in [
-        (
-            AgentActivity::Unknown,
-            "pid: 111  elapsed: 0m  agent unknown",
-        ),
-        (AgentActivity::Idle, "pid: 111  elapsed: 0m  agent idle"),
-        (AgentActivity::Busy, "pid: 111  elapsed: 0m  agent busy"),
+        // A hook that has reported nothing says nothing: no `agent unknown`.
+        (AgentActivity::Unknown, "review  claude · 0m"),
+        (AgentActivity::Idle, "review  claude  Idle · 0m"),
+        (AgentActivity::Busy, "review  claude  Working · 0m"),
         (
             AgentActivity::WaitingInput,
-            "pid: 111  elapsed: 0m  agent waiting input",
+            "review  claude  Waiting for input · 0m",
         ),
-        (AgentActivity::Error, "pid: 111  elapsed: 0m  agent error"),
+        (AgentActivity::Error, "review  claude  Error · 0m"),
     ] {
         let mut review = review_session(&fixture_hierarchy()).clone();
         review.activity = activity;
@@ -313,7 +328,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        assert_eq!(metadata(&terminal), format!("{expected}  review"));
+        assert_eq!(metadata(&terminal), with_pid(expected));
     }
 
     let mut review = review_session(&fixture_hierarchy()).clone();
@@ -325,10 +340,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(
-        metadata(&terminal),
-        "pid: 111  elapsed: 0m  agent error  paused  review"
-    );
+    assert_eq!(metadata(&terminal), with_pid("review  claude  Paused · 0m"));
 
     review.phase = SessionPhase::Exited {
         code: Some(0),
@@ -341,7 +353,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m  review");
+    assert_eq!(metadata(&terminal), "review  claude  Exited · 0m");
 }
 
 #[test]
@@ -511,14 +523,14 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
     assert_eq!(glyph(&lines, "other"), '\u{2713}');
     let header_text = header(&terminal);
     assert!(
-        header_text.contains("Unread"),
-        "header should say Unread: {header_text}"
+        header_text.contains("Ready · unread reply"),
+        "header should say unread reply: {header_text}"
     );
 
     dashboard.install_focus(SessionId(1));
     draw(&dashboard, &mut terminal);
     assert_eq!(glyph(&sidebar(&terminal), "review"), '\u{2713}');
-    assert!(header(&terminal).contains("Unread"));
+    assert!(header(&terminal).contains("unread reply"));
 
     let mut split_dashboard = dashboard_fixture();
     publish(&mut split_dashboard, review.clone());
@@ -532,8 +544,8 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(
-        split.contains("Unread"),
-        "split header should say Unread: {split}"
+        split.contains("unread reply"),
+        "split header should say unread reply: {split}"
     );
     assert!(
         sidebar(&terminal)
@@ -550,11 +562,11 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
     assert_eq!(glyph(&lines, "other"), '\u{2713}');
     let reviewed = header(&terminal);
     assert!(
-        !reviewed.contains("Unread"),
+        !reviewed.to_lowercase().contains("unread"),
         "review should clear the Unread header: {reviewed}"
     );
     assert!(
-        reviewed.contains("response ready"),
+        reviewed.contains("Ready"),
         "reviewed activity stays ready: {reviewed}"
     );
 }
@@ -1955,8 +1967,9 @@ fn enter_on_an_unready_session_refuses_and_stays_in_browse() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_unready(SessionId(1));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    // A loading pane is an expected limit: it says so plainly, without an error marker.
     let footer = rendered_footer(&dashboard, 120);
-    assert!(footer.contains("ERROR:"), "{footer}");
+    assert_eq!(footer, "Pane is loading; retry input");
     assert_ne!(
         dashboard.key(KeyCode::Char('z')),
         DashboardAction::PtyBytes(b"z".to_vec())

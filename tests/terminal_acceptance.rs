@@ -1625,43 +1625,69 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
             Ok(())
         };
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 120, 40))?;
+    // A split pane header names its session once that pane's screen is ready (`loading`
+    // before). The separator column belongs to the current layout, so a frame left over
+    // from the old size cannot satisfy this.
+    let ready_headers = |screen: &str, cols: u16, rows: u16, focused: usize| -> bool {
+        let lines: Vec<&str> = screen.lines().collect();
+        let cells = |y: u16, x: u16, width: u16| -> String {
+            lines.get(usize::from(y)).map_or_else(String::new, |line| {
+                line.chars()
+                    .skip(usize::from(x))
+                    .take(usize::from(width))
+                    .collect()
+            })
+        };
+        let rects =
+            ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, cols, rows), 2, focused);
+        let separated =
+            rects.len() < 2 || cells(rects[0].metadata.y, rects[0].terminal.right(), 1) == "│";
+        separated
+            && rects.iter().all(|rect| {
+                let prefix = if rect.pane_index == focused {
+                    "> "
+                } else {
+                    "  "
+                };
+                let name = ["waiting", "mouse"][rect.pane_index];
+                cells(rect.metadata.y, rect.metadata.x, rect.metadata.width)
+                    .starts_with(&format!("{prefix}{name}  "))
+            })
+    };
 
     dashboard.resize(30, 100)?;
-    dashboard.wait_for_screen(|screen| screen.contains("> waiting 29x26"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 100, 30, 0), wait_deadline())?;
     dashboard.send(b"SIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_26 29", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for_screen(|screen| screen.contains("> mouse 30x26"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 100, 30, 1), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_26 30", wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("> mouse 30x26") && screen.contains("BROWSE"),
+        |screen| ready_headers(screen, 100, 30, 1) && screen.contains("BROWSE"),
         wait_deadline(),
     )?;
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 100, 30))?;
 
     dashboard.resize(30, 80)?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("split hidden") && screen.contains("> mouse 40x26"),
+        |screen| screen.contains("split hidden") && ready_headers(screen, 80, 30, 1),
         wait_deadline(),
     )?;
     dashboard.resize(40, 120)?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("waiting 39x36") && screen.contains("> mouse 40x36"),
-        wait_deadline(),
-    )?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 120, 40, 1), wait_deadline())?;
     // The metadata rows are the dashboard's own parser state. Ask each pane's
     // shell what the kernel handed its PTY instead of trusting those labels.
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_36 40", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for_screen(|screen| screen.contains("> waiting 39x36"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 120, 40, 0), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_36 39", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("> mouse 40x36") && screen.contains("BROWSE"),
+        |screen| ready_headers(screen, 120, 40, 1) && screen.contains("BROWSE"),
         wait_deadline(),
     )?;
     dashboard.send(b"x")?;
@@ -1690,7 +1716,11 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     )?;
     reattached.wait_for_screen(
         |screen| {
-            screen.contains("pid:") && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
+            screen
+                .lines()
+                .nth(1)
+                .is_some_and(|header| header.contains(" pid "))
+                && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
         },
         wait_deadline(),
     )?;
@@ -2500,7 +2530,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
 
     dashboard.send(b"p")?;
-    dashboard.wait_for(b"paused", wait_deadline())?;
+    dashboard.wait_for(b"Paused", wait_deadline())?;
     let listed = fixture.list()?;
     let waiting = listed
         .projects
@@ -2523,13 +2553,13 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     )?;
     reattached.wait_until(dashboard_header_visible, wait_deadline())?;
     reattached.click_visible_text("waiting")?;
-    reattached.wait_until(|screen| screen.contains("paused"), wait_deadline())?;
+    reattached.wait_until(|screen| screen.contains("Paused"), wait_deadline())?;
     reattached.send(b"r")?;
     reattached.wait_for_screen(
         |screen| {
             dashboard_header_visible(screen)
                 && screen.contains("BROWSE  Space Menu")
-                && !screen.contains("paused")
+                && !screen.contains("Paused")
         },
         wait_deadline(),
     )?;
@@ -2578,7 +2608,7 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
 
     let paused = fixture.cli(&["pause", &id])?;
     require_success(paused, "external pause")?;
-    dashboard.wait_for(b"paused", Duration::from_secs(3))?;
+    dashboard.wait_for(b"Paused", Duration::from_secs(3))?;
 
     let resumed = fixture.cli(&["resume", &id])?;
     require_success(resumed, "external resume")?;
@@ -2586,14 +2616,14 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
         |screen| {
             dashboard_header_visible(screen)
                 && screen.contains("BROWSE  Space Menu")
-                && !screen.contains("paused")
+                && !screen.contains("Paused")
         },
         Duration::from_secs(3),
     )?;
 
     let killed = fixture.cli(&["kill", &id])?;
     require_success(killed, "external kill")?;
-    dashboard.wait_for(b"closed", Duration::from_secs(3))?;
+    dashboard.wait_for(b"Exited", Duration::from_secs(3))?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
@@ -2728,6 +2758,84 @@ fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<
         fixture.socket.display(),
         fixture.managed_pgids
     );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn full_screen_program_history_is_quiet_on_wheel_and_explained_on_page_up() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "feature/acceptance",
+        "--name",
+        "fullscreen",
+        "--",
+        "sh",
+        "-c",
+        "stty -echo; printf '\\033[?1049h\\033[2J\\033[HFULLSCREEN_READY\\n'; IFS= read -r done",
+    ])?;
+    require_success(output, "full-screen session")?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.click_visible_text("fullscreen")?;
+    dashboard.wait_until(
+        |screen| screen.contains("FULLSCREEN_READY"),
+        wait_deadline(),
+    )?;
+    // Terminal mode opens only once the pane's screen is acknowledged, so the History
+    // requests below reach the Server rather than stopping at a loading pane.
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    let pane = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+        .into_iter()
+        .next()
+        .context("focused pane rect")?
+        .terminal;
+
+    // The program asked for no mouse reports: a wheel tick over it does nothing at all.
+    dashboard.send(format!("\x1b[<64;{};{}M", pane.x + 3, pane.y + 4).as_bytes())?;
+    anyhow::ensure!(
+        dashboard
+            .wait_for_screen(
+                |screen| {
+                    screen.contains("ERROR")
+                        || screen.contains("Conflict")
+                        || screen.contains("HISTORY")
+                        || screen.contains("full-screen")
+                },
+                Duration::from_secs(2),
+            )
+            .is_err(),
+        "a wheel tick over a full-screen program opened History or showed a message: {}",
+        dashboard.rendered()
+    );
+
+    // PageUp says why, muted, instead of failing.
+    dashboard.send(b"\x1b[5~")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("History isn't available while fullscreen is full-screen"),
+        wait_deadline(),
+    )?;
+    let screen = dashboard.rendered();
+    for internal in ["ERROR", "Conflict", "alternate screen", "HISTORY"] {
+        anyhow::ensure!(!screen.contains(internal), "{internal} on screen: {screen}");
+    }
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())

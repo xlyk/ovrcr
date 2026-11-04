@@ -26,6 +26,21 @@ Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
 only key it intercepts. Click the title bar's Commands control to open the palette
 or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
 
+### Footer messages
+
+When something cannot be done, the footer says why in place of the hints. An
+expected limit (a pane still loading, a paused session, a refresh cooldown, a
+view the Server refused for now, keys the Server did not let through to a
+session, or a refusal that names its blocker, such as sessions that still block
+a removal) reads muted and in plain words. A failure, including any lifecycle
+work the Server could not do, reads `ERROR:` in red. Neither shows the Server's
+error code (`Conflict:`); `project/<workspace id>` reads `project / branch`, a
+session `#N` reads as its title, an id nothing names stays as written, and a
+path keeps its folder names as they are on disk. A message clears when a later
+request of yours succeeds. Otherwise a limit clears after ten seconds, and a failure ten
+seconds after the first key you press while it shows, so one that arrives while
+you are away waits for you. A notice that waited behind it shows next.
+
 ## Operator chat
 
 Browse `o` or the pinned Operator title-bar control opens native chat. It has its
@@ -141,8 +156,10 @@ It does not mark Unread reviewed or change process or conversation state.
 A managed Codex, Pi or Oh My Pi terminal keeps one Unread fact for its latest unreviewed
 root Ready response. The sidebar does not draw a circle for it. While it is present, the
 sidebar shows the Ready checkmark, the attention strip counts it as ready, and the pane
-header says Unread. Mark reviewed clears all of those marks. The Agent's reported activity stays Ready, so the header may still
-say the session is ready. A new Busy report does not clear an earlier Unread response.
+header adds `unread reply` after the state (`Ready · unread reply`). Mark reviewed clears
+all of those marks. The Agent's reported activity stays Ready, so the header still says
+`Ready`. A new Busy report does not clear an earlier Unread response; the header then
+reads `Working · unread reply`.
 Selecting a terminal, viewing its output or receiving a notification does not acknowledge it.
 
 Press `R` in Browse mode, or choose **Mark reviewed** in the terminal action
@@ -222,7 +239,8 @@ in the same tick as its request, or an ask execution aborted with no interactive
 UI — can still deliver one alert for a wait you will not find on screen.
 
 Read `agent.input_requests` from a terminal's JSON row for the open set, oldest
-first. The metadata line labels the oldest one.
+first. The pane header says `Waiting for input`, or `Waiting for approval` when the
+oldest one is a tool approval.
 
 ## Copy keys
 
@@ -284,8 +302,10 @@ Motion waits when a target cell still needs loading.
   does not reflow or rewrite captured rows; use horizontal navigation to reveal
   columns captured outside the viewport.
 - The history view is capped at 64 rows by 256 columns inside a larger pane.
-- Alternate-screen applications do not provide a history transcript, and History
-  stays closed while an application is on the alternate screen.
+- Alternate-screen (full-screen) applications do not provide a history transcript,
+  and History stays closed while an application is on the alternate screen. PageUp
+  there says so in a muted footer line, `History isn't available while <title> is
+  full-screen`; a wheel tick over the pane does nothing, with no error.
 - Retained history lives in memory with the session and is lost when the server
   exits. It is not persisted to disk.
 
@@ -384,17 +404,50 @@ footer.
 | `P` | Paused |
 | `·` | Exited (the row is dimmed) |
 
-An unavailable reporter draws the glyph in the muted colour. The literal state,
-quality, and reporter health (`agent busy confirmed`, `response ready ·
-observed`, `unavailable`) appear on the selected session's metadata line, not
-in the sidebar. While an input request is open the metadata line reads
-`input needed · select` (or `confirm`, `input`, `editor`, `custom`) in place of
-the activity underneath it; the question itself never appears.
+An unavailable reporter draws the glyph in the muted colour. The state in words
+appears in the [pane header](#pane-header), not in the sidebar.
 
-The selected metadata line shows `pid: closed` after the managed process exits.
-Live metadata labels the same observation as `agent unknown`, `agent idle`,
-`agent busy`, `agent waiting input`, or `agent error`. Paused sessions keep their
-last label and add `paused`; exited sessions omit the live activity label.
+### Pane header
+
+Each pane has a two-line header. The first line reads, left to right: the
+session title, the agent and model (`claude:opus-5-5`; `shell` for a terminal
+without an agent label), the state in words and the elapsed time, for example
+`verify spinner  claude:opus-5-5  Working · 2m` or `local  shell · 16m`. The
+process id follows, muted, at the far right while the line has room. With a project
+or workspace row selected, the header names it (`consigint / feature/x`) above its card.
+
+| State | Meaning |
+| --- | --- |
+| `Working` | Busy |
+| `Waiting for input` | Waiting for you, including an open [input request](#input-requests); `Waiting for approval` for a tool approval. The question itself never appears. |
+| `Ready` | The response is done; `Ready · unread reply` until you [mark it reviewed](#unread-responses) |
+| `Idle` | Idle |
+| `Error` | Reported error |
+| `Paused`, `Exited`, `Stopped`, `Interrupted` | The process phase, which outranks the activity |
+
+A terminal that reports nothing shows no state. Reporting health appears only
+when it matters, muted after the state: `starting…` while an agent has not
+reported yet (for up to a minute after launch), and `status off` when an agent's
+reporting is lost (even before its first report), was never set up, or is not
+supported, or when an Unread reply has no reporter left behind it. Report quality (observed, confirmed) and
+the reporter's own reasons stay out of the header; `ovrcr terminal list --json`
+keeps them. Recovery and control explanations follow the state after ` · `.
+
+A narrow pane gives up the process id first, then the model, the elapsed time,
+the agent label, and then clips the title, so the state stays readable. Narrower
+still, a bare `Unread` takes the state's place (`Unread · status off`), since the
+sidebar glyph still shows the activity.
+
+The second line shows the agent's metrics when it reports them:
+`ctx 6% · 417k tokens · ~$0.37` — context used, tokens in and out, and cost, `~`
+marking an estimate. Unknown values are left out. A value older than five
+minutes, or any value once the process has exited, is muted and followed by its
+own age, such as `417k tokens (12m ago)`. A narrow pane drops the ages first,
+then values from the right. Without metrics the second line is a plain rule; in
+History it shows the History position instead. Split panes carry the same words
+on one colour band, `> ` marking the focused pane and `loading` until its screen
+arrives.
+
 Terminal output, elapsed silence, keyboard input, and process liveness do not
 imply that an agent is busy or idle. See [agent reporting](agent-reporting.md)
 for provider reporting behavior.
@@ -421,7 +474,8 @@ In Browse and Terminal modes:
   hidden sidebar has no border to drag, and clicks in its former area reach
   the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
-  move one row; wheel-down at the newest row returns to the live pane.
+  move one row; wheel-down at the newest row returns to the live pane. Over a
+  full-screen application on the alternate screen the wheel does nothing.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling
@@ -646,7 +700,8 @@ adds or updates and the Codex trust line. Enter installs the hooks and shows the
 result line (with any manual-migration note); Esc closes it and writes nothing. When
 nothing needs writing the result shows at once. A failure stays in the footer and
 keeps the entry.
-Observed reporting loss keeps an `unavailable` status with its published reason.
+Observed reporting loss shows `status off` in the pane header, and the terminal's JSON
+row keeps the published reason.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
@@ -907,9 +962,10 @@ At attach the footer shows one line when the reading has findings, for example
 reading changes the number of findings the footer says so again, or **No settings
 findings** once they are gone. The next key clears the line. An error banner owns
 that line first: the findings notice waits behind it, a key while the banner is up
-does not drop the notice, and the notice shows when the banner is dismissed. The
-startup `… status off — :connect to set up` note likewise waits behind the findings
-notice, and a successful **Connect agent status** removes it.
+does not drop the notice, and the notice shows when the banner is dismissed or
+clears itself (see Footer messages). The startup `… status off — :connect to set
+up` note likewise waits behind the findings notice, and a successful **Connect
+agent status** removes it.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional

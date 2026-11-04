@@ -547,7 +547,10 @@ fn copy_render_tiny_pane_and_footer() {
     );
     assert!(copy_footer.contains("v Select  y Copy"));
     let rendered = draw_text(&dashboard, 120, 40);
-    assert!(initial.contains("pid: 111  elapsed: 0m"));
+    assert!(
+        initial.contains("review  claude · 0m") && initial.contains("pid 111"),
+        "{initial}"
+    );
     assert_eq!(buffer[(40, 3)].symbol(), "a");
     assert_eq!(buffer[(41, 3)].symbol(), "b");
     assert_eq!(buffer[(42, 3)].symbol(), "c");
@@ -560,10 +563,7 @@ fn copy_render_tiny_pane_and_footer() {
             message: "server failed".into(),
         },
     });
-    assert_eq!(
-        footer(&dashboard, 120, 40),
-        "ERROR: Internal: server failed"
-    );
+    assert_eq!(footer(&dashboard, 120, 40), "ERROR: server failed");
 
     let mut entry_notice = unready_dashboard();
     assert_eq!(
@@ -572,7 +572,7 @@ fn copy_render_tiny_pane_and_footer() {
     );
     assert_eq!(
         footer(&entry_notice, 120, 40),
-        "ERROR: Waiting for terminal screen"
+        "Waiting for terminal screen"
     );
 }
 
@@ -825,7 +825,7 @@ fn pause_resume_input_and_paste_stay_guarded() {
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         footer(&dashboard, 120, 40),
-        "ERROR: Session paused; press r to resume"
+        "Session paused; press r to resume"
     );
     assert_eq!(
         dashboard.event_action(Event::Paste("blocked".into())),
@@ -1529,7 +1529,12 @@ fn pause_resume_dense_status_has_priority() {
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     assert_eq!(row(4).trim_end(), "▌    P local");
     let rendered = draw_text(&dashboard, 120, 40);
-    assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
+    // Paused outranks the activity it froze, in words, ahead of the elapsed time.
+    assert!(
+        rendered.contains("local  shell  Paused · 0m") && rendered.contains("pid 555"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("busy") && !rendered.contains("Working"));
     assert!(
         rendered
             .lines()
@@ -1963,4 +1968,181 @@ fn history_copy_joins_soft_wrap_without_hard_newline() {
         }
         other => panic!("expected CopyText or HistoryPage, got {other:?}"),
     }
+}
+
+/// The Server's answer to History over a program on the alternate screen.
+fn alternate_screen_refusal(dashboard: &mut Dashboard, request: &ClientMessage) {
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "History is unavailable on the alternate screen".into(),
+        },
+    });
+}
+
+#[test]
+fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel() {
+    // PageUp: a muted line that names the session, not a red error.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    alternate_screen_refusal(&mut dashboard, &begin);
+    let message = "History isn't available while review is full-screen";
+    assert_eq!(footer(&dashboard, 120, 40), message);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(0, 39)].fg,
+        Color::Rgb(166, 173, 200),
+        "muted, without a red marker"
+    );
+    let screen = draw_text(&dashboard, 120, 40);
+    for absent in ["ERROR", "Conflict", "alternate screen", "HISTORY"] {
+        assert!(!screen.contains(absent), "{absent}: {screen}");
+    }
+
+    // A wheel tick asked for nothing in particular: no banner at all, and History stays closed.
+    let mut dashboard = copy_ready();
+    let area = Rect::new(0, 0, 88, 38);
+    let pane = focused_terminal(&dashboard, area);
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::ScrollUp, pane.x + 2, pane.y + 2),
+        area,
+    );
+    let begin = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        begin.request,
+        Request::HistoryBegin {
+            session: SessionId(1)
+        }
+    ));
+    let before = footer(&dashboard, 120, 40);
+    assert!(before.starts_with("BROWSE"), "{before}");
+    alternate_screen_refusal(&mut dashboard, &begin);
+    assert_eq!(footer(&dashboard, 120, 40), before);
+    assert!(!draw_text(&dashboard, 120, 40).contains("HISTORY"));
+
+    // A begin cancelled by Copy stays silent too, and Copy keeps the keys.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    dashboard.key(KeyCode::Char('['));
+    alternate_screen_refusal(&mut dashboard, &begin);
+    assert!(footer(&dashboard, 120, 40).starts_with("COPY"));
+
+    // Any other History failure is still an error.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "history snapshot id overflow".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: history snapshot id overflow"
+    );
+}
+
+#[test]
+fn a_failed_pause_is_an_error_not_a_limit() {
+    // Pause and resume failures come back as the Server's catch-all `Conflict`: real failures.
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Char('p'));
+    let pause = only_request(dashboard.drain_outbox());
+    assert!(
+        matches!(pause.request, Request::PauseSession { .. }),
+        "{pause:?}"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pause.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "could not signal the session's process group".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: could not signal the session's process group"
+    );
+}
+
+#[test]
+fn input_the_server_does_not_admit_is_a_limit_and_a_failed_write_an_error() {
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Enter);
+    let refused = dashboard
+        .input_request(b"x".to_vec(), 9100)
+        .expect("a ready focused pane accepts input");
+    assert!(
+        matches!(refused.request, Request::Input { .. }),
+        "{refused:?}"
+    );
+    // The Server's input admission answers Conflict: a limit, muted, no marker.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: refused.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "session input is paused".into(),
+        },
+    });
+    assert_eq!(footer(&dashboard, 120, 40), "session input is paused");
+    // A write that failed is still a failure.
+    let failed = dashboard
+        .input_request(b"y".to_vec(), 9101)
+        .expect("input is still accepted");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: failed.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "write to pty: broken pipe".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: write to pty: broken pipe"
+    );
+}
+
+#[test]
+fn a_failed_resume_is_an_error_not_a_limit() {
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Char('p'));
+    let pause = only_request(dashboard.drain_outbox());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pause.request_id,
+        response: Response::Ok,
+    });
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .flat_map(|workspace| &mut workspace.sessions)
+    {
+        session.phase = SessionPhase::Paused;
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.key(KeyCode::Char('r'));
+    let resume = only_request(dashboard.drain_outbox());
+    assert!(
+        matches!(resume.request, Request::ResumeSession { .. }),
+        "{resume:?}"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: resume.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "could not continue the session's process group".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: could not continue the session's process group"
+    );
 }

@@ -296,6 +296,12 @@ pub struct Dashboard {
     /// Whether the banner in `error` was written by a refused view, which is the only writer a
     /// successful view completion is allowed to clear. `set_error` releases it.
     error_owned_by_view: bool,
+    /// The banner in `error` is an expected limit (`Pane is loading; retry history`), not a
+    /// failure: it reads muted, without the `ERROR:` marker.
+    error_is_limit: bool,
+    /// When the banner's clock started: when a limit went up, or the first key press after a
+    /// failure did. It clears itself `state::BANNER_LIFETIME` later.
+    error_since: Option<std::time::Instant>,
     copy: Option<CopySelection>,
     copy_notice: Option<String>,
     history: Option<HistoryView>,
@@ -332,6 +338,8 @@ pub struct Dashboard {
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
+    /// Ids of terminal input requests in flight: their refusal (input not admitted) is a limit.
+    input_requests: HashSet<u64>,
     /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.

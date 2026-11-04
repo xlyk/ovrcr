@@ -296,6 +296,19 @@ open. Shorten the window: the quota line hides first, then the attention line,
 and the tree keeps three lines under the OPERATOR heading. Keep screenshots and
 accessibility text for each outcome.
 
+### Pane header
+
+Select a root shell: the pane header reads `local  shell · <elapsed>` with the pid
+muted at the far right, and no `agent unknown`, `pid:` or `elapsed:` field. Select a
+fixture agent: its title, `agent:model`, the state in words (`Working`, `Ready`,
+`Waiting for input`, `Idle`) and the elapsed time; the second line shows `ctx`,
+tokens and cost when the fixture reports them, and never repeats the title. A
+just-launched agent says `starting…` until its first report; a reporter lost after
+that says `status off`, never its reason or `observed`/`confirmed`. Narrow the window
+until the header clips: the pid goes first, then the model, the elapsed time and the
+agent label, while the state stays readable. An Unread reply reads `Ready · unread
+reply`, and a narrow split pane still says `Unread`.
+
 ## 3. Mouse forwarding and wheel history
 
 ### Dashboard controls
@@ -347,7 +360,7 @@ OSC52 when the GUI helper cannot deliver it.
 
 Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
 
-In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History (alternate screen). Quit Vim before repeating the plain-shell History check.
+In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History and must show no error (alternate screen); PageUp then shows the muted footer line `History isn't available while <title> is full-screen`, without `ERROR:` or `Conflict`. Quit Vim before repeating the plain-shell History check.
 
 Computer-use tools often cannot hold a mouse button across Ctrl-g. Skip that gesture here; the TUI test `ctrl_g_releases_held_buttons_before_switching` covers it.
 
