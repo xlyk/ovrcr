@@ -1863,7 +1863,11 @@ fn public_coding_replaced_parent_directory_preserves_containment_and_unrelated_w
     fs::create_dir(&replacement).unwrap();
     let root_inode = fs::metadata(&fixture.live.workspace_root).unwrap().ino();
     assert_ne!(fs::metadata(&replacement).unwrap().ino(), root_inode);
-    let parent_relative = Path::new(&fixture.workspace);
+    // The parent's folder is named after its branch; read it rather than joining the id.
+    let parent_folder = fixture.live.workspace_path(&fixture.workspace);
+    let parent_relative = parent_folder
+        .strip_prefix(&fixture.live.workspace_root)
+        .unwrap();
     let parent_bytes = fs::read(
         fixture
             .live
