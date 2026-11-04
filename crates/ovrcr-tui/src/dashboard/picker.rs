@@ -117,6 +117,18 @@ impl PickList {
         list
     }
 
+    /// The filtered options `lines(limit)` shows: at most `limit`, always
+    /// including the highlighted one.
+    pub fn window(&self, limit: usize) -> std::ops::Range<usize> {
+        let filtered = self.filtered().len();
+        let count = limit.min(filtered);
+        let start = self
+            .selected
+            .min(filtered.saturating_sub(1))
+            .saturating_sub(count.saturating_sub(1));
+        start..start + count
+    }
+
     /// Visible options and the selected row, shared by palette and task forms.
     pub fn lines(&self, limit: usize) -> (Vec<Line<'_>>, usize) {
         let filtered = self.filtered();
@@ -126,15 +138,16 @@ impl PickList {
                 0,
             );
         }
-        let count = limit.min(filtered.len());
-        let start = self
-            .selected
-            .min(filtered.len() - 1)
-            .saturating_sub(count.saturating_sub(1));
-        let mut lines = Vec::with_capacity(count + 2);
+        let window = self.window(limit);
+        let mut lines = Vec::with_capacity(window.len() + 2);
         let mut previous_section: Option<&str> = None;
         let mut selected_line = 0;
-        for (offset, item) in filtered.iter().enumerate().skip(start).take(count) {
+        for (offset, item) in filtered
+            .iter()
+            .enumerate()
+            .skip(window.start)
+            .take(window.len())
+        {
             let section = self.sections.get(&item.value).map(String::as_str);
             if let Some(section) = section.filter(|section| Some(*section) != previous_section) {
                 lines.push(Line::styled(
@@ -176,6 +189,17 @@ impl PickList {
         }
         let next = self.selected as isize + delta;
         self.selected = next.clamp(0, count as isize - 1) as usize;
+    }
+
+    /// Like `move_selection`, but past either end it wraps around.
+    pub fn cycle(&mut self, delta: isize) {
+        let count = self.filtered().len() as isize;
+        if count == 0 {
+            self.selected = 0;
+            return;
+        }
+        let current = (self.selected as isize).min(count - 1);
+        self.selected = (current + delta).rem_euclid(count) as usize;
     }
 
     pub fn accepted(&self) -> Option<&PickItem> {
@@ -437,6 +461,36 @@ mod tests {
             ["  Light", "  › dawn"]
         );
         assert_eq!(selected, 1);
+    }
+
+    #[test]
+    fn cycle_wraps_and_the_window_always_holds_the_highlight() {
+        let mut picker = PickList::new(
+            ["a", "b", "c"]
+                .into_iter()
+                .map(|value| PickItem {
+                    label: value.into(),
+                    value: value.into(),
+                })
+                .collect(),
+        );
+        picker.cycle(-1);
+        assert_eq!(picker.accepted().unwrap().value, "c");
+        picker.cycle(1);
+        assert_eq!(picker.accepted().unwrap().value, "a");
+        // A highlight left past the filtered end steps from the last option.
+        picker.selected = 9;
+        picker.cycle(1);
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.window(8), 0..3, "every option when they fit");
+        picker.selected = 2;
+        assert_eq!(picker.window(2), 1..3);
+        picker.selected = 7;
+        assert_eq!(picker.window(2), 1..3, "out of range never leaves the list");
+        picker.query = "zz".into();
+        assert_eq!(picker.window(2), 0..0);
+        picker.cycle(1);
+        assert_eq!(picker.selected, 0);
     }
 
     #[test]

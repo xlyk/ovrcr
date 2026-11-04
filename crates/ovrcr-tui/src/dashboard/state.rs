@@ -1508,7 +1508,8 @@ impl Dashboard {
             self.desktop.notice = None;
         }
         // Esc dismisses the Lifecycle status strip only while a job runs.
-        // After failure, Esc dismisses the strip first, then the failed Provisional row.
+        // After a failure that could not return to its form, one Esc dismisses
+        // the strip and the failed Provisional row together.
         if key.kind == KeyEventKind::Press
             && key.code == KeyCode::Esc
             && self.palette.is_none()
