@@ -368,11 +368,52 @@ fn branch_slug(branch: &str) -> String {
     }
 }
 
-/// First `<slug>`, `<slug>-2`, … under `workspace_root` that nothing on disk, in the project's
-/// records or in Git's worktree list already uses.
-fn free_branch_destination(
-    project: &ProjectRecord,
+/// Whether a checkout folder at `candidate` would collide with an existing entry on disk, a
+/// registered workspace (`registered`: every project's records) or a worktree Git still lists.
+/// Paths also match ASCII-case-insensitively: APFS and Git with `core.ignorecase` treat
+/// `Dep-B` and `dep-b` as one folder. On a case-sensitive filesystem this only reserves a name.
+fn destination_taken(
+    candidate: &Path,
+    registered: &[PathBuf],
+    listed: &[(PathBuf, Option<String>)],
+) -> Result<bool> {
+    match fs::symlink_metadata(candidate) {
+        Ok(_) => return Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect worktree destination {}", candidate.display()));
+        }
+    }
+    let same = |path: &Path| {
+        worktree_path_matches(path, candidate)
+            || path
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&candidate.to_string_lossy())
+    };
+    Ok(registered.iter().any(|path| same(path)) || listed.iter().any(|(path, _)| same(path)))
+}
+
+/// Refuse a fixed folder (`<workspace root>/<id>`) that another workspace or Git already holds,
+/// before any Git effect. Coding delegation checks this when it records its intent.
+pub fn ensure_destination_free(
     repo: &Path,
+    registered: &[PathBuf],
+    destination: &Path,
+) -> Result<()> {
+    if destination_taken(destination, registered, &worktree_entries(repo)?)? {
+        bail!(
+            "worktree destination is already used by another workspace or Git worktree: {}",
+            destination.display()
+        );
+    }
+    Ok(())
+}
+
+/// First `<slug>`, `<slug>-2`, … under `workspace_root` that [`destination_taken`] allows.
+fn free_branch_destination(
+    repo: &Path,
+    registered: &[PathBuf],
     workspace_root: &Path,
     branch: &str,
 ) -> Result<PathBuf> {
@@ -384,42 +425,45 @@ fn free_branch_destination(
         } else {
             format!("{slug}-{n}")
         });
-        let present = match fs::symlink_metadata(&candidate) {
-            Ok(_) => true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("inspect worktree destination {}", candidate.display())
-                });
-            }
-        };
-        if !present
-            && !project
-                .workspaces
-                .iter()
-                .any(|workspace| worktree_path_matches(&workspace.path, &candidate))
-            && !listed
-                .iter()
-                .any(|(path, _)| worktree_path_matches(path, &candidate))
-        {
+        if !destination_taken(&candidate, registered, &listed)? {
             return Ok(candidate);
         }
     }
     unreachable!("finitely many names are taken")
 }
 
+/// `registered` lists every registered workspace path across all projects (the caller holds
+/// the server's mutation lock); the project's own records are always included. No two records
+/// may share a checkout folder.
 pub fn create_worktree(
     project: &ProjectRecord,
     id: &str,
     branch: BranchSpec,
     dir: WorktreeDir,
+    registered: &[PathBuf],
 ) -> Result<WorkspaceRecord> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
     ovrcr_protocol::validate_name(id, "workspace")?;
+    let registered: Vec<PathBuf> = registered
+        .iter()
+        .cloned()
+        .chain(
+            project
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.path.clone()),
+        )
+        .collect();
     let destination = match (dir, &branch) {
-        (WorktreeDir::Id, _) => workspace_root.join(id),
+        (WorktreeDir::Id, _) => {
+            let destination = workspace_root.join(id);
+            if !destination.exists() {
+                ensure_destination_free(&repo, &registered, &destination)?;
+            }
+            destination
+        }
         (WorktreeDir::Branch, BranchSpec::New { branch, .. } | BranchSpec::Existing { branch }) => {
-            free_branch_destination(project, &repo, &workspace_root, branch)?
+            free_branch_destination(&repo, &registered, &workspace_root, branch)?
         }
     };
     if destination.exists() {

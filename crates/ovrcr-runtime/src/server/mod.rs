@@ -2243,8 +2243,13 @@ impl ServerState {
         }
         let workspace = match retained_workspace {
             Some(workspace) => workspace,
-            None => git::create_worktree(&project_record, &name, branch, dir)
-                .with_context(|| format!("create workspace {project}/{name}"))?,
+            None => {
+                // Every project's checkout folders, so no two records share one (caller holds
+                // mutation_lock).
+                let registered = self.registered_workspace_paths();
+                git::create_worktree(&project_record, &name, branch, dir, &registered)
+                    .with_context(|| format!("create workspace {project}/{name}"))?
+            }
         };
         if !already_registered {
             if let Some(handle) = assignment {
@@ -2708,6 +2713,22 @@ impl ServerState {
             }
         }
         Ok(())
+    }
+
+    /// Every registered workspace path across all projects.
+    pub(super) fn registered_workspace_paths(&self) -> Vec<PathBuf> {
+        self.registry
+            .lock()
+            .unwrap()
+            .projects
+            .iter()
+            .flat_map(|project| {
+                project
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.path.clone())
+            })
+            .collect()
     }
 
     fn root_record_for(&self, repo: &Path) -> Result<WorkspaceRecord> {

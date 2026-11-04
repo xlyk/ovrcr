@@ -280,6 +280,49 @@ fn worktree_folders_follow_the_branch_and_id_folders_keep_working() {
     }
 }
 
+#[test]
+fn projects_sharing_a_workspace_root_never_share_a_checkout_folder() {
+    let fixture = Live::binary();
+    assert_eq!(register(&fixture), Response::Ok);
+    let other_repo = fixture.root.path().join("other-repo");
+    std::fs::create_dir(&other_repo).unwrap();
+    live::init_repo(&other_repo);
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "other".into(),
+            repo: other_repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    let create = |project: &str| {
+        let id = ovrcr::protocol::new_workspace_id().unwrap();
+        assert_eq!(
+            fixture.request(Request::CreateWorkspace {
+                project: project.into(),
+                id: id.clone(),
+                branch: BranchRequest::New {
+                    branch: "fix-login".into(),
+                    base: "main".into(),
+                },
+            }),
+            Response::Ok
+        );
+        fixture.workspace_path(&id)
+    };
+    // The other project's folder is deleted and pruned outside OVRCR; its record remains.
+    let theirs = create("other");
+    assert_eq!(theirs, fixture.workspace_root.join("fix-login"));
+    std::fs::remove_dir_all(&theirs).unwrap();
+    git(&other_repo, &["worktree", "prune"]);
+    let ours = create("fixture");
+    assert_eq!(
+        ours,
+        fixture.workspace_root.join("fix-login-2"),
+        "a stale record of another project keeps its folder name"
+    );
+}
+
 fn register(fixture: &Live) -> Response {
     fixture.request(Request::AddProject {
         name: "fixture".into(),
