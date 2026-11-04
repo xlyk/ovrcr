@@ -2147,10 +2147,11 @@ impl ServerState {
         } else {
             WorkspaceLaunch::None
         };
-        self.create_workspace_inner(project, name, branch, launch)
+        self.create_workspace_inner(project, name, branch, launch, git::WorktreeDir::Branch)
             .map(|_| ())
     }
 
+    /// The run saved `<workspace root>/<name>` as its directory before this call.
     pub fn create_task_workspace(
         &self,
         project: String,
@@ -2163,6 +2164,7 @@ impl ServerState {
             name,
             BranchRequest::New { branch, base },
             WorkspaceLaunch::None,
+            git::WorktreeDir::Id,
         )
         .map(|_| ())
     }
@@ -2179,6 +2181,7 @@ impl ServerState {
             name,
             branch,
             launch.map_or(WorkspaceLaunch::None, WorkspaceLaunch::Session),
+            git::WorktreeDir::Branch,
         )
     }
 
@@ -2188,10 +2191,11 @@ impl ServerState {
         name: String,
         branch: BranchRequest,
         launch: WorkspaceLaunch,
+        dir: git::WorktreeDir,
     ) -> Result<Option<SessionSummary>> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_workspace_locked(project, name, branch, launch, None)
+        self.create_workspace_locked(project, name, branch, launch, None, dir)
     }
 
     /// The lifecycle/delegation caller already owns mutation_lock.
@@ -2202,6 +2206,7 @@ impl ServerState {
         branch: BranchRequest,
         launch: WorkspaceLaunch,
         assignment: Option<&str>,
+        dir: git::WorktreeDir,
     ) -> Result<Option<SessionSummary>> {
         self.reject_if_stopping()?;
         let retained_workspace = match assignment {
@@ -2238,8 +2243,13 @@ impl ServerState {
         }
         let workspace = match retained_workspace {
             Some(workspace) => workspace,
-            None => git::create_worktree(&project_record, &name, branch)
-                .with_context(|| format!("create workspace {project}/{name}"))?,
+            None => {
+                // Every project's checkout folders, so no two records share one (caller holds
+                // mutation_lock).
+                let registered = self.registered_workspace_paths();
+                git::create_worktree(&project_record, &name, branch, dir, &registered)
+                    .with_context(|| format!("create workspace {project}/{name}"))?
+            }
         };
         if !already_registered {
             if let Some(handle) = assignment {
@@ -2703,6 +2713,22 @@ impl ServerState {
             }
         }
         Ok(())
+    }
+
+    /// Every registered workspace path across all projects.
+    pub(super) fn registered_workspace_paths(&self) -> Vec<PathBuf> {
+        self.registry
+            .lock()
+            .unwrap()
+            .projects
+            .iter()
+            .flat_map(|project| {
+                project
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.path.clone())
+            })
+            .collect()
     }
 
     fn root_record_for(&self, repo: &Path) -> Result<WorkspaceRecord> {

@@ -126,6 +126,9 @@ impl ServerState {
                 "coding workspace destination already exists; refuse adoption",
             ));
         }
+        // A missing folder can still belong to another workspace's record or Git registration.
+        crate::git::ensure_destination_free(&repository, &self.registered_workspace_paths(), &path)
+            .map_err(|error| lifecycle_error(ErrorCode::AlreadyExists, error.to_string()))?;
         let base = crate::git::resolve_commit(&project.repo, &coding.requested_base)?;
         Ok(Some(CodingWorkspace {
             path,

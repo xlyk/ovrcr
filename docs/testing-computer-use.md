@@ -172,7 +172,9 @@ in terminal mode under `feature/cua-workspace`. Paste and execute:
 rtk proxy printf 'CUA_%s\n' W_SHELL_OK
 ```
 
-Confirm a separate `CUA_W_SHELL_OK` output line. Record this shell's PID and
+Confirm a separate `CUA_W_SHELL_OK` output line. Run `pwd` and confirm it ends in
+`/feature-cua-workspace`, the folder named after the branch (`-2`, `-3`, … when a
+folder of that name already exists), not a 32-character hex ID. Record this shell's PID and
 process group with the other fixture processes before cleanup. Return to
 `consigint / gui-consigint-auth-handoff / local` for the checks below.
 

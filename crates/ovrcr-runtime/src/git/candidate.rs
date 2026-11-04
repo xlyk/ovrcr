@@ -653,6 +653,8 @@ mod tests {
                 branch: "coding".into(),
                 base: base.clone(),
             },
+            super::super::WorktreeDir::Id,
+            &[],
         )
         .unwrap();
         project.workspaces.push(workspace.clone());

@@ -654,7 +654,13 @@ fn create_unrelated_workspace(f: &Fixture, id: &str, branch: &str, new_branch: b
 
 #[test]
 fn git_run_cleanup_rejects_a_workspace_that_preexisted_preparation() {
-    for branch in ["existing-owner", "ovrcr/task-1/run-1"] {
+    // Worktree folders follow the branch: `task-1/run-1` lands exactly where run 1 records its
+    // directory, which cleanup must refuse; the run's own branch lands in a folder of its own,
+    // which cleanup never reaches.
+    for (branch, folder) in [
+        ("task-1/run-1", "task-1-run-1"),
+        ("ovrcr/task-1/run-1", "ovrcr-task-1-run-1"),
+    ] {
         let f = Fixture::new();
         let (repo, task) = git_task_fixture(&f);
         create_unrelated_workspace(&f, "task-1-run-1", branch, true);
@@ -667,8 +673,12 @@ fn git_run_cleanup_rejects_a_workspace_that_preexisted_preparation() {
                 .contains("duplicate workspace")
         );
         let clean = f.raw(&["run", "clean", &id]);
-        assert!(!clean.status.success(), "cleanup claimed another workspace");
-        assert!(f.root.path().join("workspaces/task-1-run-1").is_dir());
+        assert_eq!(
+            clean.status.success(),
+            folder != "task-1-run-1",
+            "cleanup claimed another workspace"
+        );
+        assert!(f.root.path().join("workspaces").join(folder).is_dir());
         f.call(&[
             "workspace",
             "get",
@@ -730,10 +740,13 @@ fn git_workspace_removal_refuses_a_running_task_in_a_clean_worktree() {
 
 #[test]
 fn git_run_cleanup_rejects_a_replacement_workspace_after_cleanup() {
-    for (branch, new_branch, run_cleanup) in [
-        ("replacement-owner", true, true),
-        ("ovrcr/task-1/run-1", false, true),
-        ("ovrcr/task-1/run-1", false, false),
+    // Worktree folders follow the branch: `task-1/run-1` puts the replacement exactly where the
+    // run's worktree was, which cleanup must refuse; reusing the run's own branch puts it in a
+    // folder of its own, which cleanup never reaches.
+    for (branch, new_branch, run_cleanup, folder) in [
+        ("task-1/run-1", true, true, "task-1-run-1"),
+        ("ovrcr/task-1/run-1", false, true, "ovrcr-task-1-run-1"),
+        ("ovrcr/task-1/run-1", false, false, "ovrcr-task-1-run-1"),
     ] {
         let f = Fixture::new();
         let (repo, task) = git_task_fixture(&f);
@@ -759,12 +772,14 @@ fn git_run_cleanup_rejects_a_replacement_workspace_after_cleanup() {
             ]);
         }
         create_unrelated_workspace(&f, "task-1-run-1", branch, new_branch);
+        let replacement = cwd.with_file_name(folder);
         let clean = f.raw(&["run", "clean", &id]);
-        assert!(
-            !clean.status.success(),
+        assert_eq!(
+            clean.status.success(),
+            replacement != cwd,
             "old run claimed its replacement workspace"
         );
-        assert!(cwd.is_dir());
+        assert!(replacement.is_dir());
         f.call(&[
             "workspace",
             "get",

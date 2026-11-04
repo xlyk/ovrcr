@@ -1083,7 +1083,7 @@ fn wait_phase(live: &Live, id: u64, phase: &str) -> Value {
 }
 
 fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
-    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = live.workspace_path(live::WORKSPACE);
     let path = path.to_str().unwrap();
     let mut args = vec![
         "terminal",
@@ -2035,7 +2035,7 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
     json(&live, &["shutdown", "--kill"]);
     live.join();
     live.start_binary();
-    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree_path = live.workspace_path(live::WORKSPACE);
     let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,
@@ -2211,7 +2211,7 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
     for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
         json(&live, &["terminal", "kill", &row["id"].to_string()]);
     }
-    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree_path = live.workspace_path(live::WORKSPACE);
     let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,
