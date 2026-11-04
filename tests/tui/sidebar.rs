@@ -1173,7 +1173,8 @@ fn long_sidebar_names_clip_to_one_screen_line() {
     let review = (0..39)
         .map(|column| buffer[(column, 5)].symbol())
         .collect::<String>();
-    assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
+    // The title keeps its room first: the agent label goes before the title clips.
+    assert_eq!(review, "▌    - review-a-very-long-session-name…");
 
     // Too narrow for a twelve-cell name beside the agent: the agent moves under the name.
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();

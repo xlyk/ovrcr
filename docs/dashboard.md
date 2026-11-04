@@ -321,14 +321,16 @@ stay on that workspace. A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
-missing model leaves the agent name alone. A long name clips with `…` before that
-label. The label shares the name's line only while every visible `agent:model`
+missing model leaves the agent name alone. On a shared line the name keeps its
+room first: when the whole name and label do not fit, the model goes
+(`claude:opus-5-5` becomes `claude`), then the agent, and only then does the name
+clip with `…`. The label shares the name's line only while every visible `agent:model`
 fits beside at least twelve cells of its name. As soon as one does not, the
 sidebar stacks as a whole: every session with an agent label keeps its name on
 one line and moves the label to one extra line under it, hung by a `└`
 connector two cells in from the status glyph, under the start of the name, and
-clipped with `…` if even that line is too narrow, while local shells stay on one line. The model is never
-dropped, and no two rows use different layouts at the same width. The extra
+clipped with `…` if even that line is too narrow, while local shells stay on one line. A stacked
+label keeps its model, and no two rows use different layouts at the same width. The extra
 line belongs to the same session: `j`, `k` and the mouse treat both lines as one
 row, the selection bar and background cover both, and the hover `[x]` sits on
 the first line. Local shells show `$ local` on one line with no agent label
