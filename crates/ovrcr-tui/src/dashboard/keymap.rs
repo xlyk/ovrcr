@@ -414,6 +414,8 @@ pub(super) fn agents_binding() -> KeyBinding {
     .group('v', "s")
 }
 
+/// The Quick message key. `Dashboard::dispatch_key` reserves it everywhere except
+/// Terminal mode with nothing over the pane, where it goes to the program.
 pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL
 }
@@ -425,7 +427,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding(
                 "Ctrl-o",
                 "Quick message",
-                "Start an Operator conversation with configured defaults".into(),
+                "Start an Operator conversation with configured defaults. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
                 KeyCode::Char('o'),
                 Action::OperatorQuick,
             )

@@ -1613,6 +1613,24 @@ mod operator_loop_tests {
         )
         .unwrap();
         let mut mouse = false;
+        // In Terminal mode Ctrl-o is the program's key; Ctrl-g then Ctrl-o opens Quick.
+        let ctrl_o = Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        dispatch_dashboard_event(&mut terminal, &mut stream, &mut d, &mut mouse, ctrl_o).unwrap();
+        let input: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(
+            matches!(input.request, Request::Input { ref bytes, .. } if bytes == b"\x0f"),
+            "{input:?}"
+        );
+        assert!(!d.operator_quick_visible());
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+        )
+        .unwrap();
+        while crate::protocol::read_frame::<ClientMessage>(&mut peer).is_ok() {}
         for event in [
             Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
             Event::Paste("discard 界e\u{301}🙂\n ".into()),
@@ -1802,6 +1820,8 @@ mod operator_loop_tests {
             !d.operator.visible,
             "dismissed continuation cannot open Operator"
         );
+        // Quick was opened from Browse (Ctrl-g then Ctrl-o); Enter returns to the terminal.
+        d.key(KeyCode::Enter);
         assert_eq!(
             d.key(KeyCode::Char('p')),
             DashboardAction::PtyBytes(b"p".to_vec())

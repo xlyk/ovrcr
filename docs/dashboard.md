@@ -21,12 +21,16 @@ copy` while a copy is pending and `Esc Back` otherwise.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. Click the title bar's Actions control to open the palette
-or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
+only key it intercepts. `Ctrl-o` reaches the program there (Oh My Pi expands tool
+output with it, Claude Code opens its transcript), so Operator **Quick message** is
+`Ctrl-g` then `Ctrl-o`; the Terminal footer shows this when space permits. Click the
+title bar's Actions control to open the palette or Menu to open the action menu.
+Press `Ctrl-g` first to use dashboard shortcuts.
 
 ## Operator chat
 
-Browse `o` or the pinned Operator title-bar control opens native chat. It has its
+Browse `o` or the pinned Operator title-bar control opens native chat. `Ctrl-o`
+opens Quick message from every view except Terminal mode. It has its
 own multiline composer and conversation history, independent of terminal panes.
 Conversations stream concurrently and continue while another view is selected.
 See [Operator setup and controls](operator.md).
@@ -93,8 +97,8 @@ history request that has not opened yet.
 
 Press lowercase `s` in Browse, `Space v s` from the View menu, or sequentially
 `Ctrl-g` then `s` while typing into a terminal. When space permits, the Terminal
-footer shows this sequence. Uppercase `S` still toggles ready sound; `:` still
-opens the full command palette.
+footer shows this sequence and `Ctrl-o` for Quick message after it. Uppercase
+`S` still toggles ready sound; `:` still opens the full command palette.
 
 The Agents picker includes nonarchived Agent-launch sessions with a running,
 unpaused process, regardless of activity or reporting health. It includes every
@@ -290,8 +294,9 @@ notice `Clipboard request sent; paste to verify` confirms only that the request
 was written, so verify it by pasting in the destination application. Terminals
 that disable or lack OSC52 can ignore the request silently. Selections remain
 available after clipboard or size errors. Soft-wrapped rows join without added
-newlines; hard line breaks, explicit spaces, and stored Unicode text are
-preserved.
+newlines; hard line breaks, spaces inside a line, and stored Unicode text are
+preserved. Spaces at the end of each copied line are dropped, as terminals do:
+Oh My Pi pads every row to the pane width.
 
 ## Panes
 
@@ -383,7 +388,8 @@ In Browse and Terminal modes:
   hidden sidebar has no border to drag, and clicks in its former area reach
   the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
-  move one row; wheel-down at the newest row returns to the live pane.
+  move three rows (keys move one); wheel-down at the newest row returns to the
+  live pane.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling

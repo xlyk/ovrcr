@@ -246,7 +246,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
 fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     for mode in [
         "Browse",
-        "Terminal",
+        "Terminal then Ctrl-g",
         "History",
         "Copy",
         "Tasks",
@@ -258,8 +258,9 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     ] {
         let mut d = dashboard_fixture();
         match mode {
-            "Terminal" => {
+            "Terminal then Ctrl-g" => {
                 d.key(KeyCode::Enter);
+                d.ctrl('g');
             }
             "History" => {
                 let request = d.key(KeyCode::PageUp);
@@ -352,6 +353,52 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
             "underlying {mode} changed"
         );
     }
+}
+
+/// Oh My Pi expands tool output and Claude Code opens its transcript with Ctrl-o, so in
+/// Terminal mode the key reaches the program; Quick message is Ctrl-g then Ctrl-o.
+#[test]
+fn ctrl_o_in_terminal_mode_goes_to_the_program() {
+    let ctrl_o = || Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    let mut d = dashboard_fixture();
+    d.key(KeyCode::Enter);
+    d.drain_outbox();
+    assert_eq!(
+        d.event_action(ctrl_o()),
+        DashboardAction::PtyBytes(b"\x0f".to_vec())
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    d.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(!text.contains("Quick message ·"), "{text}");
+    assert!(
+        text.contains("Ctrl-o Quick message"),
+        "footer names the route: {text}"
+    );
+    d.ctrl('g');
+    assert!(!matches!(
+        d.event_action(ctrl_o()),
+        DashboardAction::PtyBytes(_)
+    ));
+    d.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(text.contains("Quick message ·"), "{text}");
+    assert!(!d.drain_outbox().iter().any(|m| matches!(
+        m.request,
+        Request::Input { .. } | Request::AssignedHumanInput { .. }
+    )));
 }
 
 #[test]

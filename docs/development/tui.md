@@ -41,7 +41,11 @@ only after queued requests flush; captured cleanup keeps its original target and
 authority. Clipboard effects retain the input boundary, and startup keeps reserved
 request IDs 1/2 and its interleaved handshake outside this steady-state ownership.
 
-`Ctrl-o` is reserved globally by `keymap::is_operator_quick_key`. Key dispatch,
+`Ctrl-o` (`keymap::is_operator_quick_key`) is reserved everywhere except where
+keys reach the program: Terminal mode with no Tasks, details, palette, Which-key,
+Operator editor, agent-loading intent or Quick form over the pane
+(`Dashboard::opens_operator_quick`). There it is PTY input, since Oh My Pi and
+Claude Code bind it; Ctrl-g then Ctrl-o opens the form. Elsewhere key dispatch,
 event dispatch before Tasks, and the production mouse path give the Hub-owned
 quick form priority. The form layers above existing views without taking their
 state; Repeat/Release and all modal mouse events are consumed. Its frozen

@@ -1017,6 +1017,9 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
         |s| s.contains("READY_quick-agent") && s.contains("Terminal mode"),
         wait_deadline(),
     )?;
+    // Ctrl-o in Terminal mode belongs to the program; Ctrl-g then Ctrl-o opens Quick.
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|s| s.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x0f")?;
     dashboard.wait_for_screen(
         |s| s.contains("Quick message") && s.contains("Ctrl-o"),
@@ -1038,9 +1041,11 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |s| !s.contains("Quick message") && s.contains("Terminal mode"),
+        |s| !s.contains("Quick message") && s.contains("BROWSE"),
         wait_deadline(),
     )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(|s| s.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"AFTER_QUICK\r")?;
     dashboard.wait_for(b"RECEIVED_quick-agent_AFTER_QUICK", wait_deadline())?;
     let text = fixture.read_terminal(target.id)?;
