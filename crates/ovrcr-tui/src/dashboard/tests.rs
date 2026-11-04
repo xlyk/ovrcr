@@ -4583,25 +4583,40 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
     );
 }
 
-/// One project whose workspace carries a Server-generated id, for the error presenter.
+/// Two projects with the same branch, one workspace each under a Server-generated id, and a
+/// titled session `#13`, for the error presenter.
 fn hashed_workspace_dashboard() -> Dashboard {
     use crate::protocol::*;
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 24,
         cols: 120,
     });
-    dashboard.hierarchy.projects.push(ProjectSummary {
-        name: "consigint".into(),
-        workspaces: vec![WorkspaceSummary {
-            project: "consigint".into(),
-            name: "feature/status-check".into(),
-            id: "7833bc0a230c03372aecca12545fec60".into(),
-            root: false,
-            warning: None,
-            path: "/tmp/w".into(),
-            sessions: Vec::new(),
-        }],
-    });
+    let mut session = header_session("s", SessionKind::Terminal, "zsh", 0);
+    session.id = SessionId(13);
+    session.project = "consigint".into();
+    session.workspace = "7833bc0a230c03372aecca12545fec60".into();
+    session.title = Some("verify spinner".into());
+    for (project, id, sessions) in [
+        (
+            "consigint",
+            "7833bc0a230c03372aecca12545fec60",
+            vec![session],
+        ),
+        ("spacelift", "aaaabbbbccccddddeeeeffff00001111", Vec::new()),
+    ] {
+        dashboard.hierarchy.projects.push(ProjectSummary {
+            name: project.into(),
+            workspaces: vec![WorkspaceSummary {
+                project: project.into(),
+                name: "feature/status-check".into(),
+                id: id.into(),
+                root: false,
+                warning: None,
+                path: "/tmp/w".into(),
+                sessions,
+            }],
+        });
+    }
     dashboard
 }
 
@@ -4626,7 +4641,8 @@ fn footer_cells(dashboard: &Dashboard) -> (String, Vec<ratatui::style::Color>) {
 #[test]
 fn server_refusals_read_in_plain_words_and_expected_limits_are_not_errors() {
     let mut dashboard = hashed_workspace_dashboard();
-    // An expected limit: no code, the branch instead of the workspace id, muted, no marker.
+    // A typed blocker is an expected limit: no code, `project / branch` for the workspace
+    // id, the session's title for `#13`, muted, no marker.
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 77,
         response: Response::Error {
@@ -4637,24 +4653,36 @@ fn server_refusals_read_in_plain_words_and_expected_limits_are_not_errors() {
     let (footer, colors) = footer_cells(&dashboard);
     assert_eq!(
         footer,
-        "sessions block removal of workspace feature/status-check: live: #13; kill or close them"
+        "sessions block removal of workspace consigint / feature/status-check: live: verify spinner; kill or close them"
     );
     assert_eq!(colors[0], super::render::SUBTEXT());
-    // A failure keeps its red marker, still without the code; an id nothing names goes.
+    // `Conflict` is the Server's catch-all for failed work: red, still without the code.
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 78,
         response: Response::Error {
-            code: ErrorCode::Internal,
-            message: "workspace other/0123456789abcdef0123456789abcdef is gone".into(),
+            code: ErrorCode::Conflict,
+            message: "spawn claude: No such file or directory".into(),
         },
     });
     let (footer, colors) = footer_cells(&dashboard);
-    assert_eq!(footer, "ERROR: workspace other is gone");
+    assert_eq!(footer, "ERROR: spawn claude: No such file or directory");
     assert_eq!(colors[0], super::render::RED());
     assert_eq!(colors["ERROR: ".len()], super::render::TEXT());
-    // Short ids and git hashes are not workspace ids and stay as written.
-    let kept = "in w/abc at 0123456789abcdef0123456789abcdef0123abcd";
-    assert_eq!(dashboard.plain_error(kept), kept);
+    // Two projects with the same branch stay apart; an id nothing names stays as written.
+    assert_eq!(
+        dashboard.plain_error(
+            "workspace spacelift/aaaabbbbccccddddeeeeffff00001111 and other/0123456789abcdef0123456789abcdef"
+        ),
+        "workspace spacelift / feature/status-check and other/0123456789abcdef0123456789abcdef"
+    );
+    // A worktree folder named after its id is a real path: it is never rewritten.
+    let path = "worktree directory /home/w/consigint/7833bc0a230c03372aecca12545fec60 is missing but Git does not report it prunable";
+    assert_eq!(dashboard.plain_error(path), path);
+    // A bare id outside a path reads as its branch; `#` without a known session stays.
+    assert_eq!(
+        dashboard.plain_error("workspace 7833bc0a230c03372aecca12545fec60 has #99 and #"),
+        "workspace feature/status-check has #99 and #"
+    );
 }
 
 #[test]
@@ -4665,14 +4693,20 @@ fn footer_banners_clear_themselves_after_their_lifetime() {
         rows: 24,
         cols: 120,
     });
+    // A failure that lands while nobody is typing waits for them.
     dashboard.set_error("socket hiccup");
     dashboard.show_notice("queued notice");
-    let raised = dashboard
-        .error_since
-        .expect("the banner records when it went up");
-    dashboard.expire_banner(raised + lifetime - Duration::from_millis(1));
+    assert_eq!(dashboard.error_since, None);
+    dashboard.expire_banner(Instant::now() + lifetime * 100);
     assert_eq!(dashboard.error.as_deref(), Some("socket hiccup"));
-    dashboard.expire_banner(raised + lifetime);
+    // Its clock starts at the first key press while it shows.
+    dashboard.key(KeyCode::Null);
+    let seen = dashboard
+        .error_since
+        .expect("the key press starts the clock");
+    dashboard.expire_banner(seen + lifetime - Duration::from_millis(1));
+    assert_eq!(dashboard.error.as_deref(), Some("socket hiccup"));
+    dashboard.expire_banner(seen + lifetime);
     assert_eq!(dashboard.error, None);
     assert_eq!(
         dashboard.desktop.notice.as_deref(),
@@ -4680,7 +4714,7 @@ fn footer_banners_clear_themselves_after_their_lifetime() {
         "the notice waiting behind the banner shows next"
     );
 
-    // The production draw path is the banner's clock.
+    // A limit's clock starts when it goes up; the production draw path is its clock.
     let footer = |terminal: &Terminal<ratatui::backend::TestBackend>| -> String {
         (0..120)
             .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
@@ -4688,6 +4722,7 @@ fn footer_banners_clear_themselves_after_their_lifetime() {
     };
     let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     dashboard.set_limit("Pane is loading; retry history");
+    assert!(dashboard.error_since.is_some());
     dashboard.error_since = Instant::now().checked_sub(lifetime);
     dashboard.draw(&mut terminal).unwrap();
     assert!(
@@ -4703,4 +4738,45 @@ fn footer_banners_clear_themselves_after_their_lifetime() {
         "{}",
         footer(&terminal)
     );
+}
+
+#[test]
+fn a_failed_recovery_relaunch_is_an_error_not_a_limit() {
+    let mut hierarchy = session_hierarchy(&[1]);
+    let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+    session.kind = crate::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    session.phase = SessionPhase::Interrupted;
+    session.recovery = Some(crate::protocol::SessionRecovery {
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+        attached: false,
+        conversation: None,
+    });
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.select_session(SessionId(1));
+    dashboard.request_view_at(Rect::new(0, 0, 120, 24));
+    let recover = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|r| matches!(r.request, Request::RecoverSession { .. }))
+        .expect("first display asks for the relaunch");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: recover.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "spawn claude: No such file or directory".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(footer, "ERROR: spawn claude: No such file or directory");
+    assert_eq!(colors[0], super::render::RED());
 }

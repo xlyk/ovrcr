@@ -27,12 +27,16 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 ### Footer messages
 
 When something cannot be done, the footer says why in place of the hints. An
-expected limit (a pane still loading, a paused session, a refresh cooldown, or a
-refusal the Server explains, such as sessions that still block a removal) reads
-muted and in plain words. A failure reads `ERROR:` in red. Neither shows the
-Server's error code (`Conflict:`) or a workspace's internal id; the workspace is
-named by its branch instead. A message clears when a later request of yours
-succeeds, or after ten seconds, and a notice that waited behind it shows next.
+expected limit (a pane still loading, a paused session, a refresh cooldown, a
+view the Server refused for now, or a refusal that names its blocker, such as
+sessions that still block a removal) reads muted and in plain words. A failure,
+including any lifecycle work the Server could not do, reads `ERROR:` in red.
+Neither shows the Server's error code (`Conflict:`); `project/<workspace id>`
+reads `project / branch`, a session `#N` reads as its title, and a path keeps
+its folder names as they are on disk. A message clears when a later request of
+yours succeeds. Otherwise a limit clears after ten seconds, and a failure ten
+seconds after the first key you press while it shows, so one that arrives while
+you are away waits for you. A notice that waited behind it shows next.
 
 ## Operator chat
 
@@ -382,12 +386,12 @@ or workspace row selected, the header names it (`consigint / feature/x`) above i
 A terminal that reports nothing shows no state. Reporting health appears only
 when it matters, muted after the state: `starting…` while an agent has not
 reported yet (for up to a minute after launch), and `status off` when an agent's
-reporting is lost, was never set up, or is not supported, or when an Unread
-reply has no reporter left behind it. Report quality (observed, confirmed) and
+reporting is lost (even before its first report), was never set up, or is not
+supported, or when an Unread reply has no reporter left behind it. Report quality (observed, confirmed) and
 the reporter's own reasons stay out of the header; `ovrcr terminal list --json`
 keeps them. Recovery and control explanations follow the state after ` · `.
 
-A narrow pane gives up the process id first, then the elapsed time, the model,
+A narrow pane gives up the process id first, then the model, the elapsed time,
 the agent label, and then clips the title, so the state stays readable. Narrower
 still, a bare `Unread` takes the state's place (`Unread · status off`), since the
 sidebar glyph still shows the activity.
@@ -842,7 +846,7 @@ reading changes the number of findings the footer says so again, or **No setting
 findings** once they are gone. The next key clears the line. A startup error
 banner owns that line first: the findings notice waits behind it, a key while the
 banner is up does not drop the notice, and the notice shows when the banner is
-dismissed or clears itself after ten seconds.
+dismissed or clears itself (ten seconds after the first key press).
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional

@@ -14186,7 +14186,7 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     );
     dashboard.send(b"\x07R");
     dashboard.wait_screen(|screen| {
-        !screen.to_lowercase().contains("unread reply") && screen.contains("CODEX_NATIVE_EXIT=17")
+        !screen.contains("Unread") && screen.contains("CODEX_NATIVE_EXIT=17")
     });
     dashboard.resize(180);
     // The recovery explanation sits between the state and the reporting words.

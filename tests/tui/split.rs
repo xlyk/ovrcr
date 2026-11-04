@@ -2121,8 +2121,9 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: first_a_id,
         response: Response::Ok,
     });
-    // A refused view is an expected limit: plain words, no code, no error marker.
-    assert_eq!(banner(&dashboard), "old A error");
+    // A superseded view's refusal is no longer a refused view: plain words, no code, and
+    // `Conflict` reads as the Server's catch-all failure.
+    assert_eq!(banner(&dashboard), "ERROR: old A error");
     assert!(!drawn_contains(&dashboard, 88, 38, "stale"));
 
     let size = dashboard
@@ -2220,7 +2221,8 @@ fn view_error_on_unchanged_view_retries_once_after_backoff() {
             message: "session vanished".into(),
         },
     });
-    assert_eq!(banner(&dashboard), "ERROR: session vanished");
+    // A refused view is a limit of the moment (the retry follows), whatever its code.
+    assert_eq!(banner(&dashboard), "session vanished");
     assert_view_input_blocked(&mut dashboard);
     let area = Rect::new(0, 0, 88, 38);
     for _ in 0..3 {

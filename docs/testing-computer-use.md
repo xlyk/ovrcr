@@ -254,7 +254,7 @@ fixture agent: its title, `agent:model`, the state in words (`Working`, `Ready`,
 tokens and cost when the fixture reports them, and never repeats the title. A
 just-launched agent says `starting…` until its first report; a reporter lost after
 that says `status off`, never its reason or `observed`/`confirmed`. Narrow the window
-until the header clips: the pid goes first, then the elapsed time, the model and the
+until the header clips: the pid goes first, then the model, the elapsed time and the
 agent label, while the state stays readable. An Unread reply reads `Ready · unread
 reply`, and a narrow split pane still says `Unread`.
 

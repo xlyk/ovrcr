@@ -297,7 +297,8 @@ pub struct Dashboard {
     /// The banner in `error` is an expected limit (`Pane is loading; retry history`), not a
     /// failure: it reads muted, without the `ERROR:` marker.
     error_is_limit: bool,
-    /// When the banner in `error` went up; it clears itself `state::BANNER_LIFETIME` later.
+    /// When the banner's clock started: when a limit went up, or the first key press after a
+    /// failure did. It clears itself `state::BANNER_LIFETIME` later.
     error_since: Option<std::time::Instant>,
     copy: Option<CopySelection>,
     copy_notice: Option<String>,

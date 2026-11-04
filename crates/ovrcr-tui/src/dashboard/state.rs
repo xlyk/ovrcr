@@ -792,18 +792,21 @@ impl Dashboard {
         self.raise_banner(message.into(), true);
     }
 
-    /// A Server refusal in plain words (see [`Self::plain_error`]). Codes that mean "not
-    /// now" rather than "broken" read as limits.
+    /// A Server refusal in plain words (see [`Self::plain_error`]). Only the typed refusals
+    /// that say what blocks the action (sessions or workspaces remain, a session running,
+    /// uncommitted changes, a name taken) read as limits. `Conflict` is the Server's
+    /// catch-all for failed lifecycle work, so it stays a failure here; a caller that knows
+    /// its refusal is a limit (a refused view) uses [`Self::set_limit`] itself.
     pub(super) fn set_server_error(&mut self, code: ErrorCode, message: &str) {
         let text = self.plain_error(message);
         match code {
-            ErrorCode::Conflict
-            | ErrorCode::AlreadyExists
+            ErrorCode::AlreadyExists
             | ErrorCode::DirtyWorktree
             | ErrorCode::SessionRunning
             | ErrorCode::SessionsRemain
             | ErrorCode::WorkspacesRemain => self.set_limit(text),
-            ErrorCode::InvalidRequest
+            ErrorCode::Conflict
+            | ErrorCode::InvalidRequest
             | ErrorCode::NotFound
             | ErrorCode::PartialFailure
             | ErrorCode::Internal
@@ -812,22 +815,49 @@ impl Dashboard {
     }
 
     /// Server and internal error text in plain words, for the footer and for any form that
-    /// shows a refusal inline: no `Conflict:`-style code in front, and a workspace's internal
-    /// id replaced by the branch the sidebar shows (any other such id dropped). The useful
-    /// message is otherwise kept as written.
+    /// shows a refusal inline: no `Conflict:`-style code in front, `project/<workspace id>`
+    /// read as `project / branch` and a bare workspace id as its branch, and `#N` as that
+    /// session's title. An id that continues a path stays, since a worktree's real folder
+    /// may be named after it, and an id nothing names stays as written. Lane L1's
+    /// `plain_reason` follows the same rules.
     pub(super) fn plain_error(&self, message: &str) -> String {
         let mut text = message.to_string();
         for project in &self.hierarchy.projects {
-            for workspace in project.workspaces.iter().filter(|w| internal_id(&w.id)) {
-                text = text
-                    .replace(
-                        &format!("{}/{}", project.name, workspace.id),
-                        &workspace.name,
-                    )
-                    .replace(&workspace.id, &workspace.name);
+            for workspace in &project.workspaces {
+                text = replace_outside_paths(
+                    &text,
+                    &format!("{}/{}", project.name, workspace.id),
+                    &workspace_heading(self, workspace),
+                );
+                if internal_id(&workspace.id) {
+                    text = replace_outside_paths(
+                        &text,
+                        &workspace.id,
+                        &workspace_label(self, workspace),
+                    );
+                }
             }
         }
-        strip_internal_ids(&text)
+        let mut titled = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find('#') {
+            titled.push_str(&rest[..at]);
+            let digits = rest[at + 1..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+            match rest[at + 1..at + 1 + digits]
+                .parse()
+                .ok()
+                .and_then(|id| find_session(self, SessionId(id)))
+            {
+                Some(session) => titled.push_str(&self.session_display_name(session)),
+                None => titled.push_str(&rest[at..at + 1 + digits]),
+            }
+            rest = &rest[at + 1 + digits..];
+        }
+        titled.push_str(rest);
+        titled
     }
 
     fn raise_banner(&mut self, message: String, limit: bool) {
@@ -836,14 +866,17 @@ impl Dashboard {
         }
         self.error = Some(message);
         self.error_is_limit = limit;
-        self.error_since = Some(Instant::now());
+        // A limit answers what the user just did; a failure may land unseen, so its clock
+        // starts at the first key press after it appears.
+        self.error_since = limit.then(Instant::now);
         self.error_owned_by_view = false;
         // Requests and coalesced selections predating this error cannot dismiss it.
         self.error_owning_requests.clear();
         self.handshake.note_error();
     }
 
-    /// Drops a banner that has stood for [`BANNER_LIFETIME`], so an error never lingers; the
+    /// Drops a banner that has stood for [`BANNER_LIFETIME`] since its clock started (at once
+    /// for a limit, at the first key press for a failure), so an error never lingers; the
     /// notice waiting behind it shows next. The production draw path calls this every frame.
     pub(super) fn expire_banner(&mut self, now: Instant) {
         if self.error.is_some()
@@ -1552,6 +1585,10 @@ impl Dashboard {
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        // A failure has been seen once a key is pressed while it shows.
+        if key.kind == KeyEventKind::Press && self.error.is_some() && self.error_since.is_none() {
+            self.error_since = Some(Instant::now());
+        }
         let action = self.dispatch_key(key);
         // A key clears the visible notice. One that was only queued behind the banner
         // stays queued until the banner is gone, then the next key reveals it.
@@ -1822,7 +1859,11 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         self.history_page_error = false;
-        self.dismiss_error_banner();
+        // A wheel tick may land on a full-screen program and then do nothing at all, so it
+        // leaves a standing banner to its own lifetime; PageUp is a deliberate new action.
+        if !at_tail {
+            self.dismiss_error_banner();
+        }
         let request_id = self.error_owning_request_id();
         self.history_begin_request = Some(PendingHistoryBegin {
             request_id,
@@ -3623,10 +3664,19 @@ impl Dashboard {
                         }
                     }
                     // History cannot freeze a program on the alternate screen; the Server says
-                    // so with Conflict, a limit of that program rather than a failure.
+                    // so with Conflict, a limit of that program rather than a failure. This
+                    // relies on `dispatch_history_begin` answering Conflict only for the
+                    // alternate screen (its other Conflict, a disconnected dashboard, never
+                    // reaches a live one).
                     if let Some(begin) = begin.filter(|_| code == ErrorCode::Conflict) {
                         self.alternate_screen_history(&begin);
-                    } else if matched_view || !was_view_request {
+                    } else if matched_view {
+                        // A refused view is a limit of the moment: the retry follows.
+                        let text = self.plain_error(&message);
+                        self.set_limit(text);
+                        // Only a refused view hands the banner to the next view completion.
+                        self.error_owned_by_view = true;
+                    } else if !was_view_request {
                         self.set_server_error(code, &message);
                         // Only a refused view hands the banner to the next view completion.
                         self.error_owned_by_view = matched_view;
@@ -4248,29 +4298,17 @@ fn internal_id(word: &str) -> bool {
     word.len() == 32 && word.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// `text` without the internal ids no hierarchy name replaced: each one goes, with the `/`
-/// that joined it to its project.
-fn strip_internal_ids(text: &str) -> String {
-    fn flush(out: &mut String, word: &mut String) {
-        if internal_id(word) {
-            if out.ends_with('/') {
-                out.pop();
-            }
-        } else {
-            out.push_str(word);
-        }
-        word.clear();
+/// `text` with `from` replaced by `to`, except where `from` continues a path: a worktree's
+/// real directory may be named after its internal id.
+fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(from) {
+        out.push_str(&rest[..at]);
+        out.push_str(if rest[..at].ends_with('/') { from } else { to });
+        rest = &rest[at + from.len()..];
     }
-    let (mut out, mut word) = (String::with_capacity(text.len()), String::new());
-    for character in text.chars() {
-        if character.is_ascii_alphanumeric() {
-            word.push(character);
-        } else {
-            flush(&mut out, &mut word);
-            out.push(character);
-        }
-    }
-    flush(&mut out, &mut word);
+    out.push_str(rest);
     out
 }
 

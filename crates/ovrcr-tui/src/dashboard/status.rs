@@ -252,8 +252,8 @@ fn activity_words(session: &SessionSummary) -> &'static str {
 }
 
 /// Reporting health in words, only for a running agent and only when it matters. Before the
-/// first report a young session is `starting…`, whatever the reporter says meanwhile (Claude
-/// reads Unavailable until its transcript exists). Past the grace an agent that never bound
+/// first report a young session is `starting…` while its reporter is healthy or merely waiting
+/// for Claude's transcript (`source_unavailable`); any other loss reads `status off` at once. Past the grace an agent that never bound
 /// has no reporting at all; one that bound but has not been asked anything says nothing.
 /// After the first report, a lost reporter is `status off`, and so is an Unread with no
 /// reporter left behind it.
@@ -279,6 +279,14 @@ fn reporting_words(session: &SessionSummary, now_unix_ms: u64) -> Option<&'stati
             .as_ref()
             .filter(|agent| unavailable(agent))
             .map(|_| "status off");
+    }
+    // Claude's reader says `source_unavailable` until its transcript exists, which is
+    // ordinary before the first prompt; any other loss (the supervisor gone, its capability
+    // revoked) is real even before the first report.
+    if session.agent.as_ref().is_some_and(|agent| {
+        unavailable(agent) && agent.health.reason.as_deref() != Some("source_unavailable")
+    }) {
+        return Some("status off");
     }
     if session
         .started_unix_ms
@@ -873,6 +881,14 @@ mod tests {
         let status = SessionStatus::of(&launched, 0);
         assert_eq!(status.state, "");
         assert!(!status.state.contains("source_unavailable"));
+
+        // A real loss before the first report is not a startup: the supervisor is gone.
+        launched.agent.as_mut().unwrap().health.reason = Some("supervisor_disconnected".into());
+        assert_eq!(words(&launched, 0), Some("status off"));
+        assert_eq!(words(&launched, grace), Some("status off"));
+        launched.agent.as_mut().unwrap().health.reason = Some("capability_revoked".into());
+        assert_eq!(words(&launched, grace), Some("status off"));
+        launched.agent.as_mut().unwrap().health.reason = Some("source_unavailable".into());
 
         // The first report ends `starting…`; a reporter lost after it is `status off`.
         launched.agent.as_mut().unwrap().activity = Some(ActivitySample {

@@ -842,7 +842,7 @@ fn render_split_metadata(
 /// Line 1 of a pane header: the title, the agent label (`claude:opus-5-5`, or `shell` for a
 /// terminal without one), the state in words with its reporting health and elapsed time
 /// (`Working · 2m`, `shell · 16m`), and the pid muted at the far right while it fits. A
-/// narrow pane drops the pid, then the elapsed time, the model and the label, then clips
+/// narrow pane drops the pid, then the model, the elapsed time and the label, then clips
 /// the title while it stays recognisable, first beside the state and then beside its narrow
 /// form (a bare `Unread` when there is one); below that the narrow state stands alone.
 fn pane_header(

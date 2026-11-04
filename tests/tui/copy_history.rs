@@ -2044,3 +2044,26 @@ fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel(
         "ERROR: history snapshot id overflow"
     );
 }
+
+#[test]
+fn a_failed_pause_is_an_error_not_a_limit() {
+    // Pause and resume failures come back as the Server's catch-all `Conflict`: real failures.
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Char('p'));
+    let pause = only_request(dashboard.drain_outbox());
+    assert!(
+        matches!(pause.request, Request::PauseSession { .. }),
+        "{pause:?}"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pause.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "could not signal the session's process group".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: could not signal the session's process group"
+    );
+}
