@@ -194,8 +194,11 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 Err(error) => outcome_from_error(error),
             },
         };
-        publish_completed(&state, job.client_token, op, outcome, publish_hierarchy);
+        // Free the slot before announcing completion: a Dashboard may answer the
+        // completion with its next job (stop sessions, then remove a workspace),
+        // and that job must not be refused as overlapping this finished one.
         clear_inflight(&state, job.client_token);
+        publish_completed(&state, job.client_token, op, outcome, publish_hierarchy);
     }
 }
 
@@ -264,6 +267,71 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "job did not finish");
             std::thread::sleep(Duration::from_millis(10));
         }
+        state.lifecycle.detach();
+    }
+
+    /// A Dashboard chains removal steps by answering each completion with the
+    /// next job, so a completion must never be visible while its slot is taken.
+    #[test]
+    fn completion_is_published_only_after_the_slot_is_free() {
+        let sink = DashboardSink::new();
+        let (server_stream, _client) = UnixStream::pair().unwrap();
+        let state = crate::server::tests::test_state(
+            Some(Arc::clone(&sink)),
+            Some((Arc::new(()), server_stream)),
+        );
+        let _worker = attach_worker(&state);
+        let create = |name: &str| {
+            Request::CreateSession(CreateSessionRequest {
+                project: "missing".into(),
+                workspace: "w".into(),
+                name: name.into(),
+                label: None,
+                argv: vec![OsString::from("/bin/true")],
+                kind: SessionKind::Terminal,
+            })
+        };
+        let completed = |token: u64| {
+            sink.queue.lock().unwrap().messages.iter().any(|outbound| {
+                matches!(
+                    outbound.message,
+                    ServerMessage::Event(ServerEvent::LifecycleCompleted { client_token, .. })
+                        if client_token == token
+                )
+            })
+        };
+        let wait = |token: u64| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !completed(token) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "job {token} never completed"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        let held = state.mutation_lock.lock().unwrap();
+        let first =
+            handle_request_with_id(&state, &mut ClientRole::Dashboard, create("a"), 42, None);
+        assert_eq!(first, Response::Ok);
+        // While this lock is held the finished job cannot release its slot.
+        let slot = state.lifecycle.inflight.lock().unwrap();
+        drop(held);
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        while std::time::Instant::now() < deadline {
+            assert!(
+                !completed(42),
+                "completion was published while its slot was still taken"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(slot);
+        wait(42);
+        let next =
+            handle_request_with_id(&state, &mut ClientRole::Dashboard, create("b"), 43, None);
+        assert_eq!(next, Response::Ok, "a job sent in reply to a completion");
+        wait(43);
         state.lifecycle.detach();
     }
 

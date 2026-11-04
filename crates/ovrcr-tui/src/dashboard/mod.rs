@@ -334,7 +334,8 @@ pub struct Dashboard {
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.
     provisional: Option<lifecycle_ui::Provisional>,
-    /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses this only.
+    /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses it,
+    /// with a failed Provisional row when there is one.
     lifecycle_strip: Option<String>,
     /// Remembered launch choice held across Provisional wait until CreatedSession completes.
     lifecycle_preference: Option<(String, settings::LaunchChoice)>,

@@ -123,6 +123,8 @@ running session and Resume is absent. Disabled actions should show a reason.
 Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
 the selected `consigint / gui-consigint-auth-handoff` and omits the
 repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
+When that workspace has running sessions, the confirmation names them by title
+and offers to stop them before removing it, with no Force wording.
 Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
 terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
@@ -139,10 +141,15 @@ rtk proxy printf 'CUA_%s\n' N_SHELL_OK
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
 
 Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field.
-Branch starts as `feature/` and is focused; typing appends. Type
+Branch starts as `feature/` and is focused; typing appends. Press Enter before
+typing: nothing is created, `Add a name after feature/` shows under Branch, and
+the footer lists only keys that work there (`Ctrl-u clear · Tab/Shift-Tab fields
+· Enter create · Esc cancel`). Type
 `cua-workspace` so Branch reads `feature/cua-workspace`. Base shows the
-repository's default branch once suggestions finish loading. Choose Start:
-Terminal. Enter on Branch submits. Confirm a single new terminal is selected
+repository's default branch once suggestions finish loading. Tab to Start and
+press Up or Down until the title reads `Start: Terminal`; the value changes
+without Tab or Enter. Press Enter there: Enter submits from any field. Confirm a
+single new terminal is selected
 in terminal mode under `feature/cua-workspace`. Paste and execute:
 
 ```sh
@@ -153,7 +160,7 @@ Confirm a separate `CUA_W_SHELL_OK` output line. Record this shell's PID and
 process group with the other fixture processes before cleanup. Return to
 `consigint / gui-consigint-auth-handoff / local` for the checks below.
 
-Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
+Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Press Tab once more: focus moves to Name instead of descending into the checkout. Escape without submitting if this run should not register a project; otherwise one Enter registers it.
 
 ### Workspace launch and titles
 
@@ -171,7 +178,8 @@ In the disposable fixture, also verify:
 5. Give two sessions the same manual title and confirm their visible identifiers
    distinguish them. Confirm both still receive input in the intended pane.
 6. Exercise an owned failing launch after workspace creation. Confirm the
-   workspace remains and recovery starts a program there without recreating it.
+   workspace remains, the form turns into Retry / Choose another agent / Open
+   shell, and recovery starts a program there without recreating it.
 7. Exercise Agent using a disposable configured preset, recording that this proves
    the launch UI only, not provider reporting. Verify its project preference after
    dashboard restart. Verify Terminal custom command text is absent from settings.
@@ -194,6 +202,14 @@ In the disposable fixture, also verify:
     printf. Repeat the removal check while drifted. Restore with
     `rtk proxy git checkout main`, confirm `n` is available again, and leave
     the root on `main`.
+11. Press `w`, keep Branch mode `new` and name an existing branch (for example
+    `feature/cua-workspace` again). Confirm the form returns with the typed values
+    and `Couldn't create the workspace: a branch named … already exists`, with no
+    error code, internal id, or failed sidebar row. Escape.
+12. Remove a disposable workspace that has a running shell. Confirm the
+    confirmation names the session by title and offers to stop it; confirm, then
+    verify the shell's process group is gone and the workspace row disappears.
+    No Force dialog appears at any point.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm

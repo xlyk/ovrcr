@@ -31,6 +31,57 @@ fn footer_text(dashboard: &Dashboard) -> String {
     rendered_footer(dashboard, 120)
 }
 
+/// The fixture with every session exited. Removing a workspace here sends the
+/// removal itself instead of first stopping its running sessions.
+fn stopped_hierarchy() -> HierarchySnapshot {
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .flat_map(|workspace| &mut workspace.sessions)
+    {
+        session.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        session.pid = None;
+    }
+    hierarchy
+}
+
+fn stopped_fixture() -> Dashboard {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(stopped_hierarchy());
+    dashboard
+}
+
+/// Everything inside the palette's border as one line of words, so a message
+/// the palette wrapped still reads whole.
+fn palette_words(dashboard: &Dashboard) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let cell = |x: u16, y: u16| buffer[(x, y)].symbol();
+    let Some((left, top)) = (0..40)
+        .flat_map(|y| (0..120).map(move |x| (x, y)))
+        .find(|&(x, y)| cell(x, y) == "┌")
+    else {
+        return String::new();
+    };
+    let right = (left..120).find(|&x| cell(x, top) == "┐").unwrap_or(120);
+    let bottom = (top..40).find(|&y| cell(left, y) == "└").unwrap_or(40);
+    (top + 1..bottom)
+        .map(|y| (left + 1..right).map(|x| cell(x, y)).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
 fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
     let mut dashboard = dashboard_fixture();
@@ -828,11 +879,12 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             },
         ),
         (
+            // Tab moves on from a path with nothing to complete; this folder never exists.
             "register project",
-            vec!["~/Code/repo/", "repo", "~/worktrees"],
+            vec!["~/.ovrcr-missing-fixture/repo/", "repo", "~/worktrees"],
             Request::AddProject {
                 name: "repo".into(),
-                repo: home.join("Code/repo"),
+                repo: home.join(".ovrcr-missing-fixture/repo"),
                 workspace_root: home.join("worktrees"),
             },
         ),
@@ -854,7 +906,9 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         ),
     ];
     for (query, values, expected) in cases {
-        let mut dashboard = dashboard_fixture();
+        // Removing a workspace with running sessions stops them first; that
+        // sequence has its own tests.
+        let mut dashboard = stopped_fixture();
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         for (index, value) in values.iter().enumerate() {
@@ -867,12 +921,8 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                     .unwrap();
             }
             if index + 1 < values.len() {
-                let next = if query == "register project" {
-                    KeyCode::Enter
-                } else {
-                    KeyCode::Tab
-                };
-                dashboard.key(next);
+                // Enter submits from any field; Tab moves to the next one.
+                dashboard.key(KeyCode::Tab);
             }
         }
         let mut action = dashboard.key(KeyCode::Enter);
@@ -931,6 +981,284 @@ fn create_workspace_form_submits_branch_without_name() {
         }
     );
     assert!(launch.is_some());
+}
+
+/// Settings with three named agents, remembered for `consigint`.
+fn fixture_agents(dashboard: &mut Dashboard) {
+    dashboard.install_settings(ovrcr::tui::Settings {
+        agents: ["fixture-a", "fixture-b", "fixture-c"]
+            .into_iter()
+            .map(|name| ovrcr_protocol::AgentOverride {
+                name: name.into(),
+                argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            })
+            .collect(),
+        launch_choices: [(
+            "consigint".to_owned(),
+            ovrcr_protocol::LaunchChoice::Agent("fixture-a".into()),
+        )]
+        .into(),
+        ..Default::default()
+    });
+}
+
+/// Panics unless each part appears in `text`, in this order.
+fn assert_in_order(text: &str, parts: &[&str]) {
+    let mut rest = text;
+    for part in parts {
+        let Some(at) = rest.find(part) else {
+            panic!("{part:?} missing or out of order in: {text}");
+        };
+        rest = &rest[at + part.len()..];
+    }
+}
+
+/// Opens Create workspace with Git suggestions settled (no repository known).
+fn open_workspace_form(dashboard: &mut Dashboard) {
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(dashboard, action);
+}
+
+/// The original defect: with Start = Agent the agent picker was the last
+/// field, so Enter there sent Branch = bare `feature/` to Git.
+#[test]
+fn enter_on_the_agent_picker_refuses_a_bare_branch_prefix_inline() {
+    let mut dashboard = dashboard_fixture();
+    fixture_agents(&mut dashboard);
+    open_workspace_form(&mut dashboard);
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Tab); // Branch mode, Base, Start, Agent
+    }
+    assert!(palette_text(&dashboard).contains("› fixture-a"));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "nothing reaches Git with a bare prefix"
+    );
+    // The problem sits under Branch, which takes the focus.
+    assert_in_order(
+        &palette_words(&dashboard),
+        &[
+            "Branch › feature/",
+            "Add a name after feature/",
+            "Branch mode",
+        ],
+    );
+    // Typing goes to Branch, and fixing it clears the complaint.
+    dashboard.event_action(Event::Paste("status-check".into()));
+    assert!(!palette_words(&dashboard).contains("Add a name after"));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspaceWithLaunch { branch, launch, .. } = message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(
+        branch,
+        ovrcr::protocol::BranchRequest::New {
+            branch: "feature/status-check".into(),
+            base: "main".into(),
+        }
+    );
+    assert_eq!(launch.unwrap().label.as_deref(), Some("fixture-a"));
+}
+
+#[test]
+fn branch_names_git_would_refuse_are_named_inline() {
+    let mut dashboard = dashboard_fixture();
+    open_workspace_form(&mut dashboard);
+    dashboard.event_action(Event::Paste("status check".into()));
+    dashboard.key(KeyCode::Tab); // Enter works from any field
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.drain_outbox().is_empty());
+    assert_in_order(
+        &palette_words(&dashboard),
+        &[
+            "Branch › feature/status check",
+            "Branch names can't contain spaces",
+            "Branch mode",
+        ],
+    );
+    dashboard.key(KeyCode::Backspace);
+    assert!(!palette_words(&dashboard).contains("can't contain spaces"));
+}
+
+#[test]
+fn register_project_submits_from_its_first_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("Code").join("demo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let mut dashboard = dashboard_fixture();
+    install_picker_roots(&mut dashboard, vec![dir.path().join("Code")]);
+    dashboard.install_config_dir(dir.path().join("config"));
+    dashboard.key(KeyCode::Char('a'));
+    dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
+    assert_eq!(
+        message.request,
+        Request::AddProject {
+            name: "demo".into(),
+            repo: repo.clone(),
+            workspace_root: dir.path().join("config").join("workspaces").join("demo"),
+        }
+    );
+}
+
+#[test]
+fn tab_on_a_repository_checkout_moves_to_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("demo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    let mut dashboard = dashboard_fixture();
+    install_picker_roots(&mut dashboard, vec![dir.path().to_path_buf()]);
+    dashboard.key(KeyCode::Char('a'));
+    dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
+    // The footer says what Tab will do here.
+    let words = palette_words(&dashboard);
+    assert!(words.contains("↑/↓ highlight · Tab next"), "{words}");
+    assert!(!words.contains("Tab complete"), "{words}");
+    dashboard.key(KeyCode::Tab);
+    dashboard.event_action(Event::Paste("-renamed".into()));
+    let text = palette_words(&dashboard);
+    assert!(text.contains("Name › demo-renamed"), "{text}");
+    assert!(
+        text.contains(&format!("Repository {}/", repo.display())),
+        "the checkout is complete, not descended into: {text}"
+    );
+}
+
+#[test]
+fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
+    let mut dashboard = dashboard_fixture();
+    fixture_agents(&mut dashboard);
+    dashboard.key(KeyCode::Char('n'));
+    let title = |dashboard: &Dashboard| {
+        palette_text(dashboard)
+            .lines()
+            .find(|line| line.contains("┌ Create terminal"))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert!(title(&dashboard).contains("Start: Agent (fixture-a)"));
+    // No Tab or Enter: the arrow is the choice, and the form follows it.
+    dashboard.key(KeyCode::Down);
+    assert!(
+        title(&dashboard).contains("Start: Terminal"),
+        "{}",
+        title(&dashboard)
+    );
+    let text = palette_words(&dashboard);
+    assert!(text.contains("Command"), "{text}");
+    assert!(!text.contains("fixture-a"), "{text}");
+    dashboard.key(KeyCode::Right);
+    assert!(
+        title(&dashboard).contains("Start: Agent"),
+        "wraps past the end"
+    );
+    dashboard.key(KeyCode::Left);
+    assert!(
+        title(&dashboard).contains("Start: Terminal"),
+        "wraps past the start"
+    );
+}
+
+/// The original defect: with the first agent chosen, the list below it was
+/// cut off, so only `claude` showed. Installed agents vary by host, so the
+/// names come from the form itself.
+#[test]
+fn an_open_agent_picker_shows_the_choices_below_the_current_one() {
+    let mut dashboard = dashboard_fixture();
+    fixture_agents(&mut dashboard);
+    open_workspace_form(&mut dashboard);
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Tab); // Branch mode, Base, Start, Agent
+    }
+    let chosen = |dashboard: &Dashboard| {
+        let text = palette_text(dashboard);
+        let title = text
+            .lines()
+            .find(|line| line.contains("┌ Create workspace"))
+            .unwrap_or_default();
+        title
+            .split_once("Start: Agent (")
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(name, _)| name.to_owned())
+            .unwrap_or_else(|| panic!("no chosen agent in: {text}"))
+    };
+    for _ in 0..20 {
+        dashboard.key(KeyCode::Up);
+    }
+    let first = chosen(&dashboard);
+    dashboard.key(KeyCode::Down);
+    let second = chosen(&dashboard);
+    assert_ne!(first, second, "Down changes the chosen agent at once");
+    dashboard.key(KeyCode::Up);
+    let text = palette_text(&dashboard);
+    assert!(text.contains(&format!("  › {first} ")), "{text}");
+    assert!(
+        text.contains(&format!("    {second} ")),
+        "the next choice shows below the current one: {text}"
+    );
+    for _ in 0..20 {
+        dashboard.key(KeyCode::Down);
+    }
+    assert_eq!(chosen(&dashboard), "fixture-c");
+    assert!(palette_text(&dashboard).contains("  › fixture-c "));
+}
+
+#[test]
+fn footer_lists_only_keys_that_work_for_the_focused_field() {
+    let mut dashboard = dashboard_fixture();
+    install_picker_roots(&mut dashboard, Vec::new());
+    dashboard.key(KeyCode::Char('a'));
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains("↑/↓ highlight · Tab complete · Enter register · Esc cancel"),
+        "{text}"
+    );
+    for wrong in ["Command blank", "Name blank", "toggle", "Space"] {
+        assert!(!text.contains(wrong), "{wrong}: {text}");
+    }
+    dashboard.key(KeyCode::Esc);
+
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains("↑/↓/←/→ choose · type to filter · Enter continue · Esc cancel"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Tab"),
+        "a single field has nowhere to Tab: {text}"
+    );
+    dashboard.key(KeyCode::Esc);
+
+    open_workspace_form(&mut dashboard);
+    assert!(
+        palette_words(&dashboard).contains("Ctrl-u clear · Tab/Shift-Tab fields · Enter create"),
+        "{}",
+        palette_words(&dashboard)
+    );
+    dashboard.key(KeyCode::Tab);
+    assert!(
+        palette_words(&dashboard).contains("Space/←/→ switch · Tab/Shift-Tab fields"),
+        "{}",
+        palette_words(&dashboard)
+    );
 }
 
 #[test]
@@ -1617,7 +1945,7 @@ fn paste_into_repository_field_refreshes_the_listing() {
 }
 
 #[test]
-fn double_enter_refreshes_the_derived_workspace_root_listing() {
+fn tabbing_to_workspace_root_refreshes_its_derived_listing() {
     use ovrcr::tui::DashboardAction;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("Code");
@@ -1629,8 +1957,10 @@ fn double_enter_refreshes_the_derived_workspace_root_listing() {
     std::fs::create_dir_all(dir.path().join("config").join("workspaces").join("demo")).unwrap();
     assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
     dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
+    // `demo` has no folders to complete, so Tab moves on: Name, then Workspace root.
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    assert!(dashboard.drain_outbox().is_empty());
     let text = palette_text(&dashboard);
     assert!(text.contains("  › demo"), "{text}");
 }
@@ -1823,11 +2153,11 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             },
         ),
         (
+            // `auth` has two running sessions: removal stops the first one first.
             'w',
-            Request::RemoveWorkspace {
-                project: "consigint".into(),
-                name: "auth".into(),
-                force: false,
+            Request::CloseTerminal {
+                session: SessionId(1),
+                expected_run: ovrcr::protocol::SessionRunId(1),
             },
         ),
         (
@@ -1855,8 +2185,11 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             assert!(text.contains(title), "{group}: {text}");
             assert!(text.contains("consigint"));
             if group == 'w' {
-                assert!(text.contains("Archive stopped sessions"), "{text}");
-                assert!(text.contains("original paths"), "{text}");
+                assert!(
+                    text.contains("still has 2 running sessions: review, local"),
+                    "{text}"
+                );
+                assert!(text.contains("Stop them"), "{text}");
             }
             if confirm {
                 assert_eq!(
@@ -1941,12 +2274,12 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
             },
         ),
         (
+            // Its running `local` shell is stopped before the removal.
             "progress",
             'w',
-            Request::RemoveWorkspace {
-                project: "spacelift-agent".into(),
-                name: "progress".into(),
-                force: false,
+            Request::CloseTerminal {
+                session: SessionId(3),
+                expected_run: ovrcr::protocol::SessionRunId(1),
             },
         ),
     ] {
@@ -2177,7 +2510,8 @@ fn removal_pickers_filter_and_confirm_a_different_target() {
             },
         ),
     ] {
-        let mut dashboard = dashboard_fixture();
+        // No running sessions, so the removal itself is what confirming sends.
+        let mut dashboard = stopped_fixture();
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         assert!(palette_text(&dashboard).contains("spacelift-agent"));
@@ -2783,69 +3117,526 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
     );
 }
 
+fn lifecycle_completed(
+    dashboard: &mut Dashboard,
+    request: &ClientMessage,
+    outcome: ovrcr::protocol::LifecycleOutcome,
+) -> Vec<ClientMessage> {
+    let op = match request.request {
+        Request::CloseTerminal { .. } => ovrcr::protocol::LifecycleOp::CloseTerminal,
+        Request::RemoveWorkspace { .. } => ovrcr::protocol::LifecycleOp::RemoveWorkspace,
+        Request::CreateSession(_) => ovrcr::protocol::LifecycleOp::CreateSession,
+        _ => ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
+    };
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
+        client_token: request.request_id,
+        op,
+        outcome,
+    }))
+}
+
+/// Answers a Lifecycle job the way the Server does: accepted at once, done later.
+fn accept(dashboard: &mut Dashboard, request: &ClientMessage) {
+    assert!(
+        dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            })
+            .is_empty()
+    );
+}
+
 #[test]
-fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm() {
-    {
-        let code = ovrcr::protocol::ErrorCode::SessionsRemain;
-        let mut dashboard = dashboard_fixture();
-        palette_search(&mut dashboard, "remove workspace");
-        dashboard.key(KeyCode::Enter);
-        dashboard.key(KeyCode::Enter);
-        assert_eq!(
-            dashboard.key(KeyCode::Enter),
-            ovrcr::tui::DashboardAction::Redraw
-        );
-        let request = only_request(dashboard.drain_outbox());
-        let Request::RemoveWorkspace {
-            project,
-            name,
+fn removing_a_workspace_with_running_sessions_stops_them_then_removes_it() {
+    use ovrcr::protocol::{LifecycleOutcome, SessionRunId};
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("consigint / auth still has 2 running sessions: review, local"),
+        "{text}"
+    );
+    assert!(!text.contains("Force"), "{text}");
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    // One Lifecycle job at a time: each step goes out when the previous one succeeds.
+    let first = only_request(dashboard.drain_outbox());
+    assert_eq!(
+        first.request,
+        Request::CloseTerminal {
+            session: SessionId(1),
+            expected_run: SessionRunId(1),
+        }
+    );
+    accept(&mut dashboard, &first);
+    assert!(
+        !palette_text(&dashboard).contains("Confirm action"),
+        "the confirmation steps aside while the sessions stop"
+    );
+    let second = only_request(lifecycle_completed(
+        &mut dashboard,
+        &first,
+        LifecycleOutcome::Succeeded,
+    ));
+    assert_eq!(
+        second.request,
+        Request::CloseTerminal {
+            session: SessionId(5),
+            expected_run: SessionRunId(1),
+        }
+    );
+    accept(&mut dashboard, &second);
+    let removal = only_request(lifecycle_completed(
+        &mut dashboard,
+        &second,
+        LifecycleOutcome::Succeeded,
+    ));
+    assert_eq!(
+        removal.request,
+        Request::RemoveWorkspace {
+            project: "consigint".into(),
+            name: "auth".into(),
             force: false,
-        } = request.request.clone()
-        else {
-            panic!("first removal must not force: {:?}", request.request)
-        };
-        dashboard.handle_server_message(ServerMessage::Response {
-            request_id: request.request_id,
-            response: Response::Error {
-                code: code.clone(),
-                message: "refused".into(),
-            },
-        });
-        let text = palette_text(&dashboard);
-        assert!(text.contains("Force remove workspace"), "{code:?}: {text}");
-        assert!(text.contains("refused"), "{code:?}: {text}");
-        assert_eq!(
-            dashboard.key(KeyCode::Enter),
-            ovrcr::tui::DashboardAction::Redraw
-        );
-        let forced = only_request(dashboard.drain_outbox());
-        assert_eq!(
-            forced.request,
-            Request::RemoveWorkspace {
-                project: project.clone(),
-                name: name.clone(),
-                force: true,
-            }
-        );
-        // A forced refusal (live sessions) must not loop into anything stronger.
-        dashboard.handle_server_message(ServerMessage::Response {
-            request_id: forced.request_id,
-            response: Response::Error {
-                code: ovrcr::protocol::ErrorCode::SessionsRemain,
-                message: "live sessions remain".into(),
-            },
-        });
-        assert!(palette_text(&dashboard).contains("live sessions remain"));
-        assert!({
-            let _ = dashboard.key(KeyCode::Esc);
-            dashboard.drain_outbox().is_empty()
-        });
+        }
+    );
+    accept(&mut dashboard, &removal);
+    assert!(
+        lifecycle_completed(&mut dashboard, &removal, LifecycleOutcome::Succeeded).is_empty(),
+        "nothing follows the removal"
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    assert!(!footer_text(&dashboard).contains("Esc dismiss"));
+}
+
+#[test]
+fn removal_blocked_by_sessions_never_offers_force() {
+    use ovrcr::protocol::LifecycleOutcome;
+    // Sessions that started after the confirmation: named, then stopped first.
+    let mut dashboard = stopped_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let removal = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        removal.request,
+        Request::RemoveWorkspace { force: false, .. }
+    ));
+    accept(&mut dashboard, &removal);
+    let mut started = stopped_hierarchy();
+    started.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Running;
+    started.projects[1].workspaces[1].sessions[0].title = Some("verify spinner".into());
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(started)));
+    lifecycle_completed(
+        &mut dashboard,
+        &removal,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::SessionsRemain,
+            message:
+                "sessions block removal of workspace consigint/auth: live: #1; kill or close them"
+                    .into(),
+        },
+    );
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("consigint / auth still has 1 running session: verify spinner"),
+        "{text}"
+    );
+    assert!(!text.contains("Force"), "{text}");
+    assert!(!text.contains("SessionsRemain"), "{text}");
+    assert!(!footer_text(&dashboard).contains("Failed"), "no failed row");
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        only_request(dashboard.drain_outbox()).request,
+        Request::CloseTerminal {
+            session: SessionId(1),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+        }
+    );
+
+    // Blockers the hierarchy cannot show (a task run, an unacknowledged
+    // archived session) are explained in plain words; still no Force.
+    let mut dashboard = stopped_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let removal = only_request(dashboard.drain_outbox());
+    accept(&mut dashboard, &removal);
+    lifecycle_completed(
+        &mut dashboard,
+        &removal,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::SessionsRemain,
+            message: "task run remains for workspace consigint/auth".into(),
+        },
+    );
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Couldn't remove consigint / auth: task run remains for workspace"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Force") && !text.contains("Discard"),
+        "{text}"
+    );
+    assert!({
+        let _ = dashboard.key(KeyCode::Esc);
+        dashboard.drain_outbox().is_empty()
+    });
+}
+
+/// Review S1: a stopped session awaiting acknowledgement would refuse the
+/// removal after the running ones were already stopped. It is named first and
+/// nothing is sent.
+#[test]
+fn removal_waits_for_acknowledgement_before_stopping_anything() {
+    let mut hierarchy = fixture_hierarchy();
+    // auth: `review` still runs, `local` stopped with ownership uncertain.
+    let local = &mut hierarchy.projects[1].workspaces[1].sessions[1];
+    local.phase = SessionPhase::Stopped;
+    local.pid = None;
+    local.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: true,
+        unavailable: None,
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains(
+            "consigint / auth has 1 stopped session that may still have processes running: local (#5)."
+        ),
+        "{text}"
+    );
+    assert!(text.contains("\"Acknowledge stopped\""), "{text}");
+    assert!(!text.contains("Stop it"), "{text}");
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "no session is stopped for a removal that would be refused"
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+}
+
+/// Review S2: the Server's `--force` advice never reaches the Dashboard.
+#[test]
+fn archived_blockers_point_at_acknowledge_stopped_not_force() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = stopped_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let removal = only_request(dashboard.drain_outbox());
+    accept(&mut dashboard, &removal);
+    lifecycle_completed(
+        &mut dashboard,
+        &removal,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::SessionsRemain,
+            message: "sessions block removal of workspace consigint/auth: unacknowledged stopped: #77 (archived); run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force".into(),
+        },
+    );
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains("stopped sessions may still have processes running: #77 (archived); once they have stopped, choose \"Acknowledge stopped\" for each"),
+        "{text}"
+    );
+    for wrong in ["--force", "ovrcr terminal", "SessionsRemain", "Force"] {
+        assert!(!text.contains(wrong), "{wrong}: {text}");
     }
 }
 
 #[test]
-fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
+fn uncommitted_changes_alone_offer_discard_in_plain_words() {
+    use ovrcr::protocol::LifecycleOutcome;
+    // A detached checkout cannot be saved to origin/wip/<branch>.
+    let mut hierarchy = stopped_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "detached @ 1a2b3c4".into();
     let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let removal = only_request(dashboard.drain_outbox());
+    let Request::RemoveWorkspace {
+        project,
+        name,
+        force: false,
+    } = removal.request.clone()
+    else {
+        panic!("first removal must not force: {:?}", removal.request)
+    };
+    accept(&mut dashboard, &removal);
+    lifecycle_completed(
+        &mut dashboard,
+        &removal,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
+        },
+    );
+    let text = palette_words(&dashboard);
+    assert!(
+        text.contains(
+            "consigint / detached @ 1a2b3c4 has uncommitted changes. \
+             Discard them and remove the workspace? The branch is kept."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Couldn't remove consigint / detached @ 1a2b3c4: worktree has changes"),
+        "{text}"
+    );
+    assert!(!text.contains("DirtyWorktree"), "{text}");
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        only_request(dashboard.drain_outbox()).request,
+        Request::RemoveWorkspace {
+            project,
+            name,
+            force: true,
+        }
+    );
+}
+
+/// Submits Create workspace for `feature/status-check` and lets the Server
+/// accept it; returns the request and its workspace id.
+fn create_status_check_workspace(dashboard: &mut Dashboard) -> (ClientMessage, String) {
+    open_workspace_form(dashboard);
+    dashboard.event_action(Event::Paste("status-check".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspaceWithLaunch { id, .. } = &create.request else {
+        panic!("{:?}", create.request);
+    };
+    let id = id.clone();
+    accept(dashboard, &create);
+    let text = palette_text(dashboard);
+    assert!(
+        !text.contains("┌ Create workspace"),
+        "the form steps aside while Git works: {text}"
+    );
+    assert!(text.contains("Creating… feature/status-check"), "{text}");
+    (create, id)
+}
+
+#[test]
+fn failed_workspace_creation_returns_to_the_form_with_its_values() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = dashboard_fixture();
+    let (create, id) = create_status_check_workspace(&mut dashboard);
+    lifecycle_completed(
+        &mut dashboard,
+        &create,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::Conflict,
+            message: format!(
+                "create workspace consigint/{id}: git command failed (exit status: 255): fatal: a branch named 'feature/status-check' already exists"
+            ),
+        },
+    );
+    let screen = palette_text(&dashboard);
+    assert!(screen.contains("┌ Create workspace"), "{screen}");
+    assert!(!screen.contains("Not created"), "no failed row: {screen}");
+    assert!(!screen.contains(&id), "no internal id: {screen}");
+    let words = palette_words(&dashboard);
+    assert!(
+        words.contains(
+            "Couldn't create the workspace: a branch named 'feature/status-check' already exists"
+        ),
+        "{words}"
+    );
+    assert!(!words.contains("Conflict"), "{words}");
+    assert_in_order(&words, &["Branch › feature/status-check", "Branch mode"]);
+    // Fixing the name retries the same creation.
+    dashboard.event_action(Event::Paste("-2".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let retry = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspaceWithLaunch {
+        id: retry_id,
+        branch,
+        ..
+    } = retry.request
+    else {
+        panic!("{:?}", retry.request);
+    };
+    assert_eq!(retry_id, id);
+    assert_eq!(
+        branch,
+        ovrcr::protocol::BranchRequest::New {
+            branch: "feature/status-check-2".into(),
+            base: "main".into(),
+        }
+    );
+}
+
+#[test]
+fn launch_failure_after_creation_offers_recovery_instead_of_vanishing() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = dashboard_fixture();
+    let (create, id) = create_status_check_workspace(&mut dashboard);
+    // The Server publishes the new, still empty workspace before the failure.
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces.push(WorkspaceSummary {
+        project: "consigint".into(),
+        name: "feature/status-check".into(),
+        id: id.clone(),
+        root: false,
+        warning: None,
+        path: format!("/tmp/workspaces/consigint/{id}").into(),
+        sessions: vec![],
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(1)),
+        "an empty workspace is not finished while its first program may still fail"
+    );
+    lifecycle_completed(
+        &mut dashboard,
+        &create,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::PartialFailure,
+            message: format!(
+                "worktree for workspace {id} remains at /tmp/workspaces/consigint/{id}: session 9 retained: Launch failed before a process started; check the executable and retry"
+            ),
+        },
+    );
+    let screen = palette_text(&dashboard);
+    assert!(
+        screen.contains("┌ Workspace retained · recover launch"),
+        "{screen}"
+    );
+    let words = palette_words(&dashboard);
+    for choice in ["Retry", "Choose another agent", "Open shell"] {
+        assert!(words.contains(choice), "{choice}: {words}");
+    }
+    assert!(
+        words.contains(
+            "Couldn't create the workspace: worktree for workspace feature/status-check remains at"
+        ),
+        "{words}"
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let retry = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(session) = retry.request else {
+        panic!(
+            "recovery must not recreate the workspace: {:?}",
+            retry.request
+        );
+    };
+    assert_eq!(session.workspace, id);
+}
+
+#[test]
+fn a_failure_while_typing_in_a_terminal_leaves_one_dismissable_row() {
+    use ovrcr::protocol::LifecycleOutcome;
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    let (create, _) = create_status_check_workspace(&mut dashboard);
+    // Back in a terminal while Git works.
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec())
+    );
+    lifecycle_completed(
+        &mut dashboard,
+        &create,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::Conflict,
+            message: "invalid reference: main".into(),
+        },
+    );
+    // Typing keeps reaching the terminal; no form jumps in front of it.
+    assert_eq!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec())
+    );
+    let screen = palette_text(&dashboard);
+    assert!(!screen.contains("┌ Create workspace"), "{screen}");
+    assert!(screen.contains("Not created · Esc dismiss"), "{screen}");
+    assert_eq!(
+        footer_text(&dashboard),
+        "Couldn't create the workspace: invalid reference: main · Esc dismiss"
+    );
+    dashboard.key(KeyCode::Esc);
+    let screen = palette_text(&dashboard);
+    assert!(
+        !screen.contains("Not created"),
+        "one Esc clears the row: {screen}"
+    );
+    assert!(!footer_text(&dashboard).contains("Esc dismiss"));
+}
+
+#[test]
+fn a_session_that_refuses_to_stop_returns_to_the_removal_confirmation() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let first = only_request(dashboard.drain_outbox());
+    accept(&mut dashboard, &first);
+    let followed = lifecycle_completed(
+        &mut dashboard,
+        &first,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::Conflict,
+            message: "session was reopened; the replacement run was not controlled".into(),
+        },
+    );
+    assert!(followed.is_empty(), "the removal never runs: {followed:?}");
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Confirm action"), "{text}");
+    assert!(
+        text.contains("Couldn't stop review, so the workspace was not removed"),
+        "{text}"
+    );
+    assert!(
+        !footer_text(&dashboard).contains("Esc dismiss"),
+        "no failed row"
+    );
+}
+
+#[test]
+fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
+    let mut dashboard = stopped_fixture();
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
@@ -2907,7 +3698,7 @@ fn dirty_workspace_removal_asks_to_save_then_removes_only_after_yes() {
 
 #[test]
 fn declining_the_save_does_not_remove_the_workspace() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = stopped_fixture();
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
@@ -3501,10 +4292,11 @@ fn shutdown_pending_answer_survives_navigation_and_advances_only_on_its_exact_ok
 }
 
 #[test]
-fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_relabel() {
+fn discard_prompt_survives_unchanged_hierarchy_then_needs_consent_after_relabel() {
     let mut dashboard = dashboard_fixture();
-    let mut original = fixture_hierarchy();
-    original.projects[1].workspaces[1].name = "feature/auth.previous".into();
+    // A detached checkout cannot be saved to origin/wip, so dirt offers discard.
+    let mut original = stopped_hierarchy();
+    original.projects[1].workspaces[1].name = "detached @ 1a2b3c4".into();
     dashboard.install_hierarchy(original.clone());
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
@@ -3529,22 +4321,18 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Error {
-            code: ovrcr::protocol::ErrorCode::SessionsRemain,
-            message: "refused".into(),
+            code: ovrcr::protocol::ErrorCode::DirtyWorktree,
+            message: "worktree has changes".into(),
         },
     });
-    let force_text = palette_text(&dashboard);
+    let discard_text = palette_text(&dashboard);
     assert!(
-        force_text.contains("Force remove workspace"),
-        "{force_text}"
+        discard_text.contains("consigint / detached @ 1a2b3c4 has uncommitted changes"),
+        "{discard_text}"
     );
     assert!(
-        force_text.contains("consigint / feature/auth.previous"),
-        "{force_text}"
-    );
-    assert!(
-        !force_text.contains("Force remove workspace consigint / auth."),
-        "force caption must use the branch heading, not the internal id: {force_text}"
+        !discard_text.contains("consigint / auth has"),
+        "the prompt must use the branch heading, not the internal id: {discard_text}"
     );
 
     let mut refreshed = original.clone();
@@ -3554,15 +4342,11 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
     )));
     let still = palette_text(&dashboard);
     assert!(
-        still.contains("Confirm action") && still.contains("Force remove workspace"),
-        "ordinary hierarchy refresh must keep the force prompt: {still}"
-    );
-    assert!(
-        still.contains("consigint / feature/auth.previous"),
-        "{still}"
+        still.contains("Confirm action") && still.contains("has uncommitted changes"),
+        "ordinary hierarchy refresh must keep the discard prompt: {still}"
     );
 
-    let mut relabelled = fixture_hierarchy();
+    let mut relabelled = stopped_hierarchy();
     relabelled.projects[1].workspaces[1].name = "feature/auth".into();
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         relabelled,
@@ -3570,7 +4354,7 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
     let text = palette_text(&dashboard);
     assert!(
         !text.contains("Confirm action"),
-        "relabelled force prompt must require fresh consent: {text}"
+        "relabelled discard prompt must require fresh consent: {text}"
     );
     assert!(
         text.contains("consigint / feature/auth"),
@@ -3579,7 +4363,7 @@ fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_re
     let _ = dashboard.key(KeyCode::Enter);
     if let Some(message) = optional_request(dashboard.drain_outbox()) {
         panic!(
-            "relabelled force confirmation must not submit: {:?}",
+            "relabelled discard confirmation must not submit: {:?}",
             message.request
         );
     }
@@ -3601,7 +4385,7 @@ fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
             "worktree is unavailable; session records retained for recovery",
         ),
     ] {
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = stopped_fixture();
         palette_search(&mut dashboard, "remove workspace");
         dashboard.key(KeyCode::Enter);
         dashboard.key(KeyCode::Enter);
@@ -3614,12 +4398,16 @@ fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: request.request_id,
             response: Response::Error {
-                code,
+                code: code.clone(),
                 message: message.into(),
             },
         });
-        let text = palette_text(&dashboard);
-        assert!(text.contains(message), "{text}");
+        let text = palette_words(&dashboard);
+        assert!(
+            text.contains(&format!("Couldn't remove consigint / auth: {message}")),
+            "{text}"
+        );
+        assert!(!text.contains(&format!("{code:?}")), "{text}");
         assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
         assert!({
             let _ = dashboard.key(KeyCode::Esc);

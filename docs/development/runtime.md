@@ -96,7 +96,9 @@ Source registration and Reporter disconnect retirement follow retained → Sessi
 lock order. Explicit parent transfers use the same retained row and never reset
 child control or immutable assignment identity. A second Lifecycle job is refused. Completion is a typed
 `LifecycleCompleted` event correlated by the accepting request id, plus
-`HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
+`HierarchyChanged` as today. The worker frees its slot before publishing that
+event, so a job the Dashboard sends in reply to a completion is never refused as
+overlapping the finished one. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.
 
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the

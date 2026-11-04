@@ -146,14 +146,16 @@ pub(super) struct Palette {
     archive: Option<Vec<crate::protocol::SessionSummary>>,
     workflows: Option<Vec<crate::protocol::WorkflowTransfer>>,
     error: Option<String>,
+    /// A form field that would be refused, and why; drawn under that field.
+    invalid: Option<(usize, String)>,
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
     launch_project: Option<String>,
     suggestions: Suggestions,
-    // Some(true) retains explicit whole-form Submit; Some(false) replays Enter.
-    submit_when_ready: Option<bool>,
+    /// Submit was pressed while Git suggestions were still loading.
+    submit_when_ready: bool,
     cursor: super::text_cursor::TextCursor,
     scroll: Option<usize>,
 }
@@ -563,20 +565,21 @@ impl Palette {
             archive: None,
             workflows: None,
             error: None,
+            invalid: None,
             workspace_acknowledged: false,
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
             launch_project: None,
             suggestions: Suggestions::default(),
-            submit_when_ready: None,
+            submit_when_ready: false,
             cursor: Default::default(),
             scroll: None,
         }
     }
 
     fn insert(&mut self, text: &str) {
-        if self.pending.is_some() || self.submit_when_ready.is_some() {
+        if self.pending.is_some() || self.submit_when_ready {
             return;
         }
         self.scroll = None;
@@ -597,10 +600,14 @@ impl Palette {
                 ..
             } => {
                 mark_form_edit(fields, *active, name_edited, root_edited);
+                if self.invalid.as_ref().is_some_and(|(at, _)| at == active) {
+                    self.invalid = None;
+                }
                 match &mut fields[*active].kind {
                     FieldKind::Pick(list) => {
                         self.cursor.insert(&mut list.query, &text);
                         list.selected = 0;
+                        accept_pick(&mut fields[*active]);
                     }
                     FieldKind::Text => self.cursor.insert(&mut fields[*active].value, &text),
                     FieldKind::Path(picker) => {
@@ -705,6 +712,8 @@ fn unconfirmed_pick(page: &Page) -> Option<&'static str> {
     (!exact).then_some(field.label)
 }
 
+/// A pick field's value is its highlighted option: arrows and typing change it
+/// at once. False when a filter leaves nothing highlighted.
 fn accept_pick(field: &mut Field) -> bool {
     let FieldKind::Pick(list) = &field.kind else {
         return true;
@@ -837,20 +846,7 @@ impl Dashboard {
         }
         self.palette = Some(Palette {
             page: self.palette_form(Command::CreateTerminal),
-            agents: None,
-            pending: None,
-            archive: None,
-            workflows: None,
-            error: None,
-            workspace_acknowledged: false,
-            workspace_id: None,
-            launch_preference: None,
-            failed_launch: None,
-            launch_project: None,
-            suggestions: Suggestions::default(),
-            submit_when_ready: None,
-            cursor: Default::default(),
-            scroll: None,
+            ..Palette::new()
         });
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
@@ -1027,29 +1023,27 @@ impl Dashboard {
             } => palette.suggestions.cache.contains_key(&fields[0].value),
             _ => false,
         };
-        let mut submit = palette.submit_when_ready.filter(|_| ready);
+        let mut submit = palette.submit_when_ready && ready;
         let mut refused = false;
-        if submit.is_some() {
-            palette.submit_when_ready = None;
+        if submit {
+            palette.submit_when_ready = false;
             // The hints arrived after the user pressed Enter, so they never saw
             // this list. Make them confirm anything but what they typed.
-            if let Some(label) = unconfirmed_pick(&palette.page) {
-                palette.error = Some(format!("{label} not found in repository"));
-                submit = None;
+            if let Some(label) = unconfirmed_pick(&palette.page)
+                && let Page::Form { active, .. } = &palette.page
+            {
+                palette.invalid = Some((*active, format!("{label} not found in repository")));
+                submit = false;
                 refused = true;
             }
         }
         self.palette = Some(palette);
-        if let Some(submit_all) = submit {
+        if submit {
             // Deferred submission was already queued before the writer scheduled History.
-            self.palette_key_inner(
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                submit_all,
-                false,
-            );
+            self.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false);
             self.refresh_active_path_listing();
         }
-        was_loading || submit.is_some() || refused
+        was_loading || submit || refused
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
@@ -1220,18 +1214,16 @@ impl Dashboard {
             _ => None,
         };
         if let Some((project, name, force, target)) = removal {
+            // A new branch label or a different set of running sessions changes
+            // what confirming would do, so it needs fresh consent.
             let stale = match find_workspace(self, &project, &name) {
                 None => true,
                 Some(workspace) => {
-                    let heading = workspace_heading(self, workspace);
-                    let expected = removal_confirmation(
-                        Request::RemoveWorkspace {
-                            project: project.clone(),
-                            name: name.clone(),
-                            force,
-                        },
-                        &heading,
-                    );
+                    let expected = self.removal_page(Request::RemoveWorkspace {
+                        project: project.clone(),
+                        name: name.clone(),
+                        force,
+                    });
                     workspace.root
                         || !matches!(expected, Page::Confirm { target: current, .. } if current == target)
                 }
@@ -1294,31 +1286,6 @@ impl Dashboard {
             field.value = selected;
         }
         field.kind = FieldKind::Pick(list);
-    }
-
-    pub(super) fn open_forced_remove_workspace(
-        &mut self,
-        project: String,
-        name: String,
-        code: crate::protocol::ErrorCode,
-        message: String,
-    ) {
-        let display = find_workspace(self, &project, &name)
-            .map(|workspace| workspace_heading(self, workspace))
-            .unwrap_or_else(|| format!("{project}/{name}"));
-        let request = Request::RemoveWorkspace {
-            project,
-            name,
-            force: true,
-        };
-        self.cancel_mouse_gesture();
-        self.whichkey = None;
-        self.palette = Some(Palette {
-            page: removal_confirmation(request, &display),
-            error: Some(format!("{code:?}: {message}")),
-            ..Palette::new()
-        });
-        self.mode = InputMode::Browse;
     }
 
     pub(super) fn open_remove_workspace(&mut self, project: String, id: String) -> DashboardAction {
@@ -1833,17 +1800,13 @@ impl Dashboard {
             }
             if x < cancel.saturating_sub(1)
                 && palette.pending.is_none()
-                && palette.submit_when_ready.is_none()
+                && !palette.submit_when_ready
             {
-                return self.palette_key_with_submit(
-                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                    true,
-                );
+                return self.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
             }
             return DashboardAction::Redraw;
         }
-        if palette.pending.is_some() || palette.submit_when_ready.is_some() || !body.contains(point)
-        {
+        if palette.pending.is_some() || palette.submit_when_ready || !body.contains(point) {
             return DashboardAction::None;
         }
         let (lines, targets, scroll) = self.palette_body(body);
@@ -1956,11 +1919,7 @@ impl Dashboard {
     }
 
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
-        self.palette_key_with_submit(key, false)
-    }
-
-    fn palette_key_with_submit(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
-        let action = self.palette_key_inner(key, submit, true);
+        let action = self.palette_key_inner(key, true);
         self.refresh_active_path_listing();
         action
     }
@@ -1968,7 +1927,6 @@ impl Dashboard {
     fn palette_key_inner(
         &mut self,
         key: KeyEvent,
-        submit: bool,
         history_before_request: bool,
     ) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
@@ -2004,7 +1962,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         // Other keys wait for the running request so a submit cannot repeat.
-        if palette.pending.is_some() || palette.submit_when_ready.is_some() {
+        if palette.pending.is_some() || palette.submit_when_ready {
             self.palette = Some(palette);
             return DashboardAction::Redraw;
         }
@@ -2016,6 +1974,20 @@ impl Dashboard {
         ) {
             palette.cursor = Default::default();
             palette.scroll = None;
+        }
+        // Editing or choosing a value retracts the complaint about that field.
+        if let Page::Form { fields, active, .. } = &palette.page
+            && palette.invalid.as_ref().is_some_and(|(at, _)| at == active)
+            && match key.code {
+                KeyCode::Backspace | KeyCode::Delete => true,
+                KeyCode::Char('u' | 'U') => key.modifiers.contains(KeyModifiers::CONTROL),
+                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                    matches!(fields[*active].kind, FieldKind::Pick(_))
+                }
+                _ => false,
+            }
+        {
+            palette.invalid = None;
         }
         let mut action = DashboardAction::Redraw;
         match key.code {
@@ -2038,15 +2010,19 @@ impl Dashboard {
                             return action;
                         }
                         mark_form_edit(fields, *active, name_edited, root_edited);
-                        fields[*active].value.clear();
                         palette.cursor = Default::default();
-                        match &mut fields[*active].kind {
+                        let field = &mut fields[*active];
+                        match &mut field.kind {
+                            // Clears the filter; the value stays chosen.
                             FieldKind::Pick(list) => {
                                 list.query.clear();
-                                list.selected = 0;
+                                list.select_value(&field.value);
                             }
-                            FieldKind::Path(picker) => picker.selected = 0,
-                            FieldKind::Text | FieldKind::Toggle => {}
+                            FieldKind::Path(picker) => {
+                                picker.selected = 0;
+                                field.value.clear();
+                            }
+                            FieldKind::Text | FieldKind::Toggle => field.value.clear(),
                         }
                     }
                     _ => {}
@@ -2055,6 +2031,8 @@ impl Dashboard {
             }
             KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(fields[*active].kind, FieldKind::Toggle)) =>
             {
+                // Switching modes replaces Branch, so a complaint about it no longer applies.
+                palette.invalid = None;
                 if let Page::Form { fields, .. } = &mut palette.page {
                     let to_existing = fields
                         .iter()
@@ -2113,10 +2091,18 @@ impl Dashboard {
                         let field = &mut fields[*active];
                         match &mut field.kind {
                             FieldKind::Toggle => {}
+                            // Left/Right step through the choices, wrapping at the ends.
+                            FieldKind::Pick(list)
+                                if matches!(key.code, KeyCode::Left | KeyCode::Right) =>
+                            {
+                                list.cycle(if key.code == KeyCode::Left { -1 } else { 1 });
+                                accept_pick(field);
+                            }
                             FieldKind::Pick(list) => {
                                 palette.cursor.key(&mut list.query, key.code);
                                 if editing {
                                     list.selected = 0;
+                                    accept_pick(field);
                                 }
                             }
                             FieldKind::Text => palette.cursor.key(&mut field.value, key.code),
@@ -2143,7 +2129,10 @@ impl Dashboard {
                     };
                     let value = fields[*active].value.clone();
                     match &mut fields[*active].kind {
-                        FieldKind::Pick(list) => list.move_selection(delta),
+                        FieldKind::Pick(list) => {
+                            list.move_selection(delta);
+                            accept_pick(&mut fields[*active]);
+                        }
                         FieldKind::Path(picker) => {
                             let listing =
                                 picker.listing(&value, &self.settings.picker_roots).clone();
@@ -2180,8 +2169,15 @@ impl Dashboard {
                         root_edited,
                         ..
                     } => {
+                        let value = fields[*active].value.trim();
+                        // A path that already names a Git checkout is complete:
+                        // Tab moves on rather than descending into its folders.
+                        let checkout = matches!(fields[*active].kind, FieldKind::Path(_))
+                            && !value.is_empty()
+                            && expand_path(value).join(".git").exists();
                         if matches!(key.code, KeyCode::Tab)
                             && matches!(fields[*active].kind, FieldKind::Path(_))
+                            && !checkout
                         {
                             let selected = match &fields[*active].kind {
                                 FieldKind::Path(picker) => picker.selected,
@@ -2400,15 +2396,15 @@ impl Dashboard {
                     name_edited,
                     root_edited,
                 } => {
-                    if !accept_pick(&mut fields[*active]) {
-                        let field = &fields[*active];
-                        if field.required {
-                            // A deferred submit must not wait on a pick that can
-                            // never resolve; say which field went unmatched.
-                            palette.error =
-                                Some(format!("{} not found in available choices", field.label));
-                        }
-                        palette.submit_when_ready = None;
+                    // A field that Start just hid is no longer part of the form.
+                    if !fields[*active].hidden && !accept_pick(&mut fields[*active]) {
+                        // A deferred submit must not wait on a pick that can
+                        // never resolve; say which field went unmatched.
+                        palette.invalid = Some((
+                            *active,
+                            format!("{} not found in available choices", fields[*active].label),
+                        ));
+                        palette.submit_when_ready = false;
                         self.palette = Some(palette);
                         return action;
                     }
@@ -2465,26 +2461,17 @@ impl Dashboard {
                     }
                     self.refresh_terminal_form(fields, *name_edited);
                     self.refresh_project_form(fields, *name_edited, *root_edited);
-                    let visible = visible_indices(fields);
-                    let last = submit
-                        || visible.last().copied() == Some(*active)
-                        || (matches!(command, Command::CreateWorkspace)
-                            && fields
-                                .get(*active)
-                                .is_some_and(|field| field.label == "Branch"));
-                    if !last {
-                        move_form_field(fields, active, false);
-                    } else if let Some(index) = fields
-                        .iter()
-                        .position(|f| !f.hidden && f.required && f.value.trim().is_empty())
-                    {
+                    // Enter submits from any field; the first field that would be
+                    // refused keeps the focus and says why.
+                    if let Some((index, problem)) = self.form_problem(command, fields) {
                         *active = index;
-                        palette.error = Some(format!("{} is required", fields[index].label));
+                        palette.invalid = Some((index, problem));
                     } else {
+                        palette.invalid = None;
                         if matches!(command, Command::CreateWorkspace)
                             && !palette.suggestions.cache.contains_key(&fields[0].value)
                         {
-                            palette.submit_when_ready = Some(submit);
+                            palette.submit_when_ready = true;
                             self.palette = Some(palette);
                             return action;
                         }
@@ -2625,16 +2612,7 @@ impl Dashboard {
                             _ => unreachable!(),
                         };
                         if matches!(command, Command::RemoveWorkspace | Command::RemoveProject) {
-                            let display = match &request {
-                                Request::RemoveWorkspace { project, name, .. } => {
-                                    find_workspace(self, project, name)
-                                        .map(|workspace| workspace_heading(self, workspace))
-                                        .unwrap_or_default()
-                                }
-                                Request::RemoveProject { name } => name.clone(),
-                                _ => String::new(),
-                            };
-                            palette.page = removal_confirmation(request, &display);
+                            palette.page = self.removal_page(request);
                         } else {
                             action =
                                 self.palette_submit(&mut palette, request, history_before_request);
@@ -2652,7 +2630,18 @@ impl Dashboard {
                             self.palette = None;
                             return DashboardAction::Redraw;
                         }
-                        action = self.palette_submit(&mut palette, request, history_before_request);
+                        // Removal first stops the running sessions it named, one
+                        // Lifecycle job at a time, then removes the workspace.
+                        let mut steps = self.removal_steps(&request);
+                        let first = steps.remove(0);
+                        action = self.palette_submit(&mut palette, first, history_before_request);
+                        if let Some(row) = self
+                            .lifecycle_pending
+                            .as_mut()
+                            .filter(|row| Some(row.token) == palette.pending)
+                        {
+                            row.then = steps;
+                        }
                     } else {
                         self.palette = None;
                         return DashboardAction::Redraw;
@@ -2813,12 +2802,7 @@ impl Dashboard {
                         label: Some(a.name),
                     })
                 })
-                .ok_or_else(|| {
-                    format!(
-                        "Agent '{}' is unavailable. Choose another agent or explicitly select Terminal.",
-                        value("Agent")
-                    )
-                }),
+                .ok_or_else(|| unavailable_agent(value("Agent"))),
             "Terminal" => Ok(Some(SessionLaunch {
                 argv: if value("Command").is_empty() {
                     self.shell_argv()
@@ -2834,6 +2818,39 @@ impl Dashboard {
             })),
             _ => Err("Choose Agent, Terminal, or Nothing yet".into()),
         }
+    }
+
+    /// The first field, top to bottom, the Server would refuse or misread,
+    /// and what to tell the person beside it.
+    fn form_problem(&self, command: &Command, fields: &[Field]) -> Option<(usize, String)> {
+        let new_branch = fields
+            .iter()
+            .any(|field| field.label == "Branch mode" && field.value == "new");
+        visible_indices(fields).into_iter().find_map(|index| {
+            let field = &fields[index];
+            let value = field.value.trim();
+            let problem = if field.required && value.is_empty() {
+                Some(format!("{} is required", field.label))
+            } else if let FieldKind::Pick(list) = &field.kind
+                && !list.items.iter().any(|item| item.value == field.value)
+            {
+                Some(match field.label {
+                    "Agent" => unavailable_agent(value),
+                    "Branch" => "Branch not found in repository".into(),
+                    label => format!("{label} not found in available choices"),
+                })
+            } else if matches!(command, Command::CreateWorkspace) && field.label == "Branch" {
+                let prefix = self.settings.branch_prefix.trim();
+                if new_branch && !prefix.is_empty() && value == prefix {
+                    Some(format!("Add a name after {prefix}"))
+                } else {
+                    branch_name_problem(value).map(Into::into)
+                }
+            } else {
+                None
+            };
+            problem.map(|problem| (index, problem))
+        })
     }
 
     fn refresh_project_form(&self, fields: &mut [Field], name_edited: bool, root_edited: bool) {
@@ -2880,7 +2897,7 @@ impl Dashboard {
         if self.lifecycle_busy()
             && super::lifecycle_ui::Provisional::from_request(0, &request).is_some()
         {
-            let message = "a lifecycle job is already running".to_string();
+            let message = super::lifecycle_ui::BUSY.to_string();
             self.refuse_lifecycle_job(message.clone());
             palette.error = Some(message);
             return DashboardAction::Redraw;
@@ -3066,6 +3083,54 @@ impl Dashboard {
             }
             return Some(Vec::new());
         }
+        // Lifecycle jobs accept with Ok immediately; Provisional row takes over.
+        // A removal's later steps are sent while its confirmation is out of view.
+        if self
+            .lifecycle_pending
+            .as_ref()
+            .is_some_and(|row| row.token == request_id)
+        {
+            let submitted = self
+                .palette
+                .as_ref()
+                .is_some_and(|palette| palette.pending == Some(request_id));
+            let busy = matches!(
+                response,
+                Response::Error { code, message }
+                    if *code == crate::protocol::ErrorCode::Conflict
+                        && message.contains("lifecycle job")
+            );
+            match response {
+                Response::Ok => {
+                    self.accept_lifecycle_job(request_id);
+                    return Some(Vec::new());
+                }
+                // A later step's confirmation comes back with the refusal.
+                Response::Error { code, message } if !submitted => {
+                    let row = self.lifecycle_pending.take().unwrap();
+                    let message = if busy {
+                        super::lifecycle_ui::BUSY.to_string()
+                    } else {
+                        message.clone()
+                    };
+                    self.fail_lifecycle_job(row, code.clone(), message);
+                    return Some(Vec::new());
+                }
+                Response::Error { .. } if busy => {
+                    let message = super::lifecycle_ui::BUSY.to_string();
+                    self.refuse_lifecycle_job(message.clone());
+                    if let Some(palette) = self.palette.as_mut() {
+                        palette.pending = None;
+                        palette.error = Some(message);
+                    }
+                    return Some(Vec::new());
+                }
+                Response::Error { .. } => {
+                    self.lifecycle_pending = None;
+                }
+                _ => {}
+            }
+        }
         if self.palette.as_ref()?.suggestions.inspect == Some(request_id) {
             let mut palette = self.palette.take().unwrap();
             palette.suggestions.inspect = None;
@@ -3082,35 +3147,6 @@ impl Dashboard {
         }
         if self.palette.as_ref()?.pending != Some(request_id) {
             return None;
-        }
-        // Lifecycle jobs accept with Ok immediately; Provisional row takes over.
-        if self
-            .lifecycle_pending
-            .as_ref()
-            .is_some_and(|row| row.token == request_id)
-        {
-            match response {
-                Response::Ok => {
-                    self.accept_lifecycle_job(request_id);
-                    return Some(Vec::new());
-                }
-                Response::Error { code, message }
-                    if *code == crate::protocol::ErrorCode::Conflict
-                        && message.contains("lifecycle job") =>
-                {
-                    let message = format!("{code:?}: {message}");
-                    self.refuse_lifecycle_job(message.clone());
-                    if let Some(palette) = self.palette.as_mut() {
-                        palette.pending = None;
-                        palette.error = Some(message);
-                    }
-                    return Some(Vec::new());
-                }
-                Response::Error { .. } => {
-                    self.lifecycle_pending = None;
-                }
-                _ => {}
-            }
         }
         let workspace_form = matches!(
             self.palette.as_ref()?.page,
@@ -3155,72 +3191,44 @@ impl Dashboard {
                 let message = message.clone();
                 let mut palette = self.palette.take().unwrap();
                 palette.pending = None;
-                palette.error = Some(format!("{code:?}: {message}"));
-                // A refused removal reopens as a forced one; only another
-                // explicit Confirm sends it.
-                let save_wip = match &palette.page {
-                    Page::Confirm {
-                        request:
-                            Some(Request::RemoveWorkspace {
-                                project,
-                                name,
-                                force: false,
-                            }),
-                        ..
-                    } if code == crate::protocol::ErrorCode::DirtyWorktree => {
-                        let branch = find_workspace(self, project, name)
-                            .map(|workspace| workspace.name.clone())
-                            .unwrap_or_default();
-                        (git_ref_branch(&branch)).then(|| {
-                            (
-                                project.clone(),
-                                name.clone(),
-                                format!("Save uncommitted work to origin/wip/{branch}?"),
-                            )
-                        })
-                    }
-                    _ => None,
-                };
-                let forced = match &palette.page {
-                    Page::Confirm {
-                        request:
-                            Some(Request::RemoveWorkspace {
-                                project,
-                                name,
-                                force: false,
-                            }),
-                        ..
-                    } if save_wip.is_none()
-                        && matches!(
-                            code,
-                            crate::protocol::ErrorCode::SessionsRemain
-                                | crate::protocol::ErrorCode::DirtyWorktree
-                        ) =>
-                    {
+                palette.error = Some(self.plain_failure(&palette, &message));
+                // A refused removal asks again with what now stands in its way;
+                // only another explicit Confirm sends anything.
+                if let Page::Confirm {
+                    request:
                         Some(Request::RemoveWorkspace {
-                            project: project.clone(),
-                            name: name.clone(),
-                            force: true,
-                        })
-                    }
-                    _ => None,
-                };
-                if let Some((project, name, target)) = save_wip {
-                    palette.page = Page::Confirm {
-                        request: Some(Request::SaveWorkspaceWip { project, name }),
-                        target,
-                    };
-                }
-                if let Some(request) = forced {
-                    let display = match &request {
-                        Request::RemoveWorkspace { project, name, .. } => {
-                            find_workspace(self, project, name)
-                                .map(|workspace| workspace_heading(self, workspace))
-                                .unwrap_or_default()
+                            project,
+                            name,
+                            force,
+                        }),
+                    ..
+                } = &palette.page
+                {
+                    let (project, name, force) = (project.clone(), name.clone(), *force);
+                    let branch = find_workspace(self, &project, &name)
+                        .map(|workspace| workspace.name.clone())
+                        .unwrap_or_default();
+                    palette.page = if code == crate::protocol::ErrorCode::DirtyWorktree
+                        && branch_name_problem(&branch).is_none()
+                    {
+                        Page::Confirm {
+                            request: Some(Request::SaveWorkspaceWip { project, name }),
+                            target: format!("Save uncommitted work to origin/wip/{branch}?"),
                         }
-                        _ => String::new(),
+                    } else {
+                        // Uncommitted changes alone earn the discard question.
+                        // Running sessions are named and stopped first instead:
+                        // never a forced removal they would still block.
+                        let running = !self.running_sessions(&project, &name).is_empty();
+                        if code == crate::protocol::ErrorCode::SessionsRemain && running {
+                            palette.error = None;
+                        }
+                        self.removal_page(Request::RemoveWorkspace {
+                            project,
+                            name,
+                            force: force || code == crate::protocol::ErrorCode::DirtyWorktree,
+                        })
                     };
-                    palette.page = removal_confirmation(request, &display);
                 }
                 let retry = match &palette.page {
                     Page::Confirm {
@@ -3243,7 +3251,7 @@ impl Dashboard {
                 if let Some((id, retry)) = retry {
                     if find_session(self, id).is_some() {
                         palette.page = self.command_page(retry);
-                        palette.error = Some(format!("{code:?}: {message}"));
+                        palette.error = Some(self.plain_failure(&palette, &message));
                     }
                 } else if code == crate::protocol::ErrorCode::OwnershipUncertain {
                     palette.failed_launch = None;
@@ -3305,18 +3313,14 @@ impl Dashboard {
                         name,
                         force: true,
                     };
-                    let request_id = self.next_request_id();
-                    palette.pending = Some(request_id);
-                    palette.error = None;
                     palette.page = Page::Confirm {
                         request: Some(request.clone()),
                         target: format!("Saved to origin/wip and removing workspace {display}."),
                     };
+                    // A Lifecycle job like any removal, so its failure comes back here.
+                    self.palette_submit(&mut palette, request, false);
                     self.palette = Some(palette);
-                    return Some(vec![ClientMessage {
-                        request_id,
-                        request,
-                    }]);
+                    return Some(Vec::new());
                 }
                 let answered_wip = matches!(
                     (&palette.page, response),
@@ -3587,9 +3591,7 @@ impl Dashboard {
                     if field.hidden {
                         continue;
                     }
-                    if index == *active {
-                        focus_line = lines.len() + 1;
-                    }
+                    let top = lines.len();
                     targets.push((lines.len(), PaletteTarget::Field(index, false)));
                     lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
                     let pick_label;
@@ -3623,34 +3625,45 @@ impl Dashboard {
                         format!("{} {text}", if index == *active { "›" } else { " " }),
                         Style::default().fg(if index == *active { MAUVE() } else { TEXT() }),
                     ));
-                    if index == *active
-                        && let FieldKind::Pick(list) = &field.kind
+                    if let Some((_, problem)) =
+                        palette.invalid.as_ref().filter(|(at, _)| *at == index)
                     {
-                        let (options, selected) = list.lines(8);
-                        focus_line = lines.len() + selected;
-                        let start = list.selected.saturating_sub(selected);
-                        for offset in 0..options.len().min(list.filtered().len()) {
-                            targets.push((
-                                lines.len() + offset,
-                                PaletteTarget::Option(index, start + offset),
-                            ));
+                        lines.push(Line::styled(
+                            format!("  {problem}"),
+                            Style::default().fg(PEACH()),
+                        ));
+                    }
+                    if index != *active {
+                        continue;
+                    }
+                    // An open list gets whatever the body has left after this
+                    // field's own lines, so every option shows when they fit
+                    // and the focused field never scrolls out of view.
+                    let room = usize::from(body.height)
+                        .saturating_sub(lines.len() - top)
+                        .max(1);
+                    if let FieldKind::Pick(list) = &field.kind {
+                        let (options, _) = list.lines(room);
+                        let window = list.window(room);
+                        for (offset, option) in window.enumerate() {
+                            targets
+                                .push((lines.len() + offset, PaletteTarget::Option(index, option)));
                         }
                         lines.extend(options);
                     }
-                    if index == *active
-                        && let FieldKind::Path(picker) = &field.kind
+                    if let FieldKind::Path(picker) = &field.kind
                         && let Some(listing) = picker.cached()
                     {
-                        let count = 8.min(listing.entries.len());
+                        let count = room
+                            .saturating_sub(usize::from(listing.omitted > 0))
+                            .max(1)
+                            .min(listing.entries.len());
                         let start = picker.selected.saturating_sub(count.saturating_sub(1));
                         for (offset, item) in
                             listing.entries.iter().enumerate().skip(start).take(count)
                         {
                             let chosen = offset == picker.selected;
                             targets.push((lines.len(), PaletteTarget::Option(index, offset)));
-                            if chosen {
-                                focus_line = lines.len();
-                            }
                             lines.push(Line::styled(
                                 format!("  {} {}", if chosen { "›" } else { " " }, item.label),
                                 if chosen {
@@ -3667,6 +3680,7 @@ impl Dashboard {
                             ));
                         }
                     }
+                    focus_line = lines.len() - 1;
                 }
             }
             Page::Confirm { target, .. } => {
@@ -3755,8 +3769,7 @@ impl Dashboard {
             return self.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) && layout.confirm.contains(point) {
-            return self
-                .palette_key_with_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+            return self.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         // Outside clicks and chrome clicks stay on the overlay. They do not
         // reach the dashboard underneath, and they do not confirm.
@@ -3916,40 +3929,38 @@ impl Dashboard {
         } else {
             None
         };
+        let mut status_area = Rect::new(inner.x, inner.y + body.height, inner.width, footer_height);
+        // After a refusal the way out keeps a line of its own, however narrow.
+        let recovering = palette.pending.is_none()
+            && (palette.error.is_some() || palette.invalid.is_some())
+            && status_area.height > 1;
+        let keys = match &palette.page {
+            Page::Search { .. } => detail
+                .clone()
+                .unwrap_or_else(|| "↑/↓ select · Enter continue · Esc cancel".into()),
+            Page::Form {
+                command,
+                fields,
+                active,
+                ..
+            } => form_keys(command, fields, *active, recovering),
+            Page::Confirm { .. } => "Enter confirm · Esc cancel".into(),
+        };
         let status = if palette.pending.is_some() {
-            "Working…"
+            "Working…".to_owned()
         } else if let Some(error) = &palette.error {
-            error
-        } else if palette.submit_when_ready.is_some() {
-            "Waiting for Git suggestions before creating… · Esc cancel"
+            error.clone()
+        } else if palette.submit_when_ready {
+            "Waiting for Git suggestions before creating… · Esc cancel".to_owned()
         } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields).is_err())
         {
-            "Remembered/selected agent unavailable. Choose another agent or select Terminal explicitly."
+            "Remembered/selected agent unavailable. Choose another agent or select Terminal explicitly.".to_owned()
         } else if let Some(note) = &palette.suggestions.note {
-            note
+            format!("{note}\n{keys}")
         } else {
-            match palette.page {
-                Page::Search { .. } => detail
-                    .as_deref()
-                    .unwrap_or("↑/↓ select · Enter continue · Esc cancel"),
-                Page::Form {
-                    command: Command::CreateWorkspace,
-                    ..
-                } => {
-                    "Enter on Branch submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel"
-                }
-                Page::Form {
-                    command: Command::RenameTerminal(_),
-                    ..
-                } => "Blank = original name · Enter save · Ctrl-u clear · Esc cancel",
-                Page::Form { .. } => {
-                    "Name blank = generated · Command blank = shell · Tab next · Enter submit · Ctrl-u clear"
-                }
-                Page::Confirm { .. } => "Enter confirm · Esc cancel",
-            }
+            keys
         };
-        let mut status_area = Rect::new(inner.x, inner.y + body.height, inner.width, footer_height);
-        if palette.pending.is_none() && palette.error.is_some() && status_area.height > 1 {
+        if recovering {
             status_area.height -= 1;
             let recovery = match &palette.page {
                 Page::Form { fields, active, .. }
@@ -4009,14 +4020,116 @@ fn mark_form_edit(
         _ => {}
     }
 }
-fn git_ref_branch(branch: &str) -> bool {
-    !branch.is_empty()
-        && !branch.contains(char::is_whitespace)
-        && !branch.starts_with('/')
-        && !branch.ends_with('/')
-        && !branch.contains("//")
-        && !branch.contains("..")
-        && !branch.starts_with("detached")
+/// `text` with `from` replaced by `to`, except where `from` continues a path:
+/// a worktree's real directory may be named after its internal id.
+fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(from) {
+        out.push_str(&rest[..at]);
+        out.push_str(if rest[..at].ends_with('/') { from } else { to });
+        rest = &rest[at + from.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn unavailable_agent(name: &str) -> String {
+    format!("Agent '{name}' is unavailable. Choose another agent or explicitly select Terminal.")
+}
+
+/// Why Git would refuse `name` as a branch, following
+/// `git check-ref-format --branch`; `None` when Git accepts it.
+fn branch_name_problem(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("Add a branch name");
+    }
+    if name.contains(' ') {
+        return Some("Branch names can't contain spaces");
+    }
+    if name.chars().any(|ch| ch < ' ' || ch == '\u{7f}') {
+        return Some("Branch names can't contain control characters");
+    }
+    if name.contains(['~', '^', ':', '?', '*', '[', '\\']) {
+        return Some("Branch names can't contain ~ ^ : ? * [ or \\");
+    }
+    if name.starts_with('-') {
+        return Some("Branch names can't start with -");
+    }
+    if name == "@" || name == "HEAD" {
+        return Some("Git reserves that name");
+    }
+    if name.contains("..") || name.contains("@{") {
+        return Some("Branch names can't contain .. or @{");
+    }
+    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
+        return Some("Branch names can't start or end with / or contain //");
+    }
+    if name.ends_with('.') {
+        return Some("Branch names can't end with .");
+    }
+    if name
+        .split('/')
+        .any(|part| part.starts_with('.') || part.ends_with(".lock"))
+    {
+        return Some("No part of a branch name can start with . or end with .lock");
+    }
+    None
+}
+
+/// The keys that work in this form, for its focused field. While a refusal
+/// shows, its own line offers Esc and Ctrl-u, so they are left out here.
+fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: bool) -> String {
+    let field = &fields[active];
+    let mut keys = Vec::new();
+    match (command, field.label) {
+        (Command::CreateTerminal, "Name") => keys.push("Blank = automatic name"),
+        (Command::RenameTerminal(_), _) => keys.push("Blank = original name"),
+        (_, "Command") => keys.push("Blank = your shell"),
+        _ => {}
+    }
+    match &field.kind {
+        FieldKind::Text if !recovering => keys.push("Ctrl-u clear"),
+        FieldKind::Text => {}
+        FieldKind::Toggle => keys.push("Space/←/→ switch"),
+        FieldKind::Pick(list) => {
+            keys.push("↑/↓/←/→ choose · type to filter");
+            if !list.query.is_empty() && !recovering {
+                keys.push("Ctrl-u clear filter");
+            }
+        }
+        FieldKind::Path(_) => {
+            let value = field.value.trim();
+            keys.push(
+                if !value.is_empty() && expand_path(value).join(".git").exists() {
+                    "↑/↓ highlight · Tab next"
+                } else {
+                    "↑/↓ highlight · Tab complete"
+                },
+            );
+            if !field.value.is_empty() && !recovering {
+                keys.push("Ctrl-u clear");
+            }
+        }
+    }
+    let visible = visible_indices(fields);
+    if visible.len() > 1 {
+        if !matches!(field.kind, FieldKind::Path(_)) {
+            keys.push("Tab/Shift-Tab fields");
+        } else if visible.first() != Some(&active) {
+            keys.push("Shift-Tab back");
+        }
+    }
+    keys.push(match command {
+        Command::CreateTerminal | Command::CreateWorkspace => "Enter create",
+        Command::RegisterProject => "Enter register",
+        Command::RenameTerminal(_) => "Enter save",
+        _ => "Enter continue",
+    });
+    if !recovering {
+        keys.push("Esc cancel");
+    }
+    keys.join(" · ")
 }
 
 impl Dashboard {
@@ -4045,26 +4158,366 @@ impl Dashboard {
             ..Palette::new()
         });
     }
-}
 
-fn removal_confirmation(request: Request, display: &str) -> Page {
-    let target = match &request {
-        Request::RemoveWorkspace { force: false, .. } => format!(
-            "Remove workspace {display}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths. Live or ownership-uncertain sessions block removal."
-        ),
-        Request::RemoveWorkspace { force: true, .. } => format!(
-            "Force remove workspace {display}. Discard uncommitted changes in its worktree and acknowledge that its stopped sessions' processes are gone; keep the branch. Live sessions and active task runs still block."
-        ),
-        Request::RemoveProject { name } => {
-            format!(
-                "Unregister project {name}. Remove workspaces first. Keep the repository and archived session context."
-            )
+    /// A workspace's live sessions: removing it stops them first.
+    fn running_sessions(&self, project: &str, id: &str) -> Vec<&SessionSummary> {
+        find_workspace(self, project, id)
+            .map(|workspace| {
+                workspace
+                    .sessions
+                    .iter()
+                    .filter(|session| session.phase.is_live() && !session.archived)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A session's title, with its id only when another session shares it.
+    fn session_title(&self, session: &SessionSummary) -> String {
+        let title = session.display_name();
+        let shared = self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+            .any(|other| other.id != session.id && other.display_name() == title);
+        if shared {
+            format!("{title} (#{})", session.id.0)
+        } else {
+            title.to_owned()
         }
-        _ => unreachable!("only workspace/project removal uses this confirmation"),
-    };
-    Page::Confirm {
-        request: Some(request),
-        target,
+    }
+
+    fn session_name(&self, id: SessionId) -> String {
+        find_session(self, id)
+            .map(|session| self.session_title(session))
+            .unwrap_or_else(|| format!("#{}", id.0))
+    }
+
+    fn workspace_name(&self, project: &str, id: &str) -> String {
+        find_workspace(self, project, id)
+            .map(|workspace| workspace_heading(self, workspace))
+            .unwrap_or_else(|| "that workspace".into())
+    }
+
+    /// A workspace's stopped sessions whose processes may still run: removal
+    /// refuses them until each is acknowledged.
+    fn unacknowledged_sessions(&self, project: &str, id: &str) -> Vec<&SessionSummary> {
+        find_workspace(self, project, id)
+            .map(|workspace| {
+                workspace
+                    .sessions
+                    .iter()
+                    .filter(|session| {
+                        !session.phase.is_live()
+                            && session
+                                .recovery
+                                .as_ref()
+                                .is_some_and(|recovery| recovery.requires_ack)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The confirmation for removing a workspace or unregistering a project.
+    /// A workspace's running sessions are named, because confirming stops
+    /// them first; discarding uncommitted changes is offered only on its own.
+    /// A blocker the Dashboard can already see comes first, as a notice that
+    /// sends nothing, so no session is stopped for a removal that would fail.
+    fn removal_page(&self, request: Request) -> Page {
+        if let Request::RemoveWorkspace { project, name, .. } = &request {
+            let waiting = self.unacknowledged_sessions(project, name);
+            if !waiting.is_empty() {
+                let one = waiting.len() == 1;
+                return Page::Confirm {
+                    request: None,
+                    target: format!(
+                        "{} has {} stopped session{} that may still have processes running: {}. Once {} stopped, choose \"Acknowledge stopped\" for {} in : commands, then remove the workspace. Nothing was stopped or removed.",
+                        self.workspace_name(project, name),
+                        waiting.len(),
+                        if one { "" } else { "s" },
+                        waiting
+                            .iter()
+                            .map(|session| self.session_title(session))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if one { "it has" } else { "they have" },
+                        if one { "it" } else { "each" },
+                    ),
+                };
+            }
+        }
+        let target = match &request {
+            Request::RemoveWorkspace {
+                project,
+                name,
+                force,
+            } => {
+                let display = self.workspace_name(project, name);
+                let running = self.running_sessions(project, name);
+                match (running.len(), *force) {
+                    (0, false) => format!(
+                        "Remove workspace {display}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths."
+                    ),
+                    (0, true) => format!(
+                        "{display} has uncommitted changes. Discard them and remove the workspace? The branch is kept."
+                    ),
+                    (count, force) => format!(
+                        "{display} still has {count} running session{}: {}. Stop {}{} and remove the workspace? The branch is kept.{}",
+                        if count == 1 { "" } else { "s" },
+                        running
+                            .iter()
+                            .map(|session| self.session_title(session))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if count == 1 { "it" } else { "them" },
+                        if force {
+                            ", discard its uncommitted changes"
+                        } else {
+                            ""
+                        },
+                        running
+                            .iter()
+                            .find_map(|session| session.close_warning())
+                            .map(|warning| format!(" {warning}"))
+                            .unwrap_or_default(),
+                    ),
+                }
+            }
+            Request::RemoveProject { name } => format!(
+                "Unregister project {name}. Remove workspaces first. Keep the repository and archived session context."
+            ),
+            _ => unreachable!("only workspace/project removal uses this confirmation"),
+        };
+        Page::Confirm {
+            request: Some(request),
+            target,
+        }
+    }
+
+    /// What confirming `request` sends, in order: removing a workspace first
+    /// closes each running session its confirmation named.
+    fn removal_steps(&self, request: &Request) -> Vec<Request> {
+        let mut steps: Vec<Request> = match request {
+            Request::RemoveWorkspace { project, name, .. } => self
+                .running_sessions(project, name)
+                .into_iter()
+                .map(|session| Request::CloseTerminal {
+                    session: session.id,
+                    expected_run: session.run,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        steps.push(request.clone());
+        steps
+    }
+
+    /// A Server refusal in plain words: what could not be done, then the
+    /// Server's reason without its error code.
+    fn plain_failure(&self, palette: &Palette, message: &str) -> String {
+        let lead = match &palette.page {
+            Page::Form {
+                command: Command::CreateWorkspace,
+                ..
+            } => "Couldn't create the workspace".to_owned(),
+            Page::Form {
+                command: Command::CreateTerminal | Command::RecoverLaunch,
+                ..
+            } => "Couldn't start the session".to_owned(),
+            Page::Form {
+                command: Command::RegisterProject,
+                ..
+            } => "Couldn't register the project".to_owned(),
+            Page::Form {
+                command: Command::RenameTerminal(_),
+                ..
+            } => "Couldn't rename the session".to_owned(),
+            Page::Confirm {
+                request: Some(Request::RemoveWorkspace { project, name, .. }),
+                ..
+            } => format!("Couldn't remove {}", self.workspace_name(project, name)),
+            Page::Confirm {
+                request: Some(Request::RemoveProject { name }),
+                ..
+            } => format!("Couldn't unregister {name}"),
+            Page::Confirm {
+                request: Some(Request::CloseTerminal { session, .. }),
+                ..
+            } => format!("Couldn't close {}", self.session_name(*session)),
+            _ => String::new(),
+        };
+        // The workspace being created is not in the hierarchy yet.
+        let created = match &palette.page {
+            Page::Form {
+                command: Command::CreateWorkspace,
+                fields,
+                ..
+            } => palette.workspace_id.as_ref().map(|id| {
+                let value = |label| {
+                    fields
+                        .iter()
+                        .find(|field| field.label == label)
+                        .map(|field| field.value.trim().to_owned())
+                        .unwrap_or_default()
+                };
+                (value("Project"), id.clone(), value("Branch"))
+            }),
+            _ => None,
+        };
+        let reason = self.plain_reason(message, created);
+        if lead.is_empty() {
+            reason
+        } else {
+            format!("{lead}: {reason}")
+        }
+    }
+
+    /// The Server's reason with branch names for internal workspace ids and
+    /// titles for `#id` sessions. `created` names a workspace the hierarchy
+    /// does not have yet: project, id and branch.
+    pub(super) fn plain_reason(
+        &self,
+        message: &str,
+        created: Option<(String, String, String)>,
+    ) -> String {
+        let mut text = message.to_owned();
+        let known = self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .map(|workspace| {
+                (
+                    workspace.project.clone(),
+                    workspace.id.clone(),
+                    workspace_label(self, workspace),
+                )
+            })
+            .chain(created);
+        for (project, id, label) in known {
+            let qualified = format!("{project}/{id}");
+            // Whoever shows this already says what was being created.
+            if let Some(rest) = text.strip_prefix(&format!("create workspace {qualified}: ")) {
+                text = rest.to_owned();
+            }
+            text = replace_outside_paths(&text, &qualified, &label);
+            if id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                text = replace_outside_paths(&text, &id, &label);
+            }
+        }
+        // Git's own words are the useful part of the Git runner's report.
+        if let Some(start) = text.find("git command failed (")
+            && let Some(end) = text[start..].find("): ")
+        {
+            text.replace_range(start..start + end + 3, "");
+        }
+        text = text.replace("fatal: ", "");
+        // The Server advises CLI commands and --force; the Dashboard has neither.
+        if let Some(start) = text.find("unacknowledged stopped: ")
+            && let Some(advice) = text[start..].find("; run `ovrcr terminal acknowledge-stopped")
+            && let Some(end) = text[start..].find("remove with --force")
+        {
+            let list = text[start + "unacknowledged stopped: ".len()..start + advice].to_owned();
+            text.replace_range(
+                start..start + end + "remove with --force".len(),
+                &format!(
+                    "stopped sessions may still have processes running: {list}; once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
+                ),
+            );
+        }
+        let mut titled = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find('#') {
+            titled.push_str(&rest[..at]);
+            let digits = rest[at + 1..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+            let reference = &rest[at..at + 1 + digits];
+            match rest[at + 1..at + 1 + digits]
+                .parse()
+                .ok()
+                .and_then(|id| find_session(self, SessionId(id)))
+            {
+                Some(session) => titled.push_str(&self.session_title(session)),
+                None => titled.push_str(reference),
+            }
+            rest = &rest[at + 1 + digits..];
+        }
+        titled.push_str(rest);
+        titled
+    }
+
+    /// The palette waiting on Lifecycle job `token`, out of view while the job
+    /// runs so that a failure can bring it back.
+    pub(super) fn take_palette_for_job(&mut self, token: u64) -> Option<Box<Palette>> {
+        if self.palette.as_ref()?.pending != Some(token) {
+            return None;
+        }
+        let mut palette = self.palette.take()?;
+        self.lifecycle_preference = palette.launch_preference.take();
+        Some(Box::new(palette))
+    }
+
+    /// Whether a returning form would land in front of the person, rather
+    /// than take keys meant for a terminal or another overlay.
+    pub(super) fn can_return_to_form(&self) -> bool {
+        self.palette.is_none()
+            && self.tasks.is_none()
+            && self.details.is_none()
+            && self.mode == InputMode::Browse
+            && !self.operator_quick_visible()
+    }
+
+    /// Shows the form or confirmation behind a failed Lifecycle job again and
+    /// handles the failure as if the Server had refused the request outright:
+    /// the values stay, the reason is in plain words, and recovery pages
+    /// (another agent, save or discard changes) still follow. `stopping` is
+    /// the session a workspace removal could not stop.
+    pub(super) fn return_to_form(
+        &mut self,
+        palette: Box<Palette>,
+        token: u64,
+        stopping: Option<SessionId>,
+        code: crate::protocol::ErrorCode,
+        message: String,
+    ) {
+        let mut palette = *palette;
+        palette.pending = Some(token);
+        self.cancel_mouse_gesture();
+        self.whichkey = None;
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        self.palette = Some(palette);
+        self.mode = InputMode::Browse;
+        let stopped = stopping.map(|session| {
+            format!(
+                "Couldn't stop {}, so the workspace was not removed: {}",
+                self.session_name(session),
+                self.plain_reason(&message, None)
+            )
+        });
+        if let Some(requests) = self.palette_response(token, &Response::Error { code, message }) {
+            for request in requests {
+                self.push_request(request);
+            }
+        }
+        if let Some(palette) = self.palette.as_mut()
+            && matches!(
+                palette.page,
+                Page::Confirm {
+                    request: Some(Request::RemoveWorkspace { .. }),
+                    ..
+                }
+            )
+            && stopped.is_some()
+        {
+            palette.error = stopped;
+        }
     }
 }
 
@@ -4157,12 +4610,9 @@ mod mouse_tests {
             }
         ));
         d.palette = Some(Palette {
-            page: removal_confirmation(
-                Request::RemoveProject {
-                    name: "demo".into(),
-                },
-                "demo",
-            ),
+            page: d.removal_page(Request::RemoveProject {
+                name: "demo".into(),
+            }),
             ..Palette::new()
         });
         let Some(message) = ({
@@ -4245,11 +4695,17 @@ mod mouse_tests {
                 Rect::new(0, 0, 100, 30),
             );
         }
-        click(&mut d, "Choice-13", 1, 100, 30);
-        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+        // The wheel moves the choice itself, as the arrows do.
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
             panic!()
         };
         assert_eq!(fields[0].value, "value-13");
+        // Clicking another option still visible in the scrolled list takes it.
+        click(&mut d, "    Choice-11", 4, 100, 30);
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[0].value, "value-11");
         assert_eq!(*active, 1);
     }
     #[test]
@@ -4615,8 +5071,8 @@ mod launch_tests {
         }
     }
     fn submit(d: &mut Dashboard) -> DashboardAction {
-        // This is the production handler used by the visible Submit control.
-        d.palette_key_with_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true)
+        // The visible Submit control and Enter share this production handler.
+        d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
     }
     fn request(d: &mut Dashboard) -> ClientMessage {
         let Some(message) = ({
@@ -5188,15 +5644,16 @@ mod launch_tests {
         );
         start_workspace(&mut d, "Agent");
         assert!(matches!(submit(&mut d), DashboardAction::Redraw));
-        assert!(
-            d.palette
-                .as_ref()
-                .unwrap()
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("unavailable")
-        );
+        assert!(d.drain_outbox().is_empty());
+        // The refusal sits on the Agent field, which takes the focus.
+        let palette = d.palette.as_ref().unwrap();
+        let Page::Form { fields, active, .. } = &palette.page else {
+            panic!()
+        };
+        assert_eq!(fields[*active].label, "Agent");
+        let (at, problem) = palette.invalid.as_ref().unwrap();
+        assert_eq!(*at, *active);
+        assert!(problem.contains("unavailable"), "{problem}");
         set(&mut d, "Start", "Terminal");
         assert!(matches!(
             request(&mut d).request,
@@ -5953,6 +6410,380 @@ mod launch_tests {
                 session: SessionId(9),
                 expected_run: crate::protocol::SessionRunId(4),
             })
+        );
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+    use crate::protocol::{AgentActivity, ProjectSummary, SessionPhase, WorkspaceSummary};
+
+    const ID: &str = "7833bc0a230c03372aecca12545fec60";
+
+    fn session(id: u64, workspace: &str, name: &str) -> SessionSummary {
+        SessionSummary {
+            scope: ovrcr_protocol::SessionScope::Workspace,
+            archived: false,
+            cwd: "/work".into(),
+            id: SessionId(id),
+            run: crate::protocol::SessionRunId(1),
+            kind: SessionKind::Terminal,
+            recovery: None,
+            project: "consigint".into(),
+            workspace: workspace.into(),
+            name: name.into(),
+            title: None,
+            manual_title: None,
+            assignment_control: None,
+            label: "zsh".into(),
+            pid: Some(id as u32),
+            started_unix_ms: Some(0),
+            phase: SessionPhase::Running,
+            activity: AgentActivity::Unknown,
+            context_usage: None,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+        }
+    }
+
+    /// A workspace with an internal id, two running sessions and a second
+    /// workspace whose session shares one title.
+    fn dashboard() -> Dashboard {
+        let mut d = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        let workspace = |id: &str, name: &str, sessions| WorkspaceSummary {
+            project: "consigint".into(),
+            id: id.into(),
+            name: name.into(),
+            path: format!("/config/workspaces/consigint/{id}").into(),
+            root: false,
+            warning: None,
+            sessions,
+        };
+        d.hierarchy.projects.push(ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![
+                workspace(
+                    ID,
+                    "feature/status-check",
+                    vec![session(13, ID, "verify spinner"), session(14, ID, "local")],
+                ),
+                workspace("other", "main", vec![session(15, "other", "local")]),
+            ],
+        });
+        d
+    }
+
+    #[test]
+    fn branch_name_problems_follow_git_check_ref_format() {
+        let cases: [(&str, Option<&str>); 23] = [
+            ("feature/status-check", None),
+            ("日本/ブランチ", None),
+            ("a@b", None),
+            ("feature/x.y", None),
+            ("x/y.lockz", None),
+            (
+                "feature/",
+                Some("Branch names can't start or end with / or contain //"),
+            ),
+            (
+                "/a",
+                Some("Branch names can't start or end with / or contain //"),
+            ),
+            (
+                "a//b",
+                Some("Branch names can't start or end with / or contain //"),
+            ),
+            ("a b", Some("Branch names can't contain spaces")),
+            (
+                "a\tb",
+                Some("Branch names can't contain control characters"),
+            ),
+            (
+                "a\u{7f}b",
+                Some("Branch names can't contain control characters"),
+            ),
+            ("-x", Some("Branch names can't start with -")),
+            ("HEAD", Some("Git reserves that name")),
+            ("a..b", Some("Branch names can't contain .. or @{")),
+            ("a@{b", Some("Branch names can't contain .. or @{")),
+            ("a.", Some("Branch names can't end with .")),
+            (
+                "x.lock",
+                Some("No part of a branch name can start with . or end with .lock"),
+            ),
+            (
+                "a/.b",
+                Some("No part of a branch name can start with . or end with .lock"),
+            ),
+            ("a~b", Some("Branch names can't contain ~ ^ : ? * [ or \\")),
+            ("a:b", Some("Branch names can't contain ~ ^ : ? * [ or \\")),
+            ("a?b", Some("Branch names can't contain ~ ^ : ? * [ or \\")),
+            ("a[b", Some("Branch names can't contain ~ ^ : ? * [ or \\")),
+            ("a\\b", Some("Branch names can't contain ~ ^ : ? * [ or \\")),
+        ];
+        let outside = tempfile::tempdir().unwrap();
+        for (name, expected) in cases {
+            assert_eq!(branch_name_problem(name), expected, "{name:?}");
+            // Git stays the authority: the form refuses exactly what it would.
+            let git = std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", name])
+                .current_dir(outside.path())
+                .env_remove("GIT_DIR")
+                .output()
+                .unwrap();
+            assert_eq!(
+                git.status.success(),
+                expected.is_none(),
+                "{name:?}: git disagrees"
+            );
+        }
+        // `--branch` reads a lone @ as the current branch, never a new name.
+        assert_eq!(branch_name_problem("@"), Some("Git reserves that name"));
+        assert_eq!(branch_name_problem(""), Some("Add a branch name"));
+    }
+
+    #[test]
+    fn plain_reasons_name_workspaces_and_sessions_and_keep_paths() {
+        let d = dashboard();
+        assert_eq!(
+            d.plain_reason(
+                &format!(
+                    "sessions block removal of workspace consigint/{ID}: live: #13, #14; kill or close them"
+                ),
+                None
+            ),
+            "sessions block removal of workspace feature/status-check: live: verify spinner, local (#14); kill or close them"
+        );
+        let new_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            d.plain_reason(
+                &format!(
+                    "create workspace consigint/{new_id}: git command failed (exit status: 255): fatal: a branch named 'feature/new' already exists"
+                ),
+                Some(("consigint".into(), new_id.into(), "feature/new".into()))
+            ),
+            "a branch named 'feature/new' already exists"
+        );
+        // A directory named after the id is still the real path.
+        assert_eq!(
+            d.plain_reason(
+                &format!(
+                    "worktree for workspace {ID} remains at /config/workspaces/consigint/{ID}: boom"
+                ),
+                None
+            ),
+            format!(
+                "worktree for workspace feature/status-check remains at /config/workspaces/consigint/{ID}: boom"
+            )
+        );
+        assert_eq!(
+            d.plain_reason("#99 (archived) blocks; issue #", None),
+            "#99 (archived) blocks; issue #"
+        );
+    }
+
+    /// The Server's advice names CLI commands and --force, which the
+    /// Dashboard does not have.
+    #[test]
+    fn unacknowledged_refusals_point_at_acknowledge_stopped() {
+        let d = dashboard();
+        let reason = d.plain_reason(
+            &format!(
+                "sessions block removal of workspace consigint/{ID}: unacknowledged stopped: #13, #99 (archived); run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force"
+            ),
+            None,
+        );
+        assert_eq!(
+            reason,
+            "sessions block removal of workspace feature/status-check: stopped sessions may still have processes running: verify spinner, #99 (archived); once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
+        );
+        assert!(!reason.contains("--force") && !reason.contains("ovrcr terminal"));
+    }
+
+    /// A stopped session awaiting acknowledgement would refuse the removal
+    /// after running sessions were already stopped; it is named first instead.
+    #[test]
+    fn removal_names_unacknowledged_sessions_first_and_stops_nothing() {
+        let mut d = dashboard();
+        let waiting = &mut d.hierarchy.projects[0].workspaces[0].sessions[1];
+        waiting.phase = SessionPhase::Stopped;
+        waiting.recovery = Some(crate::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: true,
+            unavailable: None,
+            failure: None,
+        });
+        let page = d.removal_page(Request::RemoveWorkspace {
+            project: "consigint".into(),
+            name: ID.into(),
+            force: false,
+        });
+        let Page::Confirm { request, target } = page else {
+            panic!()
+        };
+        assert_eq!(request, None, "confirming sends nothing");
+        assert_eq!(
+            target,
+            "consigint / feature/status-check has 1 stopped session that may still have processes running: local (#14). Once it has stopped, choose \"Acknowledge stopped\" for it in : commands, then remove the workspace. Nothing was stopped or removed."
+        );
+    }
+
+    #[test]
+    fn removal_names_running_sessions_and_stops_them_before_removing() {
+        let d = dashboard();
+        let remove = |force| Request::RemoveWorkspace {
+            project: "consigint".into(),
+            name: ID.into(),
+            force,
+        };
+        let Page::Confirm { target, .. } = d.removal_page(remove(false)) else {
+            panic!()
+        };
+        assert_eq!(
+            target,
+            "consigint / feature/status-check still has 2 running sessions: verify spinner, local (#14). Stop them and remove the workspace? The branch is kept."
+        );
+        let Page::Confirm { target, .. } = d.removal_page(remove(true)) else {
+            panic!()
+        };
+        assert!(
+            target.contains("Stop them, discard its uncommitted changes and remove the workspace?"),
+            "{target}"
+        );
+        assert_eq!(
+            d.removal_steps(&remove(false)),
+            vec![
+                Request::CloseTerminal {
+                    session: SessionId(13),
+                    expected_run: crate::protocol::SessionRunId(1),
+                },
+                Request::CloseTerminal {
+                    session: SessionId(14),
+                    expected_run: crate::protocol::SessionRunId(1),
+                },
+                remove(false),
+            ]
+        );
+        let mut quiet = dashboard();
+        for session in &mut quiet.hierarchy.projects[0].workspaces[0].sessions {
+            session.phase = SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            };
+        }
+        assert_eq!(quiet.removal_steps(&remove(false)), vec![remove(false)]);
+        let Page::Confirm { target, .. } = quiet.removal_page(remove(true)) else {
+            panic!()
+        };
+        assert_eq!(
+            target,
+            "consigint / feature/status-check has uncommitted changes. Discard them and remove the workspace? The branch is kept."
+        );
+    }
+
+    /// Create workspace focused on its Agent field, the last one, offering
+    /// `count` agents with the first chosen.
+    fn agent_picker(count: usize) -> Dashboard {
+        let mut d = dashboard();
+        let mut page = d.palette_form(Command::CreateWorkspace);
+        let Page::Form { fields, active, .. } = &mut page else {
+            panic!()
+        };
+        let items = (0..count)
+            .map(|i| PickItem {
+                label: format!("agent-{i:02}"),
+                value: format!("agent-{i:02}"),
+            })
+            .collect();
+        let start = fields.iter().position(|f| f.label == "Start").unwrap();
+        fields[start].value = "Agent".into();
+        *active = fields.iter().position(|f| f.label == "Agent").unwrap();
+        fields[*active] = pick_field("Agent", "agent-00".into(), items);
+        d.refresh_terminal_form(fields, false);
+        d.palette = Some(Palette {
+            page,
+            ..Palette::new()
+        });
+        d
+    }
+
+    /// The options a 120×40 screen actually shows.
+    fn shown_options(d: &Dashboard) -> Vec<String> {
+        let (_, _, body, _) = palette_geometry(Rect::new(0, 0, 120, 40));
+        let (lines, _, scroll) = d.palette_body(body);
+        lines
+            .iter()
+            .skip(scroll)
+            .take(usize::from(body.height))
+            .map(|line| line.to_string())
+            .filter(|line| line.starts_with("    agent-") || line.starts_with("  › agent-"))
+            .collect()
+    }
+
+    #[test]
+    fn open_pick_lists_show_every_option_that_fits_and_the_chosen_one() {
+        // Eight agents and the first chosen: before, only that one showed.
+        let d = agent_picker(8);
+        let shown = shown_options(&d);
+        assert_eq!(shown.len(), 8, "{shown:?}");
+        assert_eq!(shown[0], "  › agent-00");
+        // More than fit: the body's twelve rows hold the label, the value and
+        // ten options, and the chosen one stays among them.
+        let mut d = agent_picker(20);
+        assert_eq!(shown_options(&d).len(), 10);
+        if let Some(Palette {
+            page: Page::Form { fields, active, .. },
+            ..
+        }) = d.palette.as_mut()
+            && let FieldKind::Pick(list) = &mut fields[*active].kind
+        {
+            list.selected = 15;
+        }
+        let shown = shown_options(&d);
+        assert_eq!(shown.len(), 10);
+        assert!(shown.contains(&"  › agent-15".to_owned()), "{shown:?}");
+    }
+
+    #[test]
+    fn keys_hint_matches_the_form_and_its_focused_field() {
+        let d = dashboard();
+        let keys = |command: Command, label: &str, recovering: bool| {
+            let Page::Form { fields, .. } = d.palette_form(command.clone()) else {
+                panic!()
+            };
+            let active = fields.iter().position(|f| f.label == label).unwrap();
+            form_keys(&command, &fields, active, recovering)
+        };
+        assert_eq!(
+            keys(Command::RegisterProject, "Repository", false),
+            "↑/↓ highlight · Tab complete · Enter register · Esc cancel"
+        );
+        assert_eq!(
+            keys(Command::RegisterProject, "Name", false),
+            "Ctrl-u clear · Tab/Shift-Tab fields · Enter register · Esc cancel"
+        );
+        assert_eq!(
+            keys(Command::RemoveWorkspace, "Workspace", false),
+            "↑/↓/←/→ choose · type to filter · Enter continue · Esc cancel"
+        );
+        assert_eq!(
+            keys(Command::CreateWorkspace, "Branch mode", false),
+            "Space/←/→ switch · Tab/Shift-Tab fields · Enter create · Esc cancel"
+        );
+        assert_eq!(
+            keys(Command::CreateTerminal, "Name", false),
+            "Blank = automatic name · Ctrl-u clear · Tab/Shift-Tab fields · Enter create · Esc cancel"
+        );
+        // A refusal shows Esc and Ctrl-u on a line of its own.
+        assert_eq!(
+            keys(Command::CreateWorkspace, "Branch", true),
+            "Tab/Shift-Tab fields · Enter create"
         );
     }
 }
