@@ -440,9 +440,10 @@ else sits beside the groups: desktop notifications and the ready sound are
 settings, toggled in Settings or with their Browse keys `N` and `S`.
 
 Choose a group, then an action: `Space t X` closes the selected terminal,
-`Space w x` removes its workspace, and `Space p x` unregisters its project.
-Lowercase `x` never closes a session: in Browse and in `Space v` it hides the
-focused pane and the session keeps running.
+`Space w X` removes its workspace, and `Space p X` unregisters its project.
+Every destructive group action is uppercase. Lowercase `x` only ever closes a
+pane: in Browse and in `Space v` it hides the focused pane and the session keeps
+running; in the other groups it does nothing.
 Workspace and project removal open a searchable picker with the current target
 highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards

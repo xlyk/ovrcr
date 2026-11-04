@@ -185,12 +185,12 @@ impl Dashboard {
                 'w' => {
                     let root = current.is_some_and(|workspace| workspace.root);
                     let mut binding = key_binding(
-                        "x",
+                        "X",
                         "Remove workspace",
                         format!(
                             "Remove {workspace_title}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
                         ),
-                        KeyCode::Char('x'),
+                        KeyCode::Char('X'),
                         Action::RemoveWorkspace,
                     );
                     if root {
@@ -199,10 +199,10 @@ impl Dashboard {
                     vec![binding]
                 }
                 'p' => vec![key_binding(
-                    "x",
+                    "X",
                     "Remove project",
                     format!("Unregister {project}; asks for confirmation. Keeps the repository."),
-                    KeyCode::Char('x'),
+                    KeyCode::Char('X'),
                     Action::RemoveProject,
                 )],
                 // Menu-only, like removal: neither has a Browse key.

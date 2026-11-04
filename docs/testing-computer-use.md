@@ -120,11 +120,12 @@ list above the footer, with the surrounding dashboard still visible. Press
 `Space t`. Press Backspace and confirm the group list returns. Press Escape,
 then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
 running session and Resume is absent. Disabled actions should show a reason.
-Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
+Press Backspace, then `w`, then `X`; confirm the workspace picker highlights
 the selected `consigint / gui-consigint-auth-handoff` and omits the
 repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
-Escape cancels. Repeat with `Space p x` for projects, then `Space t X` for direct
-terminal-close confirmation, cancelling both; confirm `Space t x` closes nothing. Open tasks with `Ctrl-t`, press
+Escape cancels. Repeat with `Space p X` for projects, then `Space t X` for direct
+terminal-close confirmation, cancelling both; confirm lowercase `x` in `Space t`,
+`Space w` and `Space p` does nothing. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
@@ -202,7 +203,7 @@ In the disposable fixture, also verify:
    same shell and confirm its output. The old branch label must not remain as
    that workspace's name.
 10. Select consigint's root workspace (`main` with the root marker). From there,
-    `w` then `x` must be unavailable (`repository-root workspace cannot be
+    `w` then `X` must be unavailable (`repository-root workspace cannot be
     removed`). In its `local` shell, run `rtk proxy git checkout -b cua-root-drift`.
     Confirm the root warning, that `n` is unavailable (`root workspace is not on
     the default branch`), and that the existing shell still accepts a unique

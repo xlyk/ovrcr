@@ -1879,12 +1879,16 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
         for confirm in [false, true] {
             dashboard.key(KeyCode::Char(' '));
             dashboard.key(KeyCode::Char(group));
-            // Closing a session is `Space t X`; removal keeps `x`.
-            let remove = if group == 't' { 'X' } else { 'x' };
-            assert_eq!(
-                dashboard.key(KeyCode::Char(remove)),
-                DashboardAction::Redraw
+            // Every destructive group action is uppercase; lowercase x does nothing.
+            assert_eq!(dashboard.key(KeyCode::Char('x')), DashboardAction::Redraw);
+            assert!(dashboard.drain_outbox().is_empty());
+            let text = palette_text(&dashboard);
+            assert!(
+                text.contains("Which key") && !text.contains("Confirm action"),
+                "{group}: {text}"
             );
+            assert!(!text.contains("Close terminal?"), "{group}: {text}");
+            assert_eq!(dashboard.key(KeyCode::Char('X')), DashboardAction::Redraw);
             if group != 't' {
                 assert!(!palette_text(&dashboard).contains("Confirm action"));
                 assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -2002,7 +2006,7 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
         assert!(menu.contains("p  Project"));
         assert_eq!(menu.contains("w  Workspace"), group == 'w');
         dashboard.key(KeyCode::Char(group));
-        dashboard.key(KeyCode::Char('x'));
+        dashboard.key(KeyCode::Char('X'));
         assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
         assert!(palette_text(&dashboard).contains("Confirm action"));
         assert_eq!(
