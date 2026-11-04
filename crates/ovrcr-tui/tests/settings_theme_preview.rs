@@ -324,7 +324,7 @@ fn newer_save_of_original_theme_survives_the_older_save_report() {
     });
     dashboard.key(KeyCode::Esc);
     assert_eq!(background(&dashboard), theme_background(ThemeId::Dark));
-    assert!(!visible_text(&dashboard, 120, 40).contains("Settings · Enter edit"));
+    assert!(!visible_text(&dashboard, 120, 40).contains("Settings · ↑/↓ move · Enter edit"));
     assert!(dashboard.drain_outbox().is_empty());
 }
 
@@ -339,7 +339,7 @@ fn ctrl_g_from_the_active_picker_closes_settings_and_restores_latest_saved_theme
 
     assert!(matches!(dashboard.ctrl('g'), DashboardAction::Redraw));
     assert_eq!(background(&dashboard), theme_background(ThemeId::Light));
-    assert!(!visible_text(&dashboard, 120, 40).contains("Settings · Enter edit"));
+    assert!(!visible_text(&dashboard, 120, 40).contains("Settings · ↑/↓ move · Enter edit"));
     assert!(dashboard.drain_outbox().is_empty());
     open_theme_picker(&mut dashboard);
     assert_preview(&dashboard, ThemeId::Light);

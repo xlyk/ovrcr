@@ -51,42 +51,6 @@ fn reporter(group: &Value, command: &str) -> bool {
                 })
             })
 }
-/// Dashboard boot check: Codex on PATH whose config.toml lacks the synchronous
-/// OVRCR reporters. Hook trust and delivery stay unverified; this only flags
-/// missing configured reporters in the default CODEX_HOME file.
-pub(super) fn boot_hook_warning() -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find(|dir| dir.join("codex").is_file())?;
-    let settings_path = std::env::var_os("CODEX_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(".codex")))?
-        .join("config.toml");
-    let command = command().ok()?;
-    let issues = match settings(Some(&settings_path)) {
-        Ok(value) => {
-            let mut issues = Vec::new();
-            for event in HOOKS {
-                if !value
-                    .get("hooks")
-                    .and_then(|h| h.get(*event))
-                    .and_then(Value::as_array)
-                    .is_some_and(|groups| groups.iter().any(|g| reporter(g, &command)))
-                {
-                    issues.push(format!("{event}:synchronous_reporter_missing"));
-                }
-            }
-            issues
-        }
-        Err(_) => vec!["settings_unreadable_or_invalid".into()],
-    };
-    (!issues.is_empty()).then(|| {
-        let shown = settings_path.display();
-        format!(
-            "Codex reporting hooks missing in {shown}: run `ovrcr agent setup codex --print --settings {shown}` and merge the result; trust hooks in native Codex before the first tracked prompt"
-        )
-    })
-}
-
 /// Preserve native TOML layout and trust tables while repairing owned reporters.
 pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
     use toml_edit::{ArrayOfTables, Item, Table};
@@ -407,54 +371,5 @@ mod tests {
         assert!(!reporter(&startup, command));
         startup["matcher"] = "".into();
         assert!(reporter(&startup, command));
-    }
-    #[test]
-    fn boot_hook_warning_names_missing_codex_hooks_with_setup_command() {
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        let codex = bin.join("codex");
-        std::fs::write(&codex, []).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&codex, permissions).unwrap();
-        }
-        let home = root.path().join("home");
-        let codex_home = home.join(".codex");
-        std::fs::create_dir_all(&codex_home).unwrap();
-        std::fs::write(codex_home.join("config.toml"), b"").unwrap();
-        let previous_path = std::env::var_os("PATH");
-        let previous_home = std::env::var_os("HOME");
-        let previous_codex = std::env::var_os("CODEX_HOME");
-        unsafe {
-            std::env::set_var("PATH", &bin);
-            std::env::set_var("HOME", &home);
-            std::env::remove_var("CODEX_HOME");
-        }
-        let warning = boot_hook_warning();
-        match previous_path {
-            Some(value) => unsafe { std::env::set_var("PATH", value) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-        match previous_home {
-            Some(value) => unsafe { std::env::set_var("HOME", value) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        match previous_codex {
-            Some(value) => unsafe { std::env::set_var("CODEX_HOME", value) },
-            None => unsafe { std::env::remove_var("CODEX_HOME") },
-        }
-        let warning = warning.expect("missing Codex hooks should warn");
-        assert!(
-            warning.contains("Codex reporting hooks missing"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains("ovrcr agent setup codex --print --settings"),
-            "{warning}"
-        );
     }
 }

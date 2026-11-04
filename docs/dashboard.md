@@ -547,9 +547,11 @@ of those flags is stored and launched as written; a raw command that does not go
 replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi and Oh My Pi
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
-until their dependent tickets. Missing hook configuration shows
-a persistent Dashboard banner with the exact setup command; observed reporting loss
-keeps an `unavailable` status with its published reason.
+until their dependent tickets. Missing hook configuration shows a one-time footer
+note such as `Claude and Codex status off — :connect to set up`, never an error;
+the palette's **Connect agent status**, listed until it succeeds, installs the
+hooks without another question (a failure stays in the footer and keeps the entry).
+Observed reporting loss keeps an `unavailable` status with its published reason.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
@@ -746,12 +748,17 @@ every setting in one scrolling list under the group headers **Alerts**
 (`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`) and
 **Delegation** (`delegation.*`).
 
+The view's title lists `↑/↓ move · Enter edit · r reset · / filter · Esc close`.
 Each row shows its label, effective value (`unset` for an empty optional value)
 and source badge, `default` or `set`; a value the document sets also shows the
 default beside it, for example `kh/  set  (default: feature/)`. A setting's
-finding shows under its row. A consent setting carries its one-sentence side
-effect and, while off, the line that says how to turn it on: turning it on asks
-for no confirmation.
+finding shows under its row. Each row shows one line of description; the
+selected row shows all of it, its `key:` and, on a collection element, the keys
+that act on it (`[ ] move · x remove` on a picker root, `x remove` elsewhere).
+A consent setting that is off says `Off · Enter to turn on` (`Off · Enter to set
+the title model` for the title model) rather than the TOML key that `ovrcr
+settings` names. Selecting it shows its side effect; turning it on asks for no
+confirmation.
 
 | Key | Action |
 | --- | --- |
@@ -790,10 +797,11 @@ hand.**; Enter, `[`, `]`, `r` and `x` change nothing.
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later
 reading changes the number of findings the footer says so again, or **No settings
-findings** once they are gone. The next key clears the line. A startup error
-banner owns that line first: the findings notice waits behind it, a key while the
-banner is up does not drop the notice, and the notice shows when the banner is
-dismissed.
+findings** once they are gone. The next key clears the line. An error banner owns
+that line first: the findings notice waits behind it, a key while the banner is up
+does not drop the notice, and the notice shows when the banner is dismissed. The
+startup `… status off — :connect to set up` note likewise waits behind the findings
+notice, and a successful **Connect agent status** removes it.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional

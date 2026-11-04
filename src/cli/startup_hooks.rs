@@ -1,4 +1,6 @@
-//! Dashboard-owned offers for the installed harnesses' active native profiles.
+//! Agent status: OVRCR's reporting hooks in the installed harnesses' active native
+//! profiles. Startup offers them on one screen, the Dashboard says calmly when they
+//! are off, and its palette's Connect agent status entry installs them later.
 use anyhow::Context;
 use std::fs::{File, Metadata, Permissions};
 use std::io::{Read, Write};
@@ -7,97 +9,247 @@ use std::path::{Path, PathBuf};
 
 const MAX_BYTES: u64 = 1_048_576;
 
+/// Provider, executable, profile variable, default profile directory, settings file.
+const PROVIDERS: [(&str, &str, &str, &str, &str); 2] = [
+    (
+        "Claude",
+        "claude",
+        "CLAUDE_CONFIG_DIR",
+        ".claude",
+        "settings.json",
+    ),
+    ("Codex", "codex", "CODEX_HOME", ".codex", "config.toml"),
+];
+
+/// A settings file the screen offers to change, as read, and what would replace it.
+struct Change {
+    provider: &'static str,
+    path: PathBuf,
+    snapshot: Snapshot,
+    next: String,
+}
+
+/// A provider whose status stays off, with the line that says why.
+type Refusal = (&'static str, String);
+
+/// A manual-migration note composition left for the caller to show.
+type Note = Option<String>;
+
+/// The startup screen. Declining (`n`, Enter) changes nothing.
 pub(super) fn run(confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>) -> anyhow::Result<()> {
-    let executable = super::agent_setup::binary()?;
-    for (provider, harness, variable, directory, filename) in [
-        (
-            "Claude",
-            "claude",
-            "CLAUDE_CONFIG_DIR",
-            ".claude",
-            "settings.json",
-        ),
-        ("Codex", "codex", "CODEX_HOME", ".codex", "config.toml"),
-    ] {
-        if !std::env::var_os("PATH").is_some_and(|path| {
+    offer(
+        targets(),
+        &super::agent_setup::binary()?,
+        confirm,
+        &mut super::startup::notice,
+    )
+}
+
+/// The Dashboard's one-time note while any installed provider's status is off.
+pub(super) fn status_off() -> Option<String> {
+    let executable = super::agent_setup::binary().ok()?;
+    // Silent: the startup screen already showed any migration note.
+    let (changes, refused, _) = prepare(targets(), &executable);
+    let off: Vec<&str> = changes
+        .iter()
+        .map(|change| change.provider)
+        .chain(refused.iter().map(|(provider, _)| *provider))
+        .collect();
+    (!off.is_empty()).then(|| format!("{} status off — :connect to set up", names(&off)))
+}
+
+/// The palette's Connect agent status entry: choosing it is the answer, so it writes
+/// without asking. `Err` says what is still off and why.
+pub(super) fn connect() -> Result<String, String> {
+    let executable = super::agent_setup::binary()
+        .map_err(|error| format!("Couldn't connect agent status: {error}"))?;
+    install(targets(), &executable)
+}
+
+fn install(
+    targets: Vec<(&'static str, Result<PathBuf, String>)>,
+    executable: &str,
+) -> Result<String, String> {
+    let (changes, mut refused, notes) = prepare(targets, executable);
+    let (connected, failed) = apply(changes);
+    refused.extend(failed);
+    let mut lines: Vec<String> = if refused.is_empty() && connected.is_empty() {
+        vec!["Agent status is already connected".into()]
+    } else {
+        (!connected.is_empty())
+            .then(|| connected_line(&connected))
+            .into_iter()
+            .collect()
+    };
+    let failed = !refused.is_empty();
+    lines.extend(refused.into_iter().map(|(_, line)| line));
+    // The palette's result line is where a migration note can be read.
+    lines.extend(notes);
+    let message = lines.join(" · ");
+    if failed { Err(message) } else { Ok(message) }
+}
+
+/// Each installed harness's active settings file, or why it cannot be located.
+fn targets() -> Vec<(&'static str, Result<PathBuf, String>)> {
+    let installed = |harness: &str| {
+        std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|directory| {
                 std::fs::metadata(directory.join(harness))
                     .is_ok_and(|file| file.is_file() && file.mode() & 0o111 != 0)
             })
-        }) {
-            continue;
-        }
-        let profile = std::env::var_os(variable)
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(directory)));
-        let Some(profile) = profile else {
-            super::startup::notice(
-                &format!(
-                    "{provider} reporting hooks unavailable: set HOME or {variable} to select the native profile"
-                ),
-                false,
-            );
-            continue;
-        };
-        let path = profile.join(filename);
-        if let Err(error) = offer(provider, &path, &executable, confirm) {
-            // Only the outer, controlled reason is shown. Native parser errors
-            // and source text can contain private configuration or credentials.
-            super::startup::notice(
-                &format!(
-                    "{provider} reporting hooks in {} were not changed: {error}; fix the native file and rerun OVRCR",
-                    path.display()
-                ),
-                false,
-            );
-        }
+        })
+    };
+    PROVIDERS
+        .into_iter()
+        .filter(|(_, harness, ..)| installed(harness))
+        .map(|(provider, _, variable, directory, filename)| {
+            let profile = std::env::var_os(variable).map(PathBuf::from).or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(directory))
+            });
+            let path = profile.map(|profile| profile.join(filename)).ok_or_else(|| {
+                format!(
+                    "Couldn't connect {provider} status: set HOME or {variable} to choose its settings folder"
+                )
+            });
+            (provider, path)
+        })
+        .collect()
+}
+
+/// Says why any target cannot be changed, then asks once for every file that needs
+/// reporters and writes them only after `y`.
+fn offer(
+    targets: Vec<(&'static str, Result<PathBuf, String>)>,
+    executable: &str,
+    confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>,
+    notice: &mut impl FnMut(&str, bool),
+) -> anyhow::Result<()> {
+    let (changes, refused, notes) = prepare(targets, executable);
+    for line in refused.iter().map(|(_, line)| line).chain(&notes) {
+        notice(line, false);
+    }
+    if changes.is_empty() || !confirm(&prompt(&changes))? {
+        return Ok(());
+    }
+    let (connected, failed) = apply(changes);
+    for (_, line) in &failed {
+        notice(line, false);
+    }
+    if !connected.is_empty() {
+        notice(&connected_line(&connected), true);
     }
     Ok(())
 }
 
-fn offer(
+/// Reads every target. Files already current drop out; a file that cannot be read or
+/// composed is refused by name and reason, never by its contents. Also returns the
+/// manual-migration notes composition left for the caller to show.
+fn prepare(
+    targets: Vec<(&'static str, Result<PathBuf, String>)>,
+    executable: &str,
+) -> (Vec<Change>, Vec<Refusal>, Vec<String>) {
+    let mut changes = Vec::new();
+    let mut refused = Vec::new();
+    let mut notes = Vec::new();
+    for (provider, path) in targets {
+        let path = match path {
+            Ok(path) => path,
+            Err(line) => {
+                refused.push((provider, line));
+                continue;
+            }
+        };
+        match read(provider, &path, executable) {
+            Ok((change, note)) => {
+                notes.extend(note);
+                if let Some((snapshot, next)) = change {
+                    changes.push(Change {
+                        provider,
+                        path,
+                        snapshot,
+                        next,
+                    });
+                }
+            }
+            Err(error) => refused.push((provider, refusal(provider, &path, &error))),
+        }
+    }
+    (changes, refused, notes)
+}
+
+fn read(
     provider: &str,
     path: &Path,
     executable: &str,
-    confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(Option<(Snapshot, String)>, Note)> {
     let snapshot = Snapshot::read(path)?;
     let text = if snapshot.entry.is_none() && provider == "Claude" {
         "{}"
     } else {
         &snapshot.text
     };
-    let next = match provider {
+    let (next, note) = match provider {
         "Claude" => super::agent_setup::compose(text, executable),
-        "Codex" => super::codex_setup::compose(text, executable),
+        "Codex" => super::codex_setup::compose(text, executable).map(|next| (next, None)),
         _ => unreachable!("only providers with global hooks are offered"),
     }
     .map_err(|_| {
         anyhow::anyhow!("native settings are invalid or have an incompatible hook structure")
     })?;
-    if next == snapshot.text {
-        return Ok(());
+    Ok(((next != snapshot.text).then_some((snapshot, next)), note))
+}
+
+/// Writes each change after checking its file is still as read.
+fn apply(changes: Vec<Change>) -> (Vec<&'static str>, Vec<Refusal>) {
+    let mut connected = Vec::new();
+    let mut refused = Vec::new();
+    for change in changes {
+        match change.snapshot.write(&change.next) {
+            Ok(()) => connected.push(change.provider),
+            Err(error) => refused.push((
+                change.provider,
+                refusal(change.provider, &change.path, &error),
+            )),
+        }
     }
-    let effect = if provider == "Claude" {
-        "Shows Claude activity and usage in OVRCR.\nKeeps your existing status-line renderer."
-    } else {
-        "Shows Codex activity and usage in OVRCR.\nReview and trust hooks in native Codex before tracking."
-    };
-    let prompt = format!(
-        "{provider} reporting hooks\nInstall or repair hooks in:\n{}\n\n{effect}\nNative approvals and trust are preserved.\nReview native hook trust and delivery before relying on tracking.",
+    (connected, refused)
+}
+
+// Only the outer, controlled reason is shown. Native parser errors and source
+// text can contain private configuration or credentials.
+fn refusal(provider: &str, path: &Path, error: &anyhow::Error) -> String {
+    format!(
+        "Couldn't connect {provider} status: {error} in {}; fix the file and try again",
         path.display()
+    )
+}
+
+fn prompt(changes: &[Change]) -> String {
+    let providers: Vec<&str> = changes.iter().map(|change| change.provider).collect();
+    let mut text = format!(
+        "Connect agent status\nLets OVRCR show when your {} sessions are working, need you or are done.\nAdds or updates OVRCR hooks in:\n",
+        names(&providers)
     );
-    if !confirm(&prompt)? {
-        return Ok(());
+    for change in changes {
+        text.push_str(&format!("  {}\n", change.path.display()));
     }
-    snapshot.write(&next)?;
-    super::startup::notice(
-        &format!(
-            "{provider} reporting hooks updated. Native trust and delivery remain unverified."
-        ),
-        true,
-    );
-    Ok(())
+    text.push_str("Your other settings, status line and approvals stay as they are.");
+    if providers.contains(&"Codex") {
+        text.push_str("\nCodex asks you to trust the new hooks the next time it starts.");
+    }
+    text
+}
+
+fn connected_line(providers: &[&str]) -> String {
+    let mut text = format!("{} status connected for new sessions", names(providers));
+    if providers.contains(&"Codex") {
+        text.push_str(" · Codex asks you to trust its hooks once");
+    }
+    text
+}
+
+fn names(providers: &[&str]) -> String {
+    providers.join(" and ")
 }
 
 #[derive(PartialEq, Eq)]
@@ -299,7 +451,30 @@ fn resolve_missing(path: &Path) -> anyhow::Result<(PathBuf, PathBuf, Metadata)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
     use std::os::unix::fs::{PermissionsExt, symlink};
+
+    /// The startup screen for one file; returns the refusal lines it printed.
+    fn offer_one(
+        provider: &'static str,
+        path: &Path,
+        executable: &str,
+        confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>,
+    ) -> Vec<String> {
+        let mut refused = Vec::new();
+        offer(
+            vec![(provider, Ok(path.to_owned()))],
+            executable,
+            confirm,
+            &mut |line, success| {
+                if !success {
+                    refused.push(line.to_owned());
+                }
+            },
+        )
+        .unwrap();
+        refused
+    }
 
     #[test]
     fn run_detects_executables_and_only_changes_active_profiles() {
@@ -366,31 +541,255 @@ mod tests {
             .unwrap();
         }
         run(&mut |_| panic!("managed-only and nonexecutable providers must not prompt")).unwrap();
+        assert_eq!(
+            status_off(),
+            None,
+            "no installed provider has hooks to offer"
+        );
         for name in ["claude", "codex"] {
             let path = bin.join(name);
             std::fs::write(&path, "#!/bin/sh\nexit 83\n").unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let off = Some("Claude and Codex status off — :connect to set up".to_owned());
+        assert_eq!(status_off(), off);
+        // Not now (Enter) writes nothing and leaves the calm note.
+        let mut prompts = Vec::new();
+        run(&mut |prompt| {
+            prompts.push(prompt.to_owned());
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(prompts.len(), 1, "one screen for every provider");
+        assert!(!claude.exists() && !codex.exists());
+        assert_eq!(status_off(), off);
         let mut prompts = Vec::new();
         run(&mut |prompt| {
             prompts.push(prompt.to_owned());
             Ok(true)
         })
         .unwrap();
-        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts.len(), 1, "{prompts:?}");
+        for path in [claude.join("settings.json"), codex.join("config.toml")] {
+            assert!(prompts[0].contains(path.to_str().unwrap()), "{prompts:?}");
+        }
         assert!(claude.join("settings.json").is_file());
         assert!(codex.join("config.toml").is_file());
         assert!(!home.join(".claude/settings.json").exists());
         assert!(!home.join(".codex/config.toml").exists());
         assert_eq!(std::fs::read_to_string(&historical).unwrap(), "{}");
         run(&mut |_| panic!("unchanged installed hooks must not prompt")).unwrap();
+        assert_eq!(status_off(), None);
+        assert_eq!(connect(), Ok("Agent status is already connected".into()));
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
             std::env::remove_var("CODEX_HOME");
         }
-        run(&mut |_| Ok(true)).unwrap();
+        // The palette's Connect entry installs in the default profiles without a prompt.
+        assert_eq!(status_off(), off);
+        let connected = connect().unwrap();
+        assert!(
+            connected.starts_with("Claude and Codex status connected"),
+            "{connected}"
+        );
         assert!(home.join(".claude/settings.json").is_file());
         assert!(home.join(".codex/config.toml").is_file());
+        assert_eq!(status_off(), None);
+    }
+
+    #[test]
+    fn one_screen_names_every_file_and_not_now_changes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("settings.json");
+        let codex = root.path().join("config.toml");
+        std::fs::write(&claude, "{}").unwrap();
+        std::fs::write(&codex, "# mine\n").unwrap();
+        let targets = || vec![("Claude", Ok(claude.clone())), ("Codex", Ok(codex.clone()))];
+        let mut prompts = Vec::new();
+        let mut notices = Vec::new();
+        offer(
+            targets(),
+            "/installed/ovrcr",
+            &mut |prompt| {
+                prompts.push(prompt.to_owned());
+                Ok(false)
+            },
+            &mut |line, _| notices.push(line.to_owned()),
+        )
+        .unwrap();
+        assert_eq!(prompts.len(), 1);
+        let screen = &prompts[0];
+        assert!(screen.starts_with("Connect agent status\n"), "{screen}");
+        assert!(
+            screen.contains("your Claude and Codex sessions are working, need you or are done"),
+            "{screen}"
+        );
+        assert!(screen.contains(&format!("  {}\n", claude.display())));
+        assert!(screen.contains(&format!("  {}\n", codex.display())));
+        assert!(screen.contains("status line and approvals stay as they are"));
+        assert!(screen.contains("Codex asks you to trust the new hooks"));
+        assert!(
+            !screen.contains("native hook trust and delivery"),
+            "{screen}"
+        );
+        assert!(
+            notices.is_empty(),
+            "declining is not a problem: {notices:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&claude).unwrap(), "{}");
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), "# mine\n");
+
+        offer(
+            targets(),
+            "/installed/ovrcr",
+            &mut |_| Ok(true),
+            &mut |line, success| notices.push(format!("{success} {line}")),
+        )
+        .unwrap();
+        assert_eq!(
+            notices,
+            [
+                "true Claude and Codex status connected for new sessions · Codex asks you to trust its hooks once"
+            ]
+        );
+        assert!(
+            std::fs::read_to_string(&claude)
+                .unwrap()
+                .contains("/installed/ovrcr")
+        );
+        assert!(
+            std::fs::read_to_string(&codex)
+                .unwrap()
+                .contains("/installed/ovrcr")
+        );
+
+        // A Claude-only screen does not mention Codex trust.
+        let only = root.path().join("only.json");
+        let mut prompts = Vec::new();
+        offer_one("Claude", &only, "/installed/ovrcr", &mut |prompt| {
+            prompts.push(prompt.to_owned());
+            Ok(false)
+        });
+        assert!(prompts[0].contains("your Claude sessions"), "{prompts:?}");
+        assert!(!prompts[0].contains("Codex"), "{prompts:?}");
+    }
+
+    #[test]
+    fn a_refused_file_is_named_before_the_screen_and_the_rest_still_connect() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("settings.json");
+        let codex = root.path().join("config.toml");
+        std::fs::write(&claude, "{ PRIVATE_SETTINGS: [").unwrap();
+        std::fs::write(&codex, "").unwrap();
+        let log = RefCell::new(Vec::new());
+        offer(
+            vec![("Claude", Ok(claude.clone())), ("Codex", Ok(codex.clone()))],
+            "/installed/ovrcr",
+            &mut |prompt| {
+                log.borrow_mut().push(format!("screen {prompt}"));
+                Ok(true)
+            },
+            &mut |line, success| log.borrow_mut().push(format!("{success} {line}")),
+        )
+        .unwrap();
+        let log = log.into_inner();
+        assert_eq!(log.len(), 3, "{log:?}");
+        assert!(
+            log[0].starts_with("false Couldn't connect Claude status: ")
+                && log[0].contains(claude.to_str().unwrap())
+                && !log[0].contains("PRIVATE_SETTINGS"),
+            "{log:?}"
+        );
+        assert!(log[1].starts_with("screen Connect agent status"), "{log:?}");
+        assert!(log[1].contains("your Codex sessions") && !log[1].contains("settings.json"));
+        assert!(log[2].starts_with("true Codex status connected"), "{log:?}");
+        assert_eq!(
+            std::fs::read_to_string(&claude).unwrap(),
+            "{ PRIVATE_SETTINGS: ["
+        );
+    }
+
+    #[test]
+    fn install_writes_without_asking_and_says_what_stays_off() {
+        let root = tempfile::tempdir().unwrap();
+        let claude = root.path().join("settings.json");
+        let codex = root.path().join("config.toml");
+        std::fs::write(&codex, "hooks.Stop = false\n").unwrap();
+        let targets = vec![
+            ("Claude", Ok(claude.clone())),
+            ("Codex", Ok(codex.clone())),
+            (
+                "Codex",
+                Err("Couldn't connect Codex status: set HOME".to_owned()),
+            ),
+        ];
+        let problem = install(targets, "/installed/ovrcr").unwrap_err();
+        assert!(
+            problem.starts_with(
+                "Claude status connected for new sessions · Couldn't connect Codex status: "
+            ),
+            "{problem}"
+        );
+        assert!(problem.contains(codex.to_str().unwrap()), "{problem}");
+        assert!(problem.ends_with(" · Couldn't connect Codex status: set HOME"));
+        assert!(
+            std::fs::read_to_string(&claude)
+                .unwrap()
+                .contains("/installed/ovrcr")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&codex).unwrap(),
+            "hooks.Stop = false\n"
+        );
+        assert_eq!(
+            install(vec![("Claude", Ok(claude.clone()))], "/installed/ovrcr"),
+            Ok("Agent status is already connected".into())
+        );
+    }
+
+    /// A status line wrapping the legacy reporter cannot be migrated automatically.
+    /// The note reaches the user on the palette result line and, at startup, once
+    /// before the screen; nothing writes it to stderr under the Dashboard.
+    #[test]
+    fn legacy_wrapper_note_is_returned_not_printed() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        let legacy = r#"{"statusLine":{"type":"command","command":"/opt/wrap.sh claude-context"}}"#;
+        std::fs::write(&path, legacy).unwrap();
+        let log = RefCell::new(Vec::new());
+        offer(
+            vec![("Claude", Ok(path.clone()))],
+            "/installed/ovrcr",
+            &mut |_| {
+                log.borrow_mut().push("screen".to_owned());
+                Ok(false)
+            },
+            &mut |line, _| log.borrow_mut().push(line.to_owned()),
+        )
+        .unwrap();
+        let log = log.into_inner();
+        assert_eq!(log.len(), 2, "{log:?}");
+        assert!(log[0].starts_with("Manual migration required"), "{log:?}");
+        assert_eq!(log[1], "screen");
+
+        let done = install(vec![("Claude", Ok(path.clone()))], "/installed/ovrcr").unwrap();
+        assert!(
+            done.starts_with(
+                "Claude status connected for new sessions · Manual migration required"
+            ),
+            "{done}"
+        );
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            written["statusLine"]["command"],
+            "/opt/wrap.sh claude-context"
+        );
+        let again = install(vec![("Claude", Ok(path))], "/installed/ovrcr").unwrap();
+        assert!(
+            again.starts_with("Agent status is already connected · Manual migration required"),
+            "{again}"
+        );
     }
 
     #[test]
@@ -412,19 +811,21 @@ mod tests {
             std::fs::write(&path, original).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
             let mut prompts = Vec::new();
-            offer(provider, &path, "/installed/ovrcr", &mut |prompt| {
-                prompts.push(prompt.to_owned());
-                Ok(false)
-            })
-            .unwrap();
+            assert!(
+                offer_one(provider, &path, "/installed/ovrcr", &mut |prompt| {
+                    prompts.push(prompt.to_owned());
+                    Ok(false)
+                })
+                .is_empty()
+            );
             assert_eq!(prompts.len(), 1);
             assert!(prompts[0].contains(provider));
             assert!(prompts[0].contains(path.to_str().unwrap()));
-            assert!(prompts[0].contains("reporting"));
+            assert!(prompts[0].starts_with("Connect agent status\n"));
             assert!(!prompts[0].contains("private-hash"));
             assert!(!prompts[0].contains("Bash(secret)"));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-            offer(provider, &path, "/installed/ovrcr", &mut |_| Ok(true)).unwrap();
+            assert!(offer_one(provider, &path, "/installed/ovrcr", &mut |_| Ok(true)).is_empty());
             let installed = std::fs::read_to_string(&path).unwrap();
             assert!(installed.contains("/installed/ovrcr"));
             assert_eq!(
@@ -450,12 +851,14 @@ mod tests {
                     Some("private-hash")
                 );
             }
-            offer(provider, &path, "/installed/ovrcr", &mut |_| {
-                panic!("configured hooks must not prompt")
-            })
-            .unwrap();
+            assert!(
+                offer_one(provider, &path, "/installed/ovrcr", &mut |_| {
+                    panic!("configured hooks must not prompt")
+                })
+                .is_empty()
+            );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), installed);
-            offer(provider, &path, "/replacement/ovrcr", &mut |_| Ok(true)).unwrap();
+            assert!(offer_one(provider, &path, "/replacement/ovrcr", &mut |_| Ok(true)).is_empty());
             let repaired = std::fs::read_to_string(&path).unwrap();
             assert!(repaired.contains("/replacement/ovrcr"));
             assert!(!repaired.contains("/installed/ovrcr"));
@@ -466,9 +869,9 @@ mod tests {
     fn missing_settings_require_acceptance_and_valid_symlinks_keep_the_link() {
         let root = tempfile::tempdir().unwrap();
         let absent = root.path().join("new/profile/settings.json");
-        offer("Claude", &absent, "/installed/ovrcr", &mut |_| Ok(false)).unwrap();
+        assert!(offer_one("Claude", &absent, "/installed/ovrcr", &mut |_| Ok(false)).is_empty());
         assert!(!root.path().join("new").exists());
-        offer("Claude", &absent, "/installed/ovrcr", &mut |_| Ok(true)).unwrap();
+        assert!(offer_one("Claude", &absent, "/installed/ovrcr", &mut |_| Ok(true)).is_empty());
         assert!(absent.is_file());
         assert_eq!(
             std::fs::metadata(&absent).unwrap().permissions().mode() & 0o777,
@@ -478,7 +881,7 @@ mod tests {
         let linked = root.path().join("config.toml");
         std::fs::write(&target, "# preserve\n").unwrap();
         symlink(&target, &linked).unwrap();
-        offer("Codex", &linked, "/installed/ovrcr", &mut |_| Ok(true)).unwrap();
+        assert!(offer_one("Codex", &linked, "/installed/ovrcr", &mut |_| Ok(true)).is_empty());
         assert_eq!(std::fs::read_link(&linked).unwrap(), target);
         assert!(
             std::fs::read_to_string(&target)
@@ -512,21 +915,22 @@ mod tests {
         ] {
             let path = root.path().join("native-config");
             std::fs::write(&path, text).unwrap();
-            let error = offer(provider, &path, "/installed/ovrcr", &mut |_| {
+            let refused = offer_one(provider, &path, "/installed/ovrcr", &mut |_| {
                 panic!("invalid config must not prompt")
-            })
-            .unwrap_err();
-            assert!(!error.to_string().contains("PRIVATE_SETTINGS"));
+            });
+            assert_eq!(refused.len(), 1, "{refused:?}");
+            assert!(refused[0].starts_with(&format!("Couldn't connect {provider} status: ")));
+            assert!(!refused[0].contains("PRIVATE_SETTINGS"));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         }
         let linked = root.path().join("dangling.json");
         let missing = root.path().join("missing");
         symlink(&missing, &linked).unwrap();
         assert!(
-            offer("Claude", &linked, "/installed/ovrcr", &mut |_| panic!(
+            !offer_one("Claude", &linked, "/installed/ovrcr", &mut |_| panic!(
                 "dangling link must not prompt"
             ))
-            .is_err()
+            .is_empty()
         );
         assert_eq!(std::fs::read_link(&linked).unwrap(), missing);
         assert!(!missing.exists());
@@ -534,19 +938,19 @@ mod tests {
         std::fs::write(&locked, "{}").unwrap();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
         assert!(
-            offer("Claude", &locked, "/installed/ovrcr", &mut |_| panic!(
+            !offer_one("Claude", &locked, "/installed/ovrcr", &mut |_| panic!(
                 "read-only file must not prompt"
             ))
-            .is_err()
+            .is_empty()
         );
         assert_eq!(std::fs::read_to_string(&locked).unwrap(), "{}");
         let oversized = root.path().join("oversized");
         std::fs::write(&oversized, " ".repeat(1_048_577)).unwrap();
         assert!(
-            offer("Codex", &oversized, "/installed/ovrcr", &mut |_| panic!(
+            !offer_one("Codex", &oversized, "/installed/ovrcr", &mut |_| panic!(
                 "oversized file must not prompt"
             ))
-            .is_err()
+            .is_empty()
         );
         assert_eq!(std::fs::metadata(&oversized).unwrap().len(), 1_048_577);
     }
@@ -556,35 +960,36 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
-        let result = offer("Claude", &path, "/installed/ovrcr", &mut |_| {
+        let result = offer_one("Claude", &path, "/installed/ovrcr", &mut |_| {
             std::fs::write(&path, r#"{"external":"edit"}"#).unwrap();
             Ok(true)
         });
-        assert!(result.is_err());
+        assert_eq!(result.len(), 1, "{result:?}");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             r#"{"external":"edit"}"#
         );
         let absent = root.path().join("config.toml");
-        let result = offer("Codex", &absent, "/installed/ovrcr", &mut |_| {
+        let result = offer_one("Codex", &absent, "/installed/ovrcr", &mut |_| {
             std::fs::write(&absent, "# appeared during prompt\n").unwrap();
             Ok(true)
         });
-        assert!(result.is_err());
+        assert_eq!(result.len(), 1, "{result:?}");
         assert_eq!(
             std::fs::read_to_string(&absent).unwrap(),
             "# appeared during prompt\n"
         );
         let identical = root.path().join("identical.json");
         std::fs::write(&identical, "{}").unwrap();
-        let result = offer("Claude", &identical, "/installed/ovrcr", &mut |_| {
+        let result = offer_one("Claude", &identical, "/installed/ovrcr", &mut |_| {
             let replacement = root.path().join("replacement.json");
             std::fs::write(&replacement, "{}").unwrap();
             std::fs::rename(&replacement, &identical).unwrap();
             Ok(true)
         });
-        assert!(
-            result.is_err(),
+        assert_eq!(
+            result.len(),
+            1,
             "same-content replacement changes the file identity"
         );
         assert_eq!(std::fs::read_to_string(&identical).unwrap(), "{}");
@@ -594,12 +999,12 @@ mod tests {
         std::fs::write(&first, "{}").unwrap();
         std::fs::write(&second, "{}").unwrap();
         symlink(&first, &link).unwrap();
-        let result = offer("Claude", &link, "/installed/ovrcr", &mut |_| {
+        let result = offer_one("Claude", &link, "/installed/ovrcr", &mut |_| {
             std::fs::remove_file(&link).unwrap();
             symlink(&second, &link).unwrap();
             Ok(true)
         });
-        assert!(result.is_err());
+        assert_eq!(result.len(), 1, "{result:?}");
         assert_eq!(std::fs::read_link(&link).unwrap(), second);
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "{}");
         assert_eq!(std::fs::read_to_string(&second).unwrap(), "{}");

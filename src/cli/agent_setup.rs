@@ -291,21 +291,28 @@ fn refresh_interval(value: &mut Value) -> anyhow::Result<()> {
 
 /// Compose the same hooks used by print setup and Dashboard startup. Existing
 /// native settings remain authoritative; only owned reporters are replaced.
-pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
+/// Also returns the manual-migration note composition could not apply, for the
+/// caller to show where its user can read it (never stderr under the Dashboard).
+pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<(String, Option<String>)> {
     let original: Value = serde_json::from_str(text)?;
     anyhow::ensure!(original.is_object(), "settings must be a JSON object");
+    let mut note = None;
     let value = if original.as_object().is_some_and(|object| object.is_empty()) {
         ovrcr_runtime::claude_recovery::reporter_settings(executable)
     } else {
-        compose_value(original.clone(), executable)?
+        compose_value(original.clone(), executable, &mut note)?
     };
     if value == original {
-        return Ok(text.to_owned());
+        return Ok((text.to_owned(), note));
     }
-    Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
+    Ok((format!("{}\n", serde_json::to_string_pretty(&value)?), note))
 }
 
-fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
+fn compose_value(
+    mut value: Value,
+    executable: &str,
+    note: &mut Option<String>,
+) -> anyhow::Result<Value> {
     anyhow::ensure!(
         value.get("statusLine").is_none_or(|line| line.is_object()
             && line.get("command").is_none_or(Value::is_string)
@@ -400,9 +407,9 @@ fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
             if renderer.contains("claude-context")
                 && !owned_reporter(renderer, executable, "claude-context", "--stdin-json") =>
         {
-            eprintln!(
+            *note = Some(format!(
                 "Manual migration required: statusLine contains a wrapper around the legacy claude-context reporter and was left untouched. Edit that wrapper to remove its reporting call, then rerun setup with a renderer-only command; or replace statusLine.command with: {default}"
-            );
+            ));
         }
         renderer => {
             let composed = match renderer {
@@ -438,7 +445,11 @@ fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
 pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let result = (|| -> anyhow::Result<Value> {
         let executable = binary()?;
-        let value = compose_value(settings(path)?, &executable)?;
+        let mut note = None;
+        let value = compose_value(settings(path)?, &executable, &mut note)?;
+        if let Some(note) = note {
+            eprintln!("{note}");
+        }
         eprintln!(
             "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks; no Claude Code version is required or refused. Supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher: {} agent run --provider claude -- claude --resume UUID, or the exact separate-token form claude -r UUID",
             quote(&executable),
@@ -514,39 +525,6 @@ fn configuration_issues(value: &Value, executable: &str) -> Vec<String> {
         issues.push("statusline_reporting_unverified".into());
     }
     issues
-}
-
-/// Dashboard boot check: Claude or Codex on PATH whose settings lack the synchronous
-/// OVRCR reporters. Configuration presence is not delivery or trust; doctor keeps those
-/// unverified until evidence arrives. Warnings persist in the Dashboard banner.
-pub(super) fn boot_hook_warning() -> Option<String> {
-    let mut warnings = Vec::new();
-    if let Some(warning) = claude_boot_hook_warning() {
-        warnings.push(warning);
-    }
-    if let Some(warning) = super::codex_setup::boot_hook_warning() {
-        warnings.push(warning);
-    }
-    (!warnings.is_empty()).then(|| warnings.join(" · "))
-}
-
-fn claude_boot_hook_warning() -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find(|dir| dir.join("claude").is_file())?;
-    let settings_path = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(std::path::PathBuf::from)
-        .or_else(|| Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(".claude")))?
-        .join("settings.json");
-    let issues = match settings(Some(&settings_path)) {
-        Ok(value) => configuration_issues(&value, &binary().ok()?),
-        Err(_) => vec!["settings_unreadable_or_invalid".into()],
-    };
-    (!issues.is_empty()).then(|| {
-        let shown = settings_path.display();
-        format!(
-            "Claude reporting hooks missing in {shown}: run `ovrcr agent setup claude --print --settings {shown}` and merge the result"
-        )
-    })
 }
 
 // Health reasons are arbitrary provider text on the wire. Doctor must expose
@@ -752,68 +730,5 @@ mod tests {
         assert!(next.contains("echo keep /tmp/old/ovrcr"));
         assert!(!next.contains("exec '/tmp/old/ovrcr'"));
         assert_eq!(retarget_reporter_text(&next, installed), next);
-    }
-    #[test]
-    fn boot_hook_warning_names_missing_claude_hooks_with_setup_command() {
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        let claude = bin.join("claude");
-        std::fs::write(&claude, []).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(&claude).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&claude, permissions).unwrap();
-        }
-        let config = root.path().join("claude-config");
-        std::fs::create_dir(&config).unwrap();
-        std::fs::write(config.join("settings.json"), b"{}").unwrap();
-        let home = root.path().join("home");
-        std::fs::create_dir(&home).unwrap();
-        // Isolate from the real Codex home so a local codex config cannot join the banner.
-        let codex_home = root.path().join("codex-home-empty");
-        std::fs::create_dir(&codex_home).unwrap();
-        let previous_path = std::env::var_os("PATH");
-        let previous_claude = std::env::var_os("CLAUDE_CONFIG_DIR");
-        let previous_codex = std::env::var_os("CODEX_HOME");
-        let previous_home = std::env::var_os("HOME");
-        unsafe {
-            std::env::set_var("PATH", &bin);
-            std::env::set_var("CLAUDE_CONFIG_DIR", &config);
-            std::env::set_var("CODEX_HOME", &codex_home);
-            std::env::set_var("HOME", &home);
-        }
-        let warning = boot_hook_warning();
-        match previous_path {
-            Some(value) => unsafe { std::env::set_var("PATH", value) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-        match previous_claude {
-            Some(value) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", value) },
-            None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
-        }
-        match previous_codex {
-            Some(value) => unsafe { std::env::set_var("CODEX_HOME", value) },
-            None => unsafe { std::env::remove_var("CODEX_HOME") },
-        }
-        match previous_home {
-            Some(value) => unsafe { std::env::set_var("HOME", value) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        let warning = warning.expect("missing Claude hooks should warn");
-        assert!(
-            warning.contains("Claude reporting hooks missing"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains("ovrcr agent setup claude --print --settings"),
-            "{warning}"
-        );
-        assert!(
-            warning.contains(config.join("settings.json").display().to_string().as_str()),
-            "{warning}"
-        );
     }
 }

@@ -52,12 +52,12 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
         }
         if !screen.alternate_screen()
             && let Some((_, prompt)) = text.rsplit_once("OVRCR · startup")
-            && prompt.contains("[y/n] Enter skips · default n")
+            && (prompt.contains("[y/n] Enter skips · default n")
+                || prompt.contains("[y] Connect  [n] Not now"))
         {
             let title = prompt.lines().map(str::trim).find(|line| !line.is_empty());
             let Some(
-                title @ ("Claude reporting hooks"
-                | "Codex reporting hooks"
+                title @ ("Connect agent status"
                 | "Install OVRCR Bridge"
                 | "Repair or update OVRCR Bridge"
                 | "Install OVRCR Local"),

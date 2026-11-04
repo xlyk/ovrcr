@@ -605,6 +605,7 @@ impl Dashboard {
             whichkey: None,
             selected_container: None,
             configuration_paths: None,
+            connect_status: None,
             history_page_error: false,
             outbox: super::outbox::Outbox::default(),
             wip_prompts: VecDeque::new(),

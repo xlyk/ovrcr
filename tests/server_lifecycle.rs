@@ -11892,7 +11892,7 @@ printf '%s\n' "$reply"
     #[cfg(target_os = "macos")]
     fn open_sound_choices(&mut self) {
         self.send(b" v,");
-        self.wait_screen(|screen| screen.contains("Settings · Enter edit"));
+        self.wait_screen(|screen| screen.contains("Settings · ↑/↓ move · Enter edit"));
         self.send(b"/ready_sound_choice\r\r");
         self.wait_screen(|screen| {
             screen.contains("System default")
@@ -17547,7 +17547,8 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
     // Enable through the actual Settings editor and accepted Server snapshot.
     dashboard.send(b" v,");
     dashboard.wait_screen(|screen| {
-        screen.contains("Settings · Enter edit") && screen.contains("› Desktop notifications")
+        screen.contains("Settings · ↑/↓ move · Enter edit")
+            && screen.contains("› Desktop notifications")
     });
     dashboard.send(b"\r");
     dashboard.wait_bridge_controls(&["status", "authorize"]);
@@ -18433,7 +18434,7 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
                 == Some(ReadySoundChoice::Tap)
     });
     dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
     let reading = ovrcr::settings::load_document(&fixture.config, &document);
     assert_eq!(
         reading.settings.ready_sound_choice,
@@ -18471,7 +18472,7 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
                     == Some(choice)
         });
         dashboard.send(b"\x07");
-        dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+        dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
         let reading = ovrcr::settings::load_document(&fixture.config, &document);
         assert_eq!(reading.settings.ready_sound_choice, Some(choice));
         assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
@@ -18563,7 +18564,7 @@ fn desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_
     assert!(String::from_utf8_lossy(&refused.stderr).contains("could not save ready_sound_choice"));
     assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
     dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
     let mut index = 0;
     let mut expected = Vec::new();
     for command in [

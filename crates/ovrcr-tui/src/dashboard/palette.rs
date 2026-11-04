@@ -62,6 +62,7 @@ enum Command {
     Events,
     RefreshQuota,
     EnableQuota,
+    ConnectStatus,
     #[cfg(target_os = "macos")]
     ITermSetup,
 }
@@ -167,6 +168,44 @@ impl Dashboard {
                 self.ignored_responses.insert(request_id);
             }
         }
+    }
+}
+
+/// Agent status left off at startup ("Not now"): a calm one-time footer note, never an
+/// error, and Connect agent status in the palette until connecting succeeds.
+impl Dashboard {
+    pub fn status_off(&mut self, note: String, connect: crate::ConnectStatusFn) {
+        self.connect_status = Some((connect, note.clone()));
+        // A notice already in the footer, such as settings findings, keeps its place.
+        if self.desktop.notice.is_some() {
+            self.notice_queue.push_back(note);
+        } else {
+            self.show_notice(note);
+        }
+    }
+
+    fn connect_agent_status(&mut self) -> DashboardAction {
+        let Some((connect, note)) = self.connect_status.clone() else {
+            return DashboardAction::Redraw;
+        };
+        match connect() {
+            Ok(done) => {
+                self.connect_status = None;
+                // The startup note is no longer true; drop it wherever it waits.
+                self.notice_queue.retain(|queued| *queued != note);
+                if self.desktop.notice.as_ref() == Some(&note) {
+                    self.desktop.notice = None;
+                }
+                // Success replaces a failed attempt's banner; waiting notices stay queued.
+                self.dismiss_error_banner();
+                if let Some(waiting) = self.desktop.notice.take() {
+                    self.notice_queue.push_front(waiting);
+                }
+                self.show_notice(done);
+            }
+            Err(problem) => self.set_error(problem),
+        }
+        DashboardAction::Redraw
     }
 }
 
@@ -1721,6 +1760,12 @@ impl Dashboard {
                 command: Command::EnableQuota,
             });
         }
+        if self.connect_status.is_some() {
+            entries.push(Entry {
+                label: "Connect agent status".into(),
+                command: Command::ConnectStatus,
+            });
+        }
         for project in &self.hierarchy.projects {
             for workspace in &project.workspaces {
                 for session in &workspace.sessions {
@@ -2268,6 +2313,12 @@ impl Dashboard {
                                         value: Some("true".into()),
                                     },
                                 });
+                            }
+                            Command::ConnectStatus => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
+                                return self.connect_agent_status();
                             }
                             Command::Hint(action) => {
                                 if self
