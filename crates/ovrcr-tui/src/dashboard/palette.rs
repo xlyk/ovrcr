@@ -181,6 +181,8 @@ pub(super) struct Palette {
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
+    /// The submitted Task, for a retry with another agent. One-off: never remembered.
+    task: String,
     launch_project: Option<String>,
     suggestions: Suggestions,
     /// Submit was pressed while Git suggestions were still loading.
@@ -191,6 +193,19 @@ pub(super) struct Palette {
     split: bool,
     /// The Confirm page is the Connect agent status preview: Enter writes the hooks.
     connect_status: bool,
+}
+
+impl Palette {
+    /// Whether this is the Create workspace form.
+    pub(super) fn creates_workspace(&self) -> bool {
+        matches!(
+            self.page,
+            Page::Form {
+                command: Command::CreateWorkspace,
+                ..
+            }
+        )
+    }
 }
 
 impl Dashboard {
@@ -633,6 +648,7 @@ impl Palette {
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
+            task: String::new(),
             launch_project: None,
             suggestions: Suggestions::default(),
             submit_when_ready: false,
@@ -697,6 +713,61 @@ fn text_field(label: &'static str, value: String, required: bool) -> Field {
         edited: false,
         kind: FieldKind::Text,
     }
+}
+
+fn field_value(fields: &[Field], label: &str) -> String {
+    fields
+        .iter()
+        .find(|field| field.label == label)
+        .map(|field| field.value.clone())
+        .unwrap_or_default()
+}
+
+/// The visible Task, trimmed; empty when the form has none.
+fn form_task(fields: &[Field]) -> String {
+    fields
+        .iter()
+        .find(|field| field.label == "Task" && !field.hidden)
+        .map(|field| field.value.trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// The session name a task gives: one line of at most 60 characters.
+fn task_name(task: &str) -> String {
+    let line = task.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.char_indices().nth(60) {
+        Some((end, _)) => line[..end].trim_end().to_owned(),
+        None => line,
+    }
+}
+
+/// The branch name a task suggests after the prefix: lowercase ASCII letters, digits and
+/// `_`, every other run of characters one `-`, at most 50 bytes. Empty when nothing is left,
+/// so the bare prefix asks for a name.
+fn task_slug(task: &str) -> String {
+    let mut slug = String::new();
+    for c in task.chars().map(|c| c.to_ascii_lowercase()) {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            slug.push(c);
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.truncate(50);
+    slug.trim_end_matches('-').to_owned()
+}
+
+/// The launch a retry resends and the choice a success remembers: the agent
+/// or Terminal, never the task.
+fn remember_launch(palette: &mut Palette, launch: CreateSessionRequest) {
+    palette.launch_preference = Some((
+        launch.project.clone(),
+        match &launch.label {
+            Some(label) => super::settings::LaunchChoice::Agent(label.clone()),
+            None => super::settings::LaunchChoice::Terminal,
+        },
+    ));
+    palette.failed_launch = Some(launch);
 }
 
 fn ensure_workspace_id(palette: &mut Palette) -> Result<String, String> {
@@ -1062,7 +1133,8 @@ impl Dashboard {
             }
         }
         if !existing && !fields[branch_i].edited {
-            fields[branch_i].value = self.settings.branch_prefix.clone();
+            let task = form_task(fields);
+            fields[branch_i].value = format!("{}{}", self.settings.branch_prefix, task_slug(&task));
         }
         if hints.inspect.is_none()
             && !hints.cache.contains_key(&project)
@@ -1147,7 +1219,10 @@ impl Dashboard {
                 command: Command::CreateWorkspace,
                 fields,
                 ..
-            } => palette.suggestions.cache.contains_key(&fields[0].value),
+            } => palette
+                .suggestions
+                .cache
+                .contains_key(&field_value(fields, "Project")),
             _ => false,
         };
         let mut submit = palette.submit_when_ready && ready;
@@ -2614,7 +2689,10 @@ impl Dashboard {
                     } else {
                         palette.invalid = None;
                         if matches!(command, Command::CreateWorkspace)
-                            && !palette.suggestions.cache.contains_key(&fields[0].value)
+                            && !palette
+                                .suggestions
+                                .cache
+                                .contains_key(&field_value(fields, "Project"))
                         {
                             palette.submit_when_ready = true;
                             self.palette = Some(palette);
@@ -2627,13 +2705,19 @@ impl Dashboard {
                                 .map(|f| f.value.trim().to_string())
                                 .unwrap_or_default()
                         };
+                        // One-off: kept only for this form's own retry, never remembered.
+                        if !matches!(command, Command::RecoverLaunch) {
+                            palette.task = form_task(fields);
+                        }
+                        let task = palette.task.clone();
+                        let mut chained = None;
                         let selected_launch = if matches!(
                             command,
                             Command::CreateTerminal
                                 | Command::CreateWorkspace
                                 | Command::RecoverLaunch
                         ) {
-                            match self.selected_launch(fields) {
+                            match self.selected_launch(fields, &task) {
                                 Ok(launch) => launch,
                                 Err(error) => {
                                     palette.error = Some(error);
@@ -2658,10 +2742,15 @@ impl Dashboard {
                                     self.palette = Some(palette);
                                     return action;
                                 }
+                                let name = field("Name");
                                 Request::CreateSession(CreateSessionRequest {
                                     project: workspace.project.clone(),
                                     workspace: workspace.id.clone(),
-                                    name: field("Name"),
+                                    name: if name.is_empty() {
+                                        task_name(&task)
+                                    } else {
+                                        name
+                                    },
                                     argv: selected_launch.as_ref().unwrap().argv.clone(),
                                     label: selected_launch.as_ref().unwrap().label.clone(),
                                     kind: selected_launch.as_ref().unwrap().kind.clone(),
@@ -2692,10 +2781,27 @@ impl Dashboard {
                                         }
                                     }
                                 };
+                                // The workspace request cannot name its session, so a
+                                // task's session follows as its own Lifecycle job.
+                                let launch = if task.is_empty() {
+                                    selected_launch.clone()
+                                } else {
+                                    chained = selected_launch.clone().map(|launch| {
+                                        CreateSessionRequest {
+                                            project: field("Project"),
+                                            workspace: id.clone(),
+                                            name: task_name(&task),
+                                            argv: launch.argv,
+                                            label: launch.label,
+                                            kind: launch.kind,
+                                        }
+                                    });
+                                    None
+                                };
                                 Request::CreateWorkspaceWithLaunch {
                                     project: field("Project"),
                                     id,
-                                    launch: selected_launch.clone(),
+                                    launch,
                                     branch: if field("Branch mode") == "existing" {
                                         BranchRequest::Existing {
                                             branch: field("Branch"),
@@ -2721,7 +2827,7 @@ impl Dashboard {
                                 Request::CreateSession(CreateSessionRequest {
                                     project: previous.project.clone(),
                                     workspace: previous.workspace.clone(),
-                                    name: String::new(),
+                                    name: previous.name.clone(),
                                     argv: selected_launch.as_ref().unwrap().argv.clone(),
                                     label: selected_launch.as_ref().unwrap().label.clone(),
                                     kind: selected_launch.as_ref().unwrap().kind.clone(),
@@ -2761,6 +2867,9 @@ impl Dashboard {
                         } else {
                             action =
                                 self.palette_submit(&mut palette, request, history_before_request);
+                            if let Some(session) = chained {
+                                self.chain_session(&mut palette, session);
+                            }
                         }
                     }
                 }
@@ -2848,7 +2957,12 @@ impl Dashboard {
         else {
             return;
         };
+        // Create workspace always shows Task: it names the branch too.
+        let creates_workspace = fields.iter().any(|f| f.label == "Project");
         for field in fields {
+            if field.label == "Task" && !creates_workspace {
+                field.hidden = start != "Agent";
+            }
             if field.label == "Agent" {
                 field.hidden = start != "Agent";
                 field.required = start == "Agent";
@@ -2921,7 +3035,11 @@ impl Dashboard {
             .argv
     }
 
-    fn selected_launch(&self, fields: &[Field]) -> Result<Option<SessionLaunch>, String> {
+    fn selected_launch(
+        &self,
+        fields: &[Field],
+        task: &str,
+    ) -> Result<Option<SessionLaunch>, String> {
         let value = |label| {
             fields
                 .iter()
@@ -2943,7 +3061,7 @@ impl Dashboard {
                 })
                 .map(|a| {
                     Some(SessionLaunch {
-                        argv: a.argv,
+                        argv: super::agents::with_task(&a.name, a.argv, task),
                         kind: SessionKind::Agent {
                             name: a.name.clone(),
                         },
@@ -3068,14 +3186,7 @@ impl Dashboard {
             _ => None,
         };
         if let Some(launch) = launch {
-            palette.launch_preference = Some((
-                launch.project.clone(),
-                match &launch.label {
-                    Some(label) => super::settings::LaunchChoice::Agent(label.clone()),
-                    None => super::settings::LaunchChoice::Terminal,
-                },
-            ));
-            palette.failed_launch = Some(launch);
+            remember_launch(palette, launch);
         }
         let request_id = self.next_request_id();
         palette.pending = Some(request_id);
@@ -3089,6 +3200,26 @@ impl Dashboard {
             request,
         });
         DashboardAction::Redraw
+    }
+
+    /// Starts `session` once the workspace job just submitted succeeds. Until
+    /// then an empty workspace is not finished, and a failure of the session
+    /// offers the same recovery as a launch the workspace request carried.
+    fn chain_session(&mut self, palette: &mut Palette, session: CreateSessionRequest) {
+        let Some(row) = self
+            .lifecycle_pending
+            .as_mut()
+            .filter(|row| Some(row.token) == palette.pending)
+        else {
+            return;
+        };
+        if let super::lifecycle_ui::ProvisionalKind::CreatingWorkspace { launch, .. } =
+            &mut row.kind
+        {
+            *launch = true;
+        }
+        row.then = vec![Request::CreateSession(session.clone())];
+        remember_launch(palette, session);
     }
 
     fn palette_form(&self, command: Command) -> Page {
@@ -3120,6 +3251,7 @@ impl Dashboard {
                 let agent = launch.pop().unwrap();
                 vec![
                     launch.pop().unwrap(),
+                    text("Task", String::new(), false),
                     Field {
                         label: "Workspace",
                         value: workspace_value,
@@ -3154,6 +3286,7 @@ impl Dashboard {
                 mode.kind = FieldKind::Toggle;
                 let project_name = project.value.clone();
                 let mut fields = vec![
+                    text("Task", String::new(), false),
                     project,
                     text("Branch", self.settings.branch_prefix.clone(), true),
                     mode,
@@ -3202,11 +3335,13 @@ impl Dashboard {
             }
             _ => unreachable!(),
         };
-        let active = if matches!(command, Command::CreateWorkspace) {
-            1
-        } else {
-            0
-        };
+        let mut fields = fields;
+        self.refresh_terminal_form(&mut fields, false);
+        // A new task starts at Task whenever the form shows it.
+        let active = fields
+            .iter()
+            .position(|field| field.label == "Task" && !field.hidden)
+            .unwrap_or(0);
         Page::Form {
             command,
             fields,
@@ -4127,7 +4262,7 @@ impl Dashboard {
             error.clone()
         } else if palette.submit_when_ready {
             "Waiting for Git suggestions before creating… · Esc cancel".to_owned()
-        } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields).is_err())
+        } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields, "").is_err())
         {
             "Remembered/selected agent unavailable. Choose another agent or select Terminal explicitly.".to_owned()
         } else if let Some(note) = &palette.suggestions.note {
@@ -4304,7 +4439,29 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
     if !recovering {
         keys.push("Esc cancel");
     }
-    keys.join(" · ")
+    match field.label {
+        "Task" => format!("{} · {}", task_hint(fields), keys.join(" · ")),
+        _ => keys.join(" · "),
+    }
+}
+
+/// What a Task does with this form's choices: an agent verified to take a
+/// first message gets it; otherwise it only names things.
+fn task_hint(fields: &[Field]) -> String {
+    let agent = field_value(fields, "Agent");
+    let named = if fields.iter().any(|field| field.label == "Project") {
+        "the branch and session"
+    } else {
+        "the session"
+    };
+    match field_value(fields, "Start").as_str() {
+        "Agent" if super::agents::takes_task(&agent) => {
+            format!("Names {named}; {agent} gets it as its first message")
+        }
+        "Agent" => format!("Only names {named}; {agent} starts without it"),
+        "Nothing yet" => "Only names the branch".into(),
+        _ => format!("Only names {named}"),
+    }
 }
 
 impl Dashboard {
@@ -4651,16 +4808,30 @@ impl Dashboard {
     /// handles the failure as if the Server had refused the request outright:
     /// the values stay, the reason is in plain words, and recovery pages
     /// (another agent, save or discard changes) still follow. `stopping` is
-    /// the session a workspace removal could not stop.
+    /// the session a workspace removal could not stop. `after_workspace`: the
+    /// failed job started a task's session in the workspace this form created,
+    /// so the workspace stands and the failure offers launch recovery.
     pub(super) fn return_to_form(
         &mut self,
         palette: Box<Palette>,
         token: u64,
         stopping: Option<SessionId>,
+        after_workspace: bool,
         code: crate::protocol::ErrorCode,
         message: String,
     ) {
         let mut palette = *palette;
+        let started = after_workspace.then(|| {
+            format!(
+                "Couldn't start the session: {}",
+                self.plain_reason(&message, None)
+            )
+        });
+        let code = match code {
+            crate::protocol::ErrorCode::OwnershipUncertain => code,
+            _ if after_workspace => crate::protocol::ErrorCode::PartialFailure,
+            _ => code,
+        };
         palette.pending = Some(token);
         self.cancel_mouse_gesture();
         self.whichkey = None;
@@ -4692,6 +4863,18 @@ impl Dashboard {
             && stopped.is_some()
         {
             palette.error = stopped;
+        }
+        if let Some(palette) = self.palette.as_mut()
+            && matches!(
+                palette.page,
+                Page::Form {
+                    command: Command::RecoverLaunch,
+                    ..
+                }
+            )
+            && started.is_some()
+        {
+            palette.error = started;
         }
     }
 }
@@ -4922,7 +5105,7 @@ mod mouse_tests {
         let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
             panic!()
         };
-        assert_eq!(fields[2].value, "existing");
+        assert_eq!(fields[3].value, "existing");
         assert!(
             fields
                 .iter()
@@ -5047,11 +5230,13 @@ mod mouse_tests {
         let mut d = dashboard();
         d.open_create_workspace();
         d.drain_outbox();
-        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+        let Page::Form { fields, active, .. } = &mut d.palette.as_mut().unwrap().page else {
             panic!()
         };
-        fields[0].value = "demo".into();
-        fields[0].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+        // Type into Branch, not Task: the request stays a single workspace job.
+        *active = 2;
+        fields[1].value = "demo".into();
+        fields[1].kind = FieldKind::Pick(PickList::new(vec![PickItem {
             label: "demo".into(),
             value: "demo".into(),
         }]));
@@ -5108,11 +5293,13 @@ mod mouse_tests {
             d.drain_one_request().unwrap().request,
             Request::Inspect
         ));
-        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+        let Page::Form { fields, active, .. } = &mut d.palette.as_mut().unwrap().page else {
             panic!()
         };
-        fields[0].value = "demo".into();
-        fields[0].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+        // Type into Branch, not Task: the request stays a single workspace job.
+        *active = 2;
+        fields[1].value = "demo".into();
+        fields[1].kind = FieldKind::Pick(PickList::new(vec![PickItem {
             label: "demo".into(),
             value: "demo".into(),
         }]));
@@ -5449,7 +5636,7 @@ mod launch_tests {
             .value = "Agent".into();
         let field = fields.iter_mut().find(|f| f.label == "Agent").unwrap();
         field.value = "cursor-cloud:work".into();
-        let launch = d.selected_launch(&fields).unwrap().unwrap();
+        let launch = d.selected_launch(&fields, "").unwrap().unwrap();
         assert_eq!(
             launch.kind,
             SessionKind::Agent {
@@ -6960,6 +7147,88 @@ mod form_tests {
             keys(Command::CreateWorkspace, "Branch", true),
             "Tab/Shift-Tab fields · Enter create"
         );
+    }
+
+    #[test]
+    fn task_names_are_one_bounded_line_and_slugs_are_valid_branches() {
+        assert_eq!(task_name("  Fix   the\tlogin  "), "Fix the login");
+        let long = "word ".repeat(30);
+        let name = task_name(&long);
+        assert!(
+            name.chars().count() <= 60 && !name.ends_with(' '),
+            "{name:?}"
+        );
+        assert_eq!(task_name(&"界".repeat(70)).chars().count(), 60);
+        for (task, slug) in [
+            ("Fix the Login bug: v2!", "fix-the-login-bug-v2"),
+            ("--force push", "force-push"),
+            ("snake_case stays", "snake_case-stays"),
+            ("../../etc .lock", "etc-lock"),
+            ("修复 the bug", "the-bug"),
+            ("修复", ""),
+        ] {
+            assert_eq!(task_slug(task), slug, "{task}");
+            if !slug.is_empty() {
+                assert_eq!(branch_name_problem(&format!("feature/{slug}")), None);
+            }
+        }
+        let slug = task_slug(&"abc ".repeat(40));
+        assert!(slug.len() <= 50 && !slug.ends_with('-'), "{slug}");
+    }
+
+    #[test]
+    fn task_hint_says_whether_the_agent_gets_the_task() {
+        let d = dashboard();
+        let hint = |command: Command, start: &str, agent: &str| {
+            let Page::Form { mut fields, .. } = d.palette_form(command) else {
+                panic!()
+            };
+            for field in fields.iter_mut() {
+                match field.label {
+                    "Start" => field.value = start.into(),
+                    "Agent" => field.value = agent.into(),
+                    _ => {}
+                }
+            }
+            task_hint(&fields)
+        };
+        assert_eq!(
+            hint(Command::CreateTerminal, "Agent", "claude"),
+            "Names the session; claude gets it as its first message"
+        );
+        assert_eq!(
+            hint(Command::CreateTerminal, "Agent", "hermes"),
+            "Only names the session; hermes starts without it"
+        );
+        assert_eq!(
+            hint(Command::CreateWorkspace, "Agent", "codex"),
+            "Names the branch and session; codex gets it as its first message"
+        );
+        assert_eq!(
+            hint(Command::CreateWorkspace, "Terminal", "claude"),
+            "Only names the branch and session"
+        );
+        assert_eq!(
+            hint(Command::CreateWorkspace, "Nothing yet", "claude"),
+            "Only names the branch"
+        );
+        // Create terminal shows Task only for an agent; Create workspace always.
+        let visible = |command: Command, start: &str| {
+            let Page::Form { mut fields, .. } = d.palette_form(command) else {
+                panic!()
+            };
+            fields
+                .iter_mut()
+                .find(|f| f.label == "Start")
+                .unwrap()
+                .value = start.into();
+            d.refresh_terminal_form(&mut fields, false);
+            !fields.iter().find(|f| f.label == "Task").unwrap().hidden
+        };
+        assert!(visible(Command::CreateTerminal, "Agent"));
+        assert!(!visible(Command::CreateTerminal, "Terminal"));
+        assert!(visible(Command::CreateWorkspace, "Terminal"));
+        assert!(visible(Command::CreateWorkspace, "Nothing yet"));
     }
 }
 

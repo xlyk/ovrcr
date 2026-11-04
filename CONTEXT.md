@@ -25,7 +25,7 @@ The name shown for a session. Applications cannot change it, and changing it doe
 _Avoid_: session identity, agent label, workspace name, application title
 
 **Original session name**:
-The name chosen at creation, supplied by the user or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed. On an Agent launch, a name typed at creation is this name and is not a manual title.
+The name chosen at creation, supplied by the user (typed, or taken from a new session's task) or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed. On an Agent launch, a name typed at creation is this name and is not a manual title.
 _Avoid_: current branch name, application title, conversation subject
 
 **Manual title**:
@@ -66,7 +66,7 @@ The launch choice for opening a shell, optionally with a custom command. It crea
 _Avoid_: custom command as a separate session type
 
 **Remembered launch choice**:
-A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and is unchanged by creating an empty workspace.
+A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and tasks, and is unchanged by creating an empty workspace.
 _Avoid_: running agent, silently substituted fallback
 
 **Workspace**:
