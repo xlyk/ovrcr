@@ -619,6 +619,7 @@ impl Dashboard {
             theme: crate::theme::ThemeTokens::dark(),
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
+            input_requests: HashSet::new(),
         }
     }
 
@@ -851,7 +852,22 @@ impl Dashboard {
                 .ok()
                 .and_then(|id| find_session(self, SessionId(id)))
             {
-                Some(session) => titled.push_str(&self.session_display_name(session)),
+                // Titled as L1's `plain_reason` names sessions: the id only when shared.
+                Some(session) => {
+                    let title = session.display_name();
+                    let shared = self
+                        .hierarchy
+                        .projects
+                        .iter()
+                        .flat_map(|project| &project.workspaces)
+                        .flat_map(|workspace| &workspace.sessions)
+                        .any(|other| other.id != session.id && other.display_name() == title);
+                    if shared {
+                        titled.push_str(&format!("{title} (#{})", session.id.0));
+                    } else {
+                        titled.push_str(title);
+                    }
+                }
                 None => titled.push_str(&rest[at..at + 1 + digits]),
             }
             rest = &rest[at + 1 + digits..];
@@ -1042,7 +1058,14 @@ impl Dashboard {
     /// the call is idempotent.
     pub fn drain_outbox(&mut self) -> Vec<ClientMessage> {
         self.queue_history_request();
-        self.outbox.drain()
+        let drained = self.outbox.drain();
+        self.input_requests.extend(
+            drained
+                .iter()
+                .filter(|message| is_input(&message.request))
+                .map(|message| message.request_id),
+        );
+        drained
     }
 
     pub(super) fn queue_history_request(&mut self) {
@@ -3459,12 +3482,12 @@ impl Dashboard {
             }
             return self.drain_outbox();
         }
-        let (was_view_request, owns_error) = match &message {
+        let (was_view_request, owns_error, was_input) = match &message {
             ServerMessage::Response {
                 request_id,
                 response,
             } => self.retire_request_id(*request_id, response),
-            ServerMessage::Event(_) => (false, false),
+            ServerMessage::Event(_) => (false, false, false),
         };
         match message {
             ServerMessage::Response {
@@ -3676,10 +3699,15 @@ impl Dashboard {
                         self.set_limit(text);
                         // Only a refused view hands the banner to the next view completion.
                         self.error_owned_by_view = true;
+                    } else if was_input
+                        && matches!(code, ErrorCode::Conflict | ErrorCode::InvalidRequest)
+                    {
+                        // Input the Server did not admit (assigned, paused, no longer focused)
+                        // is a limit; a failed write stays `Internal`, a failure.
+                        let text = self.plain_error(&message);
+                        self.set_limit(text);
                     } else if !was_view_request {
                         self.set_server_error(code, &message);
-                        // Only a refused view hands the banner to the next view completion.
-                        self.error_owned_by_view = matched_view;
                     }
                     if matched_history && self.copy.is_none() {
                         self.mode = if self.history.is_some() {
@@ -4082,6 +4110,7 @@ impl Dashboard {
         let session = self.action_session()?;
         let run = self.input_run(session)?;
         self.error_owning_requests.insert(request_id);
+        self.input_requests.insert(request_id);
         Some(ClientMessage {
             request_id,
             request: self.terminal_input_request(session, run, bytes),
@@ -4279,14 +4308,16 @@ impl Dashboard {
     /// `SetView` that was still in flight, and the error banner. Only a view snapshot is not
     /// final, so every other response releases the id; both sets would otherwise grow for the
     /// life of the dashboard.
-    fn retire_request_id(&mut self, request_id: u64, response: &Response) -> (bool, bool) {
+    fn retire_request_id(&mut self, request_id: u64, response: &Response) -> (bool, bool, bool) {
         let was_view_request = self.handshake.was_view_request(request_id);
         let owns_error = self.error_owning_requests.contains(&request_id);
+        let was_input = self.input_requests.contains(&request_id);
         if !matches!(response, Response::Screen { .. }) {
             self.handshake.retire(request_id);
             self.error_owning_requests.remove(&request_id);
+            self.input_requests.remove(&request_id);
         }
-        (was_view_request, owns_error)
+        (was_view_request, owns_error, was_input)
     }
 }
 /// How long a footer banner stands before it clears itself: long enough to read, never
@@ -4298,15 +4329,30 @@ fn internal_id(word: &str) -> bool {
     word.len() == 32 && word.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// `text` with `from` replaced by `to`, except where `from` continues a path: a worktree's
-/// real directory may be named after its internal id.
+fn is_input(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::Input { .. } | Request::AssignedHumanInput { .. }
+    )
+}
+
+/// `text` with each stand-alone `from` replaced by `to`. An occurrence inside a path (a `/`
+/// on either side) or inside a longer word stays: a worktree's real directory may be named
+/// after its internal id.
 fn replace_outside_paths(text: &str, from: &str, to: &str) -> String {
+    let joined = |c: char| c == '/' || c.is_alphanumeric() || matches!(c, '-' | '_' | '.');
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(from) {
+        let before = rest[..at].chars().next_back();
+        let after = &rest[at + from.len()..];
+        // A trailing `.` or `-` after the match ends a sentence or clause; a `/` continues a path.
+        let inside = before.is_some_and(joined)
+            || after.starts_with('/')
+            || after.chars().next().is_some_and(char::is_alphanumeric);
         out.push_str(&rest[..at]);
-        out.push_str(if rest[..at].ends_with('/') { from } else { to });
-        rest = &rest[at + from.len()..];
+        out.push_str(if inside { from } else { to });
+        rest = after;
     }
     out.push_str(rest);
     out

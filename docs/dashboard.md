@@ -28,12 +28,13 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 When something cannot be done, the footer says why in place of the hints. An
 expected limit (a pane still loading, a paused session, a refresh cooldown, a
-view the Server refused for now, or a refusal that names its blocker, such as
-sessions that still block a removal) reads muted and in plain words. A failure,
+view the Server refused for now, keys the Server did not let through to a
+session, or a refusal that names its blocker, such as sessions that still block
+a removal) reads muted and in plain words. A failure,
 including any lifecycle work the Server could not do, reads `ERROR:` in red.
 Neither shows the Server's error code (`Conflict:`); `project/<workspace id>`
-reads `project / branch`, a session `#N` reads as its title, and a path keeps
-its folder names as they are on disk. A message clears when a later request of
+reads `project / branch`, a session `#N` reads as its title, an id nothing
+names stays as written, and a path keeps its folder names as they are on disk. A message clears when a later request of
 yours succeeds. Otherwise a limit clears after ten seconds, and a failure ten
 seconds after the first key you press while it shows, so one that arrives while
 you are away waits for you. A notice that waited behind it shows next.

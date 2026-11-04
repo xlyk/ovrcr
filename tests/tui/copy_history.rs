@@ -2067,3 +2067,80 @@ fn a_failed_pause_is_an_error_not_a_limit() {
         "ERROR: could not signal the session's process group"
     );
 }
+
+#[test]
+fn input_the_server_does_not_admit_is_a_limit_and_a_failed_write_an_error() {
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Enter);
+    let refused = dashboard
+        .input_request(b"x".to_vec(), 9100)
+        .expect("a ready focused pane accepts input");
+    assert!(
+        matches!(refused.request, Request::Input { .. }),
+        "{refused:?}"
+    );
+    // The Server's input admission answers Conflict: a limit, muted, no marker.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: refused.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "session input is paused".into(),
+        },
+    });
+    assert_eq!(footer(&dashboard, 120, 40), "session input is paused");
+    // A write that failed is still a failure.
+    let failed = dashboard
+        .input_request(b"y".to_vec(), 9101)
+        .expect("input is still accepted");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: failed.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "write to pty: broken pipe".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: write to pty: broken pipe"
+    );
+}
+
+#[test]
+fn a_failed_resume_is_an_error_not_a_limit() {
+    let mut dashboard = copy_ready();
+    dashboard.key(KeyCode::Char('p'));
+    let pause = only_request(dashboard.drain_outbox());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pause.request_id,
+        response: Response::Ok,
+    });
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .flat_map(|workspace| &mut workspace.sessions)
+    {
+        session.phase = SessionPhase::Paused;
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.key(KeyCode::Char('r'));
+    let resume = only_request(dashboard.drain_outbox());
+    assert!(
+        matches!(resume.request, Request::ResumeSession { .. }),
+        "{resume:?}"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: resume.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "could not continue the session's process group".into(),
+        },
+    });
+    assert_eq!(
+        footer(&dashboard, 120, 40),
+        "ERROR: could not continue the session's process group"
+    );
+}

@@ -251,9 +251,19 @@ fn activity_words(session: &SessionSummary) -> &'static str {
     }
 }
 
+/// The reasons `Reporting::lost` writes when the Server loses a session's reporter. Unlike a
+/// provider's own Unavailable reasons before its first report, these are never a startup.
+const SERVER_LOSSES: [&str; 4] = [
+    "supervisor_disconnected",
+    "capability_revoked",
+    "unfinalized_release",
+    "pty_exited_before_finalization",
+];
+
 /// Reporting health in words, only for a running agent and only when it matters. Before the
-/// first report a young session is `starting…` while its reporter is healthy or merely waiting
-/// for Claude's transcript (`source_unavailable`); any other loss reads `status off` at once. Past the grace an agent that never bound
+/// first report a young session is `starting…`, whatever the provider says meanwhile (Claude
+/// reads `source_unavailable` until its transcript exists), but a Server-side loss
+/// ([`SERVER_LOSSES`]) reads `status off` at once. Past the grace an agent that never bound
 /// has no reporting at all; one that bound but has not been asked anything says nothing.
 /// After the first report, a lost reporter is `status off`, and so is an Unread with no
 /// reporter left behind it.
@@ -280,11 +290,13 @@ fn reporting_words(session: &SessionSummary, now_unix_ms: u64) -> Option<&'stati
             .filter(|agent| unavailable(agent))
             .map(|_| "status off");
     }
-    // Claude's reader says `source_unavailable` until its transcript exists, which is
-    // ordinary before the first prompt; any other loss (the supervisor gone, its capability
-    // revoked) is real even before the first report.
     if session.agent.as_ref().is_some_and(|agent| {
-        unavailable(agent) && agent.health.reason.as_deref() != Some("source_unavailable")
+        unavailable(agent)
+            && agent
+                .health
+                .reason
+                .as_deref()
+                .is_some_and(|reason| SERVER_LOSSES.contains(&reason))
     }) {
         return Some("status off");
     }
@@ -886,8 +898,13 @@ mod tests {
         launched.agent.as_mut().unwrap().health.reason = Some("supervisor_disconnected".into());
         assert_eq!(words(&launched, 0), Some("status off"));
         assert_eq!(words(&launched, grace), Some("status off"));
-        launched.agent.as_mut().unwrap().health.reason = Some("capability_revoked".into());
-        assert_eq!(words(&launched, grace), Some("status off"));
+        for reason in SERVER_LOSSES {
+            launched.agent.as_mut().unwrap().health.reason = Some(reason.into());
+            assert_eq!(words(&launched, 0), Some("status off"), "{reason}");
+        }
+        // A provider's own reason before its first report is still a startup.
+        launched.agent.as_mut().unwrap().health.reason = Some("transcript_pending".into());
+        assert_eq!(words(&launched, 0), Some("starting…"));
         launched.agent.as_mut().unwrap().health.reason = Some("source_unavailable".into());
 
         // The first report ends `starting…`; a reporter lost after it is `status off`.

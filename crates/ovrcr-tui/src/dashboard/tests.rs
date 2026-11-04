@@ -4678,6 +4678,18 @@ fn server_refusals_read_in_plain_words_and_expected_limits_are_not_errors() {
     // A worktree folder named after its id is a real path: it is never rewritten.
     let path = "worktree directory /home/w/consigint/7833bc0a230c03372aecca12545fec60 is missing but Git does not report it prunable";
     assert_eq!(dashboard.plain_error(path), path);
+    // Nor is a relative path that starts with `project/<id>`, or an id inside a longer word.
+    for kept in [
+        "cd consigint/7833bc0a230c03372aecca12545fec60/src first",
+        "commit 7833bc0a230c03372aecca12545fec6012345678 and myconsigint/7833bc0a230c03372aecca12545fec60",
+    ] {
+        assert_eq!(dashboard.plain_error(kept), kept);
+    }
+    // A sentence may end right after the workspace.
+    assert_eq!(
+        dashboard.plain_error("removed 'consigint/7833bc0a230c03372aecca12545fec60'."),
+        "removed 'consigint / feature/status-check'."
+    );
     // A bare id outside a path reads as its branch; `#` without a known session stays.
     assert_eq!(
         dashboard.plain_error("workspace 7833bc0a230c03372aecca12545fec60 has #99 and #"),

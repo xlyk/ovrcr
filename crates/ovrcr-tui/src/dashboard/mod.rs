@@ -333,6 +333,8 @@ pub struct Dashboard {
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
+    /// Ids of terminal input requests in flight: their refusal (input not admitted) is a limit.
+    input_requests: HashSet<u64>,
     /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.
