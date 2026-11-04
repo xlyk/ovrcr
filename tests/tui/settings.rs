@@ -280,6 +280,40 @@ fn palette_connects_agent_status_until_it_succeeds() {
     );
 }
 
+/// A successful connect retires the startup note even when it was waiting behind a
+/// banner, so the next key does not bring back `… status off`.
+#[test]
+fn connecting_retires_a_queued_status_off_note() {
+    fn connect() -> Result<String, String> {
+        Ok("Claude status connected for new sessions".into())
+    }
+    let mut dashboard = dashboard_fixture();
+    dashboard.status_off(STATUS_OFF.into(), connect);
+    assert_eq!(rendered_footer(&dashboard, 120), STATUS_OFF);
+    // A banner arrives while the note shows: the note waits behind it.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9_000,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "unrelated failure".into(),
+        },
+    });
+    assert!(rendered_footer(&dashboard, 120).starts_with("ERROR:"));
+    dashboard.key(KeyCode::Char(':'));
+    only_request(dashboard.drain_outbox());
+    dashboard.event_action(Event::Paste("connect agent status".into()));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert_eq!(
+        rendered_footer(&dashboard, 200),
+        "Claude status connected for new sessions"
+    );
+    for _ in 0..3 {
+        dashboard.key(KeyCode::F(12));
+        let footer = rendered_footer(&dashboard, 200);
+        assert!(!footer.contains("status off"), "stale note: {footer}");
+    }
+}
+
 #[test]
 fn settings_opens_from_the_menu_and_has_no_browse_key() {
     let mut dashboard = dashboard_fixture();

@@ -1261,3 +1261,74 @@ fn task_times_are_local_and_new_cron_tasks_start_in_the_shown_zone() {
     };
     assert_eq!(spec.schedule, cron(&zone));
 }
+
+/// Opens the stored `spec` in the editor, returns the rendered field rows, and saves
+/// without changes.
+fn edit_and_save_unchanged(spec: TaskSpec) -> (Vec<String>, Option<TaskRequest>) {
+    let mut v = TasksView::default();
+    v.receive(
+        &TaskRequest::ListTasks,
+        Ok(TaskResponse::Tasks(vec![Task {
+            id: TaskId(4),
+            spec,
+            enabled: true,
+            next_due_at: None,
+        }])),
+    );
+    v.event(key(KeyCode::Char('e')));
+    let rows = task_rows(&v, 120, 30);
+    v.event(ctrl('s'));
+    (rows, v.take_request())
+}
+
+fn field(rows: &[String], label: &str) -> String {
+    rows.iter()
+        .find_map(|row| row.split(&format!("{label}: ")).nth(1))
+        .map(|rest| rest.split_whitespace().next().unwrap_or("").to_owned())
+        .unwrap_or_else(|| panic!("no {label} field: {rows:#?}"))
+}
+
+/// Editing a stored one-time task shows its instant in local time with an explicit
+/// offset, and saving it unchanged stores the same instant.
+#[test]
+fn editing_a_one_time_task_keeps_its_instant() {
+    let at = 1_900_000_000;
+    let spec = TaskSpec {
+        schedule: Schedule::Once { at },
+        ..spec()
+    };
+    let (rows, saved) = edit_and_save_unchanged(spec.clone());
+    let local = chrono::DateTime::from_timestamp(at, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .to_rfc3339();
+    assert_eq!(field(&rows, "When (duration/cron/RFC3339)"), local);
+    assert_eq!(
+        saved,
+        Some(TaskRequest::Update {
+            id: TaskId(4),
+            spec
+        })
+    );
+}
+
+/// A cron task keeps its stored zone, even one that is not the local default.
+#[test]
+fn editing_a_cron_task_keeps_its_stored_zone() {
+    let spec = TaskSpec {
+        schedule: Schedule::Cron {
+            expression: "0 9 * * *".into(),
+            timezone: "Pacific/Kiritimati".into(),
+        },
+        ..spec()
+    };
+    let (rows, saved) = edit_and_save_unchanged(spec.clone());
+    assert_eq!(field(&rows, "Timezone"), "Pacific/Kiritimati");
+    assert_eq!(
+        saved,
+        Some(TaskRequest::Update {
+            id: TaskId(4),
+            spec
+        })
+    );
+}

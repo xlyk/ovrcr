@@ -32,6 +32,9 @@ struct Change {
 /// A provider whose status stays off, with the line that says why.
 type Refusal = (&'static str, String);
 
+/// A manual-migration note composition left for the caller to show.
+type Note = Option<String>;
+
 /// The startup screen. Declining (`n`, Enter) changes nothing.
 pub(super) fn run(confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>) -> anyhow::Result<()> {
     offer(
@@ -45,7 +48,8 @@ pub(super) fn run(confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>) -> any
 /// The Dashboard's one-time note while any installed provider's status is off.
 pub(super) fn status_off() -> Option<String> {
     let executable = super::agent_setup::binary().ok()?;
-    let (changes, refused) = prepare(targets(), &executable);
+    // Silent: the startup screen already showed any migration note.
+    let (changes, refused, _) = prepare(targets(), &executable);
     let off: Vec<&str> = changes
         .iter()
         .map(|change| change.provider)
@@ -66,22 +70,23 @@ fn install(
     targets: Vec<(&'static str, Result<PathBuf, String>)>,
     executable: &str,
 ) -> Result<String, String> {
-    let (changes, mut refused) = prepare(targets, executable);
+    let (changes, mut refused, notes) = prepare(targets, executable);
     let (connected, failed) = apply(changes);
     refused.extend(failed);
-    if refused.is_empty() {
-        return Ok(if connected.is_empty() {
-            "Agent status is already connected".into()
-        } else {
-            connected_line(&connected)
-        });
-    }
-    let mut lines: Vec<String> = (!connected.is_empty())
-        .then(|| connected_line(&connected))
-        .into_iter()
-        .collect();
+    let mut lines: Vec<String> = if refused.is_empty() && connected.is_empty() {
+        vec!["Agent status is already connected".into()]
+    } else {
+        (!connected.is_empty())
+            .then(|| connected_line(&connected))
+            .into_iter()
+            .collect()
+    };
+    let failed = !refused.is_empty();
     lines.extend(refused.into_iter().map(|(_, line)| line));
-    Err(lines.join(" · "))
+    // The palette's result line is where a migration note can be read.
+    lines.extend(notes);
+    let message = lines.join(" · ");
+    if failed { Err(message) } else { Ok(message) }
 }
 
 /// Each installed harness's active settings file, or why it cannot be located.
@@ -119,8 +124,8 @@ fn offer(
     confirm: &mut impl FnMut(&str) -> anyhow::Result<bool>,
     notice: &mut impl FnMut(&str, bool),
 ) -> anyhow::Result<()> {
-    let (changes, refused) = prepare(targets, executable);
-    for (_, line) in &refused {
+    let (changes, refused, notes) = prepare(targets, executable);
+    for line in refused.iter().map(|(_, line)| line).chain(&notes) {
         notice(line, false);
     }
     if changes.is_empty() || !confirm(&prompt(&changes))? {
@@ -137,13 +142,15 @@ fn offer(
 }
 
 /// Reads every target. Files already current drop out; a file that cannot be read or
-/// composed is refused by name and reason, never by its contents.
+/// composed is refused by name and reason, never by its contents. Also returns the
+/// manual-migration notes composition left for the caller to show.
 fn prepare(
     targets: Vec<(&'static str, Result<PathBuf, String>)>,
     executable: &str,
-) -> (Vec<Change>, Vec<Refusal>) {
+) -> (Vec<Change>, Vec<Refusal>, Vec<String>) {
     let mut changes = Vec::new();
     let mut refused = Vec::new();
+    let mut notes = Vec::new();
     for (provider, path) in targets {
         let path = match path {
             Ok(path) => path,
@@ -153,39 +160,43 @@ fn prepare(
             }
         };
         match read(provider, &path, executable) {
-            Ok(Some((snapshot, next))) => changes.push(Change {
-                provider,
-                path,
-                snapshot,
-                next,
-            }),
-            Ok(None) => {}
+            Ok((change, note)) => {
+                notes.extend(note);
+                if let Some((snapshot, next)) = change {
+                    changes.push(Change {
+                        provider,
+                        path,
+                        snapshot,
+                        next,
+                    });
+                }
+            }
             Err(error) => refused.push((provider, refusal(provider, &path, &error))),
         }
     }
-    (changes, refused)
+    (changes, refused, notes)
 }
 
 fn read(
     provider: &str,
     path: &Path,
     executable: &str,
-) -> anyhow::Result<Option<(Snapshot, String)>> {
+) -> anyhow::Result<(Option<(Snapshot, String)>, Note)> {
     let snapshot = Snapshot::read(path)?;
     let text = if snapshot.entry.is_none() && provider == "Claude" {
         "{}"
     } else {
         &snapshot.text
     };
-    let next = match provider {
+    let (next, note) = match provider {
         "Claude" => super::agent_setup::compose(text, executable),
-        "Codex" => super::codex_setup::compose(text, executable),
+        "Codex" => super::codex_setup::compose(text, executable).map(|next| (next, None)),
         _ => unreachable!("only providers with global hooks are offered"),
     }
     .map_err(|_| {
         anyhow::anyhow!("native settings are invalid or have an incompatible hook structure")
     })?;
-    Ok((next != snapshot.text).then_some((snapshot, next)))
+    Ok(((next != snapshot.text).then_some((snapshot, next)), note))
 }
 
 /// Writes each change after checking its file is still as read.
@@ -216,7 +227,7 @@ fn refusal(provider: &str, path: &Path, error: &anyhow::Error) -> String {
 fn prompt(changes: &[Change]) -> String {
     let providers: Vec<&str> = changes.iter().map(|change| change.provider).collect();
     let mut text = format!(
-        "Connect agent status\nLets OVRCR show when your {} sessions are working, need you or are done.\nAdds OVRCR hooks to:\n",
+        "Connect agent status\nLets OVRCR show when your {} sessions are working, need you or are done.\nAdds or updates OVRCR hooks in:\n",
         names(&providers)
     );
     for change in changes {
@@ -733,6 +744,51 @@ mod tests {
         assert_eq!(
             install(vec![("Claude", Ok(claude.clone()))], "/installed/ovrcr"),
             Ok("Agent status is already connected".into())
+        );
+    }
+
+    /// A status line wrapping the legacy reporter cannot be migrated automatically.
+    /// The note reaches the user on the palette result line and, at startup, once
+    /// before the screen; nothing writes it to stderr under the Dashboard.
+    #[test]
+    fn legacy_wrapper_note_is_returned_not_printed() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        let legacy = r#"{"statusLine":{"type":"command","command":"/opt/wrap.sh claude-context"}}"#;
+        std::fs::write(&path, legacy).unwrap();
+        let log = RefCell::new(Vec::new());
+        offer(
+            vec![("Claude", Ok(path.clone()))],
+            "/installed/ovrcr",
+            &mut |_| {
+                log.borrow_mut().push("screen".to_owned());
+                Ok(false)
+            },
+            &mut |line, _| log.borrow_mut().push(line.to_owned()),
+        )
+        .unwrap();
+        let log = log.into_inner();
+        assert_eq!(log.len(), 2, "{log:?}");
+        assert!(log[0].starts_with("Manual migration required"), "{log:?}");
+        assert_eq!(log[1], "screen");
+
+        let done = install(vec![("Claude", Ok(path.clone()))], "/installed/ovrcr").unwrap();
+        assert!(
+            done.starts_with(
+                "Claude status connected for new sessions · Manual migration required"
+            ),
+            "{done}"
+        );
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            written["statusLine"]["command"],
+            "/opt/wrap.sh claude-context"
+        );
+        let again = install(vec![("Claude", Ok(path))], "/installed/ovrcr").unwrap();
+        assert!(
+            again.starts_with("Agent status is already connected · Manual migration required"),
+            "{again}"
         );
     }
 

@@ -291,21 +291,28 @@ fn refresh_interval(value: &mut Value) -> anyhow::Result<()> {
 
 /// Compose the same hooks used by print setup and Dashboard startup. Existing
 /// native settings remain authoritative; only owned reporters are replaced.
-pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<String> {
+/// Also returns the manual-migration note composition could not apply, for the
+/// caller to show where its user can read it (never stderr under the Dashboard).
+pub(super) fn compose(text: &str, executable: &str) -> anyhow::Result<(String, Option<String>)> {
     let original: Value = serde_json::from_str(text)?;
     anyhow::ensure!(original.is_object(), "settings must be a JSON object");
+    let mut note = None;
     let value = if original.as_object().is_some_and(|object| object.is_empty()) {
         ovrcr_runtime::claude_recovery::reporter_settings(executable)
     } else {
-        compose_value(original.clone(), executable)?
+        compose_value(original.clone(), executable, &mut note)?
     };
     if value == original {
-        return Ok(text.to_owned());
+        return Ok((text.to_owned(), note));
     }
-    Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
+    Ok((format!("{}\n", serde_json::to_string_pretty(&value)?), note))
 }
 
-fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
+fn compose_value(
+    mut value: Value,
+    executable: &str,
+    note: &mut Option<String>,
+) -> anyhow::Result<Value> {
     anyhow::ensure!(
         value.get("statusLine").is_none_or(|line| line.is_object()
             && line.get("command").is_none_or(Value::is_string)
@@ -400,9 +407,9 @@ fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
             if renderer.contains("claude-context")
                 && !owned_reporter(renderer, executable, "claude-context", "--stdin-json") =>
         {
-            eprintln!(
+            *note = Some(format!(
                 "Manual migration required: statusLine contains a wrapper around the legacy claude-context reporter and was left untouched. Edit that wrapper to remove its reporting call, then rerun setup with a renderer-only command; or replace statusLine.command with: {default}"
-            );
+            ));
         }
         renderer => {
             let composed = match renderer {
@@ -438,7 +445,11 @@ fn compose_value(mut value: Value, executable: &str) -> anyhow::Result<Value> {
 pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let result = (|| -> anyhow::Result<Value> {
         let executable = binary()?;
-        let value = compose_value(settings(path)?, &executable)?;
+        let mut note = None;
+        let value = compose_value(settings(path)?, &executable, &mut note)?;
+        if let Some(note) = note {
+            eprintln!("{note}");
+        }
         eprintln!(
             "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks; no Claude Code version is required or refused. Supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher: {} agent run --provider claude -- claude --resume UUID, or the exact separate-token form claude -r UUID",
             quote(&executable),

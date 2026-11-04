@@ -314,8 +314,9 @@ pub struct Dashboard {
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
-    /// Set while startup left agent status off; the palette offers Connect agent status.
-    connect_status: Option<crate::ConnectStatusFn>,
+    /// Set while startup left agent status off: the palette offers Connect agent status,
+    /// and the startup note it retires once connecting succeeds.
+    connect_status: Option<(crate::ConnectStatusFn, String)>,
     history_page_error: bool,
     /// Requests waiting for the event loop's next drain.
     outbox: outbox::Outbox,

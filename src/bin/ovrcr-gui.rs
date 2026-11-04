@@ -840,7 +840,7 @@ fn waiting_startup_decision(contents: &str) -> anyhow::Result<Option<&str>> {
 
 #[test]
 fn startup_offers_are_recognised_only_while_waiting_for_their_answer() {
-    let connect = "\n OVRCR · startup\n\n  Connect agent status\n  Lets OVRCR show when your Claude sessions are working, need you or are done.\n  Adds OVRCR hooks to:\n    /home/settings.json\n\n  [y] Connect  [n] Not now  ›";
+    let connect = "\n OVRCR · startup\n\n  Connect agent status\n  Lets OVRCR show when your Claude sessions are working, need you or are done.\n  Adds or updates OVRCR hooks in:\n    /home/settings.json\n\n  [y] Connect  [n] Not now  ›";
     assert_eq!(
         waiting_startup_decision(connect).unwrap(),
         Some("Connect agent status")

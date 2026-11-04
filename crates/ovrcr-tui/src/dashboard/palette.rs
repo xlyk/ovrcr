@@ -175,7 +175,7 @@ impl Dashboard {
 /// error, and Connect agent status in the palette until connecting succeeds.
 impl Dashboard {
     pub fn status_off(&mut self, note: String, connect: crate::ConnectStatusFn) {
-        self.connect_status = Some(connect);
+        self.connect_status = Some((connect, note.clone()));
         // A notice already in the footer, such as settings findings, keeps its place.
         if self.desktop.notice.is_some() {
             self.notice_queue.push_back(note);
@@ -185,12 +185,17 @@ impl Dashboard {
     }
 
     fn connect_agent_status(&mut self) -> DashboardAction {
-        let Some(connect) = self.connect_status else {
+        let Some((connect, note)) = self.connect_status.clone() else {
             return DashboardAction::Redraw;
         };
         match connect() {
             Ok(done) => {
                 self.connect_status = None;
+                // The startup note is no longer true; drop it wherever it waits.
+                self.notice_queue.retain(|queued| *queued != note);
+                if self.desktop.notice.as_ref() == Some(&note) {
+                    self.desktop.notice = None;
+                }
                 // Success replaces a failed attempt's banner; waiting notices stay queued.
                 self.dismiss_error_banner();
                 if let Some(waiting) = self.desktop.notice.take() {

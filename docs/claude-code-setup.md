@@ -55,7 +55,9 @@ managed settings that can add or override hooks: inspecting one file does not
 prove Claude's effective configuration. Setup preserves an external status-line
 renderer using `--render-command`. It migrates an exact legacy
 `ovrcr report claude-context --stdin-json` command. A wrapper containing that
-legacy reporter is left untouched with manual migration instructions on stderr.
+legacy reporter is left untouched with manual migration instructions: `agent setup`
+prints them on stderr, Dashboard startup shows them once before the Connect agent
+status screen, and the palette's **Connect agent status** appends them to its result line.
 
 When `claude` is on `PATH` and the settings file under `CLAUDE_CONFIG_DIR` (default
 `~/.claude`) lacks these synchronous hooks or names another OVRCR executable,

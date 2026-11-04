@@ -101,7 +101,7 @@ fn prepare_assigned(argv: &[OsString]) -> Result<()> {
     );
     let binary = std::env::current_exe()?.canonicalize()?;
     let reporter =
-        super::agent_setup::compose("{}", binary.to_str().context("non-UTF8 Reporter path")?)?;
+        super::agent_setup::compose("{}", binary.to_str().context("non-UTF8 Reporter path")?)?.0;
     immutable(&artifacts.join("claude-settings.json"), reporter.as_bytes())?;
     let files = claude_delegation::policy_files(&binary, &contract.request)?;
     ensure!(
