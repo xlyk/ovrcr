@@ -15,17 +15,19 @@ use ratatui::widgets::Paragraph;
 pub(super) enum Attention {
     /// A running session whose effective activity is WaitingInput.
     Input,
-    /// An Unread response, whatever the session is doing now.
+    /// An Unread response from a session that is not busy again. A busy session's older
+    /// Unread waits for the turn in progress: its row shows the spinner, not `✓`.
     Ready,
 }
 
+/// Paused sessions never need input (they cannot take an answer until resumed), and Operator
+/// conversations stay out: the Operator heading counts their own Unread.
 pub(super) fn attention(session: &SessionSummary) -> Option<Attention> {
-    if session.phase == SessionPhase::Running
-        && super::ready::activity(session) == AgentActivity::WaitingInput
-    {
+    let activity = super::ready::activity(session);
+    if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
         Some(Attention::Input)
     } else {
-        session.unread.as_ref().map(|_| Attention::Ready)
+        (session.unread.is_some() && activity != AgentActivity::Busy).then_some(Attention::Ready)
     }
 }
 
@@ -115,7 +117,16 @@ fn attention_line(input: usize, ready: usize, width: usize) -> Line<'static> {
     let line = |words: bool| {
         let mut spans = vec![Span::raw(" ")];
         for (count, glyph, color, label) in [
-            (input, "?", YELLOW(), "needs input"),
+            (
+                input,
+                "?",
+                YELLOW(),
+                if input == 1 {
+                    "needs input"
+                } else {
+                    "need input"
+                },
+            ),
             (ready, "✓", TEAL(), "ready"),
         ] {
             if count == 0 {
@@ -196,7 +207,11 @@ mod tests {
             agent: Some(AgentSnapshot {
                 binding: observation(id).binding,
                 activity: Some(ActivitySample {
-                    state: AgentActivity::Busy,
+                    state: if unread {
+                        AgentActivity::ResponseReady
+                    } else {
+                        AgentActivity::Busy
+                    },
                     quality: SampleQuality::Observed,
                     turn: Some("t".into()),
                 }),
@@ -282,19 +297,36 @@ mod tests {
         );
         waiting.unread = None;
         assert_eq!(attention(&waiting), None);
-        let mut busy = session(2, "a", false, true);
+        let mut ready = session(2, "a", false, true);
+        assert_eq!(attention(&ready), Some(Attention::Ready));
+        ready
+            .agent
+            .as_mut()
+            .unwrap()
+            .activity
+            .as_mut()
+            .unwrap()
+            .state = AgentActivity::Busy;
         assert_eq!(
-            attention(&busy),
-            Some(Attention::Ready),
-            "busy again, unread"
+            attention(&ready),
+            None,
+            "busy again: the older Unread waits, as the row's spinner says"
         );
-        busy.phase = SessionPhase::Exited {
+        ready
+            .agent
+            .as_mut()
+            .unwrap()
+            .activity
+            .as_mut()
+            .unwrap()
+            .state = AgentActivity::ResponseReady;
+        ready.phase = SessionPhase::Exited {
             code: Some(0),
             signal: None,
         };
-        assert_eq!(attention(&busy), Some(Attention::Ready));
-        busy.unread = None;
-        assert_eq!(attention(&busy), None);
+        assert_eq!(attention(&ready), Some(Attention::Ready));
+        ready.unread = None;
+        assert_eq!(attention(&ready), None);
         assert!(Attention::Input < Attention::Ready);
     }
 
@@ -413,33 +445,86 @@ mod tests {
         );
     }
 
-    #[test]
-    fn strip_sits_above_the_operator_heading_and_a_click_jumps_like_the_key() {
-        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-        let mut dashboard = dashboard();
+    fn screen(dashboard: &Dashboard) -> Vec<String> {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
         terminal
-            .draw(|frame| super::super::draw_dashboard_at(frame, &dashboard, 0))
+            .draw(|frame| super::super::draw_dashboard_at(frame, dashboard, 0))
             .unwrap();
-        let row = |y| {
-            (0..39)
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect::<String>()
-        };
-        assert_eq!(row(1).trim_end(), " ? 2 needs input · ✓ 2 ready");
-        assert!(row(2).starts_with(" OPERATOR"), "{}", row(2));
-        let click = MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 3,
-            row: 1,
-            modifiers: KeyModifiers::NONE,
-        };
+        (0..30)
+            .map(|y| {
+                (0..39)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn click(row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 8,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn strip_sits_above_the_quota_line_and_a_click_jumps_like_the_key() {
+        let mut dashboard = dashboard();
+        let rows = screen(&dashboard);
+        // Title row 0, sidebar rows 1..=28, footer row 29: quota on 28, the strip on 27.
+        assert!(rows[1].starts_with(" OPERATOR"), "{}", rows[1]);
+        assert_eq!(rows[27].trim_end(), " ? 2 need input · ✓ 2 ready");
+        assert!(rows[28].starts_with(" Claude"), "{}", rows[28]);
         assert_eq!(
-            dashboard.mouse_action(click, Rect::new(0, 0, 120, 30)),
+            dashboard.mouse_action(click(27), Rect::new(0, 0, 120, 30)),
             DashboardAction::Redraw
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+    }
+
+    #[test]
+    fn a_new_unread_moves_no_row_under_the_pointer() {
+        let mut dashboard = dashboard();
+        for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
+            for session in &mut workspace.sessions {
+                session.unread = None;
+                session.agent.as_mut().unwrap().input_requests.clear();
+            }
+        }
+        let before = screen(&dashboard);
+        assert!(
+            !before.iter().any(|row| row.contains(" ready")),
+            "no strip yet"
+        );
+        let y = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        // The user aims at agent-6; a Ready for it lands before the click.
+        let mut ready = session(6, "c", false, true);
+        ready.project = "p".into();
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::SessionChanged(Box::new(ready)),
+        ));
+        let after = screen(&dashboard);
+        assert!(
+            after.iter().any(|row| row.trim_end() == " ✓ 1 ready"),
+            "{after:?}"
+        );
+        assert_eq!(
+            after[..y],
+            before[..y],
+            "the rows above the target stay put"
+        );
+        assert!(
+            after[y].contains("✓ agent-6"),
+            "the target keeps its line: {}",
+            after[y]
+        );
+        dashboard.mouse_action(click(y as u16), Rect::new(0, 0, 120, 30));
+        assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
     }
 
     #[test]
@@ -477,7 +562,7 @@ mod tests {
             " ? 1 needs input · ✓ 2 ready"
         );
         assert_eq!(text(attention_line(0, 3, 40)), " ✓ 3 ready");
-        assert_eq!(text(attention_line(4, 0, 40)), " ? 4 needs input");
+        assert_eq!(text(attention_line(4, 0, 40)), " ? 4 need input");
         assert_eq!(text(attention_line(1, 2, 20)), " ? 1 · ✓ 2");
     }
 }

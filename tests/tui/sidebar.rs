@@ -231,8 +231,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        // The Unread brings up the attention strip, so the tree starts a line lower.
-        let cell = &terminal.backend().buffer()[(5, 6)];
+        let cell = &terminal.backend().buffer()[(5, 5)];
         assert_eq!(cell.symbol(), "✓", "{health:?}");
         assert_eq!(cell.fg, color, "{health:?}");
     }
@@ -387,9 +386,7 @@ fn agent_hook_sidebar_states_are_literal() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        // A session waiting for input brings up the attention strip, a line above the tree.
-        let row = 5 + u16::from(activity == AgentActivity::WaitingInput);
-        let cell = &terminal.backend().buffer()[(5, row)];
+        let cell = &terminal.backend().buffer()[(5, 5)];
         assert_eq!(cell.symbol(), glyph, "{activity:?}");
         assert_eq!(cell.fg, color, "{activity:?}");
     }

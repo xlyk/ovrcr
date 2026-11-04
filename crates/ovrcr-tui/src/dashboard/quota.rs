@@ -249,9 +249,10 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    /// Rendering and every tree interaction share these rectangles. The Operator heading and
-    /// three tree lines come first; the attention strip, then the quota line, take a line each
-    /// only while that reservation still fits. Neither depends on the clock.
+    /// Rendering and every tree interaction share these rectangles: Operator and the tree
+    /// from the top, the attention strip and the quota line at the bottom. The Operator
+    /// heading and three tree lines come first; the strip, then the quota line, take a line
+    /// each only while that reservation still fits. Neither depends on the clock.
     pub(super) fn sidebar_rects(&self, area: Rect) -> super::SidebarRects {
         const RESERVED: u16 = 4;
         let sidebar = sidebar_area(area, self.sidebar_preference());
@@ -274,13 +275,19 @@ impl Dashboard {
             self.operator_ids().len().min(5) as u16
         };
         let operator_height = heading + rows.min(available.saturating_sub(heading + 3));
-        let top = sidebar.y + attention;
+        // The strip sits at the bottom, above the quota line: when it comes or goes, only
+        // the tree's last line does, and no row moves under the pointer.
         super::SidebarRects {
-            attention: Rect::new(sidebar.x, sidebar.y, sidebar.width, attention),
-            operator: Rect::new(sidebar.x, top, sidebar.width, operator_height),
+            attention: Rect::new(
+                sidebar.x,
+                sidebar.bottom() - quota - attention,
+                sidebar.width,
+                attention,
+            ),
+            operator: Rect::new(sidebar.x, sidebar.y, sidebar.width, operator_height),
             tree: Rect::new(
                 sidebar.x,
-                top + operator_height,
+                sidebar.y + operator_height,
                 sidebar.width,
                 available - operator_height,
             ),
@@ -727,12 +734,16 @@ mod sidebar_line_tests {
         );
         assert_eq!(rects(&dashboard, 4), (0, 0, 3));
         let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
-        assert_eq!(full.attention.y, 1);
         assert_eq!(
-            full.operator.y, 2,
-            "the strip sits above the Operator heading"
+            full.operator.y, 1,
+            "the strip never moves Operator or the tree"
         );
-        assert_eq!(full.tree.bottom(), full.quota.y);
+        assert_eq!(full.tree.bottom(), full.attention.y);
+        assert_eq!(
+            full.attention.bottom(),
+            full.quota.y,
+            "directly above the quota line"
+        );
         assert_eq!(full.quota.bottom(), 29);
         dashboard.toggle_sidebar();
         assert!(

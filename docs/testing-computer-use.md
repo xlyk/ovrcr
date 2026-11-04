@@ -248,13 +248,15 @@ acknowledgements; opening or selecting must not clear Unread or resolve Input.
 ### Who needs you
 
 Publish fixture observations the same way: one Waiting Input and two Unread
-responses, one of them inside a folded workspace. Confirm the line above
-OPERATOR reads `? 1 needs input · ✓ 2 ready` and the Browse footer ends with
+responses, one of them inside a folded workspace. Confirm the line above the
+quota line reads `? 1 needs input · ✓ 2 ready` and the Browse footer ends with
 `i Next input needed`. Press `i` repeatedly: selection and the focused pane go
 to the waiting session first, then each unread one in sidebar order, unfolding
 the folded workspace, and wrap. Clicking the line does the same. On an unread
 session, confirm viewing it and pressing Enter leave the `✓`; type one
-character and confirm the `✓` and the line's ready count drop without `R`.
+character and confirm the `✓` and the line's ready count drop without `R`. Any
+key sent to the session counts as a reply, arrows and Esc included. Let a session
+become ready while the pointer rests on a tree row and confirm no row moves.
 Click the quota line at the bottom of the sidebar and confirm the quota details
 open. Shorten the window: the quota line hides first, then the attention line,
 and the tree keeps three lines under the OPERATOR heading. Keep screenshots and
