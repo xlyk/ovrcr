@@ -11610,13 +11610,39 @@ printf '%s\n' "$reply"
     }
 
     fn select(&mut self, name: &str, terminal_marker: &str) {
-        let screen = self.parser.screen().contents();
-        let row = screen
-            .lines()
-            .position(|line| line.chars().take(32).collect::<String>().contains(name))
-            .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
-        self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
+        // A Ready or an input request brings the attention strip up or down and moves every
+        // tree row a line, so aim only at a settled screen and re-aim if the click missed.
+        for _ in 0..3 {
+            self.settle();
+            let screen = self.parser.screen().contents();
+            let row = screen
+                .lines()
+                .position(|line| line.chars().take(32).collect::<String>().contains(name))
+                .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
+            self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if self.parser.screen().contents().contains(terminal_marker) {
+                    return;
+                }
+                if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(20)) {
+                    self.parser.process(&bytes);
+                }
+            }
+        }
         self.wait_screen(|screen| screen.contains(terminal_marker));
+    }
+
+    /// Apply output until the Dashboard has been quiet for 200 ms (at most 3 s), so a whole
+    /// frame is on screen rather than part of one.
+    fn settle(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            match self.received.recv_timeout(Duration::from_millis(200)) {
+                Ok(bytes) => self.parser.process(&bytes),
+                Err(_) => return,
+            }
+        }
     }
 
     fn resize(&mut self, cols: u16) {
@@ -12540,8 +12566,6 @@ fn desktop_notifications_bridge_click_focuses_existing_split_without_duplicating
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
     let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
-    // The Ready brings up the attention strip, which moves every tree row down a line.
-    dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
     dashboard.send(b"v");
     dashboard.select("setup", "HOOK_READY");
@@ -17781,8 +17805,6 @@ fn desktop_notifications_bridge_installation_failures_are_actionable_without_set
         for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
             desktop_codex_callback(&fixture, summary.id, &mut index, command);
         }
-        // The Ready brings up the attention strip, which moves every tree row down a line.
-        dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
         dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
         dashboard.select("setup", "HOOK_READY");
         assert!(!dashboard.record.exists());
