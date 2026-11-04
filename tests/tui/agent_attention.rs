@@ -451,3 +451,34 @@ fn attention_maximum_population_offscreen_filter_and_compact_duplicate_identity(
         DashboardAction::PtyBytes(b"z".to_vec())
     );
 }
+
+#[test]
+fn jump_key_visits_input_then_unread_in_sidebar_order_and_the_strip_counts_them() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(ranked_hierarchy());
+    dashboard.install_focus(SessionId(4));
+    let strip = rendered_rows(&dashboard, 120, 40)[1]
+        .chars()
+        .take(39)
+        .collect::<String>();
+    assert_eq!(strip.trim_end(), " ? 3 needs input · ✓ 2 ready");
+    assert!(
+        rendered_footer(&dashboard, 120).contains("i Next input needed"),
+        "{}",
+        rendered_footer(&dashboard, 120)
+    );
+    let mut visited = Vec::new();
+    for _ in 0..6 {
+        assert_eq!(dashboard.key(KeyCode::Char('i')), DashboardAction::Redraw);
+        visited.push(dashboard.focused_session().unwrap().0);
+    }
+    // From a quiet row: the first Input below it. Then every one, Input first, wrapping.
+    assert_eq!(visited, [8, 3, 9, 1, 2, 8]);
+    assert!(
+        dashboard
+            .drain_outbox()
+            .iter()
+            .any(|message| matches!(message.request, Request::SetView { .. })),
+        "the focused pane follows"
+    );
+}

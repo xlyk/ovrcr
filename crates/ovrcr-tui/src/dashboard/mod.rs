@@ -1,5 +1,6 @@
 mod agents;
 mod assignment_control;
+mod attention;
 mod copy;
 mod desktop;
 mod event_loop;
@@ -130,6 +131,7 @@ impl PaneState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SidebarRects {
+    pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
     pub quota: Rect,

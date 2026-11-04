@@ -2537,7 +2537,16 @@ impl Dashboard {
         {
             return None;
         }
-        let sidebar = self.sidebar_rects(area).tree;
+        let rects = self.sidebar_rects(area);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if point_in_rect(mouse, rects.attention) {
+                return Some(self.jump_to_attention());
+            }
+            if point_in_rect(mouse, rects.quota) {
+                return Some(self.open_quota_details());
+            }
+        }
+        let sidebar = rects.tree;
         if mouse.kind == MouseEventKind::Moved {
             let inside = point_in_rect(mouse, sidebar);
             let next = inside
@@ -3653,6 +3662,7 @@ impl Dashboard {
                     let summary = *summary;
                     let previous_live =
                         find_session(self, summary.id).map(|session| session.phase.is_live());
+                    let tree = self.sidebar_rects(self.outer_area).tree;
                     for session in self
                         .hierarchy
                         .projects
@@ -3664,6 +3674,10 @@ impl Dashboard {
                             *session = summary.clone();
                             break;
                         }
+                    }
+                    // The attention strip comes and goes with sessions; keep the selection shown.
+                    if tree != self.sidebar_rects(self.outer_area).tree {
+                        self.ensure_selection_visible(&self.visible_rows());
                     }
                     if self.resync_session_run(&summary, previous_live) {
                         let _ = self.request_view_at(self.outer_area);
@@ -3839,7 +3853,11 @@ impl Dashboard {
             self.assignment_control_changed(&summary);
         }
         self.observe_desktop_responses(&hierarchy);
+        let tree = self.sidebar_rects(self.outer_area).tree;
         self.hierarchy = hierarchy;
+        if tree != self.sidebar_rects(self.outer_area).tree {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
         self.sync_palette_workspace_identity();
 
         self.selected_container = self.selected_container.take().filter(|row| match row {

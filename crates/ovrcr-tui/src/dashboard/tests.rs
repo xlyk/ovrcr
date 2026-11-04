@@ -1954,8 +1954,9 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
-        // the literal state and health text live on the metadata line.
-        let cell = &terminal.backend().buffer()[(5, 4)];
+        // the literal state and health text live on the metadata line. The attention
+        // strip above the Operator heading counts it, so the tree starts a line lower.
+        let cell = &terminal.backend().buffer()[(5, 5)];
         assert_eq!(
             cell.symbol(),
             "✓",
@@ -1967,16 +1968,17 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect()
         };
+        assert_eq!(row(1).trim_end(), " ✓ 1 ready", "width {width}");
         // A label too long to share the name's line is kept on the line under it.
         assert!(
-            row(5).contains("long Codex label"),
+            row(6).contains("long Codex label"),
             "the background label follows its name: {}",
-            row(5)
+            row(6)
         );
         assert!(
-            row(6).contains(&original.name),
+            row(7).contains(&original.name),
             "the next session follows the background row: {}",
-            row(6)
+            row(7)
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();

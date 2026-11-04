@@ -12,6 +12,8 @@ Browse it shows only the three keys that open everything else, `Space Menu`,
 palette. Copy and History show their own prioritized shortcuts, and hints that
 do not fit remain available through `?` or `Space`. History shows `Esc Cancel
 copy` while a copy is pending and `Esc Back` otherwise.
+While a session needs you, the Browse footer also shows the jump key: `i Next
+input needed` or `i Next ready`, naming where it goes.
 
 | Mode | Entered by | Leaves with |
 | --- | --- | --- |
@@ -33,20 +35,18 @@ See [Operator setup and controls](operator.md).
 
 ## Browse keys
 
-The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
-allowance. See [provider allowance](provider-quota.md) for native sources,
-collection settings, freshness and reset behavior.
-Providers remain visible before the first report: **checking** until the
-account read returns. **Codex · usage off** and **Grok · usage off** only while
-`quota.enabled` is explicitly false. Wide sidebars use Option A bars (`━`/`─`) without
-brackets; a stale value keeps its age after the percentage (`37% stale 12m`),
-and a failed row shows when the Server tries again (`unavailable · retry 3m`).
-Narrow sidebars put window values and full state text on a second row
-before sacrificing labels or percentages. A short sidebar keeps at least three
-tree lines and shrinks the block in steps: one line per provider, then a single
-`Quota: u` pointer line, and only below that hides it. The tree scrolls above
-the reserved quota rows; sidebar and pane dividers remain draggable over their
-full height.
+The sidebar's last line summarizes remaining Claude, Codex, Grok and Cursor account
+allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
+least allowance left in any of its general windows. The number is red at 5% or
+less and yellow at 20% or less. A stale value is muted. A provider with no value
+yet (still checking, failed, or every window past its reset) shows a muted
+`Claude ?`. Providers switched off are left out, and providers that do not fit
+give way from the end to `…`. Click the line, or press `u`, for the windows,
+states, ages and next checks in the [details](provider-quota.md). That page also
+covers native sources, collection settings, freshness and reset behavior. The
+line hides when the sidebar is too short to keep the Operator heading and three
+tree lines. The tree scrolls above it; sidebar and pane dividers remain
+draggable over their full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
 Grok now, Cursor while `quota.cursor.dashboard` is on, and Claude too while `quota.claude.probe` is on (a refusal inside the
@@ -59,6 +59,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | Key | Action |
 | --- | --- |
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
+| `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` | Open a second pane showing the next different visible session |
@@ -83,7 +84,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `S` | Toggle the Server-saved ready sound setting |
 | `q` | Detach; the server and every session keep running |
 
-`N`, `O`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
+`N`, `O`, `S`, `R`, `b`, `i` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
@@ -137,8 +138,8 @@ It does not mark Unread reviewed or change process or conversation state.
 
 A managed Codex, Pi or Oh My Pi terminal keeps one Unread fact for its latest unreviewed
 root Ready response. The sidebar does not draw a circle for it. While it is present, the
-sidebar shows the Ready checkmark and the pane header says Unread. Mark reviewed clears
-both of those marks. The Agent's reported activity stays Ready, so the header may still
+sidebar shows the Ready checkmark, the attention strip counts it as ready, and the pane
+header says Unread. Mark reviewed clears all of those marks. The Agent's reported activity stays Ready, so the header may still
 say the session is ready. A new Busy report does not clear an earlier Unread response.
 Selecting a terminal, viewing its output or receiving a notification does not acknowledge it.
 
@@ -341,6 +342,23 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
+While any session needs you, a line at the top of the sidebar, above Operator,
+says how many: `? 1 needs input · ✓ 2 ready`, or `? 1 · ✓ 2` when the words do not
+fit. It counts every project, including folded and scrolled-away rows and the
+focused session. Needs input means a running session waiting for an answer
+(including an open [input request](#input-requests)); ready means an
+[unread response](#unread-responses), whatever the session is doing now, and a
+session that is both counts once, as needs input. The line disappears when
+nothing is left, and gives way before the quota line when the sidebar is short.
+
+`i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
+click on that line selects the next session that needs you and shows it in the
+focused pane, unfolding its project and workspace. Sessions waiting for input
+come first, then unread responses, each in sidebar order after the current
+selection, wrapping; pressing again from one of them moves to the next, so
+repeated presses visit every one. With nothing to visit, `i` says so in the
+footer.
+
 | Glyph | Meaning |
 | --- | --- |
 | `-` | No hook report accepted yet |
@@ -376,6 +394,8 @@ In Browse and Terminal modes:
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
+- Clicking the attention line at the top of the sidebar does what `i` does;
+  clicking the quota line at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane

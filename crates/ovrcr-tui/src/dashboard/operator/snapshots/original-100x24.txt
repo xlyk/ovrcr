@@ -15,10 +15,10 @@
                                        │
                                        │
                                        │
- QUOTA LEFT ───────────────────────────│
-Claude · checking                      │ Managing global
-Codex · usage off                      │ ──────────────────────────────────────────────────────────
-Grok · usage off                       │ > ▏
-Cursor · usage off                     │
+                                       │
+                                       │ Managing global
                                        │ ──────────────────────────────────────────────────────────
+                                       │ > ▏
+                                       │
+ Claude ?                              │ ──────────────────────────────────────────────────────────
 OPERATOR  Shift-Enter Newline  Ctrl-g Browse

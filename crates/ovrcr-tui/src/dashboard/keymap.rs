@@ -43,6 +43,8 @@ pub(super) enum Action {
     OtherPane,
     NextSession,
     PreviousSession,
+    /// Select the next session that needs the user; see `attention`.
+    NextAttention,
     ToggleNotifications,
     #[cfg(target_os = "macos")]
     NotificationSettings,
@@ -371,6 +373,7 @@ impl Dashboard {
                     DashboardAction::Redraw
                 }
             }
+            Action::NextAttention => self.jump_to_attention(),
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             #[cfg(target_os = "macos")]
             Action::NotificationSettings => self.recover_notification_permission(),
@@ -932,6 +935,23 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .once()
         .group('v', "b"),
+        {
+            let next = dashboard.next_attention();
+            key_binding(
+                "i",
+                match next {
+                    Some((super::attention::Attention::Input, _)) => "Next input needed",
+                    _ => "Next ready",
+                },
+                "Select the next session that needs you: input requests first, then unread responses, in sidebar order; wraps"
+                    .into(),
+                Char('i'),
+                Action::NextAttention,
+            )
+            .unless(next.is_none().then_some("no session needs you"))
+            .once()
+            .group('v', "i")
+        },
     ];
     view.extend(help());
     let (enter_name, enter_description, enter_disabled, enter_action) = if let Some(container) =

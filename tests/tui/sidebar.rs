@@ -231,7 +231,8 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 5)];
+        // The Unread brings up the attention strip, so the tree starts a line lower.
+        let cell = &terminal.backend().buffer()[(5, 6)];
         assert_eq!(cell.symbol(), "✓", "{health:?}");
         assert_eq!(cell.fg, color, "{health:?}");
     }
@@ -386,7 +387,9 @@ fn agent_hook_sidebar_states_are_literal() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 5)];
+        // A session waiting for input brings up the attention strip, a line above the tree.
+        let row = 5 + u16::from(activity == AgentActivity::WaitingInput);
+        let cell = &terminal.backend().buffer()[(5, row)];
         assert_eq!(cell.symbol(), glyph, "{activity:?}");
         assert_eq!(cell.fg, color, "{activity:?}");
     }
@@ -1637,13 +1640,16 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[32],
+        rendered[37],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
-    assert!(rendered[33].contains("QUOTA LEFT"), "{:?}", rendered[33]);
-    assert!(rendered[37].contains("Cursor"), "{:?}", rendered[37]);
-    // The last tree row remains selectable; quota cells cannot select/close a session.
-    for (index, row) in [32, 33, 37].into_iter().enumerate() {
+    assert_eq!(
+        rendered[38].trim_end(),
+        " Claude ?",
+        "the one-line quota summary"
+    );
+    // The last tree row remains selectable; the quota line cannot select/close a session.
+    for (index, row) in [37, 38].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1666,6 +1672,8 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         }
         assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     }
+    // The quota line opened its details; close them.
+    dashboard.key(KeyCode::Esc);
 
     dashboard.install_focus(SessionId(1));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));

@@ -1,5 +1,6 @@
-//! Linux TUI dashboard smoke for Atelier Option A Quota left redesign.
-//! Isolated OVRCR_HOME, empty instance directory, real server + Dashboard render path.
+//! Linux TUI dashboard smoke for the sidebar's one-line quota summary, which replaced the
+//! Atelier Option A bars. Isolated OVRCR_HOME, empty instance directory, real server +
+//! Dashboard render path.
 
 #[path = "support/live.rs"]
 mod live;
@@ -10,7 +11,7 @@ use std::io::Write;
 use std::time::Duration;
 
 #[test]
-fn quota_left_option_a_linux_dashboard_smoke() {
+fn quota_line_linux_dashboard_smoke() {
     let fixture = live::Live::idle().bounded();
     assert!(fixture.config.is_dir());
     assert!(!fixture.config.join("config.toml").exists());
@@ -46,23 +47,15 @@ fn quota_left_option_a_linux_dashboard_smoke() {
     std::fs::write(&out, &empty).unwrap();
     std::fs::write(&public, &empty).unwrap();
 
-    assert!(
-        empty
-            .lines()
-            .any(|line| line.contains("QUOTA LEFT") && line.contains('─')),
-        "header rule missing:\n{empty}"
+    // Claude is checking; Codex and Grok are off, so the line leaves them out.
+    assert_eq!(
+        sidebar_bottom(&empty),
+        " Claude ?",
+        "one-line summary missing:\n{empty}"
     );
     assert!(
-        empty.contains("Claude · checking"),
-        "state separator · missing:\n{empty}"
-    );
-    assert!(
-        empty.contains("Codex · usage off") && empty.contains("Grok · usage off"),
-        "usage-off rows:\n{empty}"
-    );
-    assert!(
-        !empty.contains('█') && !empty.contains('░'),
-        "legacy bar glyphs still present:\n{empty}"
+        !empty.contains("QUOTA LEFT") && !empty.contains('━') && !empty.contains('█'),
+        "the multi-row block and its bars are gone:\n{empty}"
     );
 
     let now = 1_800_000_000_000u64;
@@ -129,32 +122,24 @@ fn quota_left_option_a_linux_dashboard_smoke() {
         .unwrap();
     writeln!(file, "\n--- with allowance ---\n{bars}").unwrap();
 
-    assert!(
-        bars.lines()
-            .any(|line| line.contains("QUOTA LEFT") && line.contains('─')),
+    // Each provider's most constrained window: Claude's 5h (58% left) under its 7d (80%).
+    assert_eq!(
+        sidebar_bottom(&bars),
+        " Claude 58% · Codex 37% · Grok 76%",
         "{bars}"
     );
-    assert!(
-        bars.lines().any(|line| {
-            line.contains("Claude")
-                && line.contains("5h")
-                && line.contains('━')
-                && line.contains('%')
-                && !line.contains('[')
-        }),
-        "Option A Claude bar missing:\n{bars}"
-    );
-    assert!(
-        bars.lines()
-            .any(|line| line.contains("Codex") && line.contains('━') && line.contains("37%")),
-        "{bars}"
-    );
-    assert!(
-        bars.lines()
-            .any(|line| line.contains("Grok") && line.contains("wk") && line.contains('━')),
-        "{bars}"
-    );
-    eprintln!("option-a smoke ok; dump {}", public.display());
+    eprintln!("quota line smoke ok; dump {}", public.display());
+}
+
+/// The sidebar's last row in a dump: the line above the footer, left of the border.
+fn sidebar_bottom(dump: &str) -> String {
+    let lines: Vec<_> = dump.lines().collect();
+    lines[lines.len() - 2]
+        .chars()
+        .take(39)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
 }
 
 fn dump(dashboard: &ovrcr::tui::Dashboard, width: u16, height: u16, now: Option<u64>) -> String {

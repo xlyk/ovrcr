@@ -494,6 +494,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_operator_header(frame);
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
     dashboard.draw_quota(frame, now_unix_ms);
+    dashboard.draw_attention(frame);
 
     let rects = dashboard.pane_rects(frame.area());
     let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
