@@ -1,0 +1,20 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr-runtime", "--all-features", "--lib", "erase_saved_lines_preserves_terminal_state_and_frozen_history"]}
+xcargo: lock after 0s · ux-omp-scroll · cargo test -p ovrcr-runtime --all-features --lib erase_saved_lines_preserves_terminal_state_and_frozen_history
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-runtime)
+error: non-ASCII character in byte string literal
+    --> crates/ovrcr-runtime/src/session/tests.rs:1553:34
+     |
+1553 |           \x1b[1;1H\x1b[31;44;1mX界\x1b[2;3H\x1b[32;45mSAVE\x1b7\x1b[1;1H\x1b[34;43;3mNEXT",
+     |                                  ^^ must be ASCII
+     |
+help: if you meant to use the UTF-8 encoding of '界', use \xHH escapes
+     |
+1553 -           \x1b[1;1H\x1b[31;44;1mX界\x1b[2;3H\x1b[32;45mSAVE\x1b7\x1b[1;1H\x1b[34;43;3mNEXT",
+1553 +           \x1b[1;1H\x1b[31;44;1mX\xE7\x95\x8C\x1b[2;3H\x1b[32;45mSAVE\x1b7\x1b[1;1H\x1b[34;43;3mNEXT",
+     |
+
+error: could not compile `ovrcr-runtime` (lib test) due to 1 previous error
+
+EXIT 101

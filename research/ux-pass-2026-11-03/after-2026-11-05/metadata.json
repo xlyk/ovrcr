@@ -1,0 +1,121 @@
+{
+  "date": "2026-11-05",
+  "checkout": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration",
+  "branch": "integration/ux-pass-2026-11-03",
+  "revision": "78ce52fd62ddc4522e53fe23afd97d29e6fe60c4",
+  "providers": "task-owned synthetic CLI only; installed provider commands shadowed by refusing stubs",
+  "build_target": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target",
+  "fixture_root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-HUgck4",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-HUgck4/server.sock",
+  "private_home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-home-paix9klt",
+  "launcher_pid": 28863,
+  "initial_groups": [
+    {
+      "session": 1,
+      "name": "local",
+      "pid": 40019,
+      "pgid": 40019
+    },
+    {
+      "session": 2,
+      "name": "local",
+      "pid": 40470,
+      "pgid": 40470
+    },
+    {
+      "session": 3,
+      "name": "local",
+      "pid": 40688,
+      "pgid": 40688
+    },
+    {
+      "session": 4,
+      "name": "local",
+      "pid": 40925,
+      "pgid": 40925
+    },
+    {
+      "session": 5,
+      "name": "local",
+      "pid": 41173,
+      "pgid": 41173
+    },
+    {
+      "session": 6,
+      "name": "local",
+      "pid": 41422,
+      "pgid": 41422
+    },
+    {
+      "session": 7,
+      "name": "implement lifecycle cleanup",
+      "pid": 41667,
+      "pgid": 41667
+    },
+    {
+      "session": 8,
+      "name": "review websocket shutdown",
+      "pid": 41926,
+      "pgid": 41926
+    },
+    {
+      "session": 9,
+      "name": "plan snapshot restore",
+      "pid": 42183,
+      "pgid": 42183
+    },
+    {
+      "session": 10,
+      "name": "review auth handoff",
+      "pid": 42487,
+      "pgid": 42487
+    },
+    {
+      "session": 11,
+      "name": "build pipeline progress",
+      "pid": 42929,
+      "pgid": 42929
+    },
+    {
+      "session": 12,
+      "name": "review scope quality",
+      "pid": 43192,
+      "pgid": 43192
+    }
+  ],
+  "gui_pid": 38285,
+  "server_pid": 39452,
+  "additional_groups": [
+    {
+      "pid": 69538,
+      "pgid": 69538
+    },
+    {
+      "pid": 81607,
+      "pgid": 81607
+    },
+    {
+      "pid": 81801,
+      "pgid": 81801
+    },
+    {
+      "pid": 43342,
+      "pgid": 43342
+    },
+    {
+      "pid": 81730,
+      "pgid": 81730
+    }
+  ],
+  "transcript_source": {
+    "path": "/private/tmp/ovrcr-ux-resume/native/c197e9bd-b5e0-46bf-a2b6-4b830c8f6e10.jsonl",
+    "sha256": "29cca150d41e1fb682e8b11c3a425d34fd98d96f88448a56916123b51950a615"
+  },
+  "synthetic_providers": [
+    {
+      "pid": 81730,
+      "pgid": 81730,
+      "conversation": "c197e9bd-b5e0-46bf-a2b6-4b830c8f6e10"
+    }
+  ]
+}

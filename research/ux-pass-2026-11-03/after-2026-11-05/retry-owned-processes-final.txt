@@ -1,0 +1,5 @@
+36787 36769 36750 /Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+37063 36787 36750 /Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+92606 37063 92606 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard-client/ovrcr agent run claude -- /private/tmp/ovrcr-ux-resume/native/claude --dangerously-skip-permissions -- CUA retry transcript
+92908 92606 92908 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard-client/ovrcr __agent-collector
+43712 36787 43712 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard-client/ovrcr

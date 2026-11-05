@@ -1,0 +1,27 @@
+{
+  "launcher_exit": 0,
+  "fixture_exists": false,
+  "socket_exists": false,
+  "private_home_exists": false,
+  "process_groups": {
+    "37860": "gone",
+    "38495": "gone",
+    "38919": "gone",
+    "39353": "gone",
+    "39769": "gone",
+    "40195": "gone",
+    "40640": "gone",
+    "41167": "gone",
+    "41669": "gone",
+    "42184": "gone",
+    "42899": "gone",
+    "43455": "gone",
+    "43712": "gone",
+    "92606": "gone",
+    "92831": "gone",
+    "92908": "gone"
+  },
+  "36787": "gone",
+  "37063": "gone",
+  "transcript_unchanged": true
+}

@@ -1,0 +1,17 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr", "--test", "tui", "--all-features", "copy_history::full_screen_page_up_opens_a_read_only_transcript_and_escape_closes_it", "--", "--exact"]}
+xcargo: lock after 0s · ux-pass-integration · cargo test -p ovrcr --test tui --all-features copy_history::full_screen_page_up_opens_a_read_only_transcript_and_escape_closes_it -- --exact
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.76s
+     Running tests/tui/main.rs (target/debug/deps/tui-c5958f269adc6481)
+
+running 1 test
+test copy_history::full_screen_page_up_opens_a_read_only_transcript_and_escape_closes_it ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 378 filtered out; finished in 0.04s
+
+
+EXIT 0

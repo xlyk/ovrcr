@@ -1,0 +1,22 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr-runtime", "--all-features", "--lib", "erase_saved_lines"]}
+xcargo: lock after 0s · ux-omp-scroll · cargo test -p ovrcr-runtime --all-features --lib erase_saved_lines
+     Locking 1 package to latest Rust 1.97.1 compatible version
+      Adding vt100 v0.16.2 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/vendor/vt100)
+   Compiling vt100 v0.16.2 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/vendor/vt100)
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-protocol)
+error[E0596]: cannot borrow `unhandled` as mutable, as it is not declared as mutable
+    --> vendor/vt100/src/screen.rs:1077:13
+     |
+1077 |             unhandled(self);
+     |             ^^^^^^^^^ cannot borrow as mutable
+     |
+help: consider changing this to be mutable
+     |
+1074 |         mut unhandled: impl FnMut(&mut Self),
+     |         +++
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `vt100` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+
+EXIT 101

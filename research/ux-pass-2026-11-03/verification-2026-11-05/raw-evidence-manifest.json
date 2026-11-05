@@ -1,0 +1,170 @@
+[
+  {
+    "path": "after-2026-11-05/01-private-onboarding.txt",
+    "sha256": "1efd791fa7398c44b654e453a2ad8cedc993d81263b50202f6b7129f5e7cfd18"
+  },
+  {
+    "path": "after-2026-11-05/02-dashboard-before-input.txt",
+    "sha256": "37d5c03ed25dc07324de4aba365d5c557e94830bae69f3e59a20ce047a9b9a7a"
+  },
+  {
+    "path": "after-2026-11-05/03-input-unicode.txt",
+    "sha256": "1cbfdd59ff5d15f8657f19a6fd172590e909a1bda983d05f8e3bf92c8ed06a9a"
+  },
+  {
+    "path": "after-2026-11-05/04-workspace-validation.txt",
+    "sha256": "fe38c16f8a37c701a02bcc81876160d1b724182e1e21b59580e4e05d5e425efc"
+  },
+  {
+    "path": "after-2026-11-05/05-created-workspace-input.txt",
+    "sha256": "cb329793e7a9b8d79aed928870211535e1b9e61d1e5244657b59327548389fcb"
+  },
+  {
+    "path": "after-2026-11-05/06-workspace-card.txt",
+    "sha256": "657b646a931fd4e3a84f7ad9485f8dd6c1cdfeef1599ee2b5e4f533924acb25e"
+  },
+  {
+    "path": "after-2026-11-05/07-agent-task-form.txt",
+    "sha256": "06902c53d79a228c061748b3684606d275ef12b15b6b18d39d463500860b03b5"
+  },
+  {
+    "path": "after-2026-11-05/08-agent-ready-unread.txt",
+    "sha256": "2a91355416a0f049c0ac9333b4404cdc1ccf4bed167bee74c17a3ef2ccf04756"
+  },
+  {
+    "path": "after-2026-11-05/09-transcript.txt",
+    "sha256": "2a91355416a0f049c0ac9333b4404cdc1ccf4bed167bee74c17a3ef2ccf04756"
+  },
+  {
+    "path": "after-2026-11-05/10-transcript-open.txt",
+    "sha256": "cca32e5714d81e04e5a6c96c525725b087ba5c73e768b44d84086a9a3922de71"
+  },
+  {
+    "path": "after-2026-11-05/12-retry-shell-input.txt",
+    "sha256": "2265aae6426e9573e420190829655aee15f7cb902a52e665b2f27a7ded6006bc"
+  },
+  {
+    "path": "after-2026-11-05/13-settings-command.txt",
+    "sha256": "7d20c44dc864d06795ee31566deda1cfef18c7d817071eaa75060b72431dab8a"
+  },
+  {
+    "path": "after-2026-11-05/14-split-chooser.txt",
+    "sha256": "dc3d8874731ae306aed47acca26867e27e2ae2c67eb81bcb33035a415f796cd8"
+  },
+  {
+    "path": "after-2026-11-05/15-ctrl-o-passthrough.txt",
+    "sha256": "f6025a0907983240b5be4c21c7aea8a473e47e4464f7a687a964c2176381a609"
+  },
+  {
+    "path": "after-2026-11-05/16-transcript-modal-input.txt",
+    "sha256": "f45f82a71ddd35b7a1f8d67cf04f5534af2ba060320ea60d13f342edb3194301"
+  },
+  {
+    "path": "after-2026-11-05/17-transcript-resume-ack.txt",
+    "sha256": "d2407d700a1afaec523a377881b14f859ba2fb7b4ae8cc845034bf75b3479c98"
+  },
+  {
+    "path": "after-2026-11-05/18-transcript-wheel.txt",
+    "sha256": "583ef1416b51302b3fd44c5e13dcaa74f45fec3e1249ce2b6e6976c88f92a600"
+  },
+  {
+    "path": "after-2026-11-05/19-native-history.txt",
+    "sha256": "7e0eb0f1f36cf8a0dd742e7d8af3ffa52decb773005fc4c98cd59db037551d51"
+  },
+  {
+    "path": "after-2026-11-05/20-history-after-ed3.txt",
+    "sha256": "7e0eb0f1f36cf8a0dd742e7d8af3ffa52decb773005fc4c98cd59db037551d51"
+  },
+  {
+    "path": "after-2026-11-05/21-narrow-dashboard.txt",
+    "sha256": "6d48274b6ffd1d70b4ed8ec9c086555e9ae2e8a667e5ed09b2e2ec2f0136f287"
+  },
+  {
+    "path": "after-2026-11-05/22-ed3-cleared-terminal.txt",
+    "sha256": "86f5c2ad1c45c672a42e0322913b76b8ad7270c7ee5f67f284a167dbadff21fd"
+  },
+  {
+    "path": "after-2026-11-05/23-history-cleared.txt",
+    "sha256": "e13b789da6cc959b400df58ff96b6be6865c5bc0b22b5594ecdcf09319c84e13"
+  },
+  {
+    "path": "after-2026-11-05/24-task-derived-branch.txt",
+    "sha256": "6428e5c53fdef8b8b2db7480dbe0bd7beb724f44e686d50132febe93664b5e58"
+  },
+  {
+    "path": "after-2026-11-05/25-narrow-workspace-card.txt",
+    "sha256": "9675d72cbc90d931d59095d0f7be88d2a9e395ceb01e61abc1cee3ab896a8da0"
+  },
+  {
+    "path": "after-2026-11-05/26-project-card.txt",
+    "sha256": "381fd81b5298627fb1cc44e74f072ae911309868d4ef639b6949cc3e0db09ffe"
+  },
+  {
+    "path": "after-2026-11-05/owned-processes-live.txt",
+    "sha256": "919e7011802bd613334d1950502d1c62d3e86b7d2c8b52f7328d41afaba2b1ab"
+  },
+  {
+    "path": "after-2026-11-05/retry-owned-processes-final.txt",
+    "sha256": "91beae8557a0793f4fcec5456f9e4f82c743ac47c4b597affb7710f47ddd6926"
+  },
+  {
+    "path": "after-2026-11-05/retry-owned-processes-initial.txt",
+    "sha256": "83b43642c944622bd423eb4e822c7800d938ea2e9849c85c95068fe989eabc45"
+  },
+  {
+    "path": "verification-2026-11-05/integrated-clippy-all.log",
+    "sha256": "3d2026e6e5b5743a67aad052c457cf1d3ac02003741159ebaec45c8fe5efde3a"
+  },
+  {
+    "path": "verification-2026-11-05/integrated-clippy-default.log",
+    "sha256": "c62dc1b2be341a97bb038545b8e47ee21d544b5ff696bc6b5ea7b606a61cb736"
+  },
+  {
+    "path": "verification-2026-11-05/integrated-terminal-acceptance.log",
+    "sha256": "25fb05e4619907d4b6f681003c40fd93c278a4eb120c576e32d2e0bd25210496"
+  },
+  {
+    "path": "verification-2026-11-05/integrated-workspace-final.log",
+    "sha256": "5b04e09d5e653f4e2010bc8c0e020b42bad5f11312cd8d75c9560db153a04291"
+  },
+  {
+    "path": "verification-2026-11-05/integrated-workspace.log",
+    "sha256": "6de92061fac6b2bc172c9ec527694f4db25dbb14f1e9504e79e4c13d2957af0f"
+  },
+  {
+    "path": "verification-2026-11-05/l10-merge-copy-history.log",
+    "sha256": "cc7aa89a18e3541643149e4cb9e3ac9c848aedf4bcea2fc63b5206c7ac64410b"
+  },
+  {
+    "path": "verification-2026-11-05/l10-review-red-preserve-state-4.log",
+    "sha256": "a4cf6057855780f9186c75a311be00b4f8cedb2ebe50faa68e06e7311242313c"
+  },
+  {
+    "path": "verification-2026-11-05/l10-review-red-preserve-state.log",
+    "sha256": "e2f671dda21b94a78f0a61405425d228fdbfeb8b7ad1ee1821b26d51313db324"
+  },
+  {
+    "path": "verification-2026-11-05/l10-review-runtime-preserve-state-2.log",
+    "sha256": "44916a21f7cfab1696f40eb6cbfdba9256c85cd82fd0f50b89641d3c59d40e7a"
+  },
+  {
+    "path": "verification-2026-11-05/l10-review-runtime-preserve-state.log",
+    "sha256": "5535539278e6f79a50b01a4dd6c6bf471e63272002570734cab11155c5dd66fd"
+  },
+  {
+    "path": "verification-2026-11-05/l7-project-attention-green.log",
+    "sha256": "a63354dda50efeb68bddd7ac92229ad00bf8ff9853a85efdf41f61722076155f"
+  },
+  {
+    "path": "verification-2026-11-05/l7-project-attention-red.log",
+    "sha256": "728fae93f6e04095c5f6f4c49a2b59529e126695fa990defc94b1d56acf5a147"
+  },
+  {
+    "path": "verification-2026-11-05/l8-gui-full-serial-final.log",
+    "sha256": "f88ab4dfe62a3e06938c8b45adfd13d7cda0bb74294b74ae049dcae19908e500"
+  },
+  {
+    "path": "verification-2026-11-05/l9-merged-input-regression.log",
+    "sha256": "03fc08f74d0a114812e47d0243c96ac534271318e3641c4417b4fde13c2886de"
+  }
+]

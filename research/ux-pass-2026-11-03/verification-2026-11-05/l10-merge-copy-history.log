@@ -1,0 +1,56 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr", "--test", "tui", "--all-features", "copy_history::"]}
+xcargo: lock after 10s · ux-pass-integration · cargo test -p ovrcr --test tui --all-features copy_history::
+   Compiling vt100 v0.16.2 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/vendor/vt100)
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.28s
+     Running tests/tui/main.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/tui-c5958f269adc6481)
+
+running 39 tests
+test copy_history::copy_mouse_release_position_and_focus_loss_bound_the_gesture ... ok
+test copy_history::copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input ... ok
+test copy_history::browse_and_terminal_modes_keep_input_ownership_clear ... ok
+test copy_history::a_failed_pause_is_an_error_not_a_limit ... ok
+test copy_history::copy_render_highlights_unicode_and_preserves_layout ... ok
+test copy_history::a_failed_resume_is_an_error_not_a_limit ... ok
+test copy_history::history_copy_joins_soft_wrap_without_hard_newline ... ok
+test copy_history::history_begin_is_cancelled_and_captured_by_active_overlays ... ok
+test copy_history::history_cancelled_begin_releases_late_snapshot ... ok
+test copy_history::copy_mode_cancels_at_identity_boundaries ... ok
+test copy_history::copy_mode_waits_for_matching_screen ... ok
+test copy_history::copy_history_invalid_snapshot_never_emits_partial_text ... ok
+test copy_history::history_empty_rows_only_anchor_after_explicit_anchor ... ok
+test copy_history::copy_mode_keeps_alternate_and_resync_snapshots ... ok
+test copy_history::history_release_precedes_hierarchy_fallback_selection ... ok
+test copy_history::copy_render_tiny_pane_and_footer ... ok
+test copy_history::history_navigation_never_writes_to_pty ... ok
+test copy_history::history_live_output_preserves_anchor ... ok
+test copy_history::copy_mode_routes_keys_and_freezes_output ... ok
+test copy_history::history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture ... ok
+test copy_history::history_key_kinds_gate_actions ... ok
+test copy_history::history_waits_for_coalesced_focus_view_before_capture ... ok
+test copy_history::copy_history_range_survives_live_eviction ... ok
+test copy_history::history_render_preserves_cells_and_clips ... ok
+test copy_history::pause_resume_browse_keys_send_explicit_requests ... ok
+test copy_history::history_pending_keys_coalesce ... ok
+test copy_history::input_the_server_does_not_admit_is_a_limit_and_a_failed_write_an_error ... ok
+test copy_history::matching_history_open_clears_resize_notice_but_stale_response_does_not ... ok
+test copy_history::pause_resume_dense_status_has_priority ... ok
+test copy_history::history_stale_response_is_ignored ... ok
+test copy_history::resize_matching_screen_restores_snapshot_and_ignores_stale_screen ... ok
+test copy_history::history_unanchored_retry_keys_reissue_failed_cursor_request ... ok
+test copy_history::history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel ... ok
+test copy_history::pause_resume_input_and_paste_stay_guarded ... ok
+test copy_history::history_resize_preserves_capture ... ok
+test copy_history::history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion ... ok
+test copy_history::ux_history_footer_names_the_actual_escape_action ... ok
+test copy_history::whichkey_acquisition_cancels_copy_and_history_drags ... ok
+test copy_history::history_wheel_scrolls_three_rows_per_tick ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 331 filtered out; finished in 0.06s
+
+
+EXIT 0
