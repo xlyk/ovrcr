@@ -348,9 +348,10 @@ The view keeps at most 1 MiB or 16,384 entries, dropping newest entries as you
 page further back; End returns to the latest messages. It does not update live.
 Individual JSONL records over 512 KiB are skipped, prose is shortened after
 16,384 characters, and tool input summaries after 160 characters. Tool results,
-private reasoning, and image data are omitted. If the provider has no readable
-recorded conversation, PageUp explains that History is unavailable and wheel-up
-leaves the pane alone.
+private reasoning, and image data are omitted. A readable file whose entries are
+all filtered or oversized opens an empty Transcript view. Unsupported providers,
+missing conversation references, and unreadable files keep PageUp's muted History
+explanation and leave wheel-up quiet.
 
 ## Panes
 
