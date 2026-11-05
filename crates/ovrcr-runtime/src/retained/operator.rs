@@ -908,7 +908,7 @@ mod tests {
                     .connection
                     .pragma_query_value(None, "user_version", |row| row.get(0))
                     .unwrap();
-                assert_eq!(version, 27);
+                assert_eq!(version, 28);
                 let conversation = create(&mut store);
                 assert_eq!(
                     store.get(conversation.session).unwrap().metadata.scope,
@@ -966,7 +966,7 @@ mod tests {
                 .connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .unwrap();
-            assert_eq!(version, 27);
+            assert_eq!(version, 28);
             assert_eq!(
                 store.get(conversation.session).unwrap().summary(None),
                 before
