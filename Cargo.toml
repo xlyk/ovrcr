@@ -44,6 +44,10 @@ ovrcr-terminal = { path = "crates/ovrcr-terminal" }
 ovrcr-runtime = { path = "crates/ovrcr-runtime" }
 ovrcr-tui = { path = "crates/ovrcr-tui" }
 
+# Local patch to the locked vt100 0.16.2 source; see vendor/vt100/README.OVRCR.md.
+[patch.crates-io]
+vt100 = { path = "vendor/vt100" }
+
 [package]
 name = "ovrcr"
 version.workspace = true
