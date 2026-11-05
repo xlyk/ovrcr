@@ -125,6 +125,38 @@ pub fn terminal_command(argv: &[OsString]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Dashboard's Task is the native command's one message after `--`.
+    /// No recovery parser keeps it, so resume never sends it again.
+    #[test]
+    fn a_task_after_double_dash_is_never_retained_for_resume() {
+        let task = "--model secret fix the build";
+        let argv = |native: &str, flag: &str| -> Vec<OsString> {
+            vec![native.into(), flag.into(), "--".into(), task.into()]
+        };
+        assert_eq!(
+            crate::claude_recovery::launch_options(&argv(
+                "claude",
+                "--dangerously-skip-permissions"
+            ))
+            .unwrap(),
+            ["--dangerously-skip-permissions"]
+        );
+        assert_eq!(
+            crate::codex_recovery::launch_options(&argv("codex", "--approve-for-me")).unwrap(),
+            ["--approve-for-me"]
+        );
+        for (provider, flag) in [
+            (AgentProvider::Pi, "--approve"),
+            (AgentProvider::Omp, "--auto-approve"),
+        ] {
+            assert_eq!(
+                crate::extension_recovery::launch_options(provider, &argv(provider.name(), flag))
+                    .unwrap(),
+                [flag]
+            );
+        }
+    }
     #[test]
     fn picker_commands_are_explicit_and_terminal_arguments_are_literal() {
         for (provider, command) in [

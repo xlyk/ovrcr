@@ -394,6 +394,7 @@ fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u
     );
     let inspect = only_request(dashboard.drain_outbox());
     assert_eq!(inspect.request, Request::Inspect);
+    to_branch(dashboard);
     dashboard.key(KeyCode::Tab); // branch mode
     dashboard.key(KeyCode::Right); // existing
     dashboard.key(KeyCode::BackTab); // branch
@@ -403,6 +404,12 @@ fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u
     let text = palette_text(dashboard);
     assert!(text.contains("Waiting for Git suggestions"), "{text}");
     inspect.request_id
+}
+
+/// Create workspace opens on Task; Tab past Project to Branch.
+fn to_branch(dashboard: &mut Dashboard) {
+    dashboard.key(KeyCode::Tab); // Project
+    dashboard.key(KeyCode::Tab); // Branch
 }
 
 fn assert_workspace_id(id: &str) {

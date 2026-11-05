@@ -162,10 +162,10 @@ printf 'CUA_%s\n' N_SHELL_OK
 
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
 
-Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field.
-Branch starts as `feature/` and is focused; typing appends. Press Enter before
-typing: nothing is created, `Add a name after feature/` shows under Branch, and
-the footer lists only keys that work there (`Ctrl-u clear · Tab/Shift-Tab fields
+Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field and
+the form opens on an empty Task above Project. Branch starts as `feature/`. Press
+Enter before typing: nothing is created, the focus moves to Branch, `Add a name
+after feature/` shows under it, and the footer lists only keys that work there (`Ctrl-u clear · Tab/Shift-Tab fields
 · Enter create · Esc cancel`). Type
 `cua-workspace` so Branch reads `feature/cua-workspace`. Base shows the
 repository's default branch once suggestions finish loading. Tab to Start and
@@ -244,6 +244,20 @@ In the disposable fixture, also verify:
     confirmation names the session by title and offers to stop it; confirm, then
     verify the shell's process group is gone and the workspace row disappears.
     No Force dialog appears at any point.
+13. New task in one step, without a paid agent: add a disposable preset named
+    `claude` whose argv prints its arguments and then waits, for example
+    `["/bin/sh", "-c", "printf 'CUA_ARGS[%s]' \"$@\"; echo; exec /bin/sh", "fake"]`,
+    and select it as the project's agent. Press `w` and type
+    `CUA task one` into Task. Confirm Branch follows as `feature/cua-task-one`
+    and the footer reads `Names the branch and session; claude gets it as its
+    first message`. Edit Branch, then edit Task again: Branch keeps your edit.
+    Press Enter. Confirm one new session titled `CUA task one` and the output
+    line `CUA_ARGS[--]CUA_ARGS[CUA task one]`. Do not Reopen it: Reopen of an
+    Agent named `claude` types the installed `claude --resume` (that the task is
+    never resent is covered by `retained_sessions`). Confirm the settings file's
+    `launch_choices` entry names only `claude`, never the task. Repeat with
+    `n` and a preset named `hermes`: the footer reads `Only names the session;
+    hermes starts without it` and the output shows no task.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm

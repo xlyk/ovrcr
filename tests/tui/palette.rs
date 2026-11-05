@@ -984,7 +984,7 @@ fn create_workspace_form_submits_branch_without_name() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Branch"), "{text}");
     assert!(!text.contains("Name"), "{text}");
-    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::Tab); // Project
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("consigint".into()));
     dashboard.key(KeyCode::Tab);
@@ -1052,10 +1052,12 @@ fn assert_in_order(text: &str, parts: &[&str]) {
     }
 }
 
-/// Opens Create workspace with Git suggestions settled (no repository known).
+/// Opens Create workspace with Git suggestions settled (no repository known),
+/// focused on Branch.
 fn open_workspace_form(dashboard: &mut Dashboard) {
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(dashboard, action);
+    to_branch(dashboard);
 }
 
 /// The original defect: with Start = Agent the agent picker was the last
@@ -1192,6 +1194,7 @@ fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
             .to_owned()
     };
     assert!(title(&dashboard).contains("Start: Agent (fixture-a)"));
+    dashboard.key(KeyCode::Tab); // Start follows Task
     // No Tab or Enter: the arrow is the choice, and the form follows it.
     dashboard.key(KeyCode::Down);
     assert!(
@@ -1306,6 +1309,7 @@ fn create_workspace_existing_branch_keeps_generated_id() {
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "create workspace");
     dashboard.key(KeyCode::Enter);
+    to_branch(&mut dashboard);
     dashboard.key(KeyCode::Tab); // mode
     dashboard.key(KeyCode::Char(' ')); // existing
     dashboard.key(KeyCode::BackTab); // branch
@@ -1355,6 +1359,7 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
+    to_branch(&mut dashboard);
     dashboard.event_action(Event::Paste("pick-demo".into()));
     let text = palette_text(&dashboard);
     assert!(text.contains("Create workspace"), "{text}");
@@ -1463,6 +1468,7 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
         );
         std::thread::yield_now();
     }
+    to_branch(&mut dashboard);
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("custom/kept".into()));
     dashboard.key(KeyCode::Tab); // mode
@@ -1629,6 +1635,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
+    to_branch(&mut dashboard);
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -1726,6 +1733,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
+    to_branch(&mut dashboard);
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -1780,6 +1788,7 @@ fn workspace_creation_attaches_to_its_local_shell() {
         let mut dashboard = dashboard_fixture();
         let action = dashboard.key(KeyCode::Char('w'));
         answer_palette_inspect(&mut dashboard, action);
+        to_branch(&mut dashboard);
         dashboard.event_action(Event::Paste("pick-demo".into()));
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -2959,6 +2968,7 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         let mut dashboard = dashboard_fixture();
         let action = dashboard.key(KeyCode::Char('w'));
         answer_palette_inspect(&mut dashboard, action);
+        to_branch(&mut dashboard);
         dashboard.event_action(Event::Paste("pick-demo".into()));
         for _ in 0..3 {
             dashboard.key(KeyCode::Tab);
@@ -5184,4 +5194,343 @@ fn cloud_close_warns_before_archiving_live_and_exited_rows_from_key_and_palette(
             );
         }
     }
+}
+
+/// Fake `claude` and `hermes` executables as the only agents, with claude
+/// remembered for `consigint`. Nothing runs them: the tests read the argv the
+/// form sends.
+fn task_agents(dashboard: &mut Dashboard) -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut agents = Vec::new();
+    for name in ["claude", "codex", "hermes"] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        agents.push(ovrcr_protocol::AgentOverride {
+            name: name.into(),
+            argv: vec![path.to_str().unwrap().into()],
+        });
+    }
+    dashboard.install_settings(ovrcr::tui::Settings {
+        agents,
+        launch_choices: [(
+            "consigint".to_owned(),
+            ovrcr_protocol::LaunchChoice::Agent("claude".into()),
+        )]
+        .into(),
+        ..Default::default()
+    });
+    dir
+}
+
+fn agent_path(dir: &tempfile::TempDir, name: &str) -> std::ffi::OsString {
+    dir.path().join(name).into_os_string()
+}
+
+/// Every outgoing request: those a server message answers with and the outbox.
+fn outgoing(dashboard: &mut Dashboard, answered: Vec<ClientMessage>) -> Vec<ClientMessage> {
+    let mut all = answered;
+    all.extend(dashboard.drain_outbox());
+    all
+}
+
+/// The Server publishes the new workspace `id`, empty, before anything starts there.
+fn publish_empty_workspace(dashboard: &mut Dashboard, id: &str) {
+    let mut hierarchy = extra_workspace_hierarchy(id);
+    for workspace in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .filter(|workspace| workspace.id == id)
+    {
+        workspace.sessions.clear();
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+}
+
+#[test]
+fn a_task_names_the_branch_until_branch_is_edited() {
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    // The form opens on Task.
+    dashboard.event_action(Event::Paste("Fix the Login bug: v2!".into()));
+    assert_in_order(
+        &palette_words(&dashboard),
+        &[
+            "Task",
+            "Fix the Login bug: v2!",
+            "Branch",
+            "feature/fix-the-login-bug-v2",
+        ],
+    );
+    to_branch(&mut dashboard);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("feature/mine".into()));
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab); // Task
+    dashboard.event_action(Event::Paste(" again".into()));
+    let words = palette_words(&dashboard);
+    assert!(words.contains("feature/mine"), "{words}");
+    assert!(
+        !words.contains("feature/fix"),
+        "an edited Branch stays: {words}"
+    );
+    // A task with nothing ASCII leaves the bare prefix, which asks for a name.
+    dashboard.key(KeyCode::Esc);
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    dashboard.event_action(Event::Paste("修复".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(palette_words(&dashboard).contains("Add a name after feature/"));
+}
+
+#[test]
+fn a_task_starts_the_agent_with_it_and_names_the_session() {
+    use ovrcr::protocol::{BranchRequest, LifecycleOutcome, SessionKind};
+    let mut dashboard = dashboard_fixture();
+    let agents = task_agents(&mut dashboard);
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    let task = "Fix the login bug -- and the tests";
+    dashboard.event_action(Event::Paste(task.into()));
+    let words = palette_words(&dashboard);
+    assert!(
+        words.contains("Names the branch and session; claude gets it as its first message"),
+        "{words}"
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    // The workspace request cannot name a session: it creates the workspace
+    // alone, and the named session follows when it succeeds.
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = &create.request
+    else {
+        panic!("{:?}", create.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_eq!(
+        branch,
+        &BranchRequest::New {
+            branch: "feature/fix-the-login-bug-and-the-tests".into(),
+            base: "main".into(),
+        }
+    );
+    assert!(launch.is_none());
+    let id = id.clone();
+    accept(&mut dashboard, &create);
+    // The empty workspace lands first; its session is still to come.
+    publish_empty_workspace(&mut dashboard, &id);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
+    let session = only_request(outgoing(&mut dashboard, answered));
+    let Request::CreateSession(request) = &session.request else {
+        panic!("{:?}", session.request);
+    };
+    assert_eq!(request.workspace, id);
+    assert_eq!(request.name, task);
+    assert_eq!(
+        request.argv,
+        vec![agent_path(&agents, "claude"), "--".into(), task.into()]
+    );
+    assert_eq!(request.label.as_deref(), Some("claude"));
+    accept(&mut dashboard, &session);
+    let mut created = session_summary(42, "consigint", &id, task, "claude", Some(7), 0);
+    created.kind = SessionKind::Agent {
+        name: "claude".into(),
+    };
+    let answered = lifecycle_completed(
+        &mut dashboard,
+        &session,
+        LifecycleOutcome::CreatedSession(Box::new(created)),
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(42)));
+    // The remembered launch choice names the agent, never the task.
+    let after = outgoing(&mut dashboard, answered);
+    let remembered = after
+        .iter()
+        .find(|message| matches!(message.request, Request::SetSetting { .. }))
+        .expect("the agent is remembered");
+    assert_eq!(
+        remembered.request,
+        Request::SetSetting {
+            path: "launch_choices.consigint".into(),
+            value: Some("{ kind = \"Agent\", preset = \"claude\" }".into()),
+        }
+    );
+    assert!(
+        !format!("{after:?}").contains("login"),
+        "nothing after the launch carries the task: {after:?}"
+    );
+}
+
+#[test]
+fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
+    let mut dashboard = dashboard_fixture();
+    let agents = task_agents(&mut dashboard);
+    dashboard.key(KeyCode::Char('n'));
+    // Start = Agent (remembered claude): the form opens on Task.
+    dashboard.event_action(Event::Paste("Write the release notes".into()));
+    let words = palette_words(&dashboard);
+    assert_in_order(&words, &["Task", "Start", "Workspace"]);
+    assert!(
+        words.contains("Names the session; claude gets it as its first message"),
+        "{words}"
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(request) = &message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(request.name, "Write the release notes");
+    assert_eq!(
+        request.argv,
+        vec![
+            agent_path(&agents, "claude"),
+            "--".into(),
+            "Write the release notes".into()
+        ]
+    );
+
+    // An agent not verified to take a first message: the task only names it.
+    let mut dashboard = dashboard_fixture();
+    let agents = task_agents(&mut dashboard);
+    dashboard.key(KeyCode::Char('n'));
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Tab); // Start, Workspace, Name, Agent
+    }
+    dashboard.event_action(Event::Paste("hermes".into()));
+    for _ in 0..4 {
+        dashboard.key(KeyCode::BackTab); // Name, Workspace, Start, Task
+    }
+    dashboard.event_action(Event::Paste("Tidy the docs".into()));
+    let words = palette_words(&dashboard);
+    assert!(
+        words.contains("Only names the session; hermes starts without it"),
+        "{words}"
+    );
+    // A typed Name wins over the task.
+    dashboard.key(KeyCode::Tab); // Start
+    dashboard.key(KeyCode::Tab); // Workspace
+    dashboard.key(KeyCode::Tab); // Name
+    dashboard.event_action(Event::Paste("docs".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let message = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(request) = &message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(request.name, "docs");
+    assert_eq!(request.argv, vec![agent_path(&agents, "hermes")]);
+
+    // Terminal: no Task at all.
+    let mut dashboard = dashboard_fixture();
+    task_agents(&mut dashboard);
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Tab); // Start follows Task
+    dashboard.key(KeyCode::Down); // Terminal
+    let words = palette_words(&dashboard);
+    assert!(!words.contains("Task"), "{words}");
+}
+
+#[test]
+fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
+    use ovrcr::protocol::LifecycleOutcome;
+    let mut dashboard = dashboard_fixture();
+    let agents = task_agents(&mut dashboard);
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    dashboard.event_action(Event::Paste("status check".into()));
+    dashboard.key(KeyCode::Enter);
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspaceWithLaunch { id, .. } = &create.request else {
+        panic!("{:?}", create.request);
+    };
+    let id = id.clone();
+    accept(&mut dashboard, &create);
+    publish_empty_workspace(&mut dashboard, &id);
+    let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
+    let first = only_request(outgoing(&mut dashboard, answered));
+    let Request::CreateSession(request) = &first.request else {
+        panic!("{:?}", first.request);
+    };
+    assert_eq!(
+        request.argv,
+        vec![
+            agent_path(&agents, "claude"),
+            "--".into(),
+            "status check".into()
+        ]
+    );
+    accept(&mut dashboard, &first);
+    let answered = lifecycle_completed(
+        &mut dashboard,
+        &first,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::Internal,
+            message: "Launch failed before a process started; check the executable and retry"
+                .into(),
+        },
+    );
+    assert!(outgoing(&mut dashboard, answered).is_empty());
+    // The workspace stands: the same recovery as a launch the workspace
+    // request carried, never the form that would create it again.
+    let screen = palette_text(&dashboard);
+    assert!(
+        screen.contains("┌ Workspace retained · recover launch"),
+        "{screen}"
+    );
+    let words = palette_words(&dashboard);
+    assert!(
+        words.contains("Couldn't start the session: Launch failed before a process started"),
+        "{words}"
+    );
+    // Retry preserves the session name and launch choice, but never replays Task.
+    dashboard.key(KeyCode::Enter);
+    let retry = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(request) = &retry.request else {
+        panic!("{:?}", retry.request);
+    };
+    assert_eq!(request.name, "status check");
+    assert_eq!(request.argv, vec![agent_path(&agents, "claude")]);
+    accept(&mut dashboard, &retry);
+    lifecycle_completed(
+        &mut dashboard,
+        &retry,
+        LifecycleOutcome::Failed {
+            code: ErrorCode::Internal,
+            message: "still failing".into(),
+        },
+    );
+    // A different verified agent also keeps the name without receiving Task.
+    assert!(dashboard.drain_outbox().is_empty());
+    dashboard.key(KeyCode::Down); // Choose another agent
+    dashboard.key(KeyCode::Enter); // opens on Agent
+    dashboard.event_action(Event::Paste("codex".into()));
+    dashboard.key(KeyCode::Enter);
+    let other = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(request) = &other.request else {
+        panic!("{:?}", other.request);
+    };
+    assert_eq!(request.name, "status check");
+    assert_eq!(request.argv, vec![agent_path(&agents, "codex")]);
 }

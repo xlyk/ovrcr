@@ -175,6 +175,9 @@ impl Live {
             .env_remove("CODEX_HOME")
             .env_remove("GROK_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("OVRCR_HOOK_SOCKET")
+            .env_remove("OVRCR_HOOK_TOKEN")
+            .env_remove("OVRCR_SESSION_ID")
             .env("OVRCR_SOCKET", &self.socket)
             // The settings document is the one beside `config`, never the developer's.
             .env_remove("OVRCR_DASHBOARD_CONFIG")
@@ -558,6 +561,20 @@ impl Live {
             }
         }
         cleaned
+    }
+}
+
+#[test]
+fn command_clears_inherited_reporting_authority() {
+    let live = Live::idle();
+    let command = live.command();
+    for name in ["OVRCR_HOOK_SOCKET", "OVRCR_HOOK_TOKEN", "OVRCR_SESSION_ID"] {
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == std::ffi::OsStr::new(name) && value.is_none()),
+            "{name} must not reach a fixture server"
+        );
     }
 }
 

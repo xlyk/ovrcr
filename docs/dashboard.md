@@ -687,7 +687,19 @@ reporting support.
 
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
-session immediately. `n` and other new launches are unavailable when the selected
+session immediately.
+
+With Start = Agent the form also shows **Task**, and opens on it. A task names
+the session when Name is blank (one line, at most 60 characters) and, for agents
+whose CLI takes a first message, starts the agent with it: the launch arguments end
+with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
+`codex`, `pi`, `omp` and `grok`. Hermes (`-z` is one-shot only), Cursor (a
+prompt turns its reporting off) and other agents start without it; the footer
+says which applies (`Names the session; claude gets it as its first message`,
+`Only names the session; hermes starts without it`). The task is one-off: it is
+never part of the remembered launch choice, and Retry, Reopen, resume and
+server-restart recovery never send it again (recovery keeps only provider launch
+options before `--`). `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
@@ -727,7 +739,7 @@ See [Cursor harness](cursor-harness.md) for the runtime capability check and pas
 
 ### Create workspace (`w`)
 
-Choose a branch and what to start: **Agent**, **Terminal**, or
+Type a task, or choose a branch, and what to start: **Agent**, **Terminal**, or
 **Nothing yet**. There is no separate workspace name. Agent and Terminal have the same options as terminal creation.
 Only the selected program starts; an Agent launch does not also open a shell.
 Nothing yet creates an empty workspace.
@@ -737,13 +749,24 @@ The worktree folder under the project's workspace root is named after the branch
 `-2`, `-3`, ….
 
 Each project remembers its last successfully launched Agent and preset, or
-Terminal choice, across dashboard restarts. One-off command text is never saved.
+Terminal choice, across dashboard restarts. One-off command text and tasks are never saved.
 Nothing yet leaves the preference unchanged. A project without a preference
 starts with Terminal selected. If a remembered agent is unavailable, choose a
 replacement explicitly before launching.
 
-Project defaults to the selected terminal's project. Branch has initial focus
-and starts as `feature/`; typing appends to that prefix. `Enter` submits from
+The form opens on **Task** (optional). Typing a task fills Branch with the
+prefix and a slug of the task (`Fix the login bug` → `feature/fix-the-login-bug`:
+lowercase ASCII letters, digits and `_`, other runs one `-`, at most 50
+characters) until you edit Branch yourself. The task names the first session and,
+for an agent that takes a first message, starts it with that message, as under
+Create terminal; with Terminal it only names the session, with Nothing yet only
+the branch. A workspace request cannot name its session, so with a task the
+Dashboard creates the workspace first and starts the named session when that
+succeeds; if that session cannot start, the workspace stays and the same
+recovery choices below apply. `w`, type the task, `Enter` is the whole flow.
+
+Project defaults to the selected terminal's project. Branch starts as
+`feature/`; typing there appends to that prefix. `Enter` submits from
 any field. A new branch needs a name after the prefix that Git accepts as a
 branch name (the rules of `git check-ref-format --branch`); otherwise nothing is
 sent and the reason shows under Branch. `Tab` and `Shift-Tab` reach the other

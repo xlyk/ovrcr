@@ -430,7 +430,10 @@ impl Dashboard {
                 (ProvisionalKind::ClosingSession { session }, false) => Some(*session),
                 _ => None,
             };
-            self.return_to_form(form, row.token, stopping, code, message);
+            // A task's session follows its new workspace as a second job.
+            let after_workspace = matches!(row.kind, ProvisionalKind::CreatingSession { .. })
+                && form.creates_workspace();
+            self.return_to_form(form, row.token, stopping, after_workspace, code, message);
             return;
         }
         let created = match &row.kind {
