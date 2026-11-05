@@ -142,6 +142,14 @@ tables, never in content-free Events. Completed SDK history is versioned JSON an
 is loaded separately from byte-bounded visible history pages; shared crates have
 no Rig SDK dependency.
 
+Schema version 28 removes the retained-session name uniqueness constraint while
+preserving IDs, deleted-ID allocation history, recovery references, subjects and
+Operator journals. Creation reserves names only among nonarchived rows in the
+same project/workspace. Restore preserves the original name even if it was reused;
+session IDs remain the authority. Migration rebuilds the table with foreign-key
+cascades disabled inside the migration connection, verifies the references before
+commit, then restores foreign-key enforcement before returning that connection.
+
 Operator defaults are typed `Settings.operator` values in the same settings
 catalog, loader, editor and snapshots. Provider defaults to `chat_gpt`; provider
 model choices are optional until selected. Settings never contain credentials.

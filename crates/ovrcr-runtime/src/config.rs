@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 27;
+const SCHEMA_VERSION: i64 = 28;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -288,7 +288,8 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     let mut connection = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .with_context(|| format!("open registry database {}", database.display()))?;
     connection.busy_timeout(Duration::from_secs(1))?;
-    connection.pragma_update(None, "foreign_keys", true)?;
+    // Table rebuilds must preserve dependent rows rather than cascade-delete them.
+    connection.pragma_update(None, "foreign_keys", false)?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if is_uninitialized(&transaction)? {
@@ -425,7 +426,18 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         crate::retained::operator::create_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 27)?;
     }
+    if schema_identity(&transaction)?.1 < 28 {
+        crate::retained::migrate_reusable_names(&transaction)?;
+        if transaction
+            .prepare("PRAGMA foreign_key_check")?
+            .exists([])?
+        {
+            bail!("registry migration would leave invalid foreign keys");
+        }
+        transaction.pragma_update(None, "user_version", 28)?;
+    }
     transaction.commit().context("commit registry migration")?;
+    connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
 }
 
@@ -478,6 +490,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 24
                 | 25
                 | 26
+                | 27
                 | SCHEMA_VERSION
         )
     {

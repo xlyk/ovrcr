@@ -895,6 +895,7 @@ impl ServerState {
                     .filter(|record| {
                         record.metadata.project == request.project
                             && record.metadata.workspace == request.workspace
+                            && record.disposition != crate::retained::Disposition::Archived
                     })
                     .map(|record| record.metadata.name.as_str())
                     .collect();

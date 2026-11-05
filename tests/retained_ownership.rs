@@ -87,6 +87,65 @@ fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
     result
 }
 
+#[test]
+fn archived_names_are_reusable_but_active_names_still_conflict() {
+    let live = Live::binary();
+    live.ready("feature/archive-name-reuse");
+    let first = create_terminal(&live, "reusable", &["/bin/sh"]);
+    let first_id = first["id"].as_u64().unwrap().to_string();
+    json(&live, &["terminal", "close", &first_id]);
+    let second = create_terminal(&live, "reusable", &["/bin/sh"]);
+    assert_ne!(first["id"], second["id"]);
+    let path = live.workspace_root.join(live::WORKSPACE);
+    let duplicate = json_error(
+        &live,
+        &[
+            "terminal",
+            "create",
+            "--project",
+            live::PROJECT,
+            "--path",
+            path.to_str().unwrap(),
+            "--name",
+            "reusable",
+            "--",
+            "/bin/sh",
+        ],
+    );
+    assert_eq!(duplicate["error"]["code"], "AlreadyExists", "{duplicate}");
+    json(&live, &["terminal", "unarchive", &first_id]);
+    assert_eq!(
+        row(&live, first["id"].as_u64().unwrap())["name"],
+        "reusable"
+    );
+    assert_eq!(
+        row(&live, second["id"].as_u64().unwrap())["name"],
+        "reusable"
+    );
+    let automatic = create_terminal(&live, "", &["/bin/sh"]);
+    let automatic_id = automatic["id"].as_u64().unwrap().to_string();
+    json(&live, &["terminal", "close", &automatic_id]);
+    let replacement = create_terminal(&live, "", &["/bin/sh"]);
+    assert_eq!(replacement["name"], automatic["name"]);
+    let concurrent = create_terminal(&live, "", &["/bin/sh"]);
+    assert_ne!(concurrent["name"], replacement["name"]);
+    stop_server(&live);
+    live.start_binary();
+    let archived = json(&live, &["terminal", "list", "--archived"]);
+    assert!(
+        archived
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| { row["id"] == automatic["id"] && row["name"] == replacement["name"] })
+    );
+    assert_eq!(
+        row(&live, replacement["id"].as_u64().unwrap())["name"],
+        automatic["name"]
+    );
+    stop_server(&live);
+}
+
 fn row(live: &Live, id: u64) -> Value {
     json(live, &["terminal", "list"])
         .as_array()
