@@ -485,7 +485,8 @@ impl OuterDashboard {
                 continue;
             };
             if declined_prompt == Some(before.len())
-                || !prompt.contains("[y/n] Enter skips · default n")
+                || !(prompt.contains("[y/n] Enter skips · default n")
+                    || prompt.contains("[y] Connect  [n] Not now"))
             {
                 continue;
             }
@@ -493,8 +494,7 @@ impl OuterDashboard {
             if !matches!(
                 title,
                 Some(
-                    "Claude reporting hooks"
-                        | "Codex reporting hooks"
+                    "Connect agent status"
                         | "Install OVRCR Bridge"
                         | "Repair or update OVRCR Bridge"
                         | "Install OVRCR Local"
@@ -1017,6 +1017,9 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
         |s| s.contains("READY_quick-agent") && s.contains("Terminal mode"),
         wait_deadline(),
     )?;
+    // Ctrl-o in Terminal mode belongs to the program; Ctrl-g then Ctrl-o opens Quick.
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|s| s.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x0f")?;
     dashboard.wait_for_screen(
         |s| s.contains("Quick message") && s.contains("Ctrl-o"),
@@ -1038,9 +1041,11 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |s| !s.contains("Quick message") && s.contains("Terminal mode"),
+        |s| !s.contains("Quick message") && s.contains("BROWSE"),
         wait_deadline(),
     )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(|s| s.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"AFTER_QUICK\r")?;
     dashboard.wait_for(b"RECEIVED_quick-agent_AFTER_QUICK", wait_deadline())?;
     let text = fixture.read_terminal(target.id)?;
@@ -1431,7 +1436,8 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         },
     )?;
     // One input burst also exercises submission while Inspect/Git are pending.
-    dashboard.send(b"\x07wwizard\r")?;
+    // The form opens on Task; two Tabs reach Branch.
+    dashboard.send(b"\x07w\t\twizard\r")?;
     dashboard.wait_until(
         |screen| {
             screen.contains("wizard")
@@ -1501,6 +1507,128 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     dashboard.detach()?;
     fixture.shutdown()?;
     eprintln!("workspace fixture cleanup: owned process groups and socket absent");
+    Ok(())
+}
+
+/// `w`, a task, Enter: the Server creates the branch from the task, then the
+/// first session named after it, and the Dashboard attaches to that session.
+#[test]
+fn workspace_task_names_branch_and_first_session_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    std::fs::write(
+        fixture.config.join("dashboard.toml"),
+        "branch_prefix = \"task/\"\n",
+    )?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"\x07wFix the login bug\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode") && !screen.contains("┌ Create workspace"),
+        Duration::from_secs(5),
+    )?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let hierarchy = fixture.list()?;
+    let workspace = hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == "fixture")
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == "task/fix-the-login-bug")
+        })
+        .context("workspace named after the task missing")?;
+    assert_eq!(workspace.sessions.len(), 1, "{:?}", workspace.sessions);
+    let terminal = &workspace.sessions[0];
+    assert_eq!(terminal.name, "Fix the login bug");
+    // The Terminal start only names the session: the shell got no argument.
+    dashboard.send(b"printf 'TASK_%s\\n' SHELL_OK\r")?;
+    dashboard.wait_until(|screen| screen.contains("TASK_SHELL_OK"), wait_deadline())?;
+    assert!(
+        fixture
+            .read_terminal(terminal.id)?
+            .contains("TASK_SHELL_OK"),
+        "the Dashboard attached to the task's session"
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+/// A disposable agent proves the task remains one literal argv item from the
+/// Dashboard form through the compiled CLI, Server, and PTY launch.
+#[test]
+fn workspace_task_reaches_the_fake_agent_as_one_literal_argument() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let fake_agent = fixture.root.path().join("fake-claude");
+    std::fs::write(
+        &fake_agent,
+        "#!/bin/sh\nprintf 'TASK_ARG_COUNT=%s TASK_ARG1=<%s> TASK_ARG2=<%s>\\n' \"$#\" \"$1\" \"$2\"\nexec /bin/sh\n",
+    )?;
+    std::fs::set_permissions(&fake_agent, std::fs::Permissions::from_mode(0o700))?;
+    std::fs::write(
+        fixture.config.join("dashboard.toml"),
+        format!(
+            r#"branch_prefix = "task/"
+agents = [{{ name = "claude", argv = [{}] }}]
+[launch_choices.fixture]
+kind = "Agent"
+preset = "claude"
+"#,
+            toml::Value::String(fake_agent.to_string_lossy().into_owned())
+        ),
+    )?;
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    // The leading dashes must stay inside the prompt argument.
+    dashboard.send(b"\x07w--help me fix the build\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("TASK_ARG_COUNT=2") && !screen.contains("┌ Create workspace"),
+        Duration::from_secs(10),
+    )?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let hierarchy = fixture.list()?;
+    let workspace = hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == "fixture")
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == "task/help-me-fix-the-build")
+        })
+        .context("workspace named after the task missing")?;
+    assert_eq!(workspace.sessions.len(), 1);
+    let session = &workspace.sessions[0];
+    assert_eq!(session.name, "--help me fix the build");
+    let output = fixture.read_terminal(session.id)?;
+    assert!(
+        output.contains("TASK_ARG_COUNT=2 TASK_ARG1=<--> TASK_ARG2=<--help me fix the build>"),
+        "the fake agent did not receive the task as one argument: {output}"
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
     Ok(())
 }
 
@@ -1594,7 +1722,8 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     dashboard.wait_until(|screen| screen.contains("waiting"), wait_deadline())?;
     dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
-    dashboard.send(b"v")?;
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"\rMOUSE_TOKEN\r")?;
     dashboard.wait_for(b"MOUSE_ACK", wait_deadline())?;
@@ -1624,43 +1753,69 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
             Ok(())
         };
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 120, 40))?;
+    // A split pane header names its session once that pane's screen is ready (`loading`
+    // before). The separator column belongs to the current layout, so a frame left over
+    // from the old size cannot satisfy this.
+    let ready_headers = |screen: &str, cols: u16, rows: u16, focused: usize| -> bool {
+        let lines: Vec<&str> = screen.lines().collect();
+        let cells = |y: u16, x: u16, width: u16| -> String {
+            lines.get(usize::from(y)).map_or_else(String::new, |line| {
+                line.chars()
+                    .skip(usize::from(x))
+                    .take(usize::from(width))
+                    .collect()
+            })
+        };
+        let rects =
+            ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, cols, rows), 2, focused);
+        let separated =
+            rects.len() < 2 || cells(rects[0].metadata.y, rects[0].terminal.right(), 1) == "│";
+        separated
+            && rects.iter().all(|rect| {
+                let prefix = if rect.pane_index == focused {
+                    "> "
+                } else {
+                    "  "
+                };
+                let name = ["waiting", "mouse"][rect.pane_index];
+                cells(rect.metadata.y, rect.metadata.x, rect.metadata.width)
+                    .starts_with(&format!("{prefix}{name}  "))
+            })
+    };
 
     dashboard.resize(30, 100)?;
-    dashboard.wait_for_screen(|screen| screen.contains("> waiting 29x26"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 100, 30, 0), wait_deadline())?;
     dashboard.send(b"SIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_26 29", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for_screen(|screen| screen.contains("> mouse 30x26"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 100, 30, 1), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_26 30", wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("> mouse 30x26") && screen.contains("BROWSE"),
+        |screen| ready_headers(screen, 100, 30, 1) && screen.contains("BROWSE"),
         wait_deadline(),
     )?;
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 100, 30))?;
 
     dashboard.resize(30, 80)?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("split hidden") && screen.contains("> mouse 40x26"),
+        |screen| screen.contains("split hidden") && ready_headers(screen, 80, 30, 1),
         wait_deadline(),
     )?;
     dashboard.resize(40, 120)?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("waiting 39x36") && screen.contains("> mouse 40x36"),
-        wait_deadline(),
-    )?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 120, 40, 1), wait_deadline())?;
     // The metadata rows are the dashboard's own parser state. Ask each pane's
     // shell what the kernel handed its PTY instead of trusting those labels.
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_36 40", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for_screen(|screen| screen.contains("> waiting 39x36"), wait_deadline())?;
+    dashboard.wait_for_screen(|screen| ready_headers(screen, 120, 40, 0), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_36 39", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("> mouse 40x36") && screen.contains("BROWSE"),
+        |screen| ready_headers(screen, 120, 40, 1) && screen.contains("BROWSE"),
         wait_deadline(),
     )?;
     dashboard.send(b"x")?;
@@ -1689,7 +1844,11 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     )?;
     reattached.wait_for_screen(
         |screen| {
-            screen.contains("pid:") && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
+            screen
+                .lines()
+                .nth(1)
+                .is_some_and(|header| header.contains(" pid "))
+                && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
         },
         wait_deadline(),
     )?;
@@ -1698,7 +1857,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
     assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
 
-    reattached.send(b"v")?;
+    reattached.send(b"v\r")?;
     reattached.wait_until(|screen| screen.contains("MOUSE_READY"), wait_deadline())?;
     reattached.send(b"\rMOUSE_TOKEN\r")?;
     reattached.wait_for(b"MOUSE_ACK", wait_deadline())?;
@@ -2242,7 +2401,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
 }
 
 #[test]
-fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
+fn empty_dashboard_welcome_and_events_report_isolated_paths() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     let mut dashboard = OuterDashboard::start(
         &fixture,
@@ -2264,11 +2423,32 @@ fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Welcome to OVRCR")
-                && screen.contains(fixture.config.to_str().unwrap())
-                && screen.contains(fixture.socket.to_str().unwrap())
+                && screen.contains("1  a  Register a repository")
+                && !screen.contains("Socket:")
         },
         wait_deadline(),
     )?;
+    // The instance paths head the Events list. The Dashboard runs with the
+    // fixture root as HOME, so `~` stands for that root.
+    let shown = |label: &str, path: &Path| {
+        let relative = path.strip_prefix(fixture.root.path()).unwrap();
+        format!("{label}: ~/{}", relative.display())
+    };
+    let (home, socket) = (
+        shown("Home", &fixture.config),
+        shown("Socket", &fixture.socket),
+    );
+    dashboard.send(b" ")?;
+    dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
+    dashboard.send(b"v")?;
+    dashboard.wait_for_screen(|screen| screen.contains("e  Events"), wait_deadline())?;
+    dashboard.send(b"e")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains(&home) && screen.contains(&socket),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(|screen| !screen.contains(&socket), wait_deadline())?;
     dashboard.send(b"a")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Repository") && screen.contains("Workspace root"),
@@ -2368,7 +2548,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         },
         wait_deadline(),
     )?;
-    dashboard.send(b" tx")?;
+    dashboard.send(b" tX")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Close terminal?")
@@ -2437,6 +2617,8 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
+    // An unbound F12 clears the startup note without masking an incorrect Terminal mode.
+    reattached.send(b"\x1b[24~")?;
     reattached.wait_for_screen(
         |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("Terminal mode"),
         wait_deadline(),
@@ -2499,7 +2681,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
 
     dashboard.send(b"p")?;
-    dashboard.wait_for(b"paused", wait_deadline())?;
+    dashboard.wait_for(b"Paused", wait_deadline())?;
     let listed = fixture.list()?;
     let waiting = listed
         .projects
@@ -2522,13 +2704,13 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     )?;
     reattached.wait_until(dashboard_header_visible, wait_deadline())?;
     reattached.click_visible_text("waiting")?;
-    reattached.wait_until(|screen| screen.contains("paused"), wait_deadline())?;
+    reattached.wait_until(|screen| screen.contains("Paused"), wait_deadline())?;
     reattached.send(b"r")?;
     reattached.wait_for_screen(
         |screen| {
             dashboard_header_visible(screen)
                 && screen.contains("BROWSE  Space Menu")
-                && !screen.contains("paused")
+                && !screen.contains("Paused")
         },
         wait_deadline(),
     )?;
@@ -2577,7 +2759,7 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
 
     let paused = fixture.cli(&["pause", &id])?;
     require_success(paused, "external pause")?;
-    dashboard.wait_for(b"paused", Duration::from_secs(3))?;
+    dashboard.wait_for(b"Paused", Duration::from_secs(3))?;
 
     let resumed = fixture.cli(&["resume", &id])?;
     require_success(resumed, "external resume")?;
@@ -2585,14 +2767,14 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
         |screen| {
             dashboard_header_visible(screen)
                 && screen.contains("BROWSE  Space Menu")
-                && !screen.contains("paused")
+                && !screen.contains("Paused")
         },
         Duration::from_secs(3),
     )?;
 
     let killed = fixture.cli(&["kill", &id])?;
     require_success(killed, "external kill")?;
-    dashboard.wait_for(b"closed", Duration::from_secs(3))?;
+    dashboard.wait_for(b"Exited", Duration::from_secs(3))?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
@@ -2727,6 +2909,84 @@ fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<
         fixture.socket.display(),
         fixture.managed_pgids
     );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn full_screen_program_history_is_quiet_on_wheel_and_explained_on_page_up() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "feature/acceptance",
+        "--name",
+        "fullscreen",
+        "--",
+        "sh",
+        "-c",
+        "stty -echo; printf '\\033[?1049h\\033[2J\\033[HFULLSCREEN_READY\\n'; IFS= read -r done",
+    ])?;
+    require_success(output, "full-screen session")?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.click_visible_text("fullscreen")?;
+    dashboard.wait_until(
+        |screen| screen.contains("FULLSCREEN_READY"),
+        wait_deadline(),
+    )?;
+    // Terminal mode opens only once the pane's screen is acknowledged, so the History
+    // requests below reach the Server rather than stopping at a loading pane.
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    let pane = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+        .into_iter()
+        .next()
+        .context("focused pane rect")?
+        .terminal;
+
+    // The program asked for no mouse reports: a wheel tick over it does nothing at all.
+    dashboard.send(format!("\x1b[<64;{};{}M", pane.x + 3, pane.y + 4).as_bytes())?;
+    anyhow::ensure!(
+        dashboard
+            .wait_for_screen(
+                |screen| {
+                    screen.contains("ERROR")
+                        || screen.contains("Conflict")
+                        || screen.contains("HISTORY")
+                        || screen.contains("full-screen")
+                },
+                Duration::from_secs(2),
+            )
+            .is_err(),
+        "a wheel tick over a full-screen program opened History or showed a message: {}",
+        dashboard.rendered()
+    );
+
+    // PageUp says why, muted, instead of failing.
+    dashboard.send(b"\x1b[5~")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("History isn't available while fullscreen is full-screen"),
+        wait_deadline(),
+    )?;
+    let screen = dashboard.rendered();
+    for internal in ["ERROR", "Conflict", "alternate screen", "HISTORY"] {
+        anyhow::ensure!(!screen.contains(internal), "{internal} on screen: {screen}");
+    }
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())

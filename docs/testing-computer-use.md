@@ -22,7 +22,7 @@ Read the returned tool documentation before continuing. Then inspect the window:
 await app.getAXStateAndScreenshot();
 ```
 
-Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
+Use fresh accessibility indices or coordinates from the current screenshot. Sidebar row accessibility bounds can span the terminal: click within the visible sidebar or use `j`/`k`. A click that activates the window only focuses it and never reaches the dashboard; click again to act. Request the needed execution permission if local socket, PTY, or GUI access is sandbox-blocked; record a blocked check if access remains unavailable.
 
 ### Driving the window
 
@@ -56,7 +56,7 @@ that, run a second isolated `ovrcr` Dashboard in a fixture shell after
 Select `consigint / gui-consigint-auth-handoff / local`, then press Return to enter terminal mode. Paste this command through the GUI and press Return:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' INPUT_OK
+printf 'CUA_%s\n' INPUT_OK
 ```
 
 Confirm a separate output line containing `CUA_INPUT_OK`; the echoed command alone is insufficient. Inspect both the screenshot and accessibility text for readable rows, correct selection, and overlapping or clipped content. Resize the window and check the layout again. `Ctrl-g` returns to browse mode; `j`/`k` select sessions and Return resumes terminal input.
@@ -64,17 +64,17 @@ Confirm a separate output line containing `CUA_INPUT_OK`; the echoed command alo
 Check Unicode in the same shell:
 
 ```sh
-rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
+printf '\033[31mRED 界🙂 END\033[0m\n'
 ```
 
-Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
+Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, Enter (keeps the suggested session in the new pane), then Enter again to type, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
 Check modified, composed, and dead keys in the same shell. Put the PTY in raw
 mode so the line editor cannot consume the escapes:
 
 ```sh
-rtk proxy stty -icanon -echo min 1
-rtk proxy cat -v
+stty -icanon -echo min 1
+cat -v
 ```
 
 Press Ctrl-Left, Shift-Enter, Alt-Backspace, and Option-b. Confirm `^[[1;5D`,
@@ -93,7 +93,7 @@ either the composition is correct for this helper or `option_as_alt` must be set
 Press Ctrl-C, then restore the shell:
 
 ```sh
-rtk proxy stty sane
+stty sane
 ```
 
 At the restored prompt, select a CJK input method and type a composition (with
@@ -120,46 +120,87 @@ list above the footer, with the surrounding dashboard still visible. Press
 `Space t`. Press Backspace and confirm the group list returns. Press Escape,
 then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
 running session and Resume is absent. Disabled actions should show a reason.
-Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
+Press Backspace, then `w`, then `X`; confirm the workspace picker highlights
 the selected `consigint / gui-consigint-auth-handoff` and omits the
 repository-root workspace. Type to filter to a different workspace, then press Enter; confirmation must name the chosen target.
-Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
-terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
+When that workspace has running sessions, the confirmation names them by title
+and offers to stop them before removing it, with no Force wording.
+Escape cancels. Repeat with `Space p X` for projects, then `Space t X` for direct
+terminal-close confirmation, cancelling both; confirm lowercase `x` in `Space t`,
+`Space w` and `Space p` does nothing. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
-confirm `Space` shows only their applicable groups. Resize the window and scroll to
+confirm `Space` shows only their applicable groups. The pane must show a card,
+never a blank screen: the project card lists the repository path and each
+workspace with its session count; with a workspace selected the pane header
+names `project / branch` and the card shows the `~` path, its sessions with
+status, title, agent and state, and the next keys. Narrow the window to 80
+columns and confirm each session row still ends with its state and age. With a workspace selected, press `j` and confirm it opens the session the
+card's `j open …` line names. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
+Confirm the Space group list holds only the groups, Register project and Detach,
+with no notification or sound toggles.
+Press `:` and type `theme`; confirm a `Settings: Theme` row with
+`Appearance · theme` below it, press Return, and confirm Settings opens on the
+Theme row; press Escape. In the unfiltered palette confirm session rows read
+`project / branch / title` and that Take control, Resume and Mark reviewed are
+absent while they cannot run. Press `v`; confirm the second pane opens behind a
+`New pane · choose its session` list that highlights its session and omits the
+left pane's session. Type part of another session's branch, press Return, and
+confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the Operator
+view closes at once, the terminal panes return and the footer reads
+`BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the draft remains,
+and press `Ctrl-g` again. Click another application, then click a running
+terminal pane once: the footer must stay BROWSE; a second click focuses the pane
+for typing.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
 On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' N_SHELL_OK
+printf 'CUA_%s\n' N_SHELL_OK
 ```
 
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
 
-Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field.
-Branch starts as `feature/` and is focused; typing appends. Type
+Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field and
+the form opens on an empty Task above Project. Branch starts as `feature/`. Press
+Enter before typing: nothing is created, the focus moves to Branch, `Add a name
+after feature/` shows under it, and the footer lists only keys that work there (`Ctrl-u clear · Tab/Shift-Tab fields
+· Enter create · Esc cancel`). Type
 `cua-workspace` so Branch reads `feature/cua-workspace`. Base shows the
-repository's default branch once suggestions finish loading. Choose Start:
-Terminal. Enter on Branch submits. Confirm a single new terminal is selected
+repository's default branch once suggestions finish loading. Tab to Start and
+press Up or Down until the title reads `Start: Terminal`; the value changes
+without Tab or Enter. Press Enter there: Enter submits from any field. Confirm a
+single new terminal is selected
 in terminal mode under `feature/cua-workspace`. Paste and execute:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' W_SHELL_OK
+printf 'CUA_%s\n' W_SHELL_OK
 ```
 
-Confirm a separate `CUA_W_SHELL_OK` output line. Record this shell's PID and
+Confirm a separate `CUA_W_SHELL_OK` output line. Run `pwd` and confirm it ends in
+`/feature-cua-workspace`, the folder named after the branch (`-2`, `-3`, … when a
+folder of that name already exists), not a 32-character hex ID. Record this shell's PID and
 process group with the other fixture processes before cleanup. Return to
 `consigint / gui-consigint-auth-handoff / local` for the checks below.
 
-Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
+Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Press Tab once more: focus moves to Name instead of descending into the checkout. Escape without submitting if this run should not register a project; otherwise one Enter registers it.
+
+For the first run, start a second Dashboard with its own empty `OVRCR_HOME` and
+`OVRCR_SOCKET` in a fixture shell, as `nested-ladder.sh` does. Confirm the
+welcome card shows `1  a  Register a repository`, `2  w  Start an agent in a new
+workspace` and `Space actions · : commands · ? keys`, and no Home or Socket
+path. Press `Space v e` and confirm `Home:` and `Socket:` head the Events list
+and name that fixture's directories. Escape, register a disposable repository
+with `a`, and confirm the pane then shows its project card leading with
+`Next: press w to start your first agent`.
 
 ### Workspace launch and titles
 
 In the disposable fixture, also verify:
 
-1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions.
+1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions,
+   and that its card says `No sessions yet` and offers `n new agent or terminal here`.
 2. Create a workspace with Terminal and a custom command that prints a unique
    marker and waits for input. Confirm exactly one session and its actual output.
 3. In that session emit `printf '\033]2;CUA title 界\007'` followed by a unique
@@ -171,7 +212,8 @@ In the disposable fixture, also verify:
 5. Give two sessions the same manual title and confirm their visible identifiers
    distinguish them. Confirm both still receive input in the intended pane.
 6. Exercise an owned failing launch after workspace creation. Confirm the
-   workspace remains and recovery starts a program there without recreating it.
+   workspace remains, the form turns into Retry / Choose another agent / Open
+   shell, and recovery starts a program there without recreating it.
 7. Exercise Agent using a disposable configured preset, recording that this proves
    the launch UI only, not provider reporting. Verify its project preference after
    dashboard restart. Verify Terminal custom command text is absent from settings.
@@ -182,18 +224,40 @@ In the disposable fixture, also verify:
    execution marker. An older capture without this acknowledgement is not
    evidence for the current recovery policy.
 9. Select the `feature/cua-workspace` session created above, then run
-   `rtk proxy git checkout -b cua-switched`. Confirm the workspace row becomes
+   `git checkout -b cua-switched`. Confirm the workspace row becomes
    `cua-switched` without replacing that session. Paste a unique printf in the
    same shell and confirm its output. The old branch label must not remain as
    that workspace's name.
 10. Select consigint's root workspace (`main` with the root marker). From there,
-    `w` then `x` must be unavailable (`repository-root workspace cannot be
-    removed`). In its `local` shell, run `rtk proxy git checkout -b cua-root-drift`.
+    `w` then `X` must be unavailable (`repository-root workspace cannot be
+    removed`). In its `local` shell, run `git checkout -b cua-root-drift`.
     Confirm the root warning, that `n` is unavailable (`root workspace is not on
     the default branch`), and that the existing shell still accepts a unique
     printf. Repeat the removal check while drifted. Restore with
-    `rtk proxy git checkout main`, confirm `n` is available again, and leave
+    `git checkout main`, confirm `n` is available again, and leave
     the root on `main`.
+11. Press `w`, keep Branch mode `new` and name an existing branch (for example
+    `feature/cua-workspace` again). Confirm the form returns with the typed values
+    and `Couldn't create the workspace: a branch named … already exists`, with no
+    error code, internal id, or failed sidebar row. Escape.
+12. Remove a disposable workspace that has a running shell. Confirm the
+    confirmation names the session by title and offers to stop it; confirm, then
+    verify the shell's process group is gone and the workspace row disappears.
+    No Force dialog appears at any point.
+13. New task in one step, without a paid agent: add a disposable preset named
+    `claude` whose argv prints its arguments and then waits, for example
+    `["/bin/sh", "-c", "printf 'CUA_ARGS[%s]' \"$@\"; echo; exec /bin/sh", "fake"]`,
+    and select it as the project's agent. Press `w` and type
+    `CUA task one` into Task. Confirm Branch follows as `feature/cua-task-one`
+    and the footer reads `Names the branch and session; claude gets it as its
+    first message`. Edit Branch, then edit Task again: Branch keeps your edit.
+    Press Enter. Confirm one new session titled `CUA task one` and the output
+    line `CUA_ARGS[--]CUA_ARGS[CUA task one]`. Do not Reopen it: Reopen of an
+    Agent named `claude` types the installed `claude --resume` (that the task is
+    never resent is covered by `retained_sessions`). Confirm the settings file's
+    `launch_choices` entry names only `claude`, never the task. Repeat with
+    `n` and a preset named `hermes`: the footer reads `Only names the session;
+    hermes starts without it` and the output shows no task.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm
@@ -245,6 +309,36 @@ Check duplicate titles, compact selected location and offscreen filtering at the
 fifty-session limit. Preserve screenshots, accessibility text and destination
 acknowledgements; opening or selecting must not clear Unread or resolve Input.
 
+### Who needs you
+
+Publish fixture observations the same way: one Waiting Input and two Unread
+responses, one of them inside a folded workspace. Confirm the line above the
+quota line reads `? 1 needs input · ✓ 2 ready` and the Browse footer ends with
+`i Next input needed`. Press `i` repeatedly: selection and the focused pane go
+to the waiting session first, then each unread one in sidebar order, unfolding
+the folded workspace, and wrap. Clicking the line does the same. On an unread
+session, confirm viewing it and pressing Enter leave the `✓`; type one
+character and confirm the `✓` and the line's ready count drop without `R`. Any
+key sent to the session counts as a reply, arrows and Esc included. Let a session
+become ready while the pointer rests on a tree row and confirm no row moves.
+Click the quota line at the bottom of the sidebar and confirm the quota details
+open. Shorten the window: the quota line hides first, then the attention line,
+and the tree keeps three lines under the OPERATOR heading. Keep screenshots and
+accessibility text for each outcome.
+
+### Pane header
+
+Select a root shell: the pane header reads `local  shell · <elapsed>` with the pid
+muted at the far right, and no `agent unknown`, `pid:` or `elapsed:` field. Select a
+fixture agent: its title, `agent:model`, the state in words (`Working`, `Ready`,
+`Waiting for input`, `Idle`) and the elapsed time; the second line shows `ctx`,
+tokens and cost when the fixture reports them, and never repeats the title. A
+just-launched agent says `starting…` until its first report; a reporter lost after
+that says `status off`, never its reason or `observed`/`confirmed`. Narrow the window
+until the header clips: the pid goes first, then the model, the elapsed time and the
+agent label, while the state stays readable. An Unread reply reads `Ready · unread
+reply`, and a narrow split pane still says `Unread`.
+
 ## 3. Mouse forwarding and wheel history
 
 ### Dashboard controls
@@ -253,12 +347,13 @@ Run these checks with the mouse for navigation; use the keyboard only to enter
 text. Save a screenshot and accessibility text after each changed view. Repeat
 the form and menu checks in a short window to exercise scrolling and clipping.
 
-1. Open the action menu with its visible control and open a second terminal pane.
-   Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
-   `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
+1. Open the action menu with its visible control and open a second terminal pane;
+   press Return in the chooser that opens to keep the suggested session.
+   Click each pane and run `printf 'MOUSE_%s\n' LEFT_OK` or
+   `printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.
 2. Drag the sidebar border and confirm the pane narrows and widens with it.
-   Drag the divider left and right. In each pane run `rtk proxy stty size` and
+   Drag the divider left and right. In each pane run `stty size` and
    compare the reported columns with the drawn terminal width. Make the window
    too narrow for both panes, widen it again, and confirm assignments and the
    chosen split survive. Release the drag outside the terminal and confirm the
@@ -293,19 +388,32 @@ OSC52 when the GUI helper cannot deliver it.
 
 ### Application forwarding
 
-Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
+Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Each further wheel-up tick moves the header's `row a-b` up three rows. Wheel down at the newest row returns to the live prompt.
 
-In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History (alternate screen). Quit Vim before repeating the plain-shell History check.
+In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History and must show no error (alternate screen); PageUp then shows the muted footer line `History isn't available while <title> is full-screen`, without `ERROR:` or `Conflict`. Quit Vim before repeating the plain-shell History check.
 
 Computer-use tools often cannot hold a mouse button across Ctrl-g. Skip that gesture here; the TUI test `ctrl_g_releases_held_buttons_before_switching` covers it.
+
+### Full-screen agent Transcript
+
+Use a task-owned synthetic Claude/Codex conversation fixture, never a paid turn just
+to populate this check. Record its accepted conversation reference and private source
+file. With its program on the alternate screen, press PageUp and confirm Transcript
+shows the synthetic user prompt, assistant reply and tool name/input. Check wheel-up
+also opens it. Scroll with keys and the wheel, use End to reload the tail, and close
+with Esc. While loading and open, type, paste and click over the terminal: no input
+may reach the program. After closing, send a unique marker and confirm its separate
+acknowledgement. Keep source bytes unchanged, matching screenshots/AX, and the fixture
+process groups for cleanup. A plain full-screen program without a recorded supported
+conversation still gives PageUp's muted explanation and leaves wheel-up quiet.
 
 ## 4. Exercise CLI controls through the GUI
 
 First inspect each inherited path separately; macOS `printenv` accepts one name:
 
 ```sh
-rtk proxy printenv OVRCR_CONFIG
-rtk proxy printenv OVRCR_SOCKET
+printenv OVRCR_CONFIG
+printenv OVRCR_SOCKET
 ```
 
 Confirm both paths belong to this launch's disposable directory, ending in `config.toml` and `server.sock`. Stop if either is missing or points elsewhere. Do not try a config-only CLI command: config selection does not select the server socket.
@@ -314,13 +422,13 @@ In that same shell, replace the binary path below with this checkout's absolute 
 
 ```sh
 c=/absolute/checkout/target/debug/ovrcr
-rtk proxy "$c" project get consigint --json
-rtk proxy "$c" workspace get --project consigint --branch gui-consigint-auth-handoff --json
-rtk proxy "$c" terminal list --json
-t=$(rtk proxy "$c" terminal create --project consigint --workspace gui-consigint-auth-handoff --name cua-check -- /bin/sh)
-rtk proxy "$c" terminal list --json
-rtk proxy "$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
-rtk proxy "$c" terminal read "$t" --json
+"$c" project get consigint --json
+"$c" workspace get --project consigint --branch gui-consigint-auth-handoff --json
+"$c" terminal list --json
+t=$("$c" terminal create --project consigint --workspace gui-consigint-auth-handoff --name cua-check -- /bin/sh)
+"$c" terminal list --json
+"$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
+"$c" terminal read "$t" --json
 ```
 
 Confirm the new sidebar row and `CUA_BACKGROUND_OK` in the read result. The original terminal must remain selected. If output has not arrived, read again after observing progress. Reads contain the current screen only.
@@ -330,7 +438,7 @@ Use `Ctrl-g`, select `cua-check`, and press Return. Confirm the marker in its vi
 Return to the original `local` shell, where `$c` and `$t` are still set:
 
 ```sh
-rtk proxy "$c" terminal close "$t" --json
+"$c" terminal close "$t" --json
 ```
 
 Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell can take several seconds.

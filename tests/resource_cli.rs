@@ -148,7 +148,16 @@ fn workspace_json_discovers_stable_id_distinct_from_checkout_branch() {
     assert_eq!(selected, *listed);
     assert_eq!(selected["name"], "feature/demo");
     assert_eq!(selected["project"], "fixture");
+    assert!(
+        id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{id}"
+    );
     let path = selected["path"].as_str().unwrap();
+    assert_eq!(
+        std::path::Path::new(path),
+        fixture.workspace_root.join("feature-demo"),
+        "the folder is named after the branch, not the id"
+    );
     live::git(
         std::path::Path::new(path),
         &["switch", "-c", "feature/renamed"],
@@ -168,6 +177,37 @@ fn workspace_json_discovers_stable_id_distinct_from_checkout_branch() {
             .iter()
             .any(|workspace| { workspace["id"] == id && workspace["branch"] == "feature/renamed" })
     );
+    // The renamed checkout keeps its folder, so another branch with that slug gets the next one.
+    fixture.ok(&[
+        "workspace",
+        "create",
+        "--project",
+        "fixture",
+        "--new-branch",
+        "feature.demo",
+        "--base",
+        "main",
+    ]);
+    let sibling = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--branch",
+        "feature.demo",
+    ]);
+    let sibling_path = fixture.workspace_root.join("feature-demo-2");
+    assert_eq!(sibling["path"], sibling_path.to_str().unwrap());
+    fixture.ok(&[
+        "workspace",
+        "remove",
+        "--project",
+        "fixture",
+        "--branch",
+        "feature.demo",
+    ]);
+    assert!(!sibling_path.exists());
+    assert!(std::path::Path::new(path).is_dir());
 }
 
 #[test]

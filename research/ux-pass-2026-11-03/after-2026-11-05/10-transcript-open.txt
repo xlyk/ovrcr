@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ O┌Transcript · CUA synthetic transcript · ↑↓ scroll · Home/End · Esc close────────────────────────────────────────────────────────────────────────────────────────┐07
+ C│❯ CUA synthetic transcript                                                                                                                                      │
+  │  TRANS
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+		4 text (settable)  O┌Transcript · CUA synthetic transcript · ↑↓ scroll · Home/End · Esc close────────────────────────────────────────────────────────────────────────────────────────┐07
+		5 text (settable)  C│❯ CUA synthetic transcript                                                                                                                                      │
+		6 text (settable)   │  TRANSCRIPT_NATIVE_REPLY: only synthetic fixture content.                                                                                                      │
+		7 text (settable)   │  ● Read  /fixture/example.rs                                                                                                                                   │
+		8 text (settable)   │                                                                                                                                                                │
+		9 text (settable)   │                                                                                                                                                                │
+		10 text (settable) ▌ │                                                                                                                                                                │
+		11 text (settable)   │                                                                                                                                                                │
+		12 text (settable)   │                                                                                                                                                                │
+		13 text (settable)   │                                                                                                                                                                │
+		14 text (settable)   │                                                                                                                                                                │
+		15 text (settable)   │                                                                                                                                                                │
+		16 text (settable)   │                                                                                                                                                                │
+		17 text (settable)   │                                                                                                                                                                │
+		18 text (settable)   │                                                                                                                                                                │
+		19 text (settable)   │                                                                                                                                                                │
+		20 text (settable)  S│                                                                                                                                                                │
+		21 text (settable)   │                                                                                                                                                                │
+		22 text (settable)   │                                                                                                                                                                │
+		23 text (settable)   │                                                                                                                                                                │
+		24 text (settable)   │                                                                                                                                                                │
+		25 text (settable)   │                                                                                                                                                                │
+		26 text (settable)   │                                                                                                                                                                │
+		27 text (settable)   │                                                                                                                                                                │
+		28 text (settable)   │                                                                                                                                                                │
+		29 text (settable)   │                                                                                                                                                                │
+		30 text (settable)   │                                                                                                                                                                │
+		31 text (settable)   │                                                                                                                                                                │
+		32 text (settable)   │                                                                                                                                                                │
+		33 text (settable)   │                                                                                                                                                                │
+		34 text (settable)   │                                                                                                                                                                │
+		35 text (settable)   │                                                                                                                                                                │
+		36 text (settable)   │                                                                                                                                                                │
+		37 text (settable)   │                                                                                                                                                                │
+		38 text (settable)   │                                                                                                                                                                │
+		39 text (settable)   │                                                                                                                                                                │
+		40 text (settable)   │                                                                                                                                                                │
+		41 text (settable)   │                                                                                                                                                                │
+		42 text (settable)   │                                                                                                                                                                │
+		43 text (settable)   │                                                                                                                                                                │
+		44 text (settable)   │                                                                                                                                                                │
+		45 text (settable)   │                                                                                                                                                                │
+		46 text (settable)   │                                                                                                                                                                │
+		47 text (settable)   │                                                                                                                                                                │
+		48 text (settable)   │                                                                                                                                                                │
+		49 text (settable)   │                                                                                                                                                                │
+		50 text (settable)   │                                                                                                                                                                │
+		51 text (settable)   │                                                                                                                                                                │
+		52 text (settable)   │                                                                                                                                                                │
+		53 text (settable)   │                                                                                                                                                                │
+		54 text (settable)   │                                                                                                                                                                │
+		55 text (settable)   │                                                                                                                                                                │
+		56 text (settable)   │                                                                                                                                                                │
+		57 text (settable)   │                                                                                                                                                                │
+		58 text (settable)   │                                                                                                                                                                │
+		59 text (settable)   │                                                                                                                                                                │
+		60 text (settable)   │                                                                                                                                                                │
+		61 text (settable)   │                                                                                                                                                                │
+		62 text (settable)   │                                                                                                                                                                │
+		63 text (settable)   │                                                                                                                                                                │
+		64 text (settable)   │                                                                                                                                                                │
+		65 text (settable)   │                                                                                                                                                                │
+		66 text (settable)   │                                                                                                                                                                │
+		67 text (settable)   │                                                                                                                                                                │
+		68 text (settable)   │                                                                                                                                                                │
+		69 text (settable)   │                                                                                                                                                                │
+		70 text (settable)  ✓│                                                                                                                                                                │
+		71 text (settable)  C└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+		72 text (settable) BROWSE  Space Menu  : Commands  ? Help  i Next ready
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ O┌Transcript · CUA synthetic transcript · ↑↓ scroll · Home/End · Esc close────────────────────────────────────────────────────────────────────────────────────────┐07
+ C│❯ CUA synthetic transcript                                                                                                                                      │
+  │  TRANS

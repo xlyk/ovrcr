@@ -1,5 +1,7 @@
 mod agents;
 mod assignment_control;
+mod attention;
+mod cards;
 mod copy;
 mod desktop;
 mod event_loop;
@@ -27,6 +29,7 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 pub(crate) mod text_cursor;
+mod transcript;
 mod unread;
 mod view_handshake;
 mod whichkey;
@@ -130,6 +133,7 @@ impl PaneState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SidebarRects {
+    pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
     pub quota: Rect,
@@ -266,6 +270,7 @@ pub struct Dashboard {
     quotas: Option<crate::protocol::QuotaSnapshot>,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
+    transcript: transcript::View,
     /// The Server's latest settings reading; `settings` is its typed half.
     settings_report: Option<Box<crate::protocol::SettingsReport>>,
     settings_editor: settings_editor::Editor,
@@ -294,6 +299,12 @@ pub struct Dashboard {
     /// Whether the banner in `error` was written by a refused view, which is the only writer a
     /// successful view completion is allowed to clear. `set_error` releases it.
     error_owned_by_view: bool,
+    /// The banner in `error` is an expected limit (`Pane is loading; retry history`), not a
+    /// failure: it reads muted, without the `ERROR:` marker.
+    error_is_limit: bool,
+    /// When the banner's clock started: when a limit went up, or the first key press after a
+    /// failure did. It clears itself `state::BANNER_LIFETIME` later.
+    error_since: Option<std::time::Instant>,
     copy: Option<CopySelection>,
     copy_notice: Option<String>,
     history: Option<HistoryView>,
@@ -314,6 +325,9 @@ pub struct Dashboard {
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Set while startup left agent status off: the palette offers Connect agent status,
+    /// and the startup note it retires once connecting succeeds.
+    connect_status: Option<(crate::ConnectStatusFn, String)>,
     history_page_error: bool,
     /// Requests waiting for the event loop's next drain.
     outbox: outbox::Outbox,
@@ -327,11 +341,14 @@ pub struct Dashboard {
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
+    /// Ids of terminal input requests in flight: their refusal (input not admitted) is a limit.
+    input_requests: HashSet<u64>,
     /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.
     provisional: Option<lifecycle_ui::Provisional>,
-    /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses this only.
+    /// Bottom status strip for Lifecycle progress / soft refuse; Esc dismisses it,
+    /// with a failed Provisional row when there is one.
     lifecycle_strip: Option<String>,
     /// Remembered launch choice held across Provisional wait until CreatedSession completes.
     lifecycle_preference: Option<(String, settings::LaunchChoice)>,

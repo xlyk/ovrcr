@@ -2,16 +2,26 @@
 
 use super::{Dashboard, DashboardAction, TreeRow};
 use crate::protocol::{
-    ErrorCode, LifecycleOp, LifecycleOutcome, Request, ServerEvent, SessionId, SessionKind,
+    ClientMessage, ErrorCode, LifecycleOp, LifecycleOutcome, Request, ServerEvent, SessionId,
+    SessionKind,
 };
 use crate::session::SessionSummary;
 
+/// The Server runs one create, remove or close at a time.
+pub(super) const BUSY: &str =
+    "Another create, remove or close is still running; try again when it finishes";
+
 /// Fiction until the Server completes the Lifecycle job or a failed row is dismissed.
-#[derive(Clone, Debug)]
 pub(super) struct Provisional {
     pub token: u64,
     pub kind: ProvisionalKind,
     pub failed: Option<(ErrorCode, String)>,
+    /// The form or confirmation that submitted the job, out of view while it
+    /// runs; a failure brings it back with the person's values.
+    pub form: Option<Box<super::palette::Palette>>,
+    /// Requests to send after this job succeeds, in order: the rest of a
+    /// workspace removal that first stops its running sessions.
+    pub then: Vec<Request>,
 }
 
 #[derive(Clone, Debug)]
@@ -20,6 +30,9 @@ pub(super) enum ProvisionalKind {
         project: String,
         id: String,
         label: String,
+        /// A first program was requested, so an empty workspace is not done:
+        /// its launch may still fail.
+        launch: bool,
     },
     RemovingWorkspace {
         project: String,
@@ -74,16 +87,18 @@ impl Provisional {
                 project: project.clone(),
                 id: id.clone(),
                 label: branch_label(branch),
+                launch: false,
             },
             Request::CreateWorkspaceWithLaunch {
                 project,
                 id,
                 branch,
-                ..
+                launch,
             } => ProvisionalKind::CreatingWorkspace {
                 project: project.clone(),
                 id: id.clone(),
                 label: branch_label(branch),
+                launch: launch.is_some(),
             },
             Request::RemoveWorkspace { project, name, .. } => ProvisionalKind::RemovingWorkspace {
                 project: project.clone(),
@@ -105,12 +120,22 @@ impl Provisional {
             token,
             kind,
             failed: None,
+            form: None,
+            then: Vec::new(),
         })
     }
 
+    /// Short enough that a narrow sidebar never clips the way to dismiss it;
+    /// the strip names the target and the reason.
     pub(super) fn row_label(&self) -> String {
-        if let Some((_, message)) = &self.failed {
-            return format!("Failed: {message}");
+        if self.failed.is_some() {
+            let what = match &self.kind {
+                ProvisionalKind::CreatingWorkspace { .. } => "Not created",
+                ProvisionalKind::RemovingWorkspace { .. } => "Remove failed",
+                ProvisionalKind::CreatingSession { .. } => "Not started",
+                ProvisionalKind::ClosingSession { .. } => "Close failed",
+            };
+            return format!("{what} · Esc dismiss");
         }
         match &self.kind {
             ProvisionalKind::CreatingWorkspace { label, .. } => format!("Creating… {label}"),
@@ -180,19 +205,26 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    /// Hierarchy may land before LifecycleCompleted. Only auto-attach empty workspaces;
-    /// WithLaunch waits for CreatedSession so we do not drop the Provisional early.
+    /// Hierarchy may land before LifecycleCompleted. Only auto-attach empty workspaces
+    /// nothing was asked to start in; a requested launch waits for CreatedSession or
+    /// its failure, so a launch that failed after creation is not dropped unseen.
     pub(super) fn try_attach_lifecycle_workspace_from_hierarchy(
         &mut self,
     ) -> Option<DashboardAction> {
         let Some(row) = &self.provisional else {
             return None;
         };
-        let ProvisionalKind::CreatingWorkspace { project, id, .. } = &row.kind else {
+        let ProvisionalKind::CreatingWorkspace {
+            project,
+            id,
+            launch,
+            ..
+        } = &row.kind
+        else {
             return None;
         };
         let workspace = super::state::find_workspace(self, project, id)?;
-        let ready = workspace.sessions.is_empty()
+        let ready = (workspace.sessions.is_empty() && !launch)
             || workspace.sessions.iter().any(|session| {
                 session.name == "local" && session.phase == crate::session::SessionPhase::Running
             });
@@ -221,7 +253,7 @@ impl Dashboard {
                 Some(DashboardAction::Redraw)
             }
             ProvisionalKind::RemovingWorkspace { .. } | ProvisionalKind::ClosingSession { .. } => {
-                self.lifecycle_strip = Some("a lifecycle job is already running".into());
+                self.lifecycle_strip = Some(BUSY.into());
                 Some(DashboardAction::Redraw)
             }
         }
@@ -243,21 +275,19 @@ impl Dashboard {
     /// Accept response for a Lifecycle job: show the Provisional row and strip.
     /// If HierarchyChanged already landed, attach immediately (either-order).
     pub(super) fn accept_lifecycle_job(&mut self, token: u64) -> Option<DashboardAction> {
-        let row = self.lifecycle_pending.take()?;
+        let mut row = self.lifecycle_pending.take()?;
         if row.token != token {
             self.lifecycle_pending = Some(row);
             return None;
         }
-        // Keep the launch preference across the Provisional wait so success can
-        // still ask the Server to remember it (palette closes on accept).
-        let preference = self
-            .palette
-            .as_mut()
-            .and_then(|palette| palette.launch_preference.take());
-        self.lifecycle_preference = preference;
+        // The submitting palette closes on accept and keeps its launch
+        // preference, so success can still ask the Server to remember it. A
+        // later removal step carries the form it already took.
+        if let Some(form) = self.take_palette_for_job(token) {
+            row.form = Some(form);
+        }
         self.lifecycle_strip = Some(row.kind.strip_message());
         self.provisional = Some(row);
-        self.palette = None;
         self.try_attach_lifecycle_workspace_from_hierarchy()
     }
 
@@ -266,8 +296,16 @@ impl Dashboard {
         self.lifecycle_strip = Some(message);
     }
 
+    /// Esc on the strip. After a failure the strip and its row go together.
     pub(super) fn dismiss_lifecycle_strip(&mut self) -> bool {
-        self.lifecycle_strip.take().is_some()
+        let failed = self
+            .provisional
+            .as_ref()
+            .is_some_and(|row| row.failed.is_some());
+        if failed {
+            self.provisional = None;
+        }
+        self.lifecycle_strip.take().is_some() || failed
     }
 
     pub(super) fn dismiss_failed_provisional(&mut self) -> bool {
@@ -320,6 +358,9 @@ impl Dashboard {
                     return DashboardAction::None;
                 }
                 self.lifecycle_strip = None;
+                if !row.then.is_empty() {
+                    return self.next_lifecycle_step(row);
+                }
                 match &row.kind {
                     ProvisionalKind::CreatingWorkspace { project, id, .. } => {
                         let project = project.clone();
@@ -338,30 +379,91 @@ impl Dashboard {
                 }
             }
             LifecycleOutcome::Failed { code, message } => {
-                let Some(mut row) = self.provisional.take() else {
+                let Some(row) = self.provisional.take() else {
                     return DashboardAction::Redraw;
                 };
                 if row.token != client_token {
                     self.provisional = Some(row);
                     return DashboardAction::None;
                 }
-                // Preserve the sync remove UX: DirtyWorktree / SessionsRemain reopen as force.
-                if let ProvisionalKind::RemovingWorkspace { project, id } = &row.kind
-                    && matches!(code, ErrorCode::DirtyWorktree | ErrorCode::SessionsRemain)
-                {
-                    let project = project.clone();
-                    let id = id.clone();
-                    self.lifecycle_strip = Some(format!("{code:?}: {message}"));
-                    self.open_forced_remove_workspace(project, id, code, message);
-                    return DashboardAction::Redraw;
-                }
-                self.lifecycle_preference = None;
-                row.failed = Some((code.clone(), message.clone()));
-                self.lifecycle_strip = Some(format!("{code:?}: {message}"));
-                self.provisional = Some(row);
+                self.fail_lifecycle_job(row, code, message);
                 DashboardAction::Redraw
             }
         }
+    }
+
+    /// Sends the next request of a removal that stops sessions first. The new
+    /// job inherits the confirmation and the steps still to come.
+    fn next_lifecycle_step(&mut self, row: Provisional) -> DashboardAction {
+        let Provisional { form, mut then, .. } = row;
+        let request = then.remove(0);
+        let request_id = self.next_request_id();
+        self.begin_lifecycle_pending(request_id, &request);
+        if let Some(next) = self.lifecycle_pending.as_mut() {
+            next.form = form;
+            next.then = then;
+        }
+        self.push_request(ClientMessage {
+            request_id,
+            request,
+        });
+        DashboardAction::Redraw
+    }
+
+    /// A refused or failed job returns to the form that sent it, values kept,
+    /// with no failed row left behind. Only when that form cannot come back
+    /// without taking keys meant for something else does a failed row stay,
+    /// and the strip says how to dismiss it.
+    pub(super) fn fail_lifecycle_job(
+        &mut self,
+        mut row: Provisional,
+        code: ErrorCode,
+        message: String,
+    ) {
+        self.lifecycle_preference = None;
+        self.lifecycle_strip = None;
+        if self.can_return_to_form()
+            && let Some(form) = row.form.take()
+        {
+            // A session the removal had to stop is the one that refused.
+            let stopping = match (&row.kind, row.then.is_empty()) {
+                (ProvisionalKind::ClosingSession { session }, false) => Some(*session),
+                _ => None,
+            };
+            // A task's session follows its new workspace as a second job.
+            let after_workspace = matches!(row.kind, ProvisionalKind::CreatingSession { .. })
+                && form.creates_workspace();
+            self.return_to_form(form, row.token, stopping, after_workspace, code, message);
+            return;
+        }
+        let created = match &row.kind {
+            ProvisionalKind::CreatingWorkspace {
+                project, id, label, ..
+            } => Some((project.clone(), id.clone(), label.clone())),
+            _ => None,
+        };
+        let what = match &row.kind {
+            ProvisionalKind::CreatingWorkspace { .. } => "Couldn't create the workspace".to_owned(),
+            ProvisionalKind::CreatingSession { .. } => "Couldn't start the session".to_owned(),
+            ProvisionalKind::RemovingWorkspace { project, id } => {
+                let name = super::state::find_workspace(self, project, id)
+                    .map(|workspace| super::state::workspace_heading(self, workspace))
+                    .unwrap_or_else(|| "the workspace".into());
+                format!("Couldn't remove {name}")
+            }
+            ProvisionalKind::ClosingSession { session } => {
+                let name = super::state::find_session(self, *session)
+                    .map(|session| session.display_name().to_owned())
+                    .unwrap_or_else(|| format!("#{}", session.0));
+                format!("Couldn't close {name}")
+            }
+        };
+        let reason = self.plain_reason(&message, created);
+        self.lifecycle_strip = Some(format!("{what}: {reason} · Esc dismiss"));
+        row.form = None;
+        row.then.clear();
+        row.failed = Some((code, message));
+        self.provisional = Some(row);
     }
 
     fn select_created_session(&mut self, session: SessionSummary) -> DashboardAction {
@@ -495,8 +597,11 @@ mod tests {
         assert!(row.row_label().contains("feature/x"));
     }
 
+    /// Esc hides only the strip while a job runs. After a failure with no form
+    /// to return to, the row and strip both say "Esc dismiss" and one Esc
+    /// clears both.
     #[test]
-    fn esc_dismisses_strip_then_failed_provisional() {
+    fn one_esc_dismisses_a_failed_row_with_its_strip() {
         let mut d =
             crate::dashboard::Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
         d.begin_lifecycle_pending(
@@ -515,7 +620,7 @@ mod tests {
         assert!(d.provisional.is_some());
         assert!(d.dismiss_lifecycle_strip());
         assert!(d.lifecycle_strip.is_none());
-        assert!(d.provisional.is_some());
+        assert!(d.provisional.is_some(), "a running job keeps its row");
         d.on_lifecycle_completed(
             3,
             LifecycleOp::CreateSession,
@@ -524,10 +629,17 @@ mod tests {
                 message: "boom".into(),
             },
         );
-        assert!(d.provisional.as_ref().unwrap().failed.is_some());
+        let row = d.provisional.as_ref().unwrap();
+        assert!(row.failed.is_some());
+        assert_eq!(row.row_label(), "Not started · Esc dismiss");
+        assert_eq!(
+            d.lifecycle_strip.as_deref(),
+            Some("Couldn't start the session: boom · Esc dismiss")
+        );
         assert!(d.dismiss_lifecycle_strip());
-        assert!(d.dismiss_failed_provisional());
         assert!(d.provisional.is_none());
+        assert!(d.lifecycle_strip.is_none());
+        assert!(!d.dismiss_failed_provisional());
     }
 
     #[test]

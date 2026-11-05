@@ -25,8 +25,10 @@ Use the global `--json` flag for status, models or logout, for example
 
 ## Run concurrent conversations
 
-Press `Ctrl-o` from any Dashboard view, including a terminal, Tasks or another
-dialog, to open **Quick message**. The title-bar `[Ctrl-o]` control, sidebar `[+]`
+Press `Ctrl-o` from any Dashboard view, including Tasks or another dialog, to
+open **Quick message**. In Terminal mode `Ctrl-o` goes to the program (Oh My Pi
+expands tool output, Claude Code opens its transcript), so press `Ctrl-g` then
+`Ctrl-o`. The title-bar `[Ctrl-o]` control, sidebar `[+]`
 and Quick message palette action open the same form. It captures the current
 workspace/session run (or selected chat context) and configured provider/model
 defaults when opened. Type a message and press Enter to create and send once.
@@ -113,7 +115,8 @@ remain explicit. Expanded details retain full IDs, command, cwd, captured contex
 and output. With the sidebar hidden, the local header retains the selected chat's
 title. This also applies when its sidebar row is collapsed or scrolled out of view;
 a rendered selected row supplies that identity at wider sizes.
-`Ctrl-g` returns to Browse while preserving the draft. Completed background replies stay Unread until their
+`Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping every
+draft; `o` returns to it. Completed background replies stay Unread until their
 loaded tail is actually shown.
 
 The borderless prompt starts at two text rows and grows with the draft, up to six
@@ -157,11 +160,12 @@ that turn's model and Bash work; an OVRCR operation already accepted may finish.
 Visible partial text and command outcomes remain in history. Generic
 `terminal kill` and `terminal close` refuse Operator conversations; use native Stop.
 
-To close a conversation, focus its sidebar row and press `x`, or hover and click
+To close a conversation, focus its sidebar row and press `X`, or hover and click
 `[x]`. Confirming stops its exact retained run and archives the conversation while
 preserving model history and the journal. A nonempty draft is discarded only after
 archive is acknowledged. Cancellation or failure retains it. Closing one chat leaves
-other conversations usable. Ordinary `x` in the message or model field remains text.
+other conversations usable. Lowercase `x` never closes a conversation; in the
+message or model field it remains text.
 Archived sessions offers Unarchive for saved Operator conversations.
 
 Wait for confirmed worker stop before submitting again. **Finishing / stop

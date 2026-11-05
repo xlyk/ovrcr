@@ -1,0 +1,28 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:
+ OVRCR · startup
+
+  Connect agent status
+  Lets OVRCR show when your Claude and Codex sessions are working, need you or are done.
+  Adds or updates OVRCR hooks in:
+    /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-home-paix9klt/.claude/settings.json
+    /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-home-paix9klt/.codex/config.toml
+  Your other settings, status line and approvals stay as they are.
+  Codex a
+		3 text (settable)  OVRCR · startup
+		4 text (settable)   Connect agent status
+		5 text (settable)   Lets OVRCR show when your Claude and Codex sessions are working, need you or are done.
+		6 text (settable)   Adds or updates OVRCR hooks in:
+		7 text (settable)     /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-home-paix9klt/.claude/settings.json
+		8 text (settable)     /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-home-paix9klt/.codex/config.toml
+		9 text (settable)   Your other settings, status line and approvals stay as they are.
+		10 text (settable)   Codex asks you to trust the new hooks the next time it starts.
+		11 text (settable)   [y] Connect  [n] Not now  ›
+	12 close button
+	13 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	14 minimize button
+	15 text OVRCR GUI
+16 menu bar
+	17 OVRCR GUI

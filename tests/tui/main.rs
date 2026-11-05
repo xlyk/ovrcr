@@ -36,6 +36,7 @@ use std::sync::mpsc::TrySendError;
 mod agent_attention;
 mod agent_search;
 mod bridge_navigation;
+mod cards;
 mod copy_history;
 mod events;
 mod mouse;
@@ -226,9 +227,16 @@ fn acknowledge_all_view_targets(
     });
 }
 
+/// The footer shows a banner (a failure or an expected limit) instead of its mode's hints,
+/// which a hidden split prefixes with `split hidden`.
+fn footer_has_banner(footer: &str) -> bool {
+    let hints = footer.trim_start_matches("split hidden").trim_start();
+    !hints.starts_with("BROWSE") && !hints.starts_with("Terminal mode")
+}
+
 fn assert_view_input_blocked(dashboard: &mut Dashboard) {
     let footer = rendered_footer(dashboard, 120);
-    if !footer.contains("ERROR:") {
+    if !footer_has_banner(&footer) {
         let _ = dashboard.ctrl('g');
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -237,7 +245,7 @@ fn assert_view_input_blocked(dashboard: &mut Dashboard) {
         );
         let footer = rendered_footer(dashboard, 120);
         assert!(
-            footer.contains("ERROR:"),
+            footer_has_banner(&footer),
             "refusal must show a banner, got {footer:?}"
         );
     }
@@ -386,6 +394,7 @@ fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u
     );
     let inspect = only_request(dashboard.drain_outbox());
     assert_eq!(inspect.request, Request::Inspect);
+    to_branch(dashboard);
     dashboard.key(KeyCode::Tab); // branch mode
     dashboard.key(KeyCode::Right); // existing
     dashboard.key(KeyCode::BackTab); // branch
@@ -395,6 +404,12 @@ fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u
     let text = palette_text(dashboard);
     assert!(text.contains("Waiting for Git suggestions"), "{text}");
     inspect.request_id
+}
+
+/// Create workspace opens on Task; Tab past Project to Branch.
+fn to_branch(dashboard: &mut Dashboard) {
+    dashboard.key(KeyCode::Tab); // Project
+    dashboard.key(KeyCode::Tab); // Branch
 }
 
 fn assert_workspace_id(id: &str) {
@@ -467,11 +482,10 @@ fn ordinary_response_errors_remain_visible_to_dashboard() {
             message: "session 99 not found".into(),
         },
     });
+    // A failure keeps its marker; the error code itself is not shown.
     let footer = rendered_footer(&dashboard, 88);
-    assert!(
-        footer.contains("NotFound: session 99 not found"),
-        "{footer}"
-    );
+    assert!(footer.contains("ERROR: session 99 not found"), "{footer}");
+    assert!(!footer.contains("NotFound"), "{footer}");
 }
 
 #[test]

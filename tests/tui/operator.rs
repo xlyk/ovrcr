@@ -246,7 +246,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
 fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     for mode in [
         "Browse",
-        "Terminal",
+        "Terminal then Ctrl-g",
         "History",
         "Copy",
         "Tasks",
@@ -258,8 +258,9 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     ] {
         let mut d = dashboard_fixture();
         match mode {
-            "Terminal" => {
+            "Terminal then Ctrl-g" => {
                 d.key(KeyCode::Enter);
+                d.ctrl('g');
             }
             "History" => {
                 let request = d.key(KeyCode::PageUp);
@@ -352,6 +353,52 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
             "underlying {mode} changed"
         );
     }
+}
+
+/// Oh My Pi expands tool output and Claude Code opens its transcript with Ctrl-o, so in
+/// Terminal mode the key reaches the program; Quick message is Ctrl-g then Ctrl-o.
+#[test]
+fn ctrl_o_in_terminal_mode_goes_to_the_program() {
+    let ctrl_o = || Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    let mut d = dashboard_fixture();
+    d.key(KeyCode::Enter);
+    d.drain_outbox();
+    assert_eq!(
+        d.event_action(ctrl_o()),
+        DashboardAction::PtyBytes(b"\x0f".to_vec())
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    d.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(!text.contains("Quick message ·"), "{text}");
+    assert!(
+        text.contains("Ctrl-o Quick message"),
+        "footer names the route: {text}"
+    );
+    d.ctrl('g');
+    assert!(!matches!(
+        d.event_action(ctrl_o()),
+        DashboardAction::PtyBytes(_)
+    ));
+    d.draw(&mut terminal).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(text.contains("Quick message ·"), "{text}");
+    assert!(!d.drain_outbox().iter().any(|m| matches!(
+        m.request,
+        Request::Input { .. } | Request::AssignedHumanInput { .. }
+    )));
 }
 
 #[test]
@@ -499,6 +546,81 @@ fn native_operator_submission_captures_stable_context_and_never_pty_input() {
         message.request,
         Request::Input { .. } | Request::AssignedHumanInput { .. }
     )));
+}
+
+#[test]
+fn ctrl_g_and_esc_leave_operator_for_the_terminal_panes_and_keep_the_draft() {
+    let area = Rect::new(0, 0, 120, 40);
+    for leave in [
+        KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.install_area(area);
+        dashboard.key(KeyCode::Char('o'));
+        dashboard.drain_outbox();
+        dashboard.event_action(Event::Paste("-draft".into()));
+        assert!(
+            rendered_rows(&dashboard, 120, 40)
+                .join("\n")
+                .contains("Model: gpt-6.1-sol-draft")
+        );
+        // Operator empties the terminal view while it is shown.
+        let hidden = dashboard.request_view_at(area).expect("Operator view");
+        let Request::SetView { view } = &hidden.request else {
+            panic!("expected SetView, got {:?}", hidden.request);
+        };
+        assert!(view.panes.is_empty());
+        acknowledge_view_request(&mut dashboard, hidden);
+
+        dashboard.event_action(Event::Key(leave));
+        let text = rendered_rows(&dashboard, 120, 40).join("\n");
+        assert!(!text.contains("New Conversation"), "{leave:?}: {text}");
+        assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
+        // The panes come back without moving the selection.
+        let shown = dashboard.request_view_at(area).expect("terminal view");
+        let Request::SetView { view } = &shown.request else {
+            panic!("expected SetView, got {:?}", shown.request);
+        };
+        assert_eq!(
+            view.panes
+                .iter()
+                .map(|pane| pane.session)
+                .collect::<Vec<_>>(),
+            [SessionId(1)]
+        );
+        assert_eq!(view.focused, Some(SessionId(1)));
+        acknowledge_view_request(&mut dashboard, shown);
+        assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+        // `o` returns to the same draft.
+        dashboard.key(KeyCode::Char('o'));
+        assert!(
+            rendered_rows(&dashboard, 120, 40)
+                .join("\n")
+                .contains("Model: gpt-6.1-sol-draft")
+        );
+    }
+}
+
+#[test]
+fn operator_names_providers_the_way_people_do() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.key(KeyCode::Char('o'));
+    let text = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(text.contains("Provider: ChatGPT"), "{text}");
+    assert!(!text.contains("chat_gpt"), "{text}");
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Right);
+    let text = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(text.contains("Provider: Grok"), "{text}");
+    dashboard.ctrl('g');
+    dashboard.ctrl('o');
+    let text = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        text.contains("ChatGPT / gpt-6.1-sol"),
+        "quick message caption: {text}"
+    );
 }
 
 #[test]
@@ -926,9 +1048,10 @@ fn assert_operator_project_selection_at_bottom(dashboard: &mut Dashboard) {
     let selected: Vec<_> = (0..24)
         .filter(|y| terminal.backend().buffer()[(0, *y)].symbol() == "▌")
         .collect();
+    // The one-line quota summary sits below the tree on row 22.
     assert_eq!(
         selected,
-        vec![16],
+        vec![21],
         "the selected terminal must remain at the filled tree viewport's bottom"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(30)));

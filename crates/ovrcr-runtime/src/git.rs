@@ -338,14 +338,134 @@ pub fn validate_project(repo: &Path, workspace_root: &Path) -> Result<(PathBuf, 
     ))
 }
 
+/// Directory name of a new worktree under its project's workspace root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorktreeDir {
+    /// A slug of the branch, then `-2`, `-3`, … past any name already used on disk, by a
+    /// registered workspace or by a Git worktree. Dashboard and CLI creation.
+    Branch,
+    /// The workspace id. Task runs and coding delegation save `<workspace root>/<id>` as
+    /// intent before Git, so their directory must stay where that intent points.
+    Id,
+}
+
+/// Folder name for `branch`: lowercase ASCII letters, digits and `_`; every other run of
+/// characters becomes one `-`, never leading or trailing; at most 60 bytes; `workspace` when
+/// nothing is left.
+fn branch_slug(branch: &str) -> String {
+    let mut slug = String::new();
+    for c in branch.chars().map(|c| c.to_ascii_lowercase()) {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            slug.push(c);
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.truncate(60);
+    match slug.trim_end_matches('-') {
+        "" => "workspace".to_owned(),
+        slug => slug.to_owned(),
+    }
+}
+
+/// Whether a checkout folder at `candidate` would collide with an existing entry on disk, a
+/// registered workspace (`registered`: every project's records) or a worktree Git still lists.
+/// Paths also match ASCII-case-insensitively: APFS and Git with `core.ignorecase` treat
+/// `Dep-B` and `dep-b` as one folder. On a case-sensitive filesystem this only reserves a name.
+fn destination_taken(
+    candidate: &Path,
+    registered: &[PathBuf],
+    listed: &[(PathBuf, Option<String>)],
+) -> Result<bool> {
+    match fs::symlink_metadata(candidate) {
+        Ok(_) => return Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect worktree destination {}", candidate.display()));
+        }
+    }
+    let same = |path: &Path| {
+        worktree_path_matches(path, candidate)
+            || path
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&candidate.to_string_lossy())
+    };
+    Ok(registered.iter().any(|path| same(path)) || listed.iter().any(|(path, _)| same(path)))
+}
+
+/// Refuse a fixed folder (`<workspace root>/<id>`) that another workspace or Git already holds,
+/// before any Git effect. Coding delegation checks this when it records its intent.
+pub fn ensure_destination_free(
+    repo: &Path,
+    registered: &[PathBuf],
+    destination: &Path,
+) -> Result<()> {
+    if destination_taken(destination, registered, &worktree_entries(repo)?)? {
+        bail!(
+            "worktree destination is already used by another workspace or Git worktree: {}",
+            destination.display()
+        );
+    }
+    Ok(())
+}
+
+/// First `<slug>`, `<slug>-2`, … under `workspace_root` that [`destination_taken`] allows.
+fn free_branch_destination(
+    repo: &Path,
+    registered: &[PathBuf],
+    workspace_root: &Path,
+    branch: &str,
+) -> Result<PathBuf> {
+    let slug = branch_slug(branch);
+    let listed = worktree_entries(repo)?;
+    for n in 1.. {
+        let candidate = workspace_root.join(if n == 1 {
+            slug.clone()
+        } else {
+            format!("{slug}-{n}")
+        });
+        if !destination_taken(&candidate, registered, &listed)? {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("finitely many names are taken")
+}
+
+/// `registered` lists every registered workspace path across all projects (the caller holds
+/// the server's mutation lock); the project's own records are always included. No two records
+/// may share a checkout folder.
 pub fn create_worktree(
     project: &ProjectRecord,
     id: &str,
     branch: BranchSpec,
+    dir: WorktreeDir,
+    registered: &[PathBuf],
 ) -> Result<WorkspaceRecord> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
     ovrcr_protocol::validate_name(id, "workspace")?;
-    let destination = workspace_root.join(id);
+    let registered: Vec<PathBuf> = registered
+        .iter()
+        .cloned()
+        .chain(
+            project
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.path.clone()),
+        )
+        .collect();
+    let destination = match (dir, &branch) {
+        (WorktreeDir::Id, _) => {
+            let destination = workspace_root.join(id);
+            if !destination.exists() {
+                ensure_destination_free(&repo, &registered, &destination)?;
+            }
+            destination
+        }
+        (WorktreeDir::Branch, BranchSpec::New { branch, .. } | BranchSpec::Existing { branch }) => {
+            free_branch_destination(&repo, &registered, &workspace_root, branch)?
+        }
+    };
     if destination.exists() {
         bail!(
             "worktree destination already exists: {}",
@@ -1018,6 +1138,33 @@ fn run_git(repo: &Path, args: &[OsString]) -> Result<Output> {
         bail!("git command failed ({}): {}", output.status, stderr.trim());
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod branch_slug_tests {
+    use super::branch_slug;
+
+    #[test]
+    fn slug_is_a_short_lowercase_folder_name_and_never_empty() {
+        let (seventy, sixty) = ("a".repeat(70), "a".repeat(60));
+        let (cut, kept) = (format!("{}/y", "x".repeat(59)), "x".repeat(59));
+        for (branch, slug) in [
+            ("feature/Login-Form", "feature-login-form"),
+            ("Fix//UX__pass--2", "fix-ux__pass-2"),
+            ("release/1.2.0", "release-1-2-0"),
+            ("-/.lead and trail./-", "lead-and-trail"),
+            ("feature/naïve café", "feature-na-ve-caf"),
+            ("功能/登录", "workspace"),
+            ("", "workspace"),
+            ("///", "workspace"),
+            (seventy.as_str(), sixty.as_str()),
+            // A cut that ends on a separator drops it.
+            (cut.as_str(), kept.as_str()),
+        ] {
+            assert_eq!(branch_slug(branch), slug, "{branch:?}");
+            ovrcr_protocol::validate_name(slug, "workspace").unwrap();
+        }
+    }
 }
 
 #[cfg(test)]

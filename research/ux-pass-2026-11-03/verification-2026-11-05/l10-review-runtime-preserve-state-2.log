@@ -1,0 +1,18 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr-runtime", "--all-features", "--lib", "erase_saved_lines"]}
+xcargo: lock after 0s · ux-omp-scroll · cargo test -p ovrcr-runtime --all-features --lib erase_saved_lines
+   Compiling vt100 v0.16.2 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/vendor/vt100)
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.98s
+     Running unittests src/lib.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/ovrcr_runtime-e17951116e086550)
+
+running 3 tests
+test session::tests::erase_saved_lines_on_the_alternate_screen_keeps_the_normal_screen ... ok
+test session::tests::erase_saved_lines_empties_history_and_keeps_the_screen ... ok
+test session::tests::erase_saved_lines_preserves_terminal_state_and_frozen_history ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 439 filtered out; finished in 0.01s
+
+
+EXIT 0

@@ -1595,6 +1595,8 @@ impl ServerState {
                                     kind: SessionKind::Agent { name: "pi".into() },
                                 }),
                                 Some(&handle),
+                                // The coding intent saved <workspace root>/<workspace id>.
+                                crate::git::WorktreeDir::Id,
                             )
                             .map(|_| ())
                         } else {

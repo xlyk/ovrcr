@@ -241,6 +241,13 @@ also starts a `local` shell follows `automatic_local_terminals` in `dashboard.to
 (default **default branch only**); when the root is off the detected default branch,
 registration still succeeds and the initial shell is skipped until that branch is
 restored. It does not switch Git.
+`workspace create` checks the branch out in a folder under the workspace root named
+after the branch: lowercase letters, digits and `_` stay, every other run of characters
+becomes one `-`, and the name stops at 60 characters (`feature/Login-Form` becomes
+`feature-login-form`; a branch with nothing usable becomes `workspace`). A name already
+taken on disk, by a registered workspace or by a Git worktree gets `-2`, `-3`, ….
+The folder keeps its name when the checkout later switches branches, and the workspace
+ID stays a separate random identity. Scheduled task runs use `task-<task>-run-<run>`.
 `--label TEXT` sets launch metadata such as the executable or agent label.
 Omit `--name` for a stable workspace-based name, or supply `--name TEXT` to
 choose one. Application title updates are ignored for all sessions.

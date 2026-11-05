@@ -96,7 +96,9 @@ Source registration and Reporter disconnect retirement follow retained → Sessi
 lock order. Explicit parent transfers use the same retained row and never reset
 child control or immutable assignment identity. A second Lifecycle job is refused. Completion is a typed
 `LifecycleCompleted` event correlated by the accepting request id, plus
-`HierarchyChanged` as today. CLI-only RemoveSession and DeleteArchived stay
+`HierarchyChanged` as today. The worker frees its slot before publishing that
+event, so a job the Dashboard sends in reply to a completion is never refused as
+overlapping the finished one. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.
 
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
@@ -212,3 +214,11 @@ authenticity proof. Untagged private legacy records remain recognized for stale
 replacement but cannot equal the new algorithm; unknown algorithm names or fields
 remain refused. Full verification and metadata rechecks precede socket binding
 and identity publication, including `/proc/self/exe` on Linux.
+
+Protocol 71 appends read-only Transcript pages for the current Dashboard owner.
+`server::transcript` selects the retained provider reference, checks its run and
+continuation identity, reads outside retained/Session locks, then rechecks authority.
+Only regular files are opened, with nonblocking flags, and Codex header/Claude record
+identities must match. Reads use 512 KiB windows and a 4 MiB scan budget; oversized
+records are skipped and displayed text/tool summaries are bounded. No transcript
+content is persisted or written to Events.

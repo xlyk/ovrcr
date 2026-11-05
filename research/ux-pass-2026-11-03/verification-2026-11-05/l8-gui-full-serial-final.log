@@ -1,0 +1,42 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "--test", "gui", "--features", "gui", "--", "--nocapture", "--test-threads=1"]}
+xcargo: lock after 0s · ux-gui-acceptance · cargo test --test gui --features gui -- --nocapture --test-threads=1
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-gui-acceptance)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.23s
+     Running tests/gui.rs (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target/debug/deps/gui-75f28ee9582f844d)
+
+running 10 tests
+test command_k_is_not_forwarded_to_terminal ... ok
+test demo_shells_inherit_paths_and_cli_reaches_fixture ... fixture=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SeWx7o session_pgids=[81647, 82310, 83927, 82089, 82997, 83405, 83698, 81889, 82531, 84155, 82761, 84389]
+fixture cleanup verified: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SeWx7o
+ok
+test input_preserves_control_keys_terminal_modes_and_mouse_cells ... ok
+test operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty ... ok
+test outer_pty_parses_attributes_and_resize_reaches_the_tty ... ok
+test palette_creates_switches_and_closes_a_real_terminal ... ok
+test real_dashboard_accepts_input_reattaches_and_cleans_up_demo ... ok
+test real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_setting ... local policy fixture owned_pgid=10688 absent=true
+local policy fixture owned_pgid=11599 absent=true
+local policy fixture owned_pgid=12997 absent=true
+local policy fixture owned_pgid=11377 absent=true
+local policy fixture owned_pgid=12299 absent=true
+local policy fixture owned_pgid=12534 absent=true
+local policy fixture owned_pgid=12763 absent=true
+local policy fixture owned_pgid=11159 absent=true
+local policy fixture owned_pgid=11819 absent=true
+local policy fixture owned_pgid=13455 absent=true
+local policy fixture owned_pgid=12054 absent=true
+local policy fixture owned_pgid=13699 absent=true
+local policy fixture owned_pgid=15928 absent=true
+local policy fixture owned_pgid=17419 absent=true
+ok
+test real_dashboard_initial_selection_survives_quota_events_before_startup_responses ... ok
+test real_dashboard_saves_alert_preferences_and_reloads_config ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.22s
+
+
+EXIT 0

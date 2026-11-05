@@ -8,10 +8,12 @@ the full contract.
 
 The terminal workspace view has four input modes. The footer names the current one. In
 Browse it shows only the three keys that open everything else, `Space Menu`,
-`: Search` and `? Help`; every other action is listed in the menu and the
+`: Commands` and `? Help`; every other action is listed in the menu and the
 palette. Copy and History show their own prioritized shortcuts, and hints that
 do not fit remain available through `?` or `Space`. History shows `Esc Cancel
 copy` while a copy is pending and `Esc Back` otherwise.
+While a session needs you, the Browse footer also shows the jump key: `i Next
+input needed` or `i Next ready`, naming where it goes.
 
 | Mode | Entered by | Leaves with |
 | --- | --- | --- |
@@ -19,34 +21,54 @@ copy` while a copy is pending and `Esc Back` otherwise.
 | Terminal | `Enter` on a running session | `Ctrl-g` |
 | Copy | `[` in Browse | `Esc`, `q`, or `Ctrl-g` |
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
+| Transcript | `PageUp` or wheel-up on full-screen Claude Code or Codex | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. Click the title bar's Actions control to open the palette
-or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
+only key it intercepts. `Ctrl-o` reaches the program there (Oh My Pi expands tool
+output with it, Claude Code opens its transcript), so Operator **Quick message** is
+`Ctrl-g` then `Ctrl-o`; the Terminal footer shows this when space permits. Click the
+title bar's Commands control to open the palette or Menu to open the action menu.
+Press `Ctrl-g` first to use dashboard shortcuts.
+
+### Footer messages
+
+When something cannot be done, the footer says why in place of the hints. An
+expected limit (a pane still loading, a paused session, a refresh cooldown, a
+view the Server refused for now, keys the Server did not let through to a
+session, or a refusal that names its blocker, such as sessions that still block
+a removal) reads muted and in plain words. A failure, including any lifecycle
+work the Server could not do, reads `ERROR:` in red. Neither shows the Server's
+error code (`Conflict:`); `project/<workspace id>` reads `project / branch`, a
+session `#N` reads as its title, an id nothing names stays as written, and a
+path keeps its folder names as they are on disk. A message clears when a later
+request of yours succeeds. Otherwise a limit clears after ten seconds, and a failure ten
+seconds after the first key you press while it shows, so one that arrives while
+you are away waits for you. A notice that waited behind it shows next.
 
 ## Operator chat
 
-Browse `o` or the pinned Operator title-bar control opens native chat. It has its
+Browse `o` or the pinned Operator title-bar control opens native chat. `Ctrl-o`
+opens Quick message from every view except Terminal mode. It has its
 own multiline composer and conversation history, independent of terminal panes.
+`Ctrl-g` or `Esc` leaves it for the terminal panes in Browse; every draft stays
+with its conversation for the next `o`.
 Conversations stream concurrently and continue while another view is selected.
 See [Operator setup and controls](operator.md).
 
 ## Browse keys
 
-The sidebar's **Quota left** block shows remaining Claude, Codex and Grok account
-allowance. See [provider allowance](provider-quota.md) for native sources,
-collection settings, freshness and reset behavior.
-Providers remain visible before the first report: **checking** until the
-account read returns. **Codex · usage off** and **Grok · usage off** only while
-`quota.enabled` is explicitly false. Wide sidebars use Option A bars (`━`/`─`) without
-brackets; a stale value keeps its age after the percentage (`37% stale 12m`),
-and a failed row shows when the Server tries again (`unavailable · retry 3m`).
-Narrow sidebars put window values and full state text on a second row
-before sacrificing labels or percentages. A short sidebar keeps at least three
-tree lines and shrinks the block in steps: one line per provider, then a single
-`Quota: u` pointer line, and only below that hides it. The tree scrolls above
-the reserved quota rows; sidebar and pane dividers remain draggable over their
-full height.
+The sidebar's last line summarizes remaining Claude, Codex, Grok and Cursor account
+allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
+least allowance left in any of its general windows. The number is red at 5% or
+less and yellow at 20% or less. A stale value is muted. A provider with no value
+yet (still checking, failed, or every window past its reset) shows a muted
+`Claude ?`. Providers switched off are left out, and providers that do not fit
+give way from the end to `…`. Click the line, or press `u`, for the windows,
+states, ages and next checks in the [details](provider-quota.md). That page also
+covers native sources, collection settings, freshness and reset behavior. The
+line hides when the sidebar is too short to keep the Operator heading and three
+tree lines. The tree scrolls above it; sidebar and pane dividers remain
+draggable over their full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
 Grok now, Cursor while `quota.cursor.dashboard` is on, and Claude too while `quota.claude.probe` is on (a refusal inside the
@@ -59,9 +81,10 @@ change when the Server republishes. The Claude probe is a separate consent,
 | Key | Action |
 | --- | --- |
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
+| `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
-| `v` | Open a second pane showing the next different visible session |
+| `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Create a terminal (form) |
@@ -75,15 +98,15 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
-| `:` | Open the command palette |
+| `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
-| `N` | Toggle the Server-saved desktop notification setting |
+| `N` | Toggle the Server-saved desktop notification setting; also in Settings |
 | `O` | Check unresolved macOS notification permission or open Settings when denied |
-| `S` | Toggle the Server-saved ready sound setting |
+| `S` | Toggle the Server-saved ready sound setting; also in Settings |
 | `q` | Detach; the server and every session keep running |
 
-`N`, `O`, `S`, `R`, `b` and `[` act on a key press; a key repeat or release does nothing.
+`N`, `O`, `S`, `R`, `b`, `i` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
@@ -93,8 +116,8 @@ history request that has not opened yet.
 
 Press lowercase `s` in Browse, `Space v s` from the View menu, or sequentially
 `Ctrl-g` then `s` while typing into a terminal. When space permits, the Terminal
-footer shows this sequence. Uppercase `S` still toggles ready sound; `:` still
-opens the full command palette.
+footer shows this sequence and `Ctrl-o` for Quick message after it. Uppercase
+`S` still toggles ready sound; `:` still opens the full command palette.
 
 The Agents picker includes nonarchived Agent-launch sessions with a running,
 unpaused process, regardless of activity or reporting health. It includes every
@@ -137,9 +160,11 @@ It does not mark Unread reviewed or change process or conversation state.
 
 A managed Codex, Pi or Oh My Pi terminal keeps one Unread fact for its latest unreviewed
 root Ready response. The sidebar does not draw a circle for it. While it is present, the
-sidebar shows the Ready checkmark and the pane header says Unread. Mark reviewed clears
-both of those marks. The Agent's reported activity stays Ready, so the header may still
-say the session is ready. A new Busy report does not clear an earlier Unread response.
+sidebar shows the Ready checkmark, the attention strip counts it as ready, and the pane
+header adds `unread reply` after the state (`Ready · unread reply`). Mark reviewed clears
+all of those marks. The Agent's reported activity stays Ready, so the header still says
+`Ready`. A new Busy report does not clear an earlier Unread response; the header then
+reads `Working · unread reply`.
 Selecting a terminal, viewing its output or receiving a notification does not acknowledge it.
 
 Press `R` in Browse mode, or choose **Mark reviewed** in the terminal action
@@ -148,6 +173,14 @@ the dashboard. If a newer Ready arrives first, the server rejects the stale
 acknowledgement and preserves the newer unread response. Refresh your view and
 review that response before acknowledging it. Repeating a completed
 acknowledgement is safe.
+
+Replying reviews it too. The first keystroke or paste you send to a session
+whose unread response the dashboard displays sends the same request `R` sends,
+for that displayed observation, ahead of the input; later keys of the reply
+send nothing more. A stale refusal stays out of the footer: the newer response
+it protects stays unread until you reply after seeing it, or press `R`.
+Selecting, viewing, focusing a pane for typing and mouse input forwarded to the
+application do not review.
 
 For scripts, read `unread` from the intended terminal's JSON row and pass that
 complete JSON object to the CLI:
@@ -211,7 +244,8 @@ in the same tick as its request, or an ask execution aborted with no interactive
 UI — can still deliver one alert for a wait you will not find on screen.
 
 Read `agent.input_requests` from a terminal's JSON row for the open set, oldest
-first. The metadata line labels the oldest one.
+first. The pane header says `Waiting for input`, or `Waiting for approval` when the
+oldest one is a tool approval.
 
 ## Copy keys
 
@@ -273,8 +307,14 @@ Motion waits when a target cell still needs loading.
   does not reflow or rewrite captured rows; use horizontal navigation to reveal
   columns captured outside the viewport.
 - The history view is capped at 64 rows by 256 columns inside a larger pane.
-- Alternate-screen applications do not provide a history transcript, and History
-  stays closed while an application is on the alternate screen.
+- Full-screen applications on the alternate screen cannot supply terminal History.
+  Claude Code and Codex can open their provider-owned [Transcript](#transcript-keys)
+  instead. Without a readable conversation, PageUp gives a muted explanation and
+  wheel-up stays quiet.
+- An application that erases the saved lines (`ESC[3J`) empties History, as a
+  terminal's scrollback would be. `clear` sends it, and Pi and Oh My Pi send it
+  before every full repaint (a resize, a new or resumed session), then write
+  their transcript again, so History holds that transcript once.
 - Retained history lives in memory with the session and is lost when the server
   exits. It is not persisted to disk.
 
@@ -286,13 +326,40 @@ notice `Clipboard request sent; paste to verify` confirms only that the request
 was written, so verify it by pasting in the destination application. Terminals
 that disable or lack OSC52 can ignore the request silently. Selections remain
 available after clipboard or size errors. Soft-wrapped rows join without added
-newlines; hard line breaks, explicit spaces, and stored Unicode text are
-preserved.
+newlines; hard line breaks, spaces inside a line, and stored Unicode text are
+preserved. Spaces at the end of each copied line are dropped, as terminals do:
+Oh My Pi pads every row to the pane width.
+
+## Transcript keys
+
+On full-screen Claude Code or Codex, PageUp or wheel-up opens a read-only view of
+the session's recorded conversation: user prompts, assistant text, and a short
+line for each tool call. Inline agents such as Pi and Oh My Pi keep terminal
+History. Reading Transcript does not write the provider file or replay commands.
+
+Up/Down or `k`/`j` scroll one row; PageUp/PageDown scroll a viewport; the wheel
+moves three rows. Scrolling to the top loads earlier messages. Home moves toward
+the loaded beginning; End reloads the newest page. Esc, `q`, or Ctrl-g closes it.
+Keyboard, paste, and mouse input stay in the view while loading and reading.
+Changing the session run closes it; pages from another conversation cannot be
+joined to the current view.
+
+The view keeps at most 1 MiB or 16,384 entries, dropping newest entries as you
+page further back; End returns to the latest messages. It does not update live.
+Individual JSONL records over 512 KiB are skipped, prose is shortened after
+16,384 characters, and tool input summaries after 160 characters. Tool results,
+private reasoning, and image data are omitted. A readable file whose entries are
+all filtered or oversized opens an empty Transcript view. Unsupported providers,
+missing conversation references, and unreadable files keep PageUp's muted History
+explanation and leave wheel-up quiet.
 
 ## Panes
 
-`v` opens a second pane with the next different visible session. Sidebar
-navigation replaces the focused pane's session; selecting the session already
+`v` opens a second pane on the next different visible session and, over it, a
+session chooser with that suggestion highlighted. `Enter` shows the highlighted
+session in the new pane, typing filters by project, branch and title, and `Esc`
+keeps the suggestion. The chooser does not offer the session the other pane
+already shows. Sidebar navigation replaces the focused pane's session; selecting the session already
 shown in the other pane moves focus there instead. `x` closes the focused pane
 and expands the survivor, leaving its session running. If the window becomes too
 narrow for both panes, only the focused pane is drawn; widening it restores both.
@@ -312,14 +379,16 @@ stay on that workspace. A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
-missing model leaves the agent name alone. A long name clips with `…` before that
-label. The label shares the name's line only while every visible `agent:model`
+missing model leaves the agent name alone. On a shared line the name keeps its
+room first: when the whole name and label do not fit, the model goes
+(`claude:opus-5-5` becomes `claude`), then the agent, and only then does the name
+clip with `…`. The label shares the name's line only while every visible `agent:model`
 fits beside at least twelve cells of its name. As soon as one does not, the
 sidebar stacks as a whole: every session with an agent label keeps its name on
 one line and moves the label to one extra line under it, hung by a `└`
 connector two cells in from the status glyph, under the start of the name, and
-clipped with `…` if even that line is too narrow, while local shells stay on one line. The model is never
-dropped, and no two rows use different layouts at the same width. The extra
+clipped with `…` if even that line is too narrow, while local shells stay on one line. A stacked
+label keeps its model, and no two rows use different layouts at the same width. The extra
 line belongs to the same session: `j`, `k` and the mouse treat both lines as one
 row, the selection bar and background cover both, and the hover `[x]` sits on
 the first line. Local shells show `$ local` on one line with no agent label
@@ -333,6 +402,30 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
+While any session needs you, a line at the bottom of the sidebar, directly above
+the quota line, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+for more than one), or `? 1 · ✓ 2` when the words do not fit. It sits at the
+bottom so that, as it comes and goes, Operator and the tree never move under the
+pointer; only the tree's last visible line gives way. It counts every project,
+including folded and scrolled-away rows and the focused session, and lists needs
+input first, the order the jump visits. Needs input means a running session
+waiting for an answer (including an open [input request](#input-requests)). A
+paused session does not count as needing input: it cannot take the answer until
+`r` resumes it. Ready means an [unread response](#unread-responses) from a session
+that is not busy again; a busy session's older response waits for the turn in
+progress, as its spinner says, and still shows Unread in its pane header. A
+session that is both counts once, as needs input. Operator conversations stay
+out; the Operator heading counts their unread replies. The line disappears when
+nothing is left, and gives way before the quota line when the sidebar is short.
+
+`i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
+click on that line selects the next session that needs you and shows it in the
+focused pane, unfolding its project and workspace. Sessions waiting for input
+come first, then unread responses, each in sidebar order after the current
+selection, wrapping; pressing again from one of them moves to the next, so
+repeated presses visit every one. With nothing to visit, `i` says so in the
+footer.
+
 | Glyph | Meaning |
 | --- | --- |
 | `-` | No hook report accepted yet |
@@ -344,17 +437,50 @@ While the sidebar is hidden, `j` and `k` still move the selection, and
 | `P` | Paused |
 | `·` | Exited (the row is dimmed) |
 
-An unavailable reporter draws the glyph in the muted colour. The literal state,
-quality, and reporter health (`agent busy confirmed`, `response ready ·
-observed`, `unavailable`) appear on the selected session's metadata line, not
-in the sidebar. While an input request is open the metadata line reads
-`input needed · select` (or `confirm`, `input`, `editor`, `custom`) in place of
-the activity underneath it; the question itself never appears.
+An unavailable reporter draws the glyph in the muted colour. The state in words
+appears in the [pane header](#pane-header), not in the sidebar.
 
-The selected metadata line shows `pid: closed` after the managed process exits.
-Live metadata labels the same observation as `agent unknown`, `agent idle`,
-`agent busy`, `agent waiting input`, or `agent error`. Paused sessions keep their
-last label and add `paused`; exited sessions omit the live activity label.
+### Pane header
+
+Each pane has a two-line header. The first line reads, left to right: the
+session title, the agent and model (`claude:opus-5-5`; `shell` for a terminal
+without an agent label), the state in words and the elapsed time, for example
+`verify spinner  claude:opus-5-5  Working · 2m` or `local  shell · 16m`. The
+process id follows, muted, at the far right while the line has room. With a project
+or workspace row selected, the header names it (`consigint / feature/x`) above its card.
+
+| State | Meaning |
+| --- | --- |
+| `Working` | Busy |
+| `Waiting for input` | Waiting for you, including an open [input request](#input-requests); `Waiting for approval` for a tool approval. The question itself never appears. |
+| `Ready` | The response is done; `Ready · unread reply` until you [mark it reviewed](#unread-responses) |
+| `Idle` | Idle |
+| `Error` | Reported error |
+| `Paused`, `Exited`, `Stopped`, `Interrupted` | The process phase, which outranks the activity |
+
+A terminal that reports nothing shows no state. Reporting health appears only
+when it matters, muted after the state: `starting…` while an agent has not
+reported yet (for up to a minute after launch), and `status off` when an agent's
+reporting is lost (even before its first report), was never set up, or is not
+supported, or when an Unread reply has no reporter left behind it. Report quality (observed, confirmed) and
+the reporter's own reasons stay out of the header; `ovrcr terminal list --json`
+keeps them. Recovery and control explanations follow the state after ` · `.
+
+A narrow pane gives up the process id first, then the model, the elapsed time,
+the agent label, and then clips the title, so the state stays readable. Narrower
+still, a bare `Unread` takes the state's place (`Unread · status off`), since the
+sidebar glyph still shows the activity.
+
+The second line shows the agent's metrics when it reports them:
+`ctx 6% · 417k tokens · ~$0.37` — context used, tokens in and out, and cost, `~`
+marking an estimate. Unknown values are left out. A value older than five
+minutes, or any value once the process has exited, is muted and followed by its
+own age, such as `417k tokens (12m ago)`. A narrow pane drops the ages first,
+then values from the right. Without metrics the second line is a plain rule; in
+History it shows the History position instead. Split panes carry the same words
+on one colour band, `> ` marking the focused pane and `loading` until its screen
+arrives.
+
 Terminal output, elapsed silence, keyboard input, and process liveness do not
 imply that an agent is busy or idle. See [agent reporting](agent-reporting.md)
 for provider reporting behavior.
@@ -368,6 +494,8 @@ In Browse and Terminal modes:
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
+- Clicking the attention line above the quota line does what `i` does;
+  clicking the quota line at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane
@@ -379,7 +507,10 @@ In Browse and Terminal modes:
   hidden sidebar has no border to drag, and clicks in its former area reach
   the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
-  move one row; wheel-down at the newest row returns to the live pane.
+  move three rows (keys move one); wheel-down at the newest row returns to the
+  live pane.
+  On full-screen Claude Code or Codex, wheel-up opens Transcript when its recorded
+  conversation is available; other full-screen applications stay unchanged.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling
@@ -430,24 +561,42 @@ the hook-owned activity state.
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
 and `v` View. Only groups relevant to the selected row appear. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
-`q` detaches from the top level, including when the hierarchy is empty.
+`q` detaches from the top level, including when the hierarchy is empty. Nothing
+else sits beside the groups: desktop notifications and the ready sound are
+settings, toggled in Settings or with their Browse keys `N` and `S`.
 
-Choose a group, then an action: `Space t x` closes the selected terminal,
-`Space w x` removes its workspace, and `Space p x` unregisters its project.
+Choose a group, then an action: `Space t X` closes the selected terminal,
+`Space w X` removes its workspace, and `Space p X` unregisters its project.
+Every destructive group action is uppercase. Lowercase `x` only ever closes a
+pane: in Browse and in `Space v` it hides the focused pane and the session keeps
+running; in the other groups it does nothing.
 Workspace and project removal open a searchable picker with the current target
 highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. Confirmed workspace
-removal archives stopped records with their original paths. Live or ownership-uncertain
-sessions block removal, even when archived; the Archived sessions page offers
-"Acknowledge stopped" for such rows. A removal refused for uncertain sessions
-reopens as a forced removal: confirming it acknowledges the stopped processes,
-while live sessions and active task runs still block. A removal refused because
-the worktree is dirty asks "Save uncommitted work to origin/wip/<branch>?".
-Enter commits the unignored files onto that ref, pushes it to `origin`, and
-then removes the workspace; the checkout's own branch is unchanged. Escape
-leaves the workspace in place. The repository-root workspace is never offered
-the save. With `save_uncommitted_work` on, removal and server shutdown push
+removal archives stopped records with their original paths. When the workspace
+still has running sessions, the confirmation names them by title
+(`feature/status-check still has 1 running session: verify spinner. Stop it and
+remove the workspace?`); confirming closes each one, one at a time, and then
+removes the workspace. If a session refuses to stop, the confirmation returns
+saying which one and nothing is removed. The sessions are stopped before the
+Server checks the worktree, so the uncommitted-changes question below comes after
+they have stopped. If the Dashboard detaches partway through, the sessions
+already stopped stay stopped and the workspace stays; remove it again to finish.
+A stopped session whose processes may still be running (ownership uncertain)
+blocks removal. When the Dashboard can see one, the confirmation names it first
+and stops nothing: choose "Acknowledge stopped" for it, then remove again.
+Archived ones and active task runs also block, even though the Dashboard cannot
+see them beforehand; the refusal says so in plain words and the Archived sessions
+page offers "Acknowledge stopped" for archived rows. No forced removal is offered
+for them. A removal refused because the worktree is
+dirty asks "Save uncommitted work to origin/wip/<branch>?". Enter commits the
+unignored files onto that ref, pushes it to `origin`, and then removes the
+workspace; the checkout's own branch is unchanged. Escape leaves the workspace
+in place. A checkout that cannot be saved that way, such as a detached HEAD,
+asks instead whether to discard the uncommitted changes and remove it; that is
+the only forced removal the Dashboard offers. The repository-root workspace is
+never offered the save. With `save_uncommitted_work` on, removal and server shutdown push
 those refs without asking. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
@@ -479,48 +628,79 @@ shortcuts.
 
 ## Command palette
 
-Terminal search rows show the session name and ID. The selected result shows
-its project and workspace below the list. Long text ends with an ellipsis;
-filtering still searches the full identity. Creation forms use their task name
-as the window title.
+Session rows read `<project> / <branch> / <title>`. Two sessions that would read
+the same also show their ID, `(#id)`, which clipping keeps visible. Long text
+ends with an ellipsis; filtering still searches the full identity, including a
+session's ID (`#7`) that is not drawn. Creation forms use their task name as the
+window title.
 
 `:` in Browse, or `Ctrl-g` then `:` from a terminal, opens the palette. If the
 dashboard has detached it reconnects first. Type to filter actions or to search a
-terminal by project, workspace, and name. Arrows select a result, `Enter`
+terminal by project, branch, and title. Arrows select a result, `Enter`
 continues, and `Esc` cancels.
 
-Entries are `Create terminal (n)`, `Create workspace (w)`,
-`Register project (a)`, `Close terminal`, `Remove workspace`, `Remove project`,
-one `Switch terminal: <project> / <workspace> / <name> (#id)` per session, and
-the remaining key-popup actions by name.
+Entries are, in order: `Create terminal (n)`, `Create workspace (w)`,
+`Register project (a)`, the selected session's actions (`Rename terminal`,
+resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
+Settings, Events, quota actions, `Archived sessions`, one row per session, and
+the remaining key-popup actions by name. The palette follows the key popup's
+rule: it drops actions the current target cannot use, and keeps one that is
+waiting for the pane's screen or blocked (such as `Create terminal` while the
+root workspace is off its default branch) with the reason below it, so rows do
+not shift under the cursor when the action becomes available.
 
-Within a form: on a pick list, Up/Down move the highlight and `Tab` or `Enter`
-accepts. On a text field, `Tab`, Up, and Down move between fields, and
-`Enter` advances and submits at the last field. Left/Right and Home/End move
-the text cursor; Backspace and Delete remove text beside it. `Ctrl-u` clears
-a field. Click a field to focus it and position its cursor, click options or
+Searching also finds every setting by its label or its `dashboard.toml` key, as
+`Settings: <label>` with the group and key below it (`theme`, `notifications`,
+`sound`, `branch_prefix`, …). `Enter` opens Settings on that row. Setting rows
+appear only for a search, not in the unfiltered list.
+
+Within a form, `Enter` submits from any field, the same as the Submit control.
+It first checks the whole form: a required field left empty, a choice that is
+not in its list, or a branch Git would refuse keeps the form open, moves the
+focus to the first such field and says what is wrong just below it
+(`Add a name after feature/`, `Branch names can't contain spaces`). `Tab` and
+`Shift-Tab` move between fields; on a text field Up and Down do too. On a pick
+list, Up and Down change the value at once, Left and Right step through the
+choices and wrap at the ends, and typing filters the list; `Ctrl-u` clears the
+filter. The open list shows as many choices as fit, all of them when there is
+room, and always the current one. On a text field Left/Right and Home/End move
+the text cursor; Backspace and Delete remove text beside it, and `Ctrl-u` clears
+it. The footer lists only the keys that work for the form and its focused field.
+Click a field to focus it and position its cursor, click options or
 toggles to choose them, and use the wheel to scroll lists and long forms.
-Visible Submit and Cancel controls work from any field. Input stays in the
-palette while it is open.
+Input stays in the palette while it is open.
+
+Creating a workspace or terminal and removing a workspace run as Lifecycle jobs:
+the form steps aside and the sidebar shows `Creating…` or `Removing…` while the
+Server works. If the job fails before anything was created, the form comes back
+with your values and the reason in plain words (`Couldn't create the workspace:
+a branch named 'feature/x' already exists`); no failed row is left behind. When
+the form cannot come back without taking keys meant for something else, such as
+a terminal you are typing in, a short failed row stays (`Not created · Esc
+dismiss`) and the footer gives the reason; one Esc clears both.
 
 Click a search result to open it, or select it and click Open. Confirmations
 have separate Confirm and Cancel controls; clicking outside an open palette
 does not activate the terminal behind it.
 
 All existing-project and workspace fields use the same searchable picker,
-including removal forms and the scheduled-task editor. Type to filter, use
-Up/Down to choose, and Tab or Enter to accept. Workspace choices show the
+including removal forms and the scheduled-task editor. In palette forms, type to
+filter and use Up/Down to choose; the scheduled-task editor keeps Tab or Enter
+to accept. Workspace choices show the
 project and current branch, with the worktree path when those names collide.
 Removal excludes the protected repository-root workspace. Session names and
 project names remain text fields, and project registration retains its path pickers.
 
 Closing live work and deleting records show their current branch target and require confirmation.
-Closing an exited row archives it immediately. A workspace with live sessions or
-active task runs cannot be removed. A refusal for ownership-uncertain stopped
-sessions reopens as a forced confirmation that acknowledges those stopped
-processes and discards uncommitted changes. A dirty worktree asks whether to
+Closing an exited row archives it immediately. Removing a workspace with running
+sessions names them and stops them first, as described under the key popup.
+Ownership-uncertain stopped sessions and active task runs still block removal,
+and no forced removal is offered for them. A dirty worktree asks whether to
 save that work to `origin/wip/<branch>` first; declining leaves the workspace
-where it is. Errors stay in the palette with the form values retained.
+where it is. A checkout that cannot be saved there asks whether to discard the
+changes instead. Errors stay in the palette with the form values retained, in
+plain words: no error codes, branch names instead of internal workspace ids, and
+sessions by title.
 
 ### Create terminal (`n`)
 
@@ -532,7 +712,19 @@ reporting support.
 
 Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
-session immediately. `n` and other new launches are unavailable when the selected
+session immediately.
+
+With Start = Agent the form also shows **Task**, and opens on it. A task names
+the session when Name is blank (one line, at most 60 characters) and, for agents
+whose CLI takes a first message, starts the agent with it: the launch arguments end
+with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
+`codex`, `pi`, `omp` and `grok`. Hermes (`-z` is one-shot only), Cursor (a
+prompt turns its reporting off) and other agents start without it; the footer
+says which applies (`Names the session; claude gets it as its first message`,
+`Only names the session; hermes starts without it`). The task is one-off: it is
+never part of the remembered launch choice, and Retry, Reopen, resume and
+server-restart recovery never send it again (recovery keeps only provider launch
+options before `--`). `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
@@ -547,9 +739,16 @@ of those flags is stored and launched as written; a raw command that does not go
 replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi and Oh My Pi
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
-until their dependent tickets. Missing hook configuration shows
-a persistent Dashboard banner with the exact setup command; observed reporting loss
-keeps an `unavailable` status with its published reason.
+until their dependent tickets. Missing hook configuration shows a one-time footer
+note such as `Claude and Codex status off — :connect to set up`, never an error;
+the palette's **Connect agent status**, listed until it succeeds, opens a
+confirmation page with the startup screen's text: what connecting does, the files it
+adds or updates and the Codex trust line. Enter installs the hooks and shows the
+result line (with any manual-migration note); Esc closes it and writes nothing. When
+nothing needs writing the result shows at once. A failure stays in the footer and
+keeps the entry.
+Observed reporting loss shows `status off` in the pane header, and the terminal's JSON
+row keeps the published reason.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
@@ -565,22 +764,39 @@ See [Cursor harness](cursor-harness.md) for the runtime capability check and pas
 
 ### Create workspace (`w`)
 
-Choose a branch and what to start: **Agent**, **Terminal**, or
+Type a task, or choose a branch, and what to start: **Agent**, **Terminal**, or
 **Nothing yet**. There is no separate workspace name. Agent and Terminal have the same options as terminal creation.
 Only the selected program starts; an Agent launch does not also open a shell.
 Nothing yet creates an empty workspace.
 
+The worktree folder under the project's workspace root is named after the branch:
+`feature/Login-Form` becomes `feature-login-form`, and a name already in use gets
+`-2`, `-3`, ….
+
 Each project remembers its last successfully launched Agent and preset, or
-Terminal choice, across dashboard restarts. One-off command text is never saved.
+Terminal choice, across dashboard restarts. One-off command text and tasks are never saved.
 Nothing yet leaves the preference unchanged. A project without a preference
 starts with Terminal selected. If a remembered agent is unavailable, choose a
 replacement explicitly before launching.
 
-Project defaults to the selected terminal's project. Branch has initial focus
-and starts as `feature/`; typing appends to that prefix. `Enter` on Branch
-submits. `Tab` and `Shift-Tab` reach the other fields. On Branch mode, `Space` or
-Left/Right switches between `new` and `existing`. Existing mode lists local
-branches and hides Base.
+The form opens on **Task** (optional). Typing a task fills Branch with the
+prefix and a slug of the task (`Fix the login bug` → `feature/fix-the-login-bug`:
+lowercase ASCII letters, digits and `_`, other runs one `-`, at most 50
+characters) until you edit Branch yourself. The task names the first session and,
+for an agent that takes a first message, starts it with that message, as under
+Create terminal; with Terminal it only names the session, with Nothing yet only
+the branch. A workspace request cannot name its session, so with a task the
+Dashboard creates the workspace first and starts the named session when that
+succeeds; if that session cannot start, the workspace stays and the same
+recovery choices below apply. `w`, type the task, `Enter` is the whole flow.
+
+Project defaults to the selected terminal's project. Branch starts as
+`feature/`; typing there appends to that prefix. `Enter` submits from
+any field. A new branch needs a name after the prefix that Git accepts as a
+branch name (the rules of `git check-ref-format --branch`); otherwise nothing is
+sent and the reason shows under Branch. `Tab` and `Shift-Tab` reach the other
+fields. On Branch mode, `Space` or Left/Right switches between `new` and
+`existing`. Existing mode lists local branches and hides Base.
 
 Base defaults to the repository's `origin/HEAD` target, then `main`, `master`, or
 the current HEAD. A remote-only default uses its full Git ref as Base. Git
@@ -588,9 +804,12 @@ suggestions load in the background, are cached per project until the palette
 closes, and time out after two seconds. A footer note explains failures, after
 which Branch and Base accept free text. Submission waits for pending suggestions.
 
-If the workspace is created but its first program cannot launch, the workspace
-remains. Retry, choose another agent, or open a shell in that existing workspace.
-Retry does not confirm that a previous process has stopped.
+If creation fails before the workspace exists (Git refuses the branch or base),
+the form returns with its values and the reason, and submitting again reuses the
+same workspace identity. If the workspace is created but its first program
+cannot launch, the workspace remains and the form turns into its recovery
+choices: Retry, choose another agent, or open a shell in that existing
+workspace. Retry does not confirm that a previous process has stopped.
 
 If a program starts and later exits, or the server restarts, the session row
 stays. Reopen in a fresh shell is an explicit action on that same row; it does
@@ -681,7 +900,9 @@ Repository and Workspace root are path pickers: the list is one directory of
 children, directories only, filtered by fuzzy subsequence on the last path
 segment. Hidden names stay hidden unless the typed segment starts with `.`. Git
 checkouts sort first and are marked `git`. `Tab` accepts the highlight and
-appends `/`; `Enter` keeps the typed text and moves on. An empty field lists
+appends `/`. With nothing left to complete, or once the path names a Git
+checkout, `Tab` moves to the next field instead. `Enter` keeps the typed text
+and registers the project from any field. An empty field lists
 `picker_roots` from `dashboard.toml` in document order, not sorted. Name becomes
 the repository basename once a path is chosen. Workspace root defaults to `<config dir>/workspaces/<name>` until
 you edit it, and is created on registration if missing. Registration creates the
@@ -693,11 +914,48 @@ restored. It does not switch Git.
 
 ## Empty states
 
-With no project registered, the dashboard shows `Welcome to OVRCR`, the `a`, `:`,
-and `?` shortcuts, and the resolved config and socket paths. Clicking an empty
-workspace shows how to start a terminal there and prefills that workspace in the
-terminal form. A root-workspace warning disables `n` and other new launches
-there; existing sessions stay usable. OVRCR does not switch the checkout.
+A pane with no session shows a card instead of a blank screen. Cards only
+display the hierarchy the Dashboard already has; they send no request and do
+not change which keys work or what input a pane accepts. Every key a card
+names comes from the same key table as the footer and the menu.
+
+- **No project registered:** `Welcome to OVRCR` with two numbered steps,
+  `1  a  Register a repository` and `2  w  Start an agent in a new workspace`,
+  then `Space actions · : commands · ? keys`. The instance directory and
+  socket paths are at the top of [Events](#events).
+- **Workspace row selected:** the pane header names `project / branch`; the
+  card shows its path with `~` for your home directory (and `· root` on the
+  repository-root workspace), any root warning, and its sessions in sidebar
+  order: status glyph, title, `agent:model`, the header's state words
+  (`Working`, `Ready · unread reply`, `Waiting for input`, …; a plain shell has
+  none) and elapsed time. Then
+  the next steps: `j open <session>` while the row below is that workspace's
+  first session (`j` selects the next row), `Enter expand…` when the workspace
+  is collapsed, `n new agent or terminal here`, `w new workspace` and
+  `Space w more`. A key that is unavailable there is left out; a root warning
+  removes `n`, because new launches are blocked until the checkout is back on
+  the default branch. Existing sessions stay usable; OVRCR does not switch the
+  checkout. `n` prefills that workspace in the terminal form.
+- **Project row selected:** the pane header names the project; the card shows
+  its repository path, its workspace root (read from where its worktrees are,
+  so it appears once the project has one), and each workspace with its session
+  count and attention in the sidebar strip's words and order:
+  `? 1 needs input` for a running agent waiting on you, `✓ 1 ready` for an
+  Unread reply. Then
+  `w new workspace` and `a register another project`. While the project has no
+  agent yet, the card leads with `Next: press w to start your first agent`.
+- **Nothing selected,** for example right after registering a project: every
+  project's card, each led by its name, then the same two keys.
+
+A card fits its pane. In a narrow pane the model label goes first, then the
+agent, and titles and branch names end in `…`, so each row keeps its state
+and elapsed time. Project attention counts shorten to `? 1 · ✓ 1` when their
+words do not fit. When rows run out, the list ends with `+N more` and the next
+steps stay. In a split the pane header says only `no session`, so the card in
+the emptied pane names the project or workspace itself; `j` opens the session
+in the focused pane, and the emptied pane then shows the projects.
+
+Enter on a project or workspace row still collapses or expands it.
 
 ## Dashboard settings
 
@@ -733,7 +991,9 @@ Server's document whatever its own environment says.
 ### Settings view
 
 Open **Settings** from the menu (`Space v ,`) or search the command palette for
-**settings**; it has no Browse key of its own. The view is the settings editor.
+**settings**; it has no Browse key of its own. Searching the palette for one
+setting's label or key, such as `theme`, opens Settings on that row. The view is
+the settings editor.
 It shows the document path and when the Server read it, then findings that belong
 to no setting (unknown keys and document-level problems, each with its line), then
 every setting in one scrolling list under the group headers **Alerts**
@@ -746,12 +1006,17 @@ every setting in one scrolling list under the group headers **Alerts**
 (`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`) and
 **Delegation** (`delegation.*`).
 
+The view's title lists `↑/↓ move · Enter edit · r reset · / filter · Esc close`.
 Each row shows its label, effective value (`unset` for an empty optional value)
 and source badge, `default` or `set`; a value the document sets also shows the
 default beside it, for example `kh/  set  (default: feature/)`. A setting's
-finding shows under its row. A consent setting carries its one-sentence side
-effect and, while off, the line that says how to turn it on: turning it on asks
-for no confirmation.
+finding shows under its row. Each row shows one line of description; the
+selected row shows all of it, its `key:` and, on a collection element, the keys
+that act on it (`[ ] move · x remove` on a picker root, `x remove` elsewhere).
+A consent setting that is off says `Off · Enter to turn on` (`Off · Enter to set
+the title model` for the title model) rather than the TOML key that `ovrcr
+settings` names. Selecting it shows its side effect; turning it on asks for no
+confirmation.
 
 | Key | Action |
 | --- | --- |
@@ -790,10 +1055,12 @@ hand.**; Enter, `[`, `]`, `r` and `x` change nothing.
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later
 reading changes the number of findings the footer says so again, or **No settings
-findings** once they are gone. The next key clears the line. A startup error
-banner owns that line first: the findings notice waits behind it, a key while the
-banner is up does not drop the notice, and the notice shows when the banner is
-dismissed.
+findings** once they are gone. The next key clears the line. An error banner owns
+that line first: the findings notice waits behind it, a key while the banner is up
+does not drop the notice, and the notice shows when the banner is dismissed or
+clears itself (see Footer messages). The startup `… status off — :connect to set
+up` note likewise waits behind the findings notice, and a successful **Connect
+agent status** removes it.
 
 The block is the production default document. A missing file loads these values
 (`picker_roots` keeps only the paths that exist). Commented lines show optional
@@ -915,7 +1182,10 @@ panel as Quota details. It lists the Server's event ring, oldest first and
 newest last. Opening it asks the Server for that ring. The Dashboard does not
 read `events.jsonl`, and this view does not change the file.
 
-Each line is the local time, the component (`titles`, `settings`, or `quota`),
+The list starts with the Dashboard's instance directory (`Home:`) and Server
+socket (`Socket:`), with `~` for your home directory. They scroll with the
+list; the Home key brings them back. Each event line is the local time, the
+component (`titles`, `settings`, or `quota`),
 the subject when there is one, and the message. While the popup is open, an
 event the Server records is appended. Events recorded while it is closed appear
 the next time it opens. The list opens on the newest line and stays there until
@@ -1151,7 +1421,7 @@ accept one of those messages.
 
 ### Archived sessions
 
-Closing a live session (`X` or `Space t x`) asks for confirmation, stops its
+Closing a live session (`X` or `Space t X`) asks for confirmation, stops its
 currently owned processes, then archives its record. A failed stop leaves the
 active row available. Closing an exited row archives immediately. Hiding a pane
 or detaching never archives a session.

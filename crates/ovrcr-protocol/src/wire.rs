@@ -64,6 +64,30 @@ pub struct HistoryRows {
     pub rows: Vec<HistoryRow>,
 }
 
+/// One item of an agent's own conversation transcript. Text is the provider's, verbatim:
+/// a reader must escape control characters before drawing it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TranscriptEntry {
+    User(String),
+    Assistant(String),
+    /// One tool call: its name and a short, single-line summary of its input.
+    Tool {
+        name: String,
+        input: String,
+    },
+}
+
+/// A bounded page of a session's current conversation, oldest entry first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptPage {
+    pub entries: Vec<TranscriptEntry>,
+    /// Where this page starts in the provider's transcript. Pass it as `before` for the
+    /// page before this one; zero means the page reaches the start of the conversation.
+    pub start: u64,
+    /// Exact provider reference selected for this run, required to continue this page.
+    pub identity: crate::ConversationReference,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientMessage {
     pub request_id: u64,
@@ -398,6 +422,16 @@ pub enum Request {
     Operator(crate::OperatorRequest),
     OperatorExchange(crate::OperatorExchange),
     OperatorWorker(crate::OperatorWorkerRequest),
+    /// Read-only page of this run's conversation from the provider's own transcript
+    /// (Claude Code, Codex). `before` is a previous page's `start`; `None` reads the
+    /// newest page.
+    Transcript {
+        session: SessionId,
+        run: SessionRunId,
+        /// `None` opens the current reference; a prior page's identity fences pagination.
+        identity: Option<crate::ConversationReference>,
+        before: Option<u64>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -487,6 +521,7 @@ pub enum Response {
     Operator(crate::OperatorResponse),
     OperatorExchange(crate::OperatorExchangeResult),
     OperatorWorker(crate::OperatorWorkerResult),
+    Transcript(TranscriptPage),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1064,6 +1099,23 @@ mod wire_snapshot {
                     save: true,
                 },
             ),
+            (
+                "Transcript",
+                Request::Transcript {
+                    session: SessionId(1),
+                    run: SessionRunId(4),
+                    identity: Some(crate::ConversationReference::Claude(
+                        crate::ClaudeConversation {
+                            conversation: "conversation".into(),
+                            executable: "/claude".into(),
+                            history: "/history.jsonl".into(),
+                            config_dir: "/config".into(),
+                            options: Vec::new(),
+                        },
+                    )),
+                    before: Some(2),
+                },
+            ),
         ]
     }
 
@@ -1178,6 +1230,27 @@ mod wire_snapshot {
                     schema: crate::BRIDGE_SCHEMA_VERSION,
                     server_wire: crate::PROTOCOL_VERSION,
                     target: Some(activation_target()),
+                }),
+            ),
+            (
+                "Transcript",
+                Response::Transcript(TranscriptPage {
+                    entries: vec![
+                        TranscriptEntry::User("u".into()),
+                        TranscriptEntry::Assistant("a".into()),
+                        TranscriptEntry::Tool {
+                            name: "n".into(),
+                            input: "i".into(),
+                        },
+                    ],
+                    start: 3,
+                    identity: crate::ConversationReference::Claude(crate::ClaudeConversation {
+                        conversation: "conversation".into(),
+                        executable: "/claude".into(),
+                        history: "/history.jsonl".into(),
+                        config_dir: "/config".into(),
+                        options: Vec::new(),
+                    }),
                 }),
             ),
         ]
@@ -3380,15 +3453,19 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0446017301630168016c0104",
+            "2a0447017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0446017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0447017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
+        (
+            "Request::Transcript",
+            "3c010401000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e666967000102",
+        ),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -3417,18 +3494,22 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04460000"),
+        ("Response::NotificationNavigation", "0d04470000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0446017301630168016c0104",
+            "0e01016e0447017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010446017301630168016c0164",
+            "0f0107080901016901010447017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004460107080901016901010446017301630168016c0164",
+            "1004470107080901016901010447017301630168016c0164",
+        ),
+        (
+            "Response::Transcript",
+            "1c0300017501016102016e016903000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e66696700",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3452,7 +3533,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0446017301630168016c0104",
+            "08016e0447017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

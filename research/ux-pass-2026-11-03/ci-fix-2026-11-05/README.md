@@ -1,0 +1,9 @@
+# PR #390 CI correction — 2026-11-05
+
+[Initial CI run 42094306544](https://github.com/xlyk/ovrcr/actions/runs/42094306544) failed `retained_ownership::archived_names_are_reusable_but_active_names_still_conflict` on all three attempts: `NotFound` instead of `AlreadyExists`. Nextest stopped after 781 passes/1 failure; 1,821 cases did not run. Offline Cursor preflight passed. Pi evidence upload and the aggregate failed after the Test step, so later acceptance was not proven.
+
+The archived-name regression was introduced on newer main by PR #388. Its newly added duplicate-create request still constructed `<workspace_root>/<workspace_id>`, while the UX branch names checkout folders after branches. Other requests in the same fixture already used `Live::workspace_path`, which reads the registered directory.
+
+Merged current main (`b1eeb22a`) into the integration branch as `18af854a` to reproduce the exact combined code. [Focused red run](pr390-archive-names-red.log) reproduced the CI assertion in 5.17 seconds. Ranked alternatives were a wrong fixture path, a runtime lookup defect, or an active-name uniqueness defect. Changing only that one request to use the existing registered-path helper made [the same test pass](pr390-archive-names-green.log) in 7.14 seconds. All assertions remain unchanged; no production behavior, deadlines, retries or CI selection changed.
+
+[Full retained-ownership suite](pr390-retained-ownership-full.log): **13 passed, 0 failed, 1 helper ignored**, exit 0. Formatting and whitespace passed. Runs used the existing dedicated target, private HOME, cleared provider/hook authority and private server fixtures. No debug instrumentation was added. Hosted CI must pass on the corrected PR head before merge; prior source revision 78ce52fd’s 2,599-pass receipt remains historical, not a claim about the new head.

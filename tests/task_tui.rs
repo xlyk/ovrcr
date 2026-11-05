@@ -174,7 +174,7 @@ fn create_and_edit_every_field_and_multiline_prompt_in_terminal() {
         "First 界\nSecond line",
     ];
     for value in values {
-        v.event(ctrl('a'));
+        v.event(ctrl('u'));
         v.event(Event::Paste(value.into()));
         v.event(key(KeyCode::Tab));
     }
@@ -575,7 +575,7 @@ fn multiline_cursor_edits_unicode_without_corruption() {
     for _ in 0..11 {
         v.event(key(KeyCode::Tab));
     }
-    v.event(ctrl('a'));
+    v.event(ctrl('u'));
     v.event(Event::Paste("one 界\nlast".into()));
     v.event(key(KeyCode::Home));
     v.event(key(KeyCode::Up));
@@ -632,7 +632,7 @@ fn unicode_prompt_render_is_safe_while_another_field_has_focus() {
 fn long_editor_fields_keep_the_cursor_text_visible() {
     let mut v = fixture();
     v.event(key(KeyCode::Char('e')));
-    v.event(ctrl('a'));
+    v.event(ctrl('u'));
     v.event(Event::Paste(format!("{}END", "a".repeat(100))));
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
     terminal.draw(|f| draw_tasks(f, &v)).unwrap();
@@ -671,7 +671,7 @@ fn new_task_defaults_match_cli_off_thinking_and_one_hour_timeout() {
 fn rejected_save_retains_every_field_and_prompt_for_correction() {
     let mut v = fixture();
     v.event(key(KeyCode::Char('e')));
-    v.event(ctrl('a'));
+    v.event(ctrl('u'));
     v.event(Event::Paste("corrected name".into()));
     v.event(ctrl('s'));
     let first = v.take_request().unwrap();
@@ -693,13 +693,13 @@ fn unicode_duration_keeps_editor_fields_available_for_correction() {
         for _ in 0..field {
             v.event(key(KeyCode::Tab));
         }
-        v.event(ctrl('a'));
+        v.event(ctrl('u'));
         v.event(Event::Paste("1秒".into()));
         v.event(ctrl('s'));
         assert!(v.take_request().is_none());
         assert!(v.editor.is_some());
         assert!(v.message.contains("duration"));
-        v.event(ctrl('a'));
+        v.event(ctrl('u'));
         v.event(Event::Paste("60s".into()));
         v.event(ctrl('s'));
         let Some(TaskRequest::Update {
@@ -778,7 +778,6 @@ fn ux_narrow_task_footer_keeps_escape_and_save_complete() {
             "Esc cancel",
             "Ctrl-s save",
             "Tab/Shift-Tab field",
-            "Ctrl-a clear",
             "Enter newline",
             "↑/↓ pick",
             "Tab/Enter accept",
@@ -794,8 +793,9 @@ fn ux_narrow_task_footer_keeps_escape_and_save_complete() {
         );
         if field == 2 {
             assert!(footer.contains("↑/↓ pick"), "{footer}");
-            assert!(!footer.contains("Enter newline"), "{footer}");
         }
+        // Enter adds a newline only in Prompt; Name and Project do not offer it.
+        assert!(!footer.contains("Enter newline"), "{footer}");
         view.event(key(KeyCode::Esc));
         assert!(view.editor.is_none());
     }
@@ -813,7 +813,7 @@ fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
     assert_eq!(d.ctrl('t'), DashboardAction::Redraw);
     d.event_action(key(KeyCode::Char('n')));
     for value in ["review", "git"] {
-        d.event_action(ctrl('a'));
+        d.event_action(ctrl('u'));
         d.event_action(Event::Paste(value.into()));
         d.event_action(key(KeyCode::Tab));
     }
@@ -826,7 +826,7 @@ fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
     let mut v = TasksView::with_projects(&hierarchy, "project");
     v.event(key(KeyCode::Char('n')));
     for value in ["review", "git"] {
-        v.event(ctrl('a'));
+        v.event(ctrl('u'));
         v.event(Event::Paste(value.into()));
         v.event(key(KeyCode::Tab));
     }
@@ -843,7 +843,7 @@ fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
         "1h",
         "prompt",
     ] {
-        v.event(ctrl('a'));
+        v.event(ctrl('u'));
         v.event(Event::Paste(value.into()));
         v.event(key(KeyCode::Tab));
     }
@@ -988,7 +988,7 @@ fn task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once() {
     let mut v = fixture();
     task_click_text(&mut v, "e edit", 120, 24);
     task_click_text(&mut v, "Model: ", 120, 24);
-    v.event(ctrl('a'));
+    v.event(ctrl('u'));
     v.event(Event::Paste("provider/a界z".into()));
     task_click_text(&mut v, "界", 120, 24);
     v.event(key(KeyCode::Char('X')));
@@ -1019,7 +1019,7 @@ fn task_mouse_project_picker_and_transcript_wheel_use_visible_rows() {
     v.tasks = fixture().tasks;
     task_click_text(&mut v, "e edit", 120, 24);
     task_click_text(&mut v, "Target", 120, 24);
-    v.event(ctrl('a'));
+    v.event(ctrl('u'));
     v.event(Event::Paste("git".into()));
     task_click_text(&mut v, "Project", 120, 24);
     for _ in 0..10 {
@@ -1139,6 +1139,196 @@ fn task_mouse_run_rows_cancel_and_cleanup_use_selected_run() {
         Some(TaskRequest::Clean {
             id: RunId(2),
             confirmed: true
+        })
+    );
+}
+
+fn task_rows(view: &TasksView, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| draw_tasks(f, view)).unwrap();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}
+
+/// Ctrl-u clears a field; Ctrl-a and Ctrl-e go to the line's start and end, as they
+/// do elsewhere, including in the project picker and the multi-line prompt.
+#[test]
+fn ctrl_u_clears_a_field_and_ctrl_a_ctrl_e_go_to_its_line_edges() {
+    let mut v = TasksView::with_projects(&task_hierarchy(), "project");
+    v.event(key(KeyCode::Char('n')));
+    v.event(Event::Paste("draft".into()));
+    v.event(ctrl('u'));
+    v.event(Event::Paste("world".into()));
+    v.event(ctrl('a'));
+    v.event(Event::Paste("hello ".into()));
+    v.event(ctrl('e'));
+    v.event(key(KeyCode::Char('!')));
+    v.event(key(KeyCode::Tab));
+    v.event(ctrl('u'));
+    v.event(Event::Paste("git".into()));
+    v.event(key(KeyCode::Tab));
+    v.event(Event::Paste("zzz".into()));
+    v.event(ctrl('u'));
+    v.event(Event::Paste("ject".into()));
+    v.event(ctrl('a'));
+    v.event(Event::Paste("pro".into()));
+    v.event(key(KeyCode::Enter));
+    for _ in 3..8 {
+        v.event(key(KeyCode::Tab));
+    }
+    v.event(Event::Paste("provider/model".into()));
+    for _ in 8..11 {
+        v.event(key(KeyCode::Tab));
+    }
+    let footer = task_rows(&v, 120, 24).join("\n");
+    assert!(
+        footer.contains("Ctrl-u clear") && footer.contains("Enter newline"),
+        "{footer}"
+    );
+    assert!(!footer.contains("Ctrl-a"), "{footer}");
+    v.event(Event::Paste("first\nsecond".into()));
+    v.event(ctrl('a'));
+    v.event(key(KeyCode::Char('>')));
+    v.event(ctrl('s'));
+    let Some(TaskRequest::Create(spec)) = v.take_request() else {
+        panic!("save task: {}", v.message)
+    };
+    assert_eq!(spec.name, "hello world!");
+    assert_eq!(
+        spec.target,
+        TaskTarget::Git {
+            project: "project".into(),
+            remote: "origin".into(),
+            branch: "main".into()
+        }
+    );
+    assert_eq!(spec.prompt, "first\n>second");
+}
+
+/// Next runs show in local time with no `(UTC)` header, and a new cron task starts
+/// in the local zone the editor shows.
+#[test]
+fn task_times_are_local_and_new_cron_tasks_start_in_the_shown_zone() {
+    let list = task_rows(&fixture(), 110, 12).join("\n");
+    assert!(list.contains("SCHEDULE / NEXT"), "{list}");
+    assert!(!list.contains("UTC"), "{list}");
+    let local = chrono::DateTime::from_timestamp(60, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+    assert!(list.contains(&local), "{local} not in {list}");
+
+    let mut v = TasksView::default();
+    v.event(key(KeyCode::Char('n')));
+    let rows = task_rows(&v, 110, 30);
+    let zone = rows
+        .iter()
+        .find_map(|row| row.split("Timezone: ").nth(1))
+        .map(|rest| rest.split_whitespace().next().unwrap_or("").to_owned())
+        .unwrap_or_else(|| panic!("no Timezone field: {rows:#?}"));
+    let cron = |timezone: &str| Schedule::Cron {
+        expression: "0 9 * * *".into(),
+        timezone: timezone.into(),
+    };
+    cron(&zone).validate().unwrap();
+    v.event(Event::Paste("daily".into()));
+    for _ in 0..5 {
+        v.event(key(KeyCode::Tab));
+    }
+    v.event(ctrl('u'));
+    v.event(Event::Paste("cron".into()));
+    v.event(key(KeyCode::Tab));
+    v.event(ctrl('u'));
+    v.event(Event::Paste("0 9 * * *".into()));
+    // Timezone keeps its default.
+    for _ in 6..8 {
+        v.event(key(KeyCode::Tab));
+    }
+    v.event(Event::Paste("provider/model".into()));
+    for _ in 8..11 {
+        v.event(key(KeyCode::Tab));
+    }
+    v.event(Event::Paste("Review".into()));
+    v.event(ctrl('s'));
+    let Some(TaskRequest::Create(spec)) = v.take_request() else {
+        panic!("save task: {}", v.message)
+    };
+    assert_eq!(spec.schedule, cron(&zone));
+}
+
+/// Opens the stored `spec` in the editor, returns the rendered field rows, and saves
+/// without changes.
+fn edit_and_save_unchanged(spec: TaskSpec) -> (Vec<String>, Option<TaskRequest>) {
+    let mut v = TasksView::default();
+    v.receive(
+        &TaskRequest::ListTasks,
+        Ok(TaskResponse::Tasks(vec![Task {
+            id: TaskId(4),
+            spec,
+            enabled: true,
+            next_due_at: None,
+        }])),
+    );
+    v.event(key(KeyCode::Char('e')));
+    let rows = task_rows(&v, 120, 30);
+    v.event(ctrl('s'));
+    (rows, v.take_request())
+}
+
+fn field(rows: &[String], label: &str) -> String {
+    rows.iter()
+        .find_map(|row| row.split(&format!("{label}: ")).nth(1))
+        .map(|rest| rest.split_whitespace().next().unwrap_or("").to_owned())
+        .unwrap_or_else(|| panic!("no {label} field: {rows:#?}"))
+}
+
+/// Editing a stored one-time task shows its instant in local time with an explicit
+/// offset, and saving it unchanged stores the same instant.
+#[test]
+fn editing_a_one_time_task_keeps_its_instant() {
+    let at = 1_900_000_000;
+    let spec = TaskSpec {
+        schedule: Schedule::Once { at },
+        ..spec()
+    };
+    let (rows, saved) = edit_and_save_unchanged(spec.clone());
+    let local = chrono::DateTime::from_timestamp(at, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .to_rfc3339();
+    assert_eq!(field(&rows, "When (duration/cron/RFC3339)"), local);
+    assert_eq!(
+        saved,
+        Some(TaskRequest::Update {
+            id: TaskId(4),
+            spec
+        })
+    );
+}
+
+/// A cron task keeps its stored zone, even one that is not the local default.
+#[test]
+fn editing_a_cron_task_keeps_its_stored_zone() {
+    let spec = TaskSpec {
+        schedule: Schedule::Cron {
+            expression: "0 9 * * *".into(),
+            timezone: "Pacific/Kiritimati".into(),
+        },
+        ..spec()
+    };
+    let (rows, saved) = edit_and_save_unchanged(spec.clone());
+    assert_eq!(field(&rows, "Timezone"), "Pacific/Kiritimati");
+    assert_eq!(
+        saved,
+        Some(TaskRequest::Update {
+            id: TaskId(4),
+            spec
         })
     );
 }

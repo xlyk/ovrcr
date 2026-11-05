@@ -4,6 +4,7 @@
 
 use crate::*;
 use ovrcr::protocol::{ErrorCode, Request, Response, SettingsReport};
+use ovrcr::tui::ConnectStatus;
 use std::path::Path;
 
 #[cfg(target_os = "macos")]
@@ -92,7 +93,7 @@ fn select(dashboard: &mut Dashboard, words: &str) {
 }
 
 fn open(dashboard: &Dashboard) -> bool {
-    screen(dashboard).contains("Settings · Enter edit")
+    screen(dashboard).contains("Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close")
 }
 
 #[test]
@@ -128,9 +129,9 @@ fn settings_footer_reports_findings_at_attach_and_when_the_count_changes() {
     assert!(rendered_footer(&dashboard, 120).contains("No settings findings"));
 }
 
-/// A startup warning is applied after hello's settings reading and takes the
-/// footer. The findings line must wait behind that banner, including across a
-/// key press, and show once the banner is dismissed.
+/// An error banner raised after hello's settings reading takes the footer. The
+/// findings line must wait behind that banner, including across a key press, and
+/// show once the banner is dismissed.
 #[test]
 fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
     let root = tempfile::tempdir().unwrap();
@@ -144,7 +145,7 @@ fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
         rendered_footer(&dashboard, 120)
     );
 
-    // Same banner `run_dashboard` writes for a startup warning: `set_error`.
+    // An error the Server returns writes the banner through `set_error`.
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 9_000,
         response: Response::Error {
@@ -182,6 +183,169 @@ fn startup_error_banner_does_not_hide_the_settings_findings_notice() {
         footer.contains("2 settings findings; see Settings"),
         "queued findings notice must show once the banner is dismissed, got {footer:?}"
     );
+}
+
+const STATUS_OFF: &str = "Claude status off — :connect to set up";
+
+fn no_connect(_: bool) -> ConnectStatus {
+    panic!("nothing chose Connect agent status")
+}
+
+/// "Not now" at startup is not an error: `run_dashboard` hands the note to
+/// `status_off`, which shows it as a plain notice, once, behind a notice already
+/// in the footer.
+#[test]
+fn startup_status_off_is_a_calm_one_time_note_behind_the_findings_notice() {
+    let mut quiet = dashboard_fixture();
+    quiet.status_off(STATUS_OFF.into(), no_connect);
+    assert_eq!(rendered_footer(&quiet, 120), STATUS_OFF);
+
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("dashboard.toml");
+    std::fs::write(&document, "unknown_0 = 1\n").unwrap();
+    let mut dashboard = dashboard_fixture();
+    publish(&mut dashboard, &document);
+    dashboard.status_off(STATUS_OFF.into(), no_connect);
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(
+        footer.contains("1 settings finding; see Settings"),
+        "{footer}"
+    );
+    assert_eq!(dashboard.key(KeyCode::F(12)), DashboardAction::None);
+    assert_eq!(rendered_footer(&dashboard, 120), STATUS_OFF);
+    assert_eq!(dashboard.key(KeyCode::F(12)), DashboardAction::None);
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(
+        !footer.contains("status off") && !footer.contains("ERROR"),
+        "{footer}"
+    );
+}
+
+/// The palette lists Connect agent status only while startup left status off. A
+/// failure is reported and keeps the entry; success replaces that banner with a
+/// notice and removes the entry.
+#[test]
+fn palette_connects_agent_status_until_it_succeeds() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static PREVIEWS: AtomicUsize = AtomicUsize::new(0);
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn connect(apply: bool) -> ConnectStatus {
+        if !apply {
+            PREVIEWS.fetch_add(1, Ordering::SeqCst);
+            return ConnectStatus::Confirm(
+                "Lets OVRCR show when your Claude sessions are working, need you or are done.\nAdds or updates OVRCR hooks in:\n  /p/settings.json\nYour other settings, status line and approvals stay as they are.".into(),
+            );
+        }
+        ConnectStatus::Done(match CALLS.fetch_add(1, Ordering::SeqCst) {
+            0 => Err("Couldn't connect Claude status: native settings file is read-only in /p/settings.json; fix the file and try again".into()),
+            _ => Ok("Claude status connected for new sessions".into()),
+        })
+    }
+    fn listed(dashboard: &mut Dashboard) -> bool {
+        dashboard.key(KeyCode::Char(':'));
+        let inspect = only_request(dashboard.drain_outbox());
+        assert_eq!(inspect.request, Request::Inspect);
+        dashboard.event_action(Event::Paste("connect".into()));
+        let shown = screen(dashboard).contains("Connect agent status");
+        dashboard.key(KeyCode::Esc);
+        shown
+    }
+    fn choose(dashboard: &mut Dashboard) {
+        dashboard.key(KeyCode::Char(':'));
+        only_request(dashboard.drain_outbox());
+        dashboard.event_action(Event::Paste("connect agent status".into()));
+        // The entry opens the startup screen's text; nothing is written yet.
+        let calls = CALLS.load(Ordering::SeqCst);
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        let page = screen(dashboard);
+        assert!(page.contains("Adds or updates OVRCR hooks in:"), "{page}");
+        assert!(page.contains("/p/settings.json"), "{page}");
+        assert!(page.contains("Enter confirm · Esc cancel"), "{page}");
+        assert_eq!(CALLS.load(Ordering::SeqCst), calls);
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        assert!(
+            dashboard.drain_outbox().is_empty(),
+            "connecting is local, not a Server request"
+        );
+        assert!(!screen(dashboard).contains("Adds or updates OVRCR hooks in:"));
+    }
+
+    let mut dashboard = dashboard_fixture();
+    assert!(!listed(&mut dashboard), "nothing to connect");
+    dashboard.status_off(STATUS_OFF.into(), connect);
+    assert!(listed(&mut dashboard));
+
+    // Esc on the confirmation page writes nothing and keeps the entry.
+    dashboard.key(KeyCode::Char(':'));
+    only_request(dashboard.drain_outbox());
+    dashboard.event_action(Event::Paste("connect agent status".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(screen(&dashboard).contains("Adds or updates OVRCR hooks in:"));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "Esc must not connect");
+    assert_eq!(PREVIEWS.load(Ordering::SeqCst), 1);
+    assert!(!screen(&dashboard).contains("Adds or updates OVRCR hooks in:"));
+    assert!(!rendered_footer(&dashboard, 200).contains("connected"));
+    assert!(listed(&mut dashboard));
+
+    choose(&mut dashboard);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    let footer = rendered_footer(&dashboard, 200);
+    assert!(
+        footer.starts_with("ERROR: Couldn't connect Claude status:"),
+        "{footer}"
+    );
+    assert!(listed(&mut dashboard), "a failed attempt can be retried");
+
+    choose(&mut dashboard);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        rendered_footer(&dashboard, 200),
+        "Claude status connected for new sessions"
+    );
+    assert!(
+        !listed(&mut dashboard),
+        "connected status has nothing to offer"
+    );
+}
+
+/// A successful connect retires the startup note even when it was waiting behind a
+/// banner, so the next key does not bring back `… status off`.
+#[test]
+fn connecting_retires_a_queued_status_off_note() {
+    fn connect(apply: bool) -> ConnectStatus {
+        if apply {
+            ConnectStatus::Done(Ok("Claude status connected for new sessions".into()))
+        } else {
+            ConnectStatus::Confirm("Adds or updates OVRCR hooks in:\n  /p/settings.json".into())
+        }
+    }
+    let mut dashboard = dashboard_fixture();
+    dashboard.status_off(STATUS_OFF.into(), connect);
+    assert_eq!(rendered_footer(&dashboard, 120), STATUS_OFF);
+    // A banner arrives while the note shows: the note waits behind it.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9_000,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "unrelated failure".into(),
+        },
+    });
+    assert!(rendered_footer(&dashboard, 120).starts_with("ERROR:"));
+    dashboard.key(KeyCode::Char(':'));
+    only_request(dashboard.drain_outbox());
+    dashboard.event_action(Event::Paste("connect agent status".into()));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert_eq!(
+        rendered_footer(&dashboard, 200),
+        "Claude status connected for new sessions"
+    );
+    for _ in 0..3 {
+        dashboard.key(KeyCode::F(12));
+        let footer = rendered_footer(&dashboard, 200);
+        assert!(!footer.contains("status off"), "stale note: {footer}");
+    }
 }
 
 #[test]
@@ -246,11 +410,16 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     // A bad value defaults only itself and its finding shows on its row.
     assert!(at("! line 3: ") > at("Ready sound"), "{text}");
     assert!(line("Title model").contains("unset  default"));
-    assert!(text.contains("Automatic titles off: set `title_model"));
-    // Consent settings carry their side effect; turning one on asks nothing.
-    assert!(text.contains("Setting a model makes paid calls to title sessions."));
+    // In here an off consent setting says what Enter does, not which key to write.
+    assert!(
+        text.contains("Off · Enter to set the title model"),
+        "{text}"
+    );
+    assert!(!text.contains("set `"), "{text}");
+    // Each row shows one description line; the selected row (the first) shows all.
     assert!(text.contains("may show an OS notification permission prompt."));
-    assert!(text.contains("On by default while a Dashboard is attached."));
+    assert!(text.contains("Reads Codex and Grok allowance while a Dashboard is attached."));
+    assert!(!text.contains("Setting a model makes paid calls"), "{text}");
     assert!(line("Cursor dashboard usage").contains("off  default"));
     assert!(line("Cursor state database").contains("unset  default"));
     // Collections expand into child rows with an Add row.
@@ -265,6 +434,14 @@ fn rows_show_value_source_default_and_findings_with_unknown_keys_first() {
     let text = screen(&dashboard);
     assert!(line_with(&dashboard, "demo  ").contains("Terminal"));
     assert!(text.contains("+ Add project"));
+    // Selecting a consent setting shows its side effect before Enter turns it on.
+    select(&mut dashboard, "title model");
+    let text = screen(&dashboard);
+    assert!(
+        text.contains("Setting a model makes paid calls to title sessions."),
+        "{text}"
+    );
+    assert!(text.contains("key: title_model"), "{text}");
 }
 
 #[test]

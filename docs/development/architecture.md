@@ -13,6 +13,7 @@ One Reporter (`src/report/reporter.rs`) owns every managed invocation's reportin
 - Settings follow [ADR 0007](../adr/0007-one-settings-document-read-by-the-server.md): `ovrcr_runtime::settings` is the one loader of the settings document, and its typed `Settings` and `SettingsReport` live in `ovrcr-protocol` so the CLI and the Dashboard share them. Add a setting there, never a second parser.
 - Runtime and TUI depend on protocol/terminal primitives, not on each other. Keep root facades thin; put implementations in the owning crate.
 - Keep modules focused and exports small. Reuse existing helpers and dependencies before adding abstractions or libraries. Do not introduce Tokio, an agent SDK, or a new crate without a concrete requirement in the approved design. SQLite is already approved for project and workspace metadata (#112 / #113).
+- The locked `vt100 0.16.2` source is locally patched in `vendor/vt100` so `CSI 3 J` clears saved lines in place without resetting terminal state. Keep its upstream manifest, provenance and MIT license; do not publish this local patch. Recheck session parser regressions before updating it.
 - The approved built-in Operator uses Rig and Tokio only in root application workers; the Server remains synchronous. See the [Operator runtime reference](operator.md) and [approved design](../superpowers/specs/2026-10-29-rig-operator-design.md).
 - Update constructors, exhaustive matches, public re-exports, CLI output, and optional-feature callers together when shared types change. Which providers may produce Ready, Unread, review targets and alerts is decided once by `AgentProvider::supports_readiness`; never compare a provider literal at a consumer.
 
@@ -70,6 +71,13 @@ SQLite owns identity, path, and root-setup metadata. The stored
 default-branch detection is only a HEAD fallback or fails), and a feature
 workspace's branch at creation or last explicit mutation—not a promise that
 later checkout changes are written back.
+The stored `path` is the only record of the checkout directory; never derive it
+from `id`. No two records share a checkout folder: under `mutation_lock` creation
+checks every project's registered paths, the disk and Git's worktree list,
+ignoring ASCII case (APFS). Dashboard and CLI creation name the folder after a
+slug of the branch and skip taken names (`git::WorktreeDir::Branch`). Task runs
+and coding delegation save `<workspace root>/<id>` as intent before Git, so they
+keep that folder and refuse it when taken (`WorktreeDir::Id`).
 Live checkout labels are derived observations; Git is the authority for the
 current branch. `observe_registry` overlays those labels on a returned clone
 for inventory and offline inspection and is not written back. Retained sessions

@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Copy]   [Close]
+ OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m                             pid 37860│  CUA retry transcript  claude  Ready · 0m            pid 92606
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│2k tokens
+  󰘬 main
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Copy]   [Close]
+		4 text (settable)  OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m                             pid 37860│  CUA retry transcript  claude  Ready · 0m            pid 92606
+		5 text (settable)  CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│2k tokens
+		6 text (settable)   󰘬 main                          root │HISTORY_ROW_020                                               │TRANSCRIPT_NATIVE_READY
+		7 text (settable) ▌    $ local                           │HISTORY_ROW_021                                               │Synthetic provider: no model request.
+		8 text (settable)   󰘬 gui-consigint-auth-handoff         │HISTORY_ROW_022                                               │AFTER_CLOSE
+		9 text (settable)      $ local                           │HISTORY_ROW_023                                               │TRANSCRIPT_NATIVE_ACK:AFTER_CLOSE
+		10 text (settable)      - review auth handoff    grok:4.6 │HISTORY_ROW_024                                               │
+		11 text (settable)        CUA retry transcript     claude │HISTORY_ROW_025                                               │
+		12 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │HISTORY_ROW_026                                               │
+		13 text (settable)      $ local                           │HISTORY_ROW_027                                               │
+		14 text (settable)      - implement lifecycle cleanup     │HISTORY_ROW_028                                               │
+		15 text (settable)      - review websocket shutdown       │HISTORY_ROW_029                                               │
+		16 text (settable)      - plan snapshot restore        pi │HISTORY_ROW_030                                               │
+		17 text (settable)                                        │HISTORY_ROW_031                                               │
+		18 text (settable)  SPACELIFT-AGENT ──────────────────────│HISTORY_ROW_032                                               │
+		19 text (settable)   󰘬 main                          root │HISTORY_ROW_033                                               │
+		20 text (settable)      $ local                           │HISTORY_ROW_034                                               │
+		21 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│HISTORY_ROW_035                                               │
+		22 text (settable)      $ local                           │HISTORY_ROW_036                                               │
+		23 text (settable)      - build pipeline progress  claude │HISTORY_ROW_037                                               │
+		24 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │HISTORY_ROW_038                                               │
+		25 text (settable)      $ local                           │HISTORY_ROW_039                                               │
+		26 text (settable)      - review scope quality      codex │HISTORY_ROW_040                                               │
+		27 text (settable)                                        │HISTORY_ROW_041                                               │
+		28 text (settable)                                        │HISTORY_ROW_042                                               │
+		29 text (settable)                                        │HISTORY_ROW_043                                               │
+		30 text (settable)                                        │HISTORY_ROW_044                                               │
+		31 text (settable)                                        │HISTORY_ROW_045                                               │
+		32 text (settable)                                        │HISTORY_ROW_046                                               │
+		33 text (settable)                                        │HISTORY_ROW_047                                               │
+		34 text (settable)                                        │HISTORY_ROW_048                                               │
+		35 text (settable)                                        │HISTORY_ROW_049                                               │
+		36 text (settable)                                        │HISTORY_ROW_050                                               │
+		37 text (settable)                                        │HISTORY_ROW_051                                               │
+		38 text (settable)                                        │HISTORY_ROW_052                                               │
+		39 text (settable)                                        │HISTORY_ROW_053                                               │
+		40 text (settable)                                        │HISTORY_ROW_054                                               │
+		41 text (settable)                                        │HISTORY_ROW_055                                               │
+		42 text (settable)                                        │HISTORY_ROW_056                                               │
+		43 text (settable)                                        │HISTORY_ROW_057                                               │
+		44 text (settable)                                        │HISTORY_ROW_058                                               │
+		45 text (settable)                                        │HISTORY_ROW_059                                               │
+		46 text (settable)                                        │HISTORY_ROW_060                                               │
+		47 text (settable)                                        │HISTORY_ROW_061                                               │
+		48 text (settable)                                        │HISTORY_ROW_062                                               │
+		49 text (settable)                                        │HISTORY_ROW_063                                               │
+		50 text (settable)                                        │HISTORY_ROW_064                                               │
+		51 text (settable)                                        │HISTORY_ROW_065                                               │
+		52 text (settable)                                        │HISTORY_ROW_066                                               │
+		53 text (settable)                                        │HISTORY_ROW_067                                               │
+		54 text (settable)                                        │HISTORY_ROW_068                                               │
+		55 text (settable)                                        │HISTORY_ROW_069                                               │
+		56 text (settable)                                        │HISTORY_ROW_070                                               │
+		57 text (settable)                                        │HISTORY_ROW_071                                               │
+		58 text (settable)                                        │HISTORY_ROW_072                                               │
+		59 text (settable)                                        │HISTORY_ROW_073                                               │
+		60 text (settable)                                        │HISTORY_ROW_074                                               │
+		61 text (settable)                                        │HISTORY_ROW_075                                               │
+		62 text (settable)                                        │HISTORY_ROW_076                                               │
+		63 text (settable)                                        │HISTORY_ROW_077                                               │
+		64 text (settable)                                        │HISTORY_ROW_078                                               │
+		65 text (settable)                                        │HISTORY_ROW_079                                               │
+		66 text (settable)                                        │HISTORY_ROW_080                                               │
+		67 text (settable)                                        │HISTORY_ROW_081                                               │
+		68 text (settable)                                        │HISTORY_ROW_082                                               │
+		69 text (settable)                                        │HISTORY_ROW_083                                               │
+		70 text (settable)                                        │                                                              │
+		71 text (settable)  Claude ?                              │                                                              │
+		72 text (settable) HISTORY  ? Help  Esc Back  v Select  y Copy  h Move left  j Move down  k Move up  l Move right  PageUp Previous page  PageDown Next page  Space Menu
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Copy]   [Close]
+ OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m                             pid 37860│  CUA retry transcript  claude  Ready · 0m            pid 92606
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│2k tokens
+  󰘬 main

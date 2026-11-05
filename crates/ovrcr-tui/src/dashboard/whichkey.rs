@@ -185,12 +185,12 @@ impl Dashboard {
                 'w' => {
                     let root = current.is_some_and(|workspace| workspace.root);
                     let mut binding = key_binding(
-                        "x",
+                        "X",
                         "Remove workspace",
                         format!(
                             "Remove {workspace_title}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
                         ),
-                        KeyCode::Char('x'),
+                        KeyCode::Char('X'),
                         Action::RemoveWorkspace,
                     );
                     if root {
@@ -199,10 +199,10 @@ impl Dashboard {
                     vec![binding]
                 }
                 'p' => vec![key_binding(
-                    "x",
+                    "X",
                     "Remove project",
                     format!("Unregister {project}; asks for confirmation. Keeps the repository."),
-                    KeyCode::Char('x'),
+                    KeyCode::Char('X'),
                     Action::RemoveProject,
                 )],
                 // Menu-only, like removal: neither has a Browse key.
@@ -258,16 +258,13 @@ impl Dashboard {
                 ));
             }
         }
-        // Registration remains reachable even before a project exists.
-        hints.extend(groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
-            matches!(
-                binding.action,
-                Action::RegisterProject
-                    | Action::Detach
-                    | Action::ToggleNotifications
-                    | Action::ToggleSound
-            )
-        }));
+        // Registration remains reachable even before a project exists. Toggles
+        // stay off the group list: Settings and their Browse keys own them.
+        hints.extend(
+            groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
+                matches!(binding.action, Action::RegisterProject | Action::Detach)
+            }),
+        );
         vec![KeyGroup {
             title: "Groups".into(),
             keys: hints,

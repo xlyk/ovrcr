@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────┌Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close─────────────────────────────────┐                        pid 37860
+ CONSIGINT ──────────────────────│Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard.toml · read │─────────────────────────────────
+  󰘬 main
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+		4 text (settable)  OPERATOR ───────────────────────┌Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close─────────────────────────────────┐                        pid 37860
+		5 text (settable)  CONSIGINT ──────────────────────│Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard.toml · read │─────────────────────────────────
+		6 text (settable)   󰘬 main                         │                                                                                                  │
+		7 text (settable) ▌    $ local                     │Alerts                                                                                            │
+		8 text (settable)   󰘬 gui-consigint-auth-handoff   │  Desktop notifications      off  default                                                         │
+		9 text (settable)      $ local                     │      Off · Enter to turn on                                                                      │
+		10 text (settable)      - review auth handoff    gro│  Ready sound                off  default                                                         │
+		11 text (settable)   󰘬 gui-consigint-worktree-lifecy│      macOS plays the selected sound with new banners only when Desktop notifications and Ready s…│
+		12 text (settable)      $ local                     │  Ready sound choice         System default  default                                              │
+		13 text (settable)      - implement lifecycle cleanu│      Used for new Ready and Input banners when both alert settings are on. Changing this does no…│
+		14 text (settable)      - review websocket shutdown │  Exact iTerm focus          off  default                                                         │
+		15 text (settable)      - plan snapshot restore     │      Off · Enter to turn on                                                                      │
+		16 text (settable)                                  │                                                                                                  │
+		17 text (settable)  SPACELIFT-AGENT ────────────────│Appearance                                                                                        │
+		18 text (settable)   󰘬 main                         │› Theme                      Catppuccin Mocha  default                                            │
+		19 text (settable)      $ local                     │      80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the      │
+		20 text (settable)   󰘬 gui-spacelift-agent-pipeline-│      default (alias dark); Catppuccin Latte also accepts light.                                  │
+		21 text (settable)      $ local                     │      The highlighted choice previews across the Dashboard. Enter saves it; Esc restores the saved│
+		22 text (settable)      - build pipeline progress  c│      theme.                                                                                      │
+		23 text (settable)   󰘬 gui-spacelift-agent-scope-qua│      key: theme                                                                                  │
+		24 text (settable)      $ local                     │                                                                                                  │
+		25 text (settable)      - review scope quality      │Workspaces                                                                                        │
+		26 text (settable)                                  │  Automatic local terminals  on  set  (default: default_branch_only)                              │
+		27 text (settable)                                  │  Save uncommitted work      off  default                                                         │
+		28 text (settable)                                  │      Off · Enter to turn on                                                                      │
+		29 text (settable)                                  │  Branch prefix              feature/  default                                                    │
+		30 text (settable)                                  │  Picker roots               1 entry  default                                                     │
+		31 text (settable)                                  │      /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-retry-home-9pa_0_cf        │
+		32 text (settable)                                  │      + Add root                                                                                  │
+		33 text (settable)                                  │                                                                                                  │
+		34 text (settable)                                  │Titles                                                                                            │
+		35 text (settable)                                  │  Title model                unset  default                                                       │
+		36 text (settable)                                  │      Off · Enter to set the title model                                                          │
+		37 text (settable)                                  │                                                                                                  │
+		38 text (settable)                                  │Usage                                                                                             │
+		39 text (settable)                                  │  Native account usage       off  set  (default: on)                                              │
+		40 text (settable)                                  │      Off · Enter to turn on                                                                      │
+		41 text (settable)                                  │  Claude allowance probe     off  default                                                         │
+		42 text (settable)                                  │      Off · Enter to turn on                                                                      │
+		43 text (settable)                                  │  Codex command              codex  default                                                       │
+		44 text (settable)                                  │  Codex home                 unset  default                                                       │
+		45 text (settable)                                  │  Grok command               grok  default                                                        │
+		46 text (settable)                                  │  Grok home                  unset  default                                                       │
+		47 text (settable)                                  │  Cursor dashboard usage     off  default                                                         │
+		48 text (settable)                                  │      Off · Enter to turn on                                                                      │
+		49 text (settable)                                  │  Cursor state database      unset  default                                                       │
+		50 text (settable)                                  │      Optional absolute path to Cursor's state.vscdb; otherwise the platform default.             │
+		51 text (settable)                                  │                                                                                                  │
+		52 text (settable)                                  │Agents                                                                                            │
+		53 text (settable)                                  │  Agent overrides            0 entries  default                                                   │
+		54 text (settable)                                  │      + Add agent (name)                                                                          │
+		55 text (settable)                                  │  Cursor cloud accounts      []  default                                                          │
+		56 text (settable)                                  │      Named Keychain references, explicit model and repository/owner policy; selection is not bil…│
+		57 text (settable)                                  │                                                                                                  │
+		58 text (settable)                                  │Remembered launches                                                                               │
+		59 text (settable)                                  │  Remembered launches        0 entries  default                                                   │
+		60 text (settable)                                  │      + Add project                                                                               │
+		61 text (settable)                                  │                                                                                                  │
+		62 text (settable)                                  │Operator                                                                                          │
+		63 text (settable)                                  │  Provider                   ChatGPT  default                                                     │
+		64 text (settable)                                  │      Defaults for new conversations; subscription credentials are stored separately.             │
+		65 text (settable)                                  │  ChatGPT model              unset  default                                                       │
+		66 text (settable)                                  │      Defaults for new conversations; subscription credentials are stored separately.             │
+		67 text (settable)                                  │  Grok model                 unset  default                                                       │
+		68 text (settable)                                  │      Defaults for new conversations; subscription credentials are stored separately.             │
+		69 text (settable)                                  │                                                                                                  │
+		70 text (settable)                                  │Delegation                                                                                        │
+		71 text (settable)  Claude ?                        └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+		72 text (settable) BROWSE  Space Menu  : Commands  ? Help
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────┌Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close─────────────────────────────────┐                        pid 37860
+ CONSIGINT ──────────────────────│Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/dashboard.toml · read │─────────────────────────────────
+  󰘬 main

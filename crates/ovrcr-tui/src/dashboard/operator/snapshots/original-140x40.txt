@@ -1,5 +1,5 @@
-󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                    [Actions] [Menu]
- OPERATOR ───────────────────────── [+]│Operator · chat_gpt / fixture · complete
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                   [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · ChatGPT / fixture · complete
 ▌  chat-1                              │❯ You
    chat-2                              │  ▸ Context · global
                                        │  Review this workspace.
@@ -31,10 +31,10 @@
                                        │
                                        │
                                        │
- QUOTA LEFT ───────────────────────────│
-Claude · checking                      │ Managing global
-Codex · usage off                      │ ──────────────────────────────────────────────────────────────────────────────────────────────────
-Grok · usage off                       │ > ▏
-Cursor · usage off                     │
+                                       │
+                                       │ Managing global
                                        │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+                                       │ > ▏
+                                       │
+ Claude ?                              │ ──────────────────────────────────────────────────────────────────────────────────────────────────
 OPERATOR  Shift-Enter Newline  Ctrl-g Browse

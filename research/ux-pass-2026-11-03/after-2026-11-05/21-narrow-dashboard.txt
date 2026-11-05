@@ -1,0 +1,66 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m     pid 37860│  CUA retry transcript  claude  Ready
+ CONSIGINT ────────────────────────────│──────────────────────────────────────│2k tokens
+  󰘬 main                          root │HISTORY_ROW_036                       │TRANSCRIPT_NATIVE_READY
+▌    $ local
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                             [Commands] [Menu]
+		4 text (settable)  OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m     pid 37860│  CUA retry transcript  claude  Ready
+		5 text (settable)  CONSIGINT ────────────────────────────│──────────────────────────────────────│2k tokens
+		6 text (settable)   󰘬 main                          root │HISTORY_ROW_036                       │TRANSCRIPT_NATIVE_READY
+		7 text (settable) ▌    $ local                           │HISTORY_ROW_037                       │Synthetic provider: no model request.
+		8 text (settable)   󰘬 gui-consigint-auth-handoff         │HISTORY_ROW_038                       │AFTER_CLOSE
+		9 text (settable)      $ local                           │HISTORY_ROW_039                       │TRANSCRIPT_NATIVE_ACK:AFTER_CLOSE
+		10 text (settable)      - review auth handoff    grok:4.6 │HISTORY_ROW_040                       │
+		11 text (settable)        CUA retry transcript     claude │HISTORY_ROW_041                       │
+		12 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │HISTORY_ROW_042                       │
+		13 text (settable)      $ local                           │HISTORY_ROW_043                       │
+		14 text (settable)      - implement lifecycle cleanup     │HISTORY_ROW_044                       │
+		15 text (settable)      - review websocket shutdown       │HISTORY_ROW_045                       │
+		16 text (settable)      - plan snapshot restore        pi │HISTORY_ROW_046                       │
+		17 text (settable)                                        │HISTORY_ROW_047                       │
+		18 text (settable)  SPACELIFT-AGENT ──────────────────────│HISTORY_ROW_048                       │
+		19 text (settable)   󰘬 main                          root │HISTORY_ROW_049                       │
+		20 text (settable)      $ local                           │HISTORY_ROW_050                       │
+		21 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│HISTORY_ROW_051                       │
+		22 text (settable)      $ local                           │HISTORY_ROW_052                       │
+		23 text (settable)      - build pipeline progress  claude │HISTORY_ROW_053                       │
+		24 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │HISTORY_ROW_054                       │
+		25 text (settable)      $ local                           │HISTORY_ROW_055                       │
+		26 text (settable)      - review scope quality      codex │HISTORY_ROW_056                       │
+		27 text (settable)                                        │HISTORY_ROW_057                       │
+		28 text (settable)                                        │HISTORY_ROW_058                       │
+		29 text (settable)                                        │HISTORY_ROW_059                       │
+		30 text (settable)                                        │HISTORY_ROW_060                       │
+		31 text (settable)                                        │HISTORY_ROW_061                       │
+		32 text (settable)                                        │HISTORY_ROW_062                       │
+		33 text (settable)                                        │HISTORY_ROW_063                       │
+		34 text (settable)                                        │HISTORY_ROW_064                       │
+		35 text (settable)                                        │HISTORY_ROW_065                       │
+		36 text (settable)                                        │HISTORY_ROW_066                       │
+		37 text (settable)                                        │HISTORY_ROW_067                       │
+		38 text (settable)                                        │HISTORY_ROW_068                       │
+		39 text (settable)                                        │HISTORY_ROW_069                       │
+		40 text (settable)                                        │HISTORY_ROW_070                       │
+		41 text (settable)                                        │HISTORY_ROW_071                       │
+		42 text (settable)                                        │HISTORY_ROW_072                       │
+		43 text (settable)                                        │HISTORY_ROW_073                       │
+		44 text (settable)                                        │HISTORY_ROW_074                       │
+		45 text (settable)                                        │HISTORY_ROW_075                       │
+		46 text (settable)                                        │HISTORY_ROW_076                       │
+		47 text (settable)  Claude ?                              │sh-3.2$                               │
+		48 text (settable) BROWSE  Space Menu  : Commands  ? Help
+	49 close button
+	50 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	51 minimize button
+	52 text OVRCR GUI
+53 menu bar
+	54 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│> local (#1)  shell · 1m     pid 37860│  CUA retry transcript  claude  Ready
+ CONSIGINT ────────────────────────────│──────────────────────────────────────│2k tokens
+  󰘬 main                          root │HISTORY_ROW_036                       │TRANSCRIPT_NATIVE_READY
+▌    $ local

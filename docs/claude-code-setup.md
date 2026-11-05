@@ -38,7 +38,7 @@ sources, which can duplicate existing hooks.
 
 The generated status line carries `"refreshInterval": 60`. Claude Code re-runs
 the status line on that timer while the session is idle, so an idle managed
-session keeps its `rate_limits` (the Quota left block) current. Setup keeps a
+session keeps its `rate_limits` (the sidebar's quota line) current. Setup keeps a
 `refreshInterval` you already set, and running setup on its own output changes
 nothing:
 
@@ -55,13 +55,20 @@ managed settings that can add or override hooks: inspecting one file does not
 prove Claude's effective configuration. Setup preserves an external status-line
 renderer using `--render-command`. It migrates an exact legacy
 `ovrcr report claude-context --stdin-json` command. A wrapper containing that
-legacy reporter is left untouched with manual migration instructions on stderr.
+legacy reporter is left untouched with manual migration instructions: `agent setup`
+prints them on stderr, Dashboard startup shows them once before the Connect agent
+status screen, and the palette's **Connect agent status** appends them to its result line.
 
 When `claude` is on `PATH` and the settings file under `CLAUDE_CONFIG_DIR` (default
-`~/.claude`) lacks these synchronous hooks, the Dashboard shows a persistent
-one-line warning in its error banner at startup naming the file and the setup
-command to run. The same banner reports a missing Codex reporter configuration
-when `codex` is on `PATH`. Configuration presence is not hook trust or delivery;
+`~/.claude`) lacks these synchronous hooks or names another OVRCR executable,
+interactive Dashboard startup shows one **Connect agent status** screen for every
+installed provider that needs them (Claude and Codex): what connecting does, the
+files it changes, and `[y] Connect  [n] Not now`. Enter is Not now and changes
+nothing. While a provider's status stays off the Dashboard shows a one-time
+footer note such as `Claude status off — :connect to set up` (a notice, not an
+error), and the palette lists **Connect agent status**. It opens a confirmation page
+with the startup screen's text (what connecting does, the files it adds or updates,
+the Codex trust line); Enter writes the same composition and Esc changes nothing. Configuration presence is not hook trust or delivery;
 `agent doctor` keeps those fields `unverified` until evidence arrives. Ready is
 available as observed root-turn response end (`completion_quality: observed`);
 Confirmed settling remains unverified. Approval Input requests are available from a

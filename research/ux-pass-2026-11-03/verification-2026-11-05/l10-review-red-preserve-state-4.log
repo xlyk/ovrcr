@@ -1,0 +1,30 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr-runtime", "--all-features", "--lib", "erase_saved_lines_preserves_terminal_state_and_frozen_history"]}
+xcargo: lock after 1s · ux-omp-scroll · cargo test -p ovrcr-runtime --all-features --lib erase_saved_lines_preserves_terminal_state_and_frozen_history
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-omp-scroll/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.25s
+     Running unittests src/lib.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/ovrcr_runtime-99f1e179def1e235)
+
+running 1 test
+test session::tests::erase_saved_lines_preserves_terminal_state_and_frozen_history ... FAILED
+
+failures:
+
+---- session::tests::erase_saved_lines_preserves_terminal_state_and_frozen_history stdout ----
+
+thread 'session::tests::erase_saved_lines_preserves_terminal_state_and_frozen_history' (519695735) panicked at crates/ovrcr-runtime/src/session/tests.rs:1583:5:
+assertion `left == right` failed
+  left: (0, 0)
+ right: (2, 6)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::tests::erase_saved_lines_preserves_terminal_state_and_frozen_history
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 441 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`
+
+EXIT 101

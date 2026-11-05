@@ -31,10 +31,16 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         InputMode::History if history.is_some_and(|v| v.anchor.is_some()) => "HISTORY SELECT",
         InputMode::History => "HISTORY",
         InputMode::Terminal => {
+            // Ctrl-o goes to the program here, so Quick message is reached from Browse.
             let mut text = "Terminal mode  Ctrl-g browse".to_owned();
             let agents = super::keymap::agents_binding();
-            let hint = format!("  then {} {}", agents.key, agents.name);
-            if text.width() + hint.width() <= usize::from(width) {
+            for hint in [
+                format!("  then {} {}", agents.key, agents.name),
+                ", Ctrl-o Quick message".into(),
+            ] {
+                if text.width() + hint.width() > usize::from(width) {
+                    break;
+                }
                 text.push_str(&hint);
             }
             return text;
@@ -43,12 +49,12 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     let mut text: String = mode.chars().take(usize::from(width)).collect();
     let groups = keymap(dashboard);
     let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
-    // Browse shows only the keys that open everything else; the menu and the
-    // palette carry the per-action hints.
+    // Browse shows only the keys that open everything else, and the jump while a
+    // session needs the user; the menu and the palette carry the per-action hints.
     let priority: &[&str] = if dashboard.operator_is_editing() {
         &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x"]
     } else if dashboard.mode == InputMode::Browse {
-        &["Space", ":", "?"]
+        &["Space", ":", "?", "i"]
     } else {
         &[
             "?", "Esc", "v", "y", "h/Left", "j/Down", "k/Up", "l/Right", "PageUp", "PageDown",

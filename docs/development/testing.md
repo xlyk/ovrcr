@@ -162,7 +162,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 - Follow [Computer-use testing](../testing-computer-use.md) for `just gui`. Use the exact checkout under review and fresh screenshots/accessibility state.
 - Record owned fixture PIDs/PGIDs and paths, retain the launcher result, and verify cleanup. Permission denial does not prove a process group is gone. Stop a hung owned test before starting another.
 - Never bypass a tool's access denial through another control channel or modify the user's live agent configuration to make an acceptance check pass.
-- Interactive Dashboard fixtures can encounter optional native-hook or Bridge setup offers. Decline recognized optional offers with `n`, leave unknown decisions unanswered, and wait for the actual alternate-screen Dashboard before sending test input. Preserve fresh-output assertions separately from waits for already-rendered state. The development GUI retains a single Cmd-K intent across dashboard restart; tests must not resend the shortcut to compensate for startup.
+- Interactive Dashboard fixtures can encounter optional native-hook or Bridge setup offers. Decline recognized optional offers with `n`, leave unknown decisions unanswered, and wait for the actual alternate-screen Dashboard before sending test input. A declined Connect agent status offer leaves a one-time footer note (`… status off — :connect to set up`) where the mode name shows until the next key; a readiness wait on footer text must accept it. Preserve fresh-output assertions separately from waits for already-rendered state. The development GUI retains a single Cmd-K intent across dashboard restart; tests must not resend the shortcut to compensate for startup.
 - The shared initial-admission lifecycle cases can fail with `supervisor must select a fresh UUID` when a saturated host pushes the fixture's `/bin/sh` reply past the product's one-second probe budget; read a recurrence as contention unless its evidence says otherwise, per the [issue #62 diagnosis](../../research/issue-62-lifecycle-diagnosis/README.md).
 
 ## Standalone Cursor cloud client
@@ -239,8 +239,9 @@ prove a dismissed quick message keeps its captured text and context, submits onc
 and preserves terminal focus while another chat completes. The close/archive case
 records two real Bash child groups, closes A, completes B and receives terminal
 output, then restarts and restores A without replay before an explicit new turn.
-The outer-PTY `operator_quick` case sends Ctrl+O, CSI-u Shift+Enter and bracketed
-paste through the compiled Dashboard, checks separate editor lines, dismisses to
+The outer-PTY `operator_quick` case sends Ctrl+G then Ctrl+O (in Terminal mode
+Ctrl+O goes to the program), CSI-u Shift+Enter and bracketed paste through the
+compiled Dashboard, checks separate editor lines, dismisses to Browse, re-enters
 the original terminal, and verifies no conversation was created.
 See the [2026-10-30 layout acceptance record](../../research/operator-layout-2026-10-30/README.md)
 for exact revisions, native JPEG/AX evidence, commands, failures and platform gaps.

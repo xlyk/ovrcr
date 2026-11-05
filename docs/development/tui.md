@@ -24,8 +24,14 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
-Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph and the process, paused, activity, Unread and elapsed clauses, with an Unread replacing a header line outright — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width, and readiness itself is still decided in `dashboard::ready`. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the activity clause may still say ready. The sidebar agent label appends the current model after a colon when one is known. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
-Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard.
+Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph, the plain-words state (with its narrow form, a bare `Unread` when there is one), the reporting words (`starting…`, `status off`) and elapsed clauses the pane headers read, and the activity, Unread and health clauses the Agents picker reads — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers, the picker and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width (`render::pane_header` gives up the pid, model, elapsed time and label before the state), and readiness itself is still decided in `dashboard::ready`. Quality words and reporter reasons never reach the headers. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the header still says Ready. The sidebar agent label appends the current model after a colon when one is known; on a shared line the title keeps its room first, so the model goes, then the agent, before the title clips. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
+Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard. The palette applies the popup's `shown_in_group` rule: it drops bindings the target cannot use and keeps waiting or protected rows with their reason, so the list never shifts under the cursor when a screen is acknowledged. The title bar's `[Commands]` control opens the palette. Split (`v`) reuses the palette's Search page as the new pane's session chooser (`Palette::split`), and palette setting rows open the editor through `Editor::select`.
+
+Palette forms have one Enter rule: Enter submits from any field after `form_problem` checks the visible fields top to bottom (required, pick value in its list, Branch after the prefix and valid under `git check-ref-format --branch` via `branch_name_problem`); the first problem takes the focus and is drawn under its field from `Palette.invalid`. A pick field's value is its highlighted option (`accept_pick` after every arrow, cycle or filter edit). An open list gets the body rows its field leaves free, through `PickList::window`, which rendering and mouse hit-testing share. `form_keys` builds the footer from the form and its focused field. New fields (a Task field, say) get these rules without per-field Enter handling.
+A Lifecycle job submitted from the palette carries that palette on its Provisional row while the job runs (`take_palette_for_job`). On failure, `fail_lifecycle_job` returns it through `return_to_form`, which replays the failure through `palette_response` exactly as a synchronous refusal, so recovery pages (RecoverLaunch, WIP save, discard) are shared. Only when the form cannot come back (another overlay, or a non-Browse mode) does a failed row stay. Workspace removal with running sessions sends CloseTerminal for each and then the removal, chaining each request from the previous `LifecycleCompleted` through `Provisional.then`. Create workspace with a Task uses the same chain: `CreateWorkspaceWithLaunch` carries no launch (its `SessionLaunch` has no session name) and the named `CreateSession` follows (`chain_session`, which also marks the Provisional `launch` so an early empty workspace is not attached as finished). A failure of that second step returns with `after_workspace` and is handled as `PartialFailure`, so it reaches RecoverLaunch rather than a form that would create the workspace again. The Task reaches an agent only through `agents::with_task` (`-- <task>` for `TASK_AGENTS`); it is never in the remembered launch choice or retained for RecoverLaunch. Retry and resume use only the provider's recovery options, so the first message cannot be replayed.
+`dashboard::attention` decides which sessions need the user: a running session whose effective activity is WaitingInput, else one with an Unread that is not Busy again. Paused sessions and Operator conversations never count. The sidebar attention strip counts them across the whole hierarchy, and the `i` binding and a strip click visit them in one order (Input before Ready, each in fully expanded tree order, cyclic from a queued selection, otherwise the leading kind after the selection). A keystroke or paste sent to the focused session reviews its Presented Unread with the same `MarkReviewed` request `R` sends, queued in the Outbox ahead of the input, once per Presented observation (`Unread::reply_target`); the response is ignored, so a stale refusal stays silent. Mouse reports forwarded to the application never review.
+Footer banners go through `set_error` (a failure, behind a red `ERROR:`), `set_limit` (an expected limit, muted) or `set_server_error`, which reads the typed blocker codes as limits and everything else, `Conflict` included (the Server's catch-all for failed lifecycle work), as failures, passing the message through `plain_error` (no code in front; `project/<id>` becomes `project / branch`, a bare workspace id its branch and `#N` the session title, never inside a path; unknown ids stay). A caller that knows its refusal is a limit calls `set_limit` itself: a refused view, and terminal input the Server did not admit (`Conflict` or `InvalidRequest` to a request id in `input_requests`). A form that shows a Server refusal inline calls `plain_error` too. A banner clears when the request that owns it succeeds, or `BANNER_LIFETIME` after its clock starts (when a limit goes up, or at the first key press after a failure), which `Dashboard::draw` checks every frame.
+A pane with no session draws a card from `dashboard::cards`: the welcome steps, the selected project or workspace, or every project while nothing is selected. Cards are display only. They read the hierarchy snapshot, `SessionStatus` (the same plain-words state the headers use), `dashboard::attention` and the keymap (by action, never by key letter), send no request, and leave pane assignment, the view handshake and input permission alone. Next-step hints name a key only while its binding is enabled; the welcome's numbered steps always name theirs. A card fits its pane: columns shrink before the state and elapsed time, and when rows run out the next steps stay and the list ends with `+N more`.
 
 The Outbox owns every fully formed steady-state request. Producers enqueue once;
 Dashboard actions carry only local effects or fresh PTY bytes. `drain_outbox`
@@ -41,7 +47,11 @@ only after queued requests flush; captured cleanup keeps its original target and
 authority. Clipboard effects retain the input boundary, and startup keeps reserved
 request IDs 1/2 and its interleaved handshake outside this steady-state ownership.
 
-`Ctrl-o` is reserved globally by `keymap::is_operator_quick_key`. Key dispatch,
+`Ctrl-o` (`keymap::is_operator_quick_key`) is reserved everywhere except where
+keys reach the program: Terminal mode with no Tasks, details, palette, Which-key,
+Operator editor, agent-loading intent or Quick form over the pane
+(`Dashboard::opens_operator_quick`). There it is PTY input, since Oh My Pi and
+Claude Code bind it; Ctrl-g then Ctrl-o opens the form. Elsewhere key dispatch,
 event dispatch before Tasks, and the production mouse path give the Hub-owned
 quick form priority. The form layers above existing views without taking their
 state; Repeat/Release and all modal mouse events are consumed. Its frozen
@@ -85,10 +95,13 @@ resume picker. Unknown providers and invalidated references remain unavailable.
 
 
 Operator conversations occupy one-line rows above Projects in the existing sidebar.
-`SidebarRects` supplies Operator, project-tree and quota rectangles to rendering,
-mouse input and viewport calculations. The quota ladder reserves the Operator
-heading and three project-tree lines; up to five conversation rows use remaining
-space and shrink first. Collapsing keeps the heading and active-conversation count.
+`SidebarRects` supplies the Operator, project-tree, attention strip and quota rectangles
+to rendering, mouse input and viewport calculations. Operator and the tree start at the
+top; the strip sits directly above the quota line at the bottom, so its coming and going
+never moves a row under the pointer. The Operator heading and three project-tree lines
+are reserved first; the strip, then the one-line quota summary, take a line each only
+while that reservation still fits, and neither depends on the clock. Up to five conversation rows use the remaining space and shrink first.
+A server update that brings the strip in or out keeps the selection in view. Collapsing keeps the heading and active-conversation count.
 Rows share the session activity glyphs, selected background/bar and hover close mark,
 and omit provider/model metadata. Archived chats remain cached as authority tombstones
 but never appear in the active list. Saved summaries load asynchronously after the
@@ -96,7 +109,9 @@ production handshake and initial terminal attachment, without opening Operator.
 
 Browse `o` and the clickable title-bar control open the native hub. Terminal pane
 assignments survive, but the desired terminal view is empty while the hub is visible
-and native composer input never produces PTY bytes. Existing overlays retain input
+and native composer input never produces PTY bytes. Leaving the hub (Ctrl-g or Esc)
+hides it through `retarget(PaneChange::Focus)`, so the next view request
+re-subscribes the unchanged panes. Existing overlays retain input
 priority; spaces and punctuation in an active composer remain ordinary text.
 
 `dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
@@ -147,11 +162,12 @@ Unread review requires an unobscured, actually drawn, adequately sized transcrip
 at its confirmed durable tail; empty, new, too-small and sidebar-only views cannot
 acknowledge it.
 `Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
-Ctrl-g returns to Browse retaining drafts, and Ctrl-x stops only the selected exact
-current turn. A pending submission clears only its captured draft after acceptance;
+Ctrl-g or Esc returns to the terminal panes in Browse retaining drafts, and Ctrl-x
+stops only the selected exact current turn. Provider names display through
+`OperatorProvider::label` (`ChatGPT`, `Grok`); `as_str` stays the saved identifier. A pending submission clears only its captured draft after acceptance;
 refusal or later typing preserves the draft.
 
-Sidebar `x` and `[x]` open the native confirmation for that conversation's retained
+Sidebar `X` and `[x]` open the native confirmation for that conversation's retained
 run. Confirmation explains uncertain/live work and draft discard, then sends the
 Operator Close request rather than workspace WIP-save. Only that chat is frozen
 while close is pending. Cancel or error retains its draft and row; acknowledged
@@ -167,3 +183,12 @@ Complete without that proof displays finishing/stop-unconfirmed. History commits
 completion Unread only after a successful unobscured tail draw, with sufficient
 transcript geometry. Model/tool strings escape terminal and directional controls
 before rendering, including tool output with explicit empty-success results.
+
+The read-only `dashboard::transcript` view replaces an alternate-screen History refusal
+with provider-owned Claude/Codex conversation pages. Its loading and loaded states use
+`Details::Transcript`, ahead of terminal and Operator shortcuts. Captured session/run,
+request id and exact `ConversationReference` fence page application; cancel, a changed
+run and superseding End requests retire their pending responses. Text uses Operator's
+control escaping. The byte/entry-bounded window slides toward older pages, while End
+reloads the tail; rendering skips whole wrapped logical lines before its u16 scroll
+remainder so long views reach their actual tail. No page causes input, review or launch.

@@ -1,0 +1,17 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr", "--test", "retained_ownership", "--all-features", "archived_names_are_reusable_but_active_names_still_conflict", "--", "--exact"]}
+xcargo: lock after 0s · ux-pass-integration · cargo test -p ovrcr --test retained_ownership --all-features archived_names_are_reusable_but_active_names_still_conflict -- --exact
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.79s
+     Running tests/retained_ownership.rs (target/debug/deps/retained_ownership-bd59a7be00904a6a)
+
+running 1 test
+test archived_names_are_reusable_but_active_names_still_conflict ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 7.14s
+
+
+EXIT 0

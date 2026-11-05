@@ -43,6 +43,8 @@ pub(super) enum Action {
     OtherPane,
     NextSession,
     PreviousSession,
+    /// Select the next session that needs the user; see `attention`.
+    NextAttention,
     ToggleNotifications,
     #[cfg(target_os = "macos")]
     NotificationSettings,
@@ -336,10 +338,7 @@ impl Dashboard {
             Action::MarkReviewed => self.mark_reviewed_request(),
             Action::CopyScreen => self.begin_copy(),
             Action::History => self.begin_history_request(false),
-            Action::Split => {
-                self.split_pane();
-                DashboardAction::Redraw
-            }
+            Action::Split => self.open_split_chooser(),
             Action::ClosePane => {
                 if self.action_session().is_some() {
                     self.close_focused_pane();
@@ -371,6 +370,7 @@ impl Dashboard {
                     DashboardAction::Redraw
                 }
             }
+            Action::NextAttention => self.jump_to_attention(),
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             #[cfg(target_os = "macos")]
             Action::NotificationSettings => self.recover_notification_permission(),
@@ -414,6 +414,8 @@ pub(super) fn agents_binding() -> KeyBinding {
     .group('v', "s")
 }
 
+/// The Quick message key. `Dashboard::dispatch_key` reserves it everywhere except
+/// Terminal mode with nothing over the pane, where it goes to the program.
 pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL
 }
@@ -425,7 +427,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding(
                 "Ctrl-o",
                 "Quick message",
-                "Start an Operator conversation with configured defaults".into(),
+                "Start an Operator conversation with configured defaults. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
                 KeyCode::Char('o'),
                 Action::OperatorQuick,
             )
@@ -482,7 +484,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                         KeyModifiers::NONE,
                     ),
                     native("Enter", "Open composer", Enter, KeyModifiers::NONE),
-                    native("x", "Close conversation", Char('x'), KeyModifiers::NONE),
+                    native("X", "Close conversation", Char('X'), KeyModifiers::NONE),
                     native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
                     native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
                     native("Tab", "Transcript", Tab, KeyModifiers::NONE),
@@ -848,8 +850,8 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .group('v', "t/Ctrl-t"),
         key_binding(
             ":",
-            "Search",
-            "Search dashboard actions and terminals".into(),
+            "Commands",
+            "Search commands, sessions and settings".into(),
             Char(':'),
             Action::Palette,
         )
@@ -857,7 +859,9 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         key_binding(
             "v",
             "Split",
-            format!("Open a second pane beside {target}; sessions keep running"),
+            format!(
+                "Open a second pane beside {target} and choose its session; Esc keeps the suggestion"
+            ),
             Char('v'),
             Action::Split,
         )
@@ -932,6 +936,23 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .once()
         .group('v', "b"),
+        {
+            let next = dashboard.next_attention();
+            key_binding(
+                "i",
+                match next {
+                    Some((super::attention::Attention::Input, _)) => "Next input needed",
+                    _ => "Next ready",
+                },
+                "Select the next session that needs you: input requests first, then unread responses, in sidebar order; wraps"
+                    .into(),
+                Char('i'),
+                Action::NextAttention,
+            )
+            .unless(next.is_none().then_some("no session needs you"))
+            .once()
+            .group('v', "i")
+        },
     ];
     view.extend(help());
     let (enter_name, enter_description, enter_disabled, enter_action) = if let Some(container) =
@@ -1012,7 +1033,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
             key_binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
             key_binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),
-            key_binding("X", "Close terminal", format!("Archive {target}. Asks for confirmation before stopping live work."), Char('X'), Action::CloseTerminal).unless(missing).group('t', "x"),
+            key_binding("X", "Close terminal", format!("Archive {target}. Asks for confirmation before stopping live work."), Char('X'), Action::CloseTerminal).unless(missing).group('t', "X"),
             key_binding("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('['), Action::CopyScreen).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).once().group('t', "c"),
             key_binding("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp, Action::History).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).group('t', "h"),
         ] },

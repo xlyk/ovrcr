@@ -68,7 +68,7 @@ fn wait_phase(live: &Live, id: u64, phase: &str) -> Value {
 }
 
 fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
-    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = live.workspace_path(live::WORKSPACE);
     let path = path.to_str().unwrap();
     let mut args = vec![
         "terminal",
@@ -96,7 +96,7 @@ fn archived_names_are_reusable_but_active_names_still_conflict() {
     json(&live, &["terminal", "close", &first_id]);
     let second = create_terminal(&live, "reusable", &["/bin/sh"]);
     assert_ne!(first["id"], second["id"]);
-    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = live.workspace_path(live::WORKSPACE);
     let duplicate = json_error(
         &live,
         &[
@@ -759,11 +759,7 @@ fn same_boot_crash_with_surviving_descendant_requires_ack_before_fresh_shell_reo
             "printf 'NEW_%s\\n' SHELL_114; printf 'CWD='; pwd -P",
         ],
     );
-    let expected_cwd = live
-        .workspace_root
-        .join(live::WORKSPACE)
-        .canonicalize()
-        .unwrap();
+    let expected_cwd = live.workspace_path(live::WORKSPACE).canonicalize().unwrap();
     let text = wait_text(&live, id, &format!("CWD={}", expected_cwd.display()));
     assert!(text.contains("NEW_SHELL_114"));
     assert!(
@@ -870,11 +866,7 @@ fn missing_recorded_directory_refuses_reopen_without_fallback() {
     wait_phase(&live, id, "exited");
     stop_server(&live);
 
-    let cwd = live
-        .workspace_root
-        .join(live::WORKSPACE)
-        .canonicalize()
-        .unwrap();
+    let cwd = live.workspace_path(live::WORKSPACE).canonicalize().unwrap();
     assert!(
         cwd.is_dir(),
         "recorded cwd was already missing: {}",

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use live::Live;
 use ovrcr::config::{ProjectRecord, WorkspaceRecord, load_registry};
 use ovrcr::git::{
-    BranchSpec, UNAVAILABLE_CHECKOUT, checkout_name, create_worktree, default_branch,
+    BranchSpec, UNAVAILABLE_CHECKOUT, WorktreeDir, checkout_name, create_worktree, default_branch,
     inspect_worktree, observe_registry, remove_worktree, root_warning, worktree_identity,
 };
 use ovrcr::protocol::{BranchRequest, ErrorCode, Request, Response};
@@ -235,6 +235,8 @@ fn creates_new_and_existing_branch_worktrees() {
             branch: "feature/new".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     assert_eq!(first.branch, "feature/new");
@@ -253,6 +255,8 @@ fn creates_new_and_existing_branch_worktrees() {
         BranchSpec::Existing {
             branch: "feature/existing".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     assert_eq!(second.branch, "feature/existing");
@@ -271,6 +275,8 @@ fn rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation() {
             branch: "feature/invalid-base".into(),
             base: "--force".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap_err()
     .to_string();
@@ -291,6 +297,8 @@ fn rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation() {
         BranchSpec::Existing {
             branch: "tag-only".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap_err()
     .to_string();
@@ -308,6 +316,8 @@ fn rejects_workspace_path_traversal_before_git() {
             branch: "feature/escape".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap_err()
     .to_string();
@@ -327,12 +337,302 @@ fn rejects_existing_worktree_destination() {
             branch: "feature/already-there".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap_err()
     .to_string();
     assert!(error.contains("destination already exists"));
     assert!(destination.exists());
     assert!(!fixture.worktree_paths().contains(&destination));
+}
+
+fn new_id() -> String {
+    ovrcr::protocol::new_workspace_id().unwrap()
+}
+
+#[test]
+fn branch_dir_names_the_worktree_after_the_branch_and_keeps_the_random_id() {
+    let fixture = GitFixture::new();
+    let root = &fixture.project.workspace_root;
+    let id = new_id();
+    let created = create_worktree(
+        &fixture.project,
+        &id,
+        BranchSpec::New {
+            branch: "UX/Login-Form.v2".into(),
+            base: "main".into(),
+        },
+        WorktreeDir::Branch,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(created.id, id);
+    assert_eq!(created.path, root.join("ux-login-form-v2"));
+    assert_eq!(created.branch, "UX/Login-Form.v2");
+    assert!(!created.setup_pending);
+    assert_eq!(
+        created.git_identity.as_deref(),
+        Some(worktree_identity(&created.path).unwrap()).as_deref()
+    );
+    assert!(fixture.worktree_paths().contains(&created.path));
+    assert!(!root.join(&id).exists(), "the id no longer names a folder");
+
+    fixture.git(&["branch", "fix/existing_one", "main"]);
+    let existing = create_worktree(
+        &fixture.project,
+        &new_id(),
+        BranchSpec::Existing {
+            branch: "fix/existing_one".into(),
+        },
+        WorktreeDir::Branch,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(existing.path, root.join("fix-existing_one"));
+    assert_eq!(existing.branch, "fix/existing_one");
+
+    // The id is still validated as the registry identity before any Git effect.
+    let error = create_worktree(
+        &fixture.project,
+        "../escape",
+        BranchSpec::New {
+            branch: "feature/escape".into(),
+            base: "main".into(),
+        },
+        WorktreeDir::Branch,
+        &[],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("invalid workspace name"), "{error}");
+    assert!(!root.join("feature-escape").exists());
+}
+
+#[test]
+fn branch_dir_skips_names_taken_on_disk_by_records_or_by_git() {
+    let fixture = GitFixture::new();
+    let root = &fixture.project.workspace_root;
+    let create = |project: &ProjectRecord, branch: &str| {
+        create_worktree(
+            project,
+            &new_id(),
+            BranchSpec::New {
+                branch: branch.into(),
+                base: "main".into(),
+            },
+            WorktreeDir::Branch,
+            &[],
+        )
+        .unwrap()
+        .path
+    };
+
+    // Any entry takes a name, even a file, and suffixes continue past -2.
+    std::fs::write(root.join("feature-taken"), "not a worktree\n").unwrap();
+    std::fs::create_dir(root.join("feature-taken-2")).unwrap();
+    assert_eq!(
+        create(&fixture.project, "feature/taken"),
+        root.join("feature-taken-3")
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("feature-taken")).unwrap(),
+        "not a worktree\n"
+    );
+
+    // Two branches with one slug.
+    assert_eq!(
+        create(&fixture.project, "feature/x.y"),
+        root.join("feature-x-y")
+    );
+    assert_eq!(
+        create(&fixture.project, "feature/x-y"),
+        root.join("feature-x-y-2")
+    );
+
+    // A registered workspace whose directory was deleted keeps its name, so the record never
+    // points at someone else's checkout.
+    let project = ProjectRecord {
+        workspaces: vec![WorkspaceRecord {
+            id: new_id(),
+            path: root.join("feature-gone"),
+            branch: "feature/gone".into(),
+            git_identity: None,
+            setup_pending: false,
+        }],
+        ..fixture.project.clone()
+    };
+    assert_eq!(
+        create(&project, "feature/gone"),
+        root.join("feature-gone-2")
+    );
+
+    // So does a deleted worktree Git still lists; `git worktree add` would refuse that path.
+    let stale = root.join("feature-stale");
+    fixture.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "outside/stale",
+        stale.to_str().unwrap(),
+        "main",
+    ]);
+    std::fs::remove_dir_all(&stale).unwrap();
+    assert_eq!(
+        create(&fixture.project, "feature/stale"),
+        root.join("feature-stale-2")
+    );
+    assert!(
+        fixture.worktree_paths().contains(&stale),
+        "the stale registration is left alone"
+    );
+}
+
+#[test]
+fn id_dir_refuses_a_folder_another_record_or_git_still_holds() {
+    let fixture = GitFixture::new();
+    let root = &fixture.project.workspace_root;
+    let id_create = |id: &str, registered: &[PathBuf]| {
+        create_worktree(
+            &fixture.project,
+            id,
+            BranchSpec::New {
+                branch: format!("coding/{}", id.to_ascii_lowercase()),
+                base: "main".into(),
+            },
+            WorktreeDir::Id,
+            registered,
+        )
+    };
+
+    // A Dashboard workspace on `dep-b` whose folder was deleted and pruned outside OVRCR keeps
+    // its record (here: another project's, so not in this project's list).
+    let stale = create_worktree(
+        &fixture.project,
+        &new_id(),
+        BranchSpec::New {
+            branch: "dep-b".into(),
+            base: "main".into(),
+        },
+        WorktreeDir::Branch,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(stale.path, root.join("dep-b"));
+    std::fs::remove_dir_all(&stale.path).unwrap();
+    fixture.git(&["worktree", "prune"]);
+    assert!(!fixture.worktree_paths().contains(&stale.path));
+    let registered = vec![stale.path.clone()];
+    // Exact and differently cased ids are both refused before Git: APFS treats them as one folder.
+    for id in ["dep-b", "Dep-B"] {
+        let error = id_create(id, &registered).unwrap_err().to_string();
+        assert!(error.contains("already used"), "{id}: {error}");
+        assert!(!root.join(id).exists(), "{id}");
+        assert_eq!(
+            fixture.worktree_paths().len(),
+            1,
+            "{id}: only the repository"
+        );
+    }
+
+    // A deleted worktree Git still lists is refused up front too.
+    let listed = root.join("Listed-Only");
+    fixture.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "outside/listed",
+        listed.to_str().unwrap(),
+        "main",
+    ]);
+    std::fs::remove_dir_all(&listed).unwrap();
+    let error = id_create("listed-only", &[]).unwrap_err().to_string();
+    assert!(error.contains("already used"), "{error}");
+    // A branch slug skips that differently cased folder instead of failing in Git.
+    assert_eq!(
+        create_worktree(
+            &fixture.project,
+            &new_id(),
+            BranchSpec::New {
+                branch: "listed/only".into(),
+                base: "main".into(),
+            },
+            WorktreeDir::Branch,
+            &[],
+        )
+        .unwrap()
+        .path,
+        root.join("listed-only-2")
+    );
+}
+
+#[test]
+fn branch_and_hash_named_worktrees_keep_every_removal_guard() {
+    for dir in [WorktreeDir::Branch, WorktreeDir::Id] {
+        let fixture = GitFixture::new();
+        let root = &fixture.project.workspace_root;
+        let create = |branch: &str| {
+            let id = new_id();
+            let workspace = create_worktree(
+                &fixture.project,
+                &id,
+                BranchSpec::New {
+                    branch: branch.into(),
+                    base: "main".into(),
+                },
+                dir,
+                &[],
+            )
+            .unwrap();
+            let folder = match dir {
+                WorktreeDir::Branch => branch.replace('/', "-"),
+                WorktreeDir::Id => id,
+            };
+            assert_eq!(workspace.path, root.join(folder), "{dir:?}");
+            let project = ProjectRecord {
+                workspaces: vec![workspace.clone()],
+                ..fixture.project.clone()
+            };
+            (project, workspace)
+        };
+
+        let (project, workspace) = create("feature/guarded");
+        let error = remove_worktree(&fixture.project, &workspace, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("workspace is not registered"), "{error}");
+        std::fs::write(workspace.path.join("untracked"), "change\n").unwrap();
+        let error = remove_worktree(&project, &workspace, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("worktree has changes"), "{error}");
+        std::fs::remove_file(workspace.path.join("untracked")).unwrap();
+        remove_worktree(&project, &workspace, false).unwrap();
+        assert!(!workspace.path.exists());
+        assert!(!fixture.worktree_paths().contains(&workspace.path));
+        fixture.git(&["show-ref", "--verify", "refs/heads/feature/guarded"]);
+
+        // A directory deleted outside OVRCR is pruned from Git.
+        let (project, vanished) = create("feature/vanished");
+        std::fs::remove_dir_all(&vanished.path).unwrap();
+        remove_worktree(&project, &vanished, false).unwrap();
+        assert!(!fixture.worktree_paths().contains(&vanished.path));
+        fixture.git(&["show-ref", "--verify", "refs/heads/feature/vanished"]);
+
+        // A foreign worktree in the same folder is refused, even forced.
+        let (project, claimed) = create("feature/claimed");
+        let path = claimed.path.to_str().unwrap();
+        fixture.git(&["worktree", "remove", path]);
+        fixture.git(&["worktree", "add", "-b", "feature/replacement", path, "main"]);
+        let error = remove_worktree(&project, &claimed, true)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("replacement") || error.contains("unrelated"),
+            "{error}"
+        );
+        assert!(claimed.path.exists());
+    }
 }
 
 #[test]
@@ -345,6 +645,8 @@ fn inspects_clean_and_dirty_worktrees() {
             branch: "feature/inspect".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let clean = inspect_worktree(&fixture.project, &created).unwrap();
@@ -376,6 +678,8 @@ fn publish_wip_pushes_unignored_files_without_moving_the_branch() {
             branch: "feature/wip-save".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let before = live::git(&fixture.project.repo, &["rev-parse", "feature/wip-save"]);
@@ -434,6 +738,8 @@ fn refuses_to_remove_worktree_with_tracked_changes() {
             branch: "feature/tracked-change".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     std::fs::write(workspace.path.join("README"), "modified\n").unwrap();
@@ -460,6 +766,8 @@ fn refuses_to_remove_worktree_with_untracked_files() {
             branch: "feature/untracked-change".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     std::fs::write(workspace.path.join("untracked"), "change\n").unwrap();
@@ -519,6 +827,8 @@ fn refuses_replacement_worktree_with_different_identity() {
             branch: "feature/claim".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -568,6 +878,8 @@ fn refuses_registry_and_git_path_disagreement() {
             branch: "feature/actual".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let workspace = WorkspaceRecord {
@@ -606,6 +918,8 @@ fn removes_clean_registered_worktree_and_preserves_branch() {
             branch: "feature/remove".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
 
@@ -635,6 +949,8 @@ fn removes_workspace_whose_directory_is_gone() {
             branch: "feature/vanished".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -665,6 +981,8 @@ fn removes_workspace_whose_directory_is_gone() {
             branch: "feature/pruned-outside".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -697,6 +1015,8 @@ fn missing_replacement_worktree_cannot_be_pruned_by_the_old_registration() {
             branch: "feature/owned".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -746,6 +1066,8 @@ fn missing_replacement_without_held_inode_cannot_be_pruned() {
             branch: "feature/owned".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -790,6 +1112,8 @@ fn missing_worktree_prune_leaves_unrelated_prunable_admin() {
             branch: "feature/owned".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let other = create_worktree(
@@ -799,6 +1123,8 @@ fn missing_worktree_prune_leaves_unrelated_prunable_admin() {
             branch: "feature/other".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let other_admin = live::git(&other.path, &["rev-parse", "--absolute-git-dir"]);
@@ -829,6 +1155,8 @@ fn refuses_to_prune_missing_worktree_without_git_identity() {
             branch: "feature/no-identity".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
@@ -861,6 +1189,8 @@ fn refuses_to_remove_unregistered_matching_worktree() {
             branch: "feature/unregistered".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
 
@@ -885,6 +1215,8 @@ fn refuses_symlink_substitution_without_touching_either_worktree() {
             branch: "feature/a".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let second = create_worktree(
@@ -894,6 +1226,8 @@ fn refuses_symlink_substitution_without_touching_either_worktree() {
             branch: "feature/b".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -925,6 +1259,8 @@ fn inspect_and_remove_survive_branch_switch_and_detach() {
             branch: "feature/switch".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let identity = workspace.git_identity.clone().unwrap();
@@ -961,6 +1297,8 @@ fn forced_dirty_removal_keeps_generation_and_root_guards() {
             branch: "feature/force-dirty".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let identity = workspace.git_identity.clone().unwrap();
@@ -1009,6 +1347,8 @@ fn forced_dirty_removal_keeps_generation_and_root_guards() {
             branch: "feature/force-claim".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let project = ProjectRecord {
@@ -1094,6 +1434,8 @@ fn root_warning_and_observe_preserve_setup_default() {
             branch: "feature/observe".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let root = WorkspaceRecord {
@@ -1196,6 +1538,8 @@ fn refuses_existing_worktree_without_git_identity() {
             branch: "feature/no-identity".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let mut missing_identity = workspace.clone();
@@ -1231,6 +1575,8 @@ fn refuses_same_id_with_different_registered_path() {
             branch: "feature/owned".into(),
             base: "main".into(),
         },
+        WorktreeDir::Id,
+        &[],
     )
     .unwrap();
     let forged = WorkspaceRecord {

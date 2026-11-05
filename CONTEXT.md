@@ -25,7 +25,7 @@ The name shown for a session. Applications cannot change it, and changing it doe
 _Avoid_: session identity, agent label, workspace name, application title
 
 **Original session name**:
-The name chosen at creation, supplied by the user or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed. On an Agent launch, a name typed at creation is this name and is not a manual title.
+The name chosen at creation, supplied by the user (typed, or taken from a new session's task) or generated from the workspace. Clearing a manual title restores this name, even if the workspace's branch has since changed. On an Agent launch, a name typed at creation is this name and is not a manual title.
 _Avoid_: current branch name, application title, conversation subject
 
 **Manual title**:
@@ -66,7 +66,7 @@ The launch choice for opening a shell, optionally with a custom command. It crea
 _Avoid_: custom command as a separate session type
 
 **Remembered launch choice**:
-A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and is unchanged by creating an empty workspace.
+A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and tasks, and is unchanged by creating an empty workspace.
 _Avoid_: running agent, silently substituted fallback
 
 **Workspace**:
@@ -106,7 +106,7 @@ The accepted root observation of a completed response cycle from a supported rea
 _Avoid_: Confirmed activity as a success claim, a desktop alert
 
 **Unread**:
-The current Ready observation that has not been marked reviewed.
+The current Ready observation that has not been marked reviewed, explicitly or by replying.
 _Avoid_: treating view, selection, or notification as review
 
 **Presented**:
@@ -142,7 +142,7 @@ The Dashboard's exchange with the server that acknowledges a view: one `SetView`
 _Avoid_: pane ready as a flag anyone sets
 
 **Session status**:
-What one session says about itself on screen, decided once per draw: the row's glyph and the process, paused, effective activity, Unread and elapsed clauses. An Unread clause replaces a header line outright; each surface arranges and clips the rest for its own width. The sidebar row, both pane headers, and the spinner redraw cadence read the same value.
+What one session says about itself on screen, decided once per draw: the row's glyph, the state in words (process phase or effective activity, then Unread, recovery and control clauses), reporting health in words and the elapsed time. Each surface arranges and clips the clauses for its own width; a narrow header lets an Unread reply lead. The sidebar row, both pane headers, the Agents picker and the spinner redraw cadence read the same value.
 _Avoid_: the raw rollup activity, the glyph on its own, a per-renderer reading
 
 **Retarget**:
@@ -195,7 +195,7 @@ The one declaration of every setting path: its shape, its owner, and what the of
 _Avoid_: a second settings document, the settings snapshot, a separate path list for the editor, the writer, and the rows, a value type and an editor kind that can disagree
 
 **Allowance**:
-What a provider's subscription still permits in a window, shown in the Quota left block as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
+What a provider's subscription still permits in a window, shown in the sidebar's quota line as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
 _Avoid_: usage, tokens, cost, quota as a synonym for spend
 
 **Quota reason**:

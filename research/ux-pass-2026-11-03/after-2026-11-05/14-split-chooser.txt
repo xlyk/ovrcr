@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│  local (#1)  shell · 0m                             pid 37860│> local (#4)  shell · 0m                              pid 39353
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│───────────────────────────────────────────────────────────────
+  󰘬 main
+		3 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+		4 text (settable)  OPERATOR ───────────────────────── [+]│  local (#1)  shell · 0m                             pid 37860│> local (#4)  shell · 0m                              pid 39353
+		5 text (settable)  CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│───────────────────────────────────────────────────────────────
+		6 text (settable)   󰘬 main                          root │sh-3.2$ printf 'RETRY_%s\n' INPUT_OK                          │sh-3.2$
+		7 text (settable)      $ local                           │RETRY_INPUT_OK                                                │
+		8 text (settable)   󰘬 gui-consigint-auth-handoff         │sh-3.2$                                                       │
+		9 text (settable) ▌    $ local                           │                                                              │
+		10 text (settable)      - review auth handoff    grok:4.6 │                                                              │
+		11 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │                                                              │
+		12 text (settable)      $ local                           │                                                              │
+		13 text (settable)      - implement lifecycle cleanup     │                                                              │
+		14 text (settable)      - review websocket shutdown       │                                                              │
+		15 text (settable)      - plan snapshot restore        pi │                                                              │
+		16 text (settable)                                        │                                                              │
+		17 text (settable)  SPACELIFT-AGENT ──────────────────────│                                                              │
+		18 text (settable)   󰘬 main                          root │                                                              │
+		19 text (settable)      $ local                           │                                                              │
+		20 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                                              │
+		21 text (settable)      $ local                           │                                                              │
+		22 text (settable)      - build pipeline progress  claude │                                                              │
+		23 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                                              │
+		24 text (settable)      $ local                           │                                                              │
+		25 text (settable)      - review scope quality      codex │                                                              │
+		26 text (settable)                                        │                                                              │
+		27 text (settable)                                        │                                                              │
+		28 text (settable)                                        │  ┌ New pane · choose its session ─────────────────────────────────────────────────┐
+		29 text (settable)                                        │  │Search: ▏                                                                       │
+		30 text (settable)                                        │  │› consigint / gui-consigint-auth-handoff / local                                │
+		31 text (settable)                                        │  │                                                                                │
+		32 text (settable)                                        │  │  consigint / gui-consigint-auth-handoff / review auth handoff                  │
+		33 text (settable)                                        │  │                                                                                │
+		34 text (settable)                                        │  │  consigint / gui-consigint-worktree-lifecycle / local                          │
+		35 text (settable)                                        │  │                                                                                │
+		36 text (settable)                                        │  │  consigint / gui-consigint-worktree-lifecycle / implement lifecycle cleanup    │
+		37 text (settable)                                        │  │                                                                                │
+		38 text (settable)                                        │  │  consigint / gui-consigint-worktree-lifecycle / review websocket shutdown      │
+		39 text (settable)                                        │  │                                                                                │
+		40 text (settable)                                        │  │                                                                                │
+		41 text (settable)                                        │  │↑/↓ select · Enter show in new pane · Esc keep local                            │
+		42 text (settable)                                        │  │                                                                                │
+		43 text (settable)                                        │  │                                                                                │
+		44 text (settable)                                        │  │                                                                                │
+		45 text (settable)                                        │  │[Open] [Cancel]                                                                 │
+		46 text (settable)                                        │  └────────────────────────────────────────────────────────────────────────────────┘
+		47 text (settable)                                        │                                                              │
+		48 text (settable)                                        │                                                              │
+		49 text (settable)                                        │                                                              │
+		50 text (settable)                                        │                                                              │
+		51 text (settable)                                        │                                                              │
+		52 text (settable)                                        │                                                              │
+		53 text (settable)                                        │                                                              │
+		54 text (settable)                                        │                                                              │
+		55 text (settable)                                        │                                                              │
+		56 text (settable)                                        │                                                              │
+		57 text (settable)                                        │                                                              │
+		58 text (settable)                                        │                                                              │
+		59 text (settable)                                        │                                                              │
+		60 text (settable)                                        │                                                              │
+		61 text (settable)                                        │                                                              │
+		62 text (settable)                                        │                                                              │
+		63 text (settable)                                        │                                                              │
+		64 text (settable)                                        │                                                              │
+		65 text (settable)                                        │                                                              │
+		66 text (settable)                                        │                                                              │
+		67 text (settable)                                        │                                                              │
+		68 text (settable)                                        │                                                              │
+		69 text (settable)                                        │                                                              │
+		70 text (settable)                                        │                                                              │
+		71 text (settable)  Claude ?                              │                                                              │
+		72 text (settable) BROWSE  Space Menu  : Commands  ? Help
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│  local (#1)  shell · 0m                             pid 37860│> local (#4)  shell · 0m                              pid 39353
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────│───────────────────────────────────────────────────────────────
+  󰘬 main

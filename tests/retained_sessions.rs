@@ -1083,7 +1083,7 @@ fn wait_phase(live: &Live, id: u64, phase: &str) -> Value {
 }
 
 fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
-    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = live.workspace_path(live::WORKSPACE);
     let path = path.to_str().unwrap();
     let mut args = vec![
         "terminal",
@@ -1122,8 +1122,15 @@ fn wait_output(live: &Live, id: &str, marker: &str) {
 #[test]
 fn claude_reopen_retains_exact_conversation_before_another_callback() {
     for initial_resume in [false, true] {
-        assert_claude_recovery(initial_resume);
+        assert_claude_recovery(initial_resume, false);
     }
+}
+
+/// The Dashboard's Task arrives as the agent's one message after `--`. It reaches the
+/// first launch once; reopen and restarts resume the conversation without it.
+#[test]
+fn claude_task_after_double_dash_starts_once_and_is_never_resent() {
+    assert_claude_recovery(false, true);
 }
 
 fn install_claude_fixture(live: &Live, native: &std::path::Path) {
@@ -1139,7 +1146,7 @@ fn install_claude_fixture(live: &Live, native: &std::path::Path) {
     std::fs::set_permissions(native, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-fn assert_claude_recovery(initial_resume: bool) {
+fn assert_claude_recovery(initial_resume: bool, separated: bool) {
     let live = Live::idle().bounded();
     let config_dir = live.root.path().join("claude-config");
     std::fs::create_dir(&config_dir).unwrap();
@@ -1165,6 +1172,9 @@ fn assert_claude_recovery(initial_resume: bool) {
     if initial_resume {
         launch.extend(["--resume", "5ebc5f9b-54b5-4928-9955-dc81c23743dd"]);
     } else {
+        if separated {
+            launch.push("--");
+        }
         launch.push("PRIVATE_RETAINED_PROMPT_116");
     }
     let created = create_terminal(&live, "claude-retained", &launch);
@@ -1188,6 +1198,14 @@ fn assert_claude_recovery(initial_resume: bool) {
     } else {
         "--session-id\n"
     }));
+    if separated {
+        // Admission kept the launch eligible and left the message last.
+        assert!(
+            arguments
+                .ends_with("--dangerously-skip-permissions\n--\nPRIVATE_RETAINED_PROMPT_116\n"),
+            "{arguments}"
+        );
+    }
     for attempt in 1..=2 {
         json(&live, &["shutdown", "--kill"]);
         live.join();
@@ -2035,7 +2053,7 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
     json(&live, &["shutdown", "--kill"]);
     live.join();
     live.start_binary();
-    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree_path = live.workspace_path(live::WORKSPACE);
     let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,
@@ -2211,7 +2229,7 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
     for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
         json(&live, &["terminal", "kill", &row["id"].to_string()]);
     }
-    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree_path = live.workspace_path(live::WORKSPACE);
     let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,

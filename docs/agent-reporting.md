@@ -111,11 +111,12 @@ command has a one-second total deadline, and successful reports are silent,
 including with `--json`. OVRCR retains the last accepted report in memory and
 exposes that observation across dashboard detach and reconnect.
 
-`response-ready` means the last observed root turn has finished responding. Managed
-reporters display `response ready · observed` or `· confirmed`, by sample quality,
-on the selected session's metadata line, with a `✓` glyph in the sidebar, and retain it until the next activity
-report, including across reconnects. Reporter health and process exit remain
-separate; Ready does not acknowledge unread output or imply known usage or cost.
+`response-ready` means the last observed root turn has finished responding. The pane
+header says `Ready` and the sidebar draws a `✓` glyph while the response is unread; the
+Agents picker keeps the sample quality (`response ready · observed` or `· confirmed`),
+and `ovrcr terminal list --json` carries it in `agent.activity`. The state is retained
+until the next activity report, including across reconnects. Reporter health and process
+exit remain separate; Ready does not acknowledge unread output or imply known usage or cost.
 
 Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi, Claude)
 retain one unread identity for its latest root Ready observation. [Mark-reviewed](dashboard.md#unread-responses)

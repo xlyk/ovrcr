@@ -1,0 +1,30 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr", "--test", "retained_ownership", "--all-features"]}
+xcargo: lock after 0s · ux-pass-integration · cargo test -p ovrcr --test retained_ownership --all-features
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.52s
+     Running tests/retained_ownership.rs (target/debug/deps/retained_ownership-bd59a7be00904a6a)
+
+running 14 tests
+test acknowledge_stopped_starts_only_the_server_when_cold ... ok
+test archived_names_are_reusable_but_active_names_still_conflict ... ok
+test current_boot_id_matches_macos_or_linux_os_source ... ok
+test exclusive_registry_lock_does_not_publish_reopen_success ... ok
+test live::command_clears_inherited_reporting_authority ... ok
+test missing_recorded_directory_refuses_reopen_without_fallback ... ok
+test natural_exit_archive_preserves_uncertainty_until_acknowledged ... ok
+test natural_leader_exit_with_attached_job_requires_ack_before_reopen ... ok
+test natural_survivor_helper ... ignored
+test ordinary_natural_exit_requires_ack_and_accepts_acknowledgement ... ok
+test same_boot_crash_with_surviving_descendant_requires_ack_before_fresh_shell_reopen ... ok
+test simulated_absent_and_malformed_saved_boot_id_fail_closed ... ok
+test simulated_prior_boot_uuid_allows_reopen_without_ack ... ok
+test stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 59.12s
+
+
+EXIT 0

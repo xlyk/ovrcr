@@ -45,7 +45,7 @@ pub(super) fn run(command: OperatorCommand, json_output: bool) -> AppResult<()> 
                         "needs_refresh":status.needs_refresh, "plan_usage":status.plan_usage,
                         "subject":status.subject, "client_id":status.client_id}))
                 } else {
-                    println!("{}: {}{}", provider.as_str(), if status.signed_in { "signed in" } else { "signed out" },
+                    println!("{}: {}{}", provider.label(), if status.signed_in { "signed in" } else { "signed out" },
                         if status.needs_refresh { " (refresh needed)" } else { "" });
                     Ok(())
                 }

@@ -149,11 +149,14 @@ In browse mode, press Ctrl-t to open Tasks; Esc returns to the terminal dashboar
 view provides creation and editing, pause/resume, run-now, deletion, concurrency,
 run history, streaming transcripts, cancellation, and confirmed working-file
 cleanup. Use n/e to create/edit, Tab or Shift-Tab to move between fields, Enter
-for a prompt newline, and Ctrl-s to save. Use h for history and PgUp/PgDn to
+for a prompt newline, and Ctrl-s to save. In a field, Ctrl-u clears it and Ctrl-a
+and Ctrl-e go to the start and end of the line. A new task's Timezone starts as
+your local zone (`TZ`, else the system zone), and next-run, run and one-time
+times show in local time. Use h for history and PgUp/PgDn to
 scroll the transcript. Follow the on-screen key hints. Task output uses its own control
 connection and does not change terminal selection.
 
-For mouse navigation, open Tasks from the dashboard's Actions or Menu control.
+For mouse navigation, open Tasks from the dashboard's Commands or Menu control.
 Click a task or run row to select it, and click the footer actions to create,
 edit, save, pause/resume, or open history. In the editor, click a field to focus
 it and place the text cursor; project options are clickable. The Prompt field

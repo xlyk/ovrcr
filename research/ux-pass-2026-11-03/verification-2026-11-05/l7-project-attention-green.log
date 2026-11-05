@@ -1,0 +1,33 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "test", "-p", "ovrcr-tui", "--all-features", "dashboard::cards::"]}
+xcargo: lock after 167s · ux-pass-integration · cargo test -p ovrcr-tui --all-features dashboard::cards::
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.23s
+     Running unittests src/lib.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/ovrcr_tui-60646be5495a0811)
+
+running 13 tests
+test dashboard::cards::tests::workspace_root_needs_every_worktree_to_agree ... ok
+test dashboard::cards::tests::welcome_numbers_the_first_steps_with_keys_from_the_keymap ... ok
+test dashboard::cards::tests::project_card_counts_sessions_and_attention_per_workspace ... ok
+test dashboard::cards::tests::nothing_selected_shows_every_project_and_how_to_start ... ok
+test dashboard::cards::tests::empty_and_warned_workspaces_only_offer_keys_that_work ... ok
+test dashboard::cards::tests::workspace_card_lists_sessions_in_sidebar_order_and_what_to_do_next ... ok
+test dashboard::cards::tests::a_narrow_project_row_keeps_both_attention_counts ... ok
+test dashboard::cards::tests::a_narrow_unread_row_keeps_its_whole_state_and_age ... ok
+test dashboard::cards::tests::project_card_leads_with_the_first_agent_until_one_exists ... ok
+test dashboard::cards::tests::a_narrow_pane_keeps_state_and_elapsed_and_shortens_the_rest ... ok
+test dashboard::cards::tests::the_open_hint_names_what_the_next_row_key_selects ... ok
+test dashboard::cards::tests::a_short_pane_keeps_the_next_steps_and_counts_what_it_hides ... ok
+test dashboard::cards::tests::cards_are_drawn_only_where_a_pane_has_no_session ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 384 filtered out; finished in 0.02s
+
+     Running tests/settings_theme_preview.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/settings_theme_preview-5fe4ef98ae78471a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+EXIT 0

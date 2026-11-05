@@ -40,7 +40,8 @@ pub fn run_dashboard(
     mut stream: UnixStream,
     task_request: TaskRequestFn,
     configuration_paths: (PathBuf, PathBuf),
-    startup_warning: Option<String>,
+    status_off: Option<String>,
+    connect_status: crate::ConnectStatusFn,
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
@@ -54,8 +55,8 @@ pub fn run_dashboard(
     // Hello and geometry reserve IDs 1 and 2, including while events arrive.
     dashboard.next_request_id = 3;
     initialize_dashboard(&mut stream, &mut dashboard, pane_size)?;
-    if let Some(warning) = startup_warning {
-        dashboard.set_error(warning);
+    if let Some(note) = status_off {
+        dashboard.status_off(note, connect_status);
     }
     let first_session = dashboard
         .visible_rows()
@@ -1346,6 +1347,123 @@ mod unread_review_tests {
     }
 
     #[test]
+    fn reply_reviews_the_presented_unread_once_ahead_of_its_input() {
+        let (mut dashboard, first) = fixture();
+        let presented = first.unread.clone().unwrap();
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+            },
+        )
+        .unwrap();
+        dashboard.install_screen(first.id, b"RESPONSE");
+        dashboard.draw(&mut terminal).unwrap();
+        dashboard.drain_outbox();
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        fn send<W: Write>(
+            terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+            stream: &mut UnixStream,
+            dashboard: &mut Dashboard,
+            event: Event,
+        ) {
+            let action = dashboard.event_action(event);
+            send_dashboard_action(terminal, stream, dashboard, &mut false, action).unwrap();
+        }
+        let mut sent = |wait: u64| {
+            peer.set_read_timeout(Some(Duration::from_millis(wait)))
+                .unwrap();
+            crate::protocol::read_frame::<ClientMessage>(&mut peer).ok()
+        };
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        // Viewing it and focusing the pane review nothing.
+        send(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            key(KeyCode::Enter),
+        );
+        assert_eq!(dashboard.mode, super::super::InputMode::Terminal);
+        assert_eq!(sent(50), None);
+        send(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            key(KeyCode::Char('x')),
+        );
+        let review = sent(1_000).expect("review");
+        assert_eq!(
+            review.request,
+            Request::MarkReviewed {
+                session: first.id,
+                expected: presented.clone(),
+            },
+            "the same request R sends, ahead of the input"
+        );
+        assert!(matches!(
+            sent(1_000).expect("input").request,
+            Request::Input { ref bytes, .. } if bytes == b"x"
+        ));
+        send(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            key(KeyCode::Char('y')),
+        );
+        send(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            Event::Paste("z".into()),
+        );
+        for expected in [&b"y"[..], b"z"] {
+            assert!(
+                matches!(
+                    sent(1_000).expect("input").request,
+                    Request::Input { ref bytes, .. } if bytes == expected
+                ),
+                "the rest of the reply is input only"
+            );
+        }
+        assert_eq!(sent(50), None);
+        // A newer Ready beat the review to the Server: the refusal stays out of the footer.
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: review.request_id,
+            response: Response::Error {
+                code: crate::protocol::ErrorCode::Conflict,
+                message: "Ready observation changed".into(),
+            },
+        });
+        assert_eq!(dashboard.error, None);
+        let mut newer = first.clone();
+        newer.unread.as_mut().unwrap().turn = Some("displayed-B".into());
+        newer.unread.as_mut().unwrap().activity_revision = 4;
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(newer.clone()),
+        )));
+        dashboard.draw(&mut terminal).unwrap();
+        send(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            Event::Paste("again".into()),
+        );
+        assert_eq!(
+            sent(1_000).expect("review").request,
+            Request::MarkReviewed {
+                session: first.id,
+                expected: newer.unread.unwrap(),
+            },
+            "once displayed, the newer Ready is the next reply's target"
+        );
+        assert!(matches!(
+            sent(1_000).expect("input").request,
+            Request::Input { .. }
+        ));
+    }
+
+    #[test]
     fn unread_input_boundary_reviews_presented_ready_before_next_draw() {
         let (mut dashboard, first) = fixture();
         let mut bytes = Vec::new();
@@ -1613,6 +1731,24 @@ mod operator_loop_tests {
         )
         .unwrap();
         let mut mouse = false;
+        // In Terminal mode Ctrl-o is the program's key; Ctrl-g then Ctrl-o opens Quick.
+        let ctrl_o = Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        dispatch_dashboard_event(&mut terminal, &mut stream, &mut d, &mut mouse, ctrl_o).unwrap();
+        let input: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(
+            matches!(input.request, Request::Input { ref bytes, .. } if bytes == b"\x0f"),
+            "{input:?}"
+        );
+        assert!(!d.operator_quick_visible());
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+        )
+        .unwrap();
+        while crate::protocol::read_frame::<ClientMessage>(&mut peer).is_ok() {}
         for event in [
             Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
             Event::Paste("discard 界e\u{301}🙂\n ".into()),
@@ -1802,6 +1938,8 @@ mod operator_loop_tests {
             !d.operator.visible,
             "dismissed continuation cannot open Operator"
         );
+        // Quick was opened from Browse (Ctrl-g then Ctrl-o); Enter returns to the terminal.
+        d.key(KeyCode::Enter);
         assert_eq!(
             d.key(KeyCode::Char('p')),
             DashboardAction::PtyBytes(b"p".to_vec())

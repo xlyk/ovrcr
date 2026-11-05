@@ -1,14 +1,15 @@
-//! One status value for a session: the glyph the sidebar row draws and the process, paused,
-//! activity, Unread and elapsed clauses both pane headers lay out. Which clause a session
-//! gets, and its wording, live here once, so the sidebar and the two metadata lines cannot
-//! disagree about the same session; an Unread clause replaces a header line outright, and
-//! each surface arranges and clips the rest for its own width. The value carries the glyph's
-//! colour, because the colour is part of what the status says; text styles, widths and
-//! clipping stay with the renderer. Readiness itself is still decided in [`super::ready`].
+//! One status value for a session: the glyph the sidebar row draws, the plain-words state,
+//! reporting and elapsed clauses both pane headers lay out, and the activity, Unread and
+//! health clauses the Agents picker shows. Which clause a session gets, and its wording,
+//! live here once, so the sidebar, the two pane headers and the picker cannot disagree
+//! about the same session; each surface arranges and clips the clauses for its own width.
+//! The value carries the glyph's colour, because the colour is part of what the status
+//! says; text styles, widths and clipping stay with the renderer. Readiness itself is still
+//! decided in [`super::ready`].
 use super::render::{GREEN, MUTED, RED, SUBTEXT, TEAL, YELLOW};
 use ovrcr_protocol::{
-    AgentActivity, AgentSnapshot, InputKind, ReporterHealth, SampleQuality, SessionPhase,
-    SessionSummary,
+    AgentActivity, AgentSnapshot, InputKind, ReporterHealth, SampleQuality, SessionKind,
+    SessionPhase, SessionSummary,
 };
 use ratatui::style::Color;
 use std::time::Duration;
@@ -17,6 +18,10 @@ const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '�
 const SPINNER_FRAME_MS: u64 = 100;
 /// How long one spinner frame stands: the redraw cadence the Dashboard owes a busy session.
 pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAME_MS);
+/// How long after its start an agent that has reported nothing still reads `starting…`.
+/// Managed agents bind within seconds of launch; one that never binds by then has no
+/// reporting (hooks not set up, or a provider without it) and reads `status off`.
+const STARTING_GRACE_MS: u64 = 60_000;
 
 /// The glyph and colour a session holds still at, or `None` when its glyph is a moving
 /// spinner frame — the one state that needs the clock. [`busy`] and [`SessionStatus::of`]
@@ -64,23 +69,28 @@ pub(super) struct SessionStatus {
     pub glyph: char,
     pub color: Color,
     pub exited: bool,
-    pub live: bool,
-    pub paused: bool,
-    /// A Ready observation is present: the headers give its wording the whole line.
-    pub ready: bool,
-    /// The managed process: its pid, `closed` after exit, or `—`.
-    pub pid: String,
+    /// The managed process id while it runs; `None` once it has exited or when unknown.
+    pub pid: Option<u32>,
     pub elapsed: String,
-    /// The activity clause the headers append, leading space included: ` busy observed`,
+    /// The headers' state in plain words — `Working`, `Ready · unread reply`, `Waiting for
+    /// input`, `Paused`, `Exited` — then any recovery or control explanation. Empty when
+    /// nothing is known, as for a plain shell. Quality words and internal reasons stay out.
+    pub state: String,
+    /// `state` for a header too narrow to hold it: a bare `Unread` when there is one, since
+    /// the sidebar glyph still shows the activity and the explanations need the full width;
+    /// otherwise the same as `state`.
+    pub narrow_state: String,
+    /// The headers' reporting health, only when it matters: `starting…` before an agent's
+    /// first report, `status off` when its reporting is off or lost.
+    pub reporting: Option<&'static str>,
+    /// The Agents picker's activity clause, leading space included: ` busy observed`,
     /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
     pub activity: String,
     /// Reporting loss also remains textual when an Input request overrides activity.
     pub reporting_health: Option<String>,
     /// Essential Agent state for a narrow picker row, without explanatory detail.
     pub compact: String,
-    /// Recovery explanations remain actionable after the managed process exits.
-    pub recovery_diagnostic: bool,
-    /// The Unread clause, which replaces a header line outright when present.
+    /// The Agents picker's Unread clause, which replaces its activity when present.
     pub unread: Option<String>,
 }
 
@@ -92,6 +102,7 @@ impl SessionStatus {
                 [((now_unix_ms / SPINNER_FRAME_MS) % SPINNER_FRAMES.len() as u64) as usize],
             GREEN(),
         ));
+        let (state, narrow_state) = header_states(session);
         Self {
             glyph,
             color: if session.agent.as_ref().is_some_and(unavailable) {
@@ -100,20 +111,14 @@ impl SessionStatus {
                 color
             },
             exited,
-            live: session.phase.is_live(),
-            paused: matches!(session.phase, SessionPhase::Paused),
-            ready: super::ready::ready(session).is_some(),
-            pid: if exited {
-                "closed".to_string()
-            } else {
-                session
-                    .pid
-                    .map_or_else(|| "—".to_string(), |pid| pid.to_string())
-            },
+            pid: session.pid.filter(|_| !exited),
             elapsed: session
                 .started_unix_ms
                 .map(|started| format_elapsed_at(started, now_unix_ms))
                 .unwrap_or_default(),
+            state,
+            narrow_state,
+            reporting: reporting_words(session, now_unix_ms),
             activity: {
                 let mut clause = activity_clause(session);
                 if let Some(control) = super::assignment_control::control_clause(
@@ -145,11 +150,6 @@ impl SessionStatus {
                 .as_ref()
                 .filter(|agent| unavailable(agent))
                 .map(unavailable_clause),
-            recovery_diagnostic: session.recovery.as_ref().is_some_and(|recovery| {
-                recovery.unavailable.is_some()
-                    || recovery.failure.is_some()
-                    || recovery.requires_ack
-            }),
             unread: session.unread.as_ref().map(|_| {
                 let unread = unread_clause(session);
                 match super::assignment_control::control_clause(
@@ -185,6 +185,156 @@ fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
 /// reporter behind it has nobody left to confirm it and reads Unavailable (`is_none_or`).
 fn unavailable(agent: &AgentSnapshot) -> bool {
     agent.health.state == ReporterHealth::Unavailable
+}
+
+/// The headers' state words: the process phase, or a running session's effective activity,
+/// then the Unread, recovery and control clauses, joined with ` · `; and the narrow form,
+/// a bare `Unread` when there is one.
+fn header_states(session: &SessionSummary) -> (String, String) {
+    let base = match session.phase {
+        SessionPhase::Running => activity_words(session),
+        SessionPhase::Paused => "Paused",
+        SessionPhase::Exited { .. } => "Exited",
+        SessionPhase::Stopped => "Stopped",
+        SessionPhase::Interrupted => "Interrupted",
+    };
+    let mut clauses = recovery_parts(session);
+    if let Some(control) = super::assignment_control::control_clause(
+        session
+            .assignment_control
+            .as_ref()
+            .map(|view| &view.control),
+    ) {
+        clauses.push(control.into());
+    }
+    // A clause that leads because nothing came before it still starts a sentence.
+    let sentence = |lead: &[&str]| {
+        let mut parts: Vec<&str> = lead
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect();
+        parts.extend(clauses.iter().map(String::as_str));
+        let joined = parts.join(" · ");
+        let mut chars = joined.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect::<String>()
+        })
+    };
+    if session.unread.is_some() {
+        (sentence(&[base, "unread reply"]), "Unread".into())
+    } else {
+        let state = sentence(&[base]);
+        (state.clone(), state)
+    }
+}
+
+/// A running session's effective activity in words; nothing for Unknown, which is what a
+/// plain shell, or an agent before its first report, says.
+fn activity_words(session: &SessionSummary) -> &'static str {
+    match super::ready::activity(session) {
+        AgentActivity::Busy => "Working",
+        AgentActivity::WaitingInput
+            if session
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.input_requests.first())
+                .is_some_and(|request| request.kind == InputKind::Approval) =>
+        {
+            "Waiting for approval"
+        }
+        AgentActivity::WaitingInput => "Waiting for input",
+        AgentActivity::ResponseReady => "Ready",
+        AgentActivity::Idle => "Idle",
+        AgentActivity::Error => "Error",
+        AgentActivity::Unknown => "",
+    }
+}
+
+/// The reasons `Reporting::lost` writes when the Server loses a session's reporter. Unlike a
+/// provider's own Unavailable reasons before its first report, these are never a startup.
+const SERVER_LOSSES: [&str; 4] = [
+    "supervisor_disconnected",
+    "capability_revoked",
+    "unfinalized_release",
+    "pty_exited_before_finalization",
+];
+
+/// Reporting health in words, only for a running agent and only when it matters. Before the
+/// first report a young session is `starting…`, whatever the provider says meanwhile (Claude
+/// reads `source_unavailable` until its transcript exists), but a Server-side loss
+/// ([`SERVER_LOSSES`]) reads `status off` at once. Past the grace an agent that never bound
+/// has no reporting at all; one that bound but has not been asked anything says nothing.
+/// After the first report, a lost reporter is `status off`, and so is an Unread with no
+/// reporter left behind it.
+fn reporting_words(session: &SessionSummary, now_unix_ms: u64) -> Option<&'static str> {
+    if session.phase != SessionPhase::Running {
+        return None;
+    }
+    if session.unread.is_some() && session.agent.as_ref().is_none_or(unavailable) {
+        return Some("status off");
+    }
+    if !matches!(session.kind, SessionKind::Agent { .. }) && session.agent.is_none() {
+        return None;
+    }
+    let reported = session
+        .agent
+        .as_ref()
+        .map_or(session.activity != AgentActivity::Unknown, |agent| {
+            agent.activity.is_some() || !agent.input_requests.is_empty()
+        });
+    if reported {
+        return session
+            .agent
+            .as_ref()
+            .filter(|agent| unavailable(agent))
+            .map(|_| "status off");
+    }
+    if session.agent.as_ref().is_some_and(|agent| {
+        unavailable(agent)
+            && agent
+                .health
+                .reason
+                .as_deref()
+                .is_some_and(|reason| SERVER_LOSSES.contains(&reason))
+    }) {
+        return Some("status off");
+    }
+    if session
+        .started_unix_ms
+        .is_some_and(|started| now_unix_ms.saturating_sub(started) < STARTING_GRACE_MS)
+    {
+        Some("starting…")
+    } else if session.agent.is_none() {
+        Some("status off")
+    } else {
+        None
+    }
+}
+
+/// Recovery explanations, which stay actionable after the managed process exits.
+fn recovery_parts(session: &SessionSummary) -> Vec<String> {
+    let Some(recovery) = &session.recovery else {
+        return Vec::new();
+    };
+    let mut parts = Vec::new();
+    if let Some(unavailable) = &recovery.unavailable {
+        parts.push(unavailable.clone());
+    }
+    if let Some(failure) = &recovery.failure {
+        parts.push(failure.clone());
+    }
+    if session.phase.is_live()
+        && recovery.conversation.is_some()
+        && !recovery.attached
+        && recovery.unavailable.is_none()
+    {
+        parts.push("Agent launched; awaiting conversation attachment".into());
+    }
+    if recovery.requires_ack {
+        parts.push("confirm previous processes stopped".into());
+    }
+    parts
 }
 
 fn compact_agent_clause(session: &SessionSummary) -> String {
@@ -247,32 +397,14 @@ fn unread_clause(session: &SessionSummary) -> String {
 }
 
 fn activity_clause(session: &SessionSummary) -> String {
-    if let Some(recovery) = &session.recovery {
-        let mut parts = Vec::new();
-        if let Some(unavailable) = &recovery.unavailable {
-            parts.push(unavailable.clone());
-        }
-        if let Some(failure) = &recovery.failure {
-            parts.push(failure.clone());
-        }
+    let mut parts = recovery_parts(session);
+    if !parts.is_empty() {
         if session.phase.is_live()
-            && recovery.conversation.is_some()
-            && !recovery.attached
-            && recovery.unavailable.is_none()
+            && let Some(agent) = &session.agent
         {
-            parts.push("Agent launched; awaiting conversation attachment".into());
+            parts.insert(0, provider_clause(session, agent).trim_start().into());
         }
-        if recovery.requires_ack {
-            parts.push("confirm previous processes stopped".into());
-        }
-        if !parts.is_empty() {
-            if session.phase.is_live()
-                && let Some(agent) = &session.agent
-            {
-                parts.insert(0, provider_clause(session, agent).trim_start().into());
-            }
-            return format!(" {}", parts.join(" · "));
-        }
+        return format!(" {}", parts.join(" · "));
     }
     match session.phase {
         SessionPhase::Stopped => return " stopped".into(),
@@ -429,7 +561,24 @@ mod tests {
             unavailable: None,
             failure: None,
         });
-        assert!(!SessionStatus::of(&row, 0).recovery_diagnostic);
+        assert!(recovery_parts(&row).is_empty());
+        assert_eq!(SessionStatus::of(&row, 0).state, "Exited");
+        // A narrow header keeps only a bare Unread: explanations need the full width.
+        row.recovery.as_mut().unwrap().unavailable = Some("No native history".into());
+        row.unread = Some(ReadyObservation {
+            binding: agent(
+                AgentActivity::ResponseReady,
+                SampleQuality::Observed,
+                ReporterHealth::Connected,
+                Vec::new(),
+            )
+            .binding,
+            turn: Some("t".into()),
+            activity_revision: 1,
+        });
+        let status = SessionStatus::of(&row, 0);
+        assert_eq!(status.state, "Exited · unread reply · No native history");
+        assert_eq!(status.narrow_state, "Unread");
     }
 
     fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
@@ -499,7 +648,8 @@ mod tests {
         }
     }
 
-    /// Phase x effective activity x reporter health, at the glyph and the activity clause.
+    /// Phase x effective activity x reporter health, at the glyph, the picker's activity
+    /// clause and the headers' state and reporting words.
     #[test]
     fn status_table() {
         use AgentActivity::*;
@@ -510,20 +660,21 @@ mod tests {
             code: Some(0),
             signal: None,
         };
-        // Eight columns per row: phase, agent snapshot, then the expected glyph, glyph
-        // colour, activity clause, pid text, ready and paused. `exited` is checked against
-        // the pid text and `busy` against the glyph, so neither needs a column of its own;
-        // the Unread clause has its own test below.
+        // Columns: phase, agent snapshot, then the expected glyph, glyph colour, picker
+        // activity clause, header state, header reporting words and pid. `exited` is checked
+        // against the phase and `busy` against the glyph, so neither needs a column of its
+        // own; the Unread clauses have their own test below.
         let cases = [
+            // A plain shell says nothing about activity it was never told.
             (
                 running.clone(),
                 None,
                 '-',
                 MUTED(),
                 " unknown",
-                "42",
-                false,
-                false,
+                "",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -531,9 +682,9 @@ mod tests {
                 '-',
                 MUTED(),
                 " unknown observed",
-                "42",
-                false,
-                false,
+                "",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -541,9 +692,9 @@ mod tests {
                 ' ',
                 MUTED(),
                 " idle confirmed",
-                "42",
-                false,
-                false,
+                "Idle",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -551,9 +702,9 @@ mod tests {
                 '⠋',
                 GREEN(),
                 " busy observed",
-                "42",
-                false,
-                false,
+                "Working",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -561,9 +712,9 @@ mod tests {
                 '?',
                 YELLOW(),
                 " waiting estimated",
-                "42",
-                false,
-                false,
+                "Waiting for input",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -571,9 +722,9 @@ mod tests {
                 '!',
                 RED(),
                 " error observed",
-                "42",
-                false,
-                false,
+                "Error",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -581,20 +732,21 @@ mod tests {
                 ' ',
                 MUTED(),
                 " response ready · confirmed",
-                "42",
-                true,
-                false,
+                "Ready",
+                None,
+                Some(42),
             ),
-            // An unavailable reporter mutes the glyph and says so in the clause.
+            // An unavailable reporter mutes the glyph; the picker names it, the headers keep
+            // the state and say `status off` instead of the reason.
             (
                 running.clone(),
                 Some(agent(Busy, Observed, Unavailable, vec![])),
                 '⠋',
                 MUTED(),
                 " unavailable",
-                "42",
-                false,
-                false,
+                "Working",
+                Some("status off"),
+                Some(42),
             ),
             (
                 running.clone(),
@@ -602,9 +754,9 @@ mod tests {
                 ' ',
                 MUTED(),
                 " unavailable response ready · observed",
-                "42",
-                true,
-                false,
+                "Ready",
+                Some("status off"),
+                Some(42),
             ),
             // An open Input request outranks the activity underneath it, glyph included.
             (
@@ -613,9 +765,9 @@ mod tests {
                 '?',
                 YELLOW(),
                 " input needed · confirm",
-                "42",
-                false,
-                false,
+                "Waiting for input",
+                None,
+                Some(42),
             ),
             (
                 running.clone(),
@@ -628,20 +780,30 @@ mod tests {
                 '?',
                 YELLOW(),
                 " input needed · approval",
-                "42",
-                true,
-                false,
+                "Waiting for approval",
+                None,
+                Some(42),
             ),
-            // Phase outranks every activity.
+            // Phase outranks every activity, and only a running agent reports its health.
             (
                 SessionPhase::Paused,
                 Some(agent(Busy, Observed, Connected, vec![])),
                 'P',
                 SUBTEXT(),
                 " busy observed",
-                "42",
-                false,
-                true,
+                "Paused",
+                None,
+                Some(42),
+            ),
+            (
+                SessionPhase::Paused,
+                Some(agent(Busy, Observed, Unavailable, vec![])),
+                'P',
+                MUTED(),
+                " unavailable",
+                "Paused",
+                None,
+                Some(42),
             ),
             (
                 exited.clone(),
@@ -649,9 +811,9 @@ mod tests {
                 '·',
                 MUTED(),
                 " busy observed",
-                "closed",
-                false,
-                false,
+                "Exited",
+                None,
+                None,
             ),
             (
                 exited,
@@ -659,23 +821,38 @@ mod tests {
                 '·',
                 MUTED(),
                 " response ready · observed",
-                "closed",
-                true,
-                false,
+                "Exited",
+                None,
+                None,
             ),
         ];
-        for (phase, snapshot, glyph, color, activity, pid, ready, paused) in cases {
+        for (phase, snapshot, glyph, color, activity, state, reporting, pid) in cases {
             let session = session(phase.clone(), snapshot);
             let status = SessionStatus::of(&session, 0);
             let case = format!("{phase:?} {activity}");
             assert_eq!(status.glyph, glyph, "{case}");
             assert_eq!(status.color, color, "{case}");
             assert_eq!(status.activity, activity, "{case}");
+            assert_eq!(status.state, state, "{case}");
+            assert_eq!(status.narrow_state, status.state, "{case}");
+            assert_eq!(status.reporting, reporting, "{case}");
             assert_eq!(status.pid, pid, "{case}");
-            assert_eq!(status.ready, ready, "{case}");
-            assert_eq!(status.paused, paused, "{case}");
-            assert_eq!(status.exited, pid == "closed", "{case}");
+            assert_eq!(
+                status.exited,
+                matches!(phase, SessionPhase::Exited { .. }),
+                "{case}"
+            );
             assert_eq!(status.unread, None, "{case}");
+            // The headers never carry quality words or internal reasons.
+            for internal in [
+                "observed",
+                "confirmed",
+                "estimated",
+                "unavailable",
+                "unknown",
+            ] {
+                assert!(!status.state.contains(internal), "{case}: {}", status.state);
+            }
             // The redraw cadence and the glyph read the same activity.
             assert_eq!(
                 busy(&session),
@@ -683,6 +860,111 @@ mod tests {
                 "{case}"
             );
         }
+    }
+
+    /// Before an agent's first report the headers say `starting…`; once the grace has passed,
+    /// one that never bound has no reporting at all, and one that bound but has not been asked
+    /// anything says nothing. Terminals never get reporting words.
+    #[test]
+    fn reporting_words_start_then_settle_without_false_alarms() {
+        let grace = STARTING_GRACE_MS;
+        let mut launched = session(SessionPhase::Running, None);
+        launched.kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        let words = |session: &SessionSummary, now| SessionStatus::of(session, now).reporting;
+        assert_eq!(words(&launched, 0), Some("starting…"));
+        assert_eq!(words(&launched, grace - 1), Some("starting…"));
+        assert_eq!(words(&launched, grace), Some("status off"), "never bound");
+
+        // Bound, but Claude has no transcript yet: Unavailable is not an alarm before the
+        // first report, and past the grace an unasked agent says nothing.
+        let mut bound = agent(
+            AgentActivity::Unknown,
+            SampleQuality::Observed,
+            ReporterHealth::Unavailable,
+            Vec::new(),
+        );
+        bound.activity = None;
+        bound.health.reason = Some("source_unavailable".into());
+        launched.agent = Some(bound);
+        assert_eq!(words(&launched, 0), Some("starting…"));
+        assert_eq!(words(&launched, grace), None);
+        let status = SessionStatus::of(&launched, 0);
+        assert_eq!(status.state, "");
+        assert!(!status.state.contains("source_unavailable"));
+
+        // A real loss before the first report is not a startup: the supervisor is gone.
+        launched.agent.as_mut().unwrap().health.reason = Some("supervisor_disconnected".into());
+        assert_eq!(words(&launched, 0), Some("status off"));
+        assert_eq!(words(&launched, grace), Some("status off"));
+        for reason in SERVER_LOSSES {
+            launched.agent.as_mut().unwrap().health.reason = Some(reason.into());
+            assert_eq!(words(&launched, 0), Some("status off"), "{reason}");
+        }
+        // A provider's own reason before its first report is still a startup.
+        launched.agent.as_mut().unwrap().health.reason = Some("transcript_pending".into());
+        assert_eq!(words(&launched, 0), Some("starting…"));
+        launched.agent.as_mut().unwrap().health.reason = Some("source_unavailable".into());
+
+        // The first report ends `starting…`; a reporter lost after it is `status off`.
+        launched.agent.as_mut().unwrap().activity = Some(ActivitySample {
+            state: AgentActivity::Busy,
+            quality: SampleQuality::Observed,
+            turn: Some("t".into()),
+        });
+        assert_eq!(words(&launched, 0), Some("status off"));
+        launched.agent.as_mut().unwrap().health.state = ReporterHealth::Connected;
+        assert_eq!(words(&launched, 0), None);
+        assert_eq!(SessionStatus::of(&launched, 0).state, "Working");
+
+        // A legacy hook's rollup is a report too.
+        let mut rollup = session(SessionPhase::Running, None);
+        rollup.kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        rollup.activity = AgentActivity::Busy;
+        assert_eq!(words(&rollup, grace), None);
+        assert_eq!(SessionStatus::of(&rollup, grace).state, "Working");
+
+        // A terminal is not an agent: no `starting…`, no `status off`, no `Unknown`.
+        let shell = session(SessionPhase::Running, None);
+        assert_eq!(words(&shell, 0), None);
+        assert_eq!(words(&shell, grace * 10), None);
+        assert_eq!(SessionStatus::of(&shell, 0).state, "");
+
+        // A start the clock cannot place never claims `starting…`.
+        launched.agent = None;
+        launched.started_unix_ms = None;
+        assert_eq!(words(&launched, 0), Some("status off"));
+        // Only a running agent reports; a paused or exited one says its phase.
+        launched.started_unix_ms = Some(0);
+        launched.phase = SessionPhase::Paused;
+        assert_eq!(words(&launched, 0), None);
+    }
+
+    #[test]
+    fn header_state_names_recovery_and_control_after_the_phase() {
+        let mut row = session(SessionPhase::Interrupted, None);
+        row.recovery = Some(ovrcr_protocol::SessionRecovery {
+            conversation: Some("c".into()),
+            attached: false,
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("resume failed".into()),
+        });
+        assert_eq!(
+            SessionStatus::of(&row, 0).state,
+            "Interrupted · resume failed · confirm previous processes stopped"
+        );
+        // A clause that leads still starts with a capital.
+        row.phase = SessionPhase::Running;
+        row.recovery.as_mut().unwrap().requires_ack = false;
+        row.recovery.as_mut().unwrap().failure = None;
+        assert_eq!(
+            SessionStatus::of(&row, 0).state,
+            "Agent launched; awaiting conversation attachment"
+        );
     }
 
     #[test]
@@ -706,17 +988,30 @@ mod tests {
             Some("Unread response ready · observed")
         );
         assert_eq!(SessionStatus::of(&ready, 0).glyph, '✓');
+        // The headers keep the state and add the Unread as a clause.
+        assert_eq!(SessionStatus::of(&ready, 0).state, "Ready · unread reply");
+        assert_eq!(SessionStatus::of(&ready, 0).reporting, None);
         ready.agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
         assert_eq!(
             SessionStatus::of(&ready, 0).unread.as_deref(),
             Some("Unread Unavailable response ready · observed")
         );
+        assert_eq!(SessionStatus::of(&ready, 0).state, "Ready · unread reply");
+        assert_eq!(SessionStatus::of(&ready, 0).reporting, Some("status off"));
         // Without a reporting provider there is no clause to add, only the health word.
         ready.agent = None;
         assert_eq!(
             SessionStatus::of(&ready, 0).unread.as_deref(),
             Some("Unread Unavailable")
         );
+        assert_eq!(SessionStatus::of(&ready, 0).state, "Unread reply");
+        assert_eq!(SessionStatus::of(&ready, 0).reporting, Some("status off"));
+        // A narrow header keeps the Unread ahead of the activity word.
+        ready.activity = AgentActivity::Busy;
+        let status = SessionStatus::of(&ready, 0);
+        assert_eq!(status.state, "Working · unread reply");
+        assert_eq!(status.narrow_state, "Unread");
+        ready.activity = AgentActivity::Unknown;
 
         assert_eq!(SessionStatus::of(&ready, 0).compact, "Unread Unavailable");
         ready.unread = None;
@@ -745,6 +1040,7 @@ mod tests {
             Some("Unread input needed · confirm")
         );
         assert_eq!(status.glyph, '?');
+        assert_eq!(status.state, "Waiting for input · unread reply");
 
         // An unavailable reporter under a sample that is not Ready says ` unavailable` in the
         // activity clause; Unread already carries the health word, so it is not repeated.

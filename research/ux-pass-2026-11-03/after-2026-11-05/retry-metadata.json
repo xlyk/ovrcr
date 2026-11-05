@@ -1,0 +1,82 @@
+{
+  "pid": 36787,
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-ux-native-retry-home-9pa_0_cf",
+  "revision": "78ce52fd62ddc4522e53fe23afd97d29e6fe60c4",
+  "method": "reuse frozen bundle built by just gui; no rebuild or target mutation",
+  "fixture_root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-rO2Bbb/server.sock",
+  "initial_groups": [
+    {
+      "pid": 37860,
+      "pgid": 37860
+    },
+    {
+      "pid": 38495,
+      "pgid": 38495
+    },
+    {
+      "pid": 38919,
+      "pgid": 38919
+    },
+    {
+      "pid": 39353,
+      "pgid": 39353
+    },
+    {
+      "pid": 39769,
+      "pgid": 39769
+    },
+    {
+      "pid": 40195,
+      "pgid": 40195
+    },
+    {
+      "pid": 40640,
+      "pgid": 40640
+    },
+    {
+      "pid": 41167,
+      "pgid": 41167
+    },
+    {
+      "pid": 41669,
+      "pgid": 41669
+    },
+    {
+      "pid": 42184,
+      "pgid": 42184
+    },
+    {
+      "pid": 42899,
+      "pgid": 42899
+    },
+    {
+      "pid": 43455,
+      "pgid": 43455
+    }
+  ],
+  "additional_groups": [
+    {
+      "pid": 43712,
+      "pgid": 43712
+    },
+    {
+      "pid": 92606,
+      "pgid": 92606
+    },
+    {
+      "pid": 92831,
+      "pgid": 92831
+    },
+    {
+      "pid": 92908,
+      "pgid": 92908
+    }
+  ],
+  "gui_pid": 36787,
+  "server_pid": 37063,
+  "transcript_source": {
+    "path": "/private/tmp/ovrcr-ux-resume/native/1544d989-7cbe-4b7e-8e78-dbe5df75e2c7.jsonl",
+    "sha256": "f16092447fb58b5402282d6cbf15808c2100092a92232d567fc70de461250d0d"
+  }
+}

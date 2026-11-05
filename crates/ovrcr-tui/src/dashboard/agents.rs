@@ -31,6 +31,27 @@ pub const MANAGED_AGENTS: [&str; 7] = [
     "cursor-agent",
 ];
 
+/// Agents whose interactive CLI takes a first message as a positional argument after `--`,
+/// checked against the installed `--help` (claude 2.1.318, codex 0.164.0, pi 0.87.1,
+/// grok 1.0.70, omp 18.10.3). Hermes (`-z` is one-shot), Cursor (a prompt turns its
+/// reporting off) and OpenCode are left out: a task only names their session.
+pub const TASK_AGENTS: [&str; 5] = ["claude", "codex", "pi", "omp", "grok"];
+
+/// Whether `agent` starts with a task as its first message.
+pub fn takes_task(agent: &str) -> bool {
+    TASK_AGENTS.contains(&agent)
+}
+
+/// `argv` with `task` as the agent's first message. The explicit `--` keeps a task that
+/// looks like a flag or a subcommand a message, and every recovery parser stops at it,
+/// so the task is never retained for resume.
+pub fn with_task(agent: &str, mut argv: Vec<OsString>, task: &str) -> Vec<OsString> {
+    if !task.is_empty() && takes_task(agent) {
+        argv.extend(["--".into(), task.into()]);
+    }
+    argv
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
     Detected,
@@ -165,6 +186,45 @@ mod tests {
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(mode);
         std::fs::set_permissions(&path, permissions).unwrap();
+    }
+
+    #[test]
+    fn a_task_follows_double_dash_only_for_verified_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "claude",
+            "codex",
+            "pi",
+            "omp",
+            "grok",
+            "hermes",
+            "cursor-agent",
+        ] {
+            write_stub(dir.path(), name, 0o755);
+        }
+        let launcher = Path::new("/opt/ovrcr");
+        let agents = detect_agents(dir.path().as_os_str(), None, Some(launcher));
+        let task = "--help me fix the build";
+        for entry in &agents {
+            let argv = with_task(&entry.name, entry.argv.clone(), task);
+            if TASK_AGENTS.contains(&entry.name.as_str()) {
+                // The wrapper's own `--` comes first; the task is the native
+                // command's single message after a second one.
+                let mut expected = entry.argv.clone();
+                expected.extend(["--".into(), task.into()]);
+                assert_eq!(argv, expected, "{}", entry.name);
+                assert_eq!(argv.iter().filter(|arg| *arg == "--").count(), 2);
+            } else {
+                assert_eq!(argv, entry.argv, "{}", entry.name);
+            }
+        }
+        let claude = agents.iter().find(|entry| entry.name == "claude").unwrap();
+        assert_eq!(
+            with_task("claude", claude.argv.clone(), ""),
+            claude.argv,
+            "no task, no change"
+        );
+        assert!(!takes_task("opencode") && !takes_task("cursor-cloud:work"));
     }
 
     #[test]

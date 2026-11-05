@@ -35,6 +35,40 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
     }
 }
 
+fn wait_screen_absent(terminal: &Terminal, needle: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = terminal.screen().contents();
+        if !text.contains(needle) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("screen still contained {needle:?}:\n{text}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_pane_header(terminal: &Terminal, title: &str, agent_model: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = terminal.screen().contents();
+        let header = text
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split_once('│'))
+            .map(|(_, pane)| pane)
+            .unwrap_or_default();
+        if header.contains(title) && header.contains(agent_model) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("pane header never showed {title:?} with {agent_model:?}:\n{text}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut declined = Vec::<String>::new();
@@ -52,12 +86,12 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
         }
         if !screen.alternate_screen()
             && let Some((_, prompt)) = text.rsplit_once("OVRCR · startup")
-            && prompt.contains("[y/n] Enter skips · default n")
+            && (prompt.contains("[y/n] Enter skips · default n")
+                || prompt.contains("[y] Connect  [n] Not now"))
         {
             let title = prompt.lines().map(str::trim).find(|line| !line.is_empty());
             let Some(
-                title @ ("Claude reporting hooks"
-                | "Codex reporting hooks"
+                title @ ("Connect agent status"
                 | "Install OVRCR Bridge"
                 | "Repair or update OVRCR Bridge"
                 | "Install OVRCR Local"),
@@ -144,9 +178,9 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_dashboard(&mut terminal)?;
-    // The complete Demo inventory is established above, but the initial frame
-    // arrives in PTY chunks. Wait for the last required sidebar label.
-    wait_screen(&terminal, "claude:opus-4")?;
+    // The sidebar keeps room for long session names and can omit the model.
+    // Check the known agent identities there, then each model in its pane header.
+    wait_screen(&terminal, "review scope quality")?;
     let initial = terminal.screen().contents();
     let sidebar = initial
         .lines()
@@ -156,17 +190,15 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     for agent in ["claude", "codex", "pi", "grok"] {
         assert!(sidebar.contains(agent), "missing agent {agent}: {sidebar}");
     }
-    for label in [
-        "claude:sonnet-4",
-        "codex:gpt-5.4",
-        "pi:grok-4.6",
-        "grok:4.6",
-        "claude:opus-4",
+    for (session, model) in [
+        ("implement lifecycle cleanup", "claude:sonnet-4"),
+        ("review websocket shutdown", "codex:gpt-5.4"),
+        ("plan snapshot restore", "pi:grok-4.6"),
+        ("review auth handoff", "grok:4.6"),
+        ("build pipeline progress", "claude:opus-4"),
     ] {
-        assert!(
-            sidebar.contains(label),
-            "missing agent and model {label}: {sidebar}"
-        );
+        select_sidebar_session(&mut terminal, session)?;
+        wait_pane_header(&terminal, session, model)?;
     }
     terminal.send(b":create terminal\r")?;
     wait_screen(&terminal, "┌ Create terminal")?;
@@ -203,7 +235,8 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let pgid = unsafe { libc::getpgid(created["pid"].as_i64().unwrap() as i32) };
     assert!(pgid > 1);
     pgids.push(pgid);
-    terminal.send(b"\x07:switch terminal palette-check\r")?;
+    // Session rows read `project / branch / title`; search one by its title.
+    terminal.send(b"\x07:palette-check\r")?;
     wait_screen(&terminal, "PALETTE_LIVE")?;
     terminal.send(b":close terminal\r")?;
     wait_screen(&terminal, "Close terminal?")?;
@@ -248,8 +281,9 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
-    select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
+    select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
+    wait_pane_header(&terminal, "implement lifecycle cleanup", "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "fixture: lifecycle cleanup")?;
     terminal.send(b"printf 'GUI_%s\\n' CHECKPOINT\r")?;
     wait_screen(&terminal, "GUI_CHECKPOINT")?;
@@ -257,8 +291,9 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     terminal.stop()?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
-    select_sidebar_session(&mut terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
+    select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
+    wait_pane_header(&terminal, "implement lifecycle cleanup", "claude:sonnet-4")?;
     enter_selected_session(&mut terminal, "GUI_CHECKPOINT")?;
     terminal.stop()?;
     demo.shutdown()?;
@@ -286,12 +321,19 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     let result = (|| -> Result<()> {
         wait_dashboard(&mut terminal)?;
-        wait_screen(&terminal, "claude:sonnet-4")?;
+        wait_screen(&terminal, "implement lifecycle cleanup")?;
         for (index, name, ready) in [
-            (0, "claude:sonnet-4", "fixture: lifecycle cleanup"),
+            (
+                0,
+                "implement lifecycle cleanup",
+                "fixture: lifecycle cleanup",
+            ),
             (1, "local", "Terminal mode"),
         ] {
             select_sidebar_session(&mut terminal, name)?;
+            if index == 0 {
+                wait_pane_header(&terminal, name, "claude:sonnet-4")?;
+            }
             enter_selected_session(&mut terminal, ready)?;
             let env_file = root.join(format!("child-env-{index}"));
             let list_file = root.join(format!("child-list-{index}.json"));
@@ -362,7 +404,11 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
 fn select_sidebar_session(terminal: &mut Terminal, name: &str) -> Result<()> {
     let screen = terminal.screen();
     let (_, cols) = screen.size();
-    let Some(row) = screen.rows(0, cols).position(|text| text.contains(name)) else {
+    let Some(row) = screen.rows(0, cols).position(|text| {
+        text.split_once('│')
+            .map_or(text.as_str(), |(sidebar, _)| sidebar)
+            .contains(name)
+    }) else {
         bail!("sidebar never rendered {name:?}");
     };
     let click = format!("\x1b[<0;5;{}M", row + 1);
@@ -783,7 +829,7 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
                 // The Server publishes its own quota snapshot (Claude auth
                 // status is not the silent default). This test injects the
                 // events it asserts on; forwarding the real ones replaces
-                // "invalid report" before the screen can show it.
+                // "unreadable report" before the details can show it.
                 if matches!(message, ServerMessage::Event(ServerEvent::QuotaChanged(_))) {
                     continue;
                 }
@@ -841,7 +887,10 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
     // The actual first session's child output proves selection, not just rows.
     wait_screen(&terminal, "local (#1)")?;
     wait_screen(&terminal, "Grok")?;
-    wait_screen(&terminal, "invalid report")?;
+    terminal.send(b"u")?;
+    wait_screen(&terminal, "Grok · unreadable report")?;
+    terminal.send(b"\r")?;
+    wait_screen_absent(&terminal, "Quota details")?;
     terminal.send(b"L")?;
     wait_screen(&terminal, "Automatic local terminals: off")?;
     terminal.send(b"N")?;
@@ -933,7 +982,7 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
     };
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
     assert_eq!(saved_policy()?, "on");
     terminal.send(b"L")?;
     wait_screen(&terminal, "Automatic local terminals: off")?;
@@ -966,7 +1015,7 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
 
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b"L")?;
     wait_screen(&terminal, "Automatic local terminals: default branch only")?;
     assert_eq!(saved_policy()?, "default_branch_only");
@@ -1061,7 +1110,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     };
     let mut terminal = launch()?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;
     terminal.send(b"S")?;
@@ -1082,7 +1131,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
 
     let mut terminal = launch()?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b":desktop notifications")?;
     wait_screen(&terminal, "Disable desktop notifications")?;
     terminal.send(b"\r")?;
@@ -1100,7 +1149,7 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     )?;
     let mut terminal = launch()?;
     wait_dashboard(&mut terminal)?;
-    wait_screen(&terminal, "claude:sonnet-4")?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b"N")?;
     wait_screen(&terminal, "Desktop notifications: on")?;
     terminal.send(b"S")?;

@@ -1,0 +1,11 @@
+{"cwd": "/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration", "command": ["/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/.superpowers/sdd/2026-11-03-ux-pass/xcargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]}
+xcargo: lock after 0s · ux-pass-integration · cargo clippy --workspace --all-targets --all-features -- -D warnings
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-protocol)
+    Checking vt100 v0.16.2 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/vendor/vt100)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-terminal)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-runtime)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/crates/ovrcr-tui)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.23s
+
+EXIT 0

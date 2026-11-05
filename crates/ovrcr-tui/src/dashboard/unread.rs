@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub(super) struct Unread {
     presented: Option<(SessionId, ReadyObservation)>,
+    /// The Presented observation a reply already reviewed, so the rest of that reply's keys
+    /// send nothing more.
+    replied: Option<(SessionId, ReadyObservation)>,
     observed: HashMap<SessionId, ReadyObservation>,
     /// Per session, the binding and the request ids already delivered under it. A
     /// rebinding resets the set: the same id under a new generation is a new request.
@@ -86,6 +89,16 @@ impl Unread {
             .as_ref()
             .filter(|(id, _)| *id == session)
             .map(|(_, ready)| ready.clone())
+    }
+
+    /// The review target of input sent to `session`, handed out once per Presented
+    /// observation however many keys follow it.
+    pub(super) fn reply_target(&mut self, session: SessionId) -> Option<ReadyObservation> {
+        let target = self.review_target(session)?;
+        (self.replied != self.presented).then(|| {
+            self.replied = self.presented.clone();
+            target
+        })
     }
 }
 
@@ -209,6 +222,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["question:q1"],
             "the same id under a new binding is a different request"
+        );
+    }
+
+    #[test]
+    fn reply_target_is_handed_out_once_per_presented_observation() {
+        let ready = |turn: &str| ovrcr_protocol::ReadyObservation {
+            binding: binding(AgentProvider::Codex),
+            turn: Some(turn.into()),
+            activity_revision: 2,
+        };
+        let mut unread = Unread::default();
+        assert_eq!(unread.reply_target(SessionId(1)), None, "nothing presented");
+        unread.commit_presented(Some((SessionId(1), ready("a"))));
+        assert_eq!(
+            unread.reply_target(SessionId(2)),
+            None,
+            "input to another session reviews nothing"
+        );
+        assert_eq!(unread.reply_target(SessionId(1)), Some(ready("a")));
+        assert_eq!(
+            unread.reply_target(SessionId(1)),
+            None,
+            "the rest of the reply sends nothing more"
+        );
+        assert_eq!(
+            unread.review_target(SessionId(1)),
+            Some(ready("a")),
+            "R still names it"
+        );
+        unread.commit_presented(Some((SessionId(1), ready("a"))));
+        assert_eq!(
+            unread.reply_target(SessionId(1)),
+            None,
+            "redrawing the same observation does not make it new"
+        );
+        unread.commit_presented(Some((SessionId(1), ready("b"))));
+        assert_eq!(
+            unread.reply_target(SessionId(1)),
+            Some(ready("b")),
+            "a newer Ready, once displayed, is the next key's target"
         );
     }
 

@@ -12,7 +12,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::ReadySoundChoice;
 use ovrcr_protocol::{
-    ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeAppearance, ThemeId,
+    ClientMessage, OperatorProvider, Request, Response, SettingSource, SettingsReport,
+    ThemeAppearance, ThemeId,
 };
 use ratatui::{
     Frame,
@@ -23,10 +24,10 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
-pub(super) const TITLE: &str =
-    "Settings · Enter edit · [ up · ] down · r reset · x remove · / filter · Esc close";
+pub(super) const TITLE: &str = "Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close";
 const UNPARSEABLE: &str = "Editing is off until dashboard.toml is fixed by hand.";
 const PICK_VISIBLE_ROWS: usize = 6;
+const OPERATOR_PROVIDER: &str = "operator.provider";
 
 #[derive(Default)]
 pub(super) struct Editor {
@@ -62,6 +63,11 @@ impl Editor {
         self.filtering = false;
         self.preview_theme = None;
         self.preview_request = None;
+    }
+
+    /// Select row `id`, as the palette's setting entries do on opening.
+    pub(super) fn select(&mut self, id: &str) {
+        self.selected = Some(id.to_owned());
     }
 }
 
@@ -174,16 +180,18 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
     let top = |group, key: &str, label: &str, kind: Kind, about: &[&str]| {
         let row = row_of(key);
         let source = row.map_or(SettingSource::Default, |row| row.source);
+        // The Server marks a consent setting that is off. Its off state names the
+        // TOML key for the CLI; here the way on is Enter.
         let mut lines: Vec<String> = row
-            .and_then(|row| row.off_state.clone())
+            .and_then(|row| row.off_state.as_ref())
+            .map(|_| match (&kind, report.unparseable) {
+                (_, true) => "Off".to_string(),
+                (Kind::Toggle(_), false) => "Off · Enter to turn on".into(),
+                (_, false) => format!("Off · Enter to set the {}", label.to_lowercase()),
+            })
             .into_iter()
             .collect();
-        for line in about {
-            let line = line.to_string();
-            if !lines.contains(&line) {
-                lines.push(line);
-            }
-        }
+        lines.extend(about.iter().map(|line| line.to_string()));
         let value = row.and_then(|row| row.value.clone());
         Row {
             id: key.into(),
@@ -379,7 +387,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 #[cfg(target_os = "macos")]
                 let row = native_sound_choice_labels(row, settings);
                 let row = theme_choice_labels(row, settings);
-                items.push(row);
+                items.push(operator_provider_labels(row));
             }
         }
     }
@@ -424,6 +432,17 @@ fn theme_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row
     row
 }
 
+/// Provider display names in the list; pick values stay the saved identifiers.
+fn operator_provider_labels(mut row: Row) -> Row {
+    if row.id == OPERATOR_PROVIDER {
+        row.value = OperatorProvider::label_of(&row.value).into();
+        row.default = row
+            .default
+            .map(|default| OperatorProvider::label_of(&default).into());
+    }
+    row
+}
+
 fn editor_kind(
     shape: ovrcr_protocol::Shape,
     entry: &ovrcr_protocol::Entry,
@@ -443,6 +462,9 @@ fn editor_kind(
                     let mut label: &str = value;
                     if entry.path == ThemeId::KEY {
                         label = ThemeId::parse(label).map_or(label, ThemeId::label);
+                    }
+                    if entry.path == OPERATOR_PROVIDER {
+                        label = OperatorProvider::label_of(label);
                     }
                     #[cfg(target_os = "macos")]
                     if entry.path == ReadySoundChoice::KEY {
@@ -1196,11 +1218,24 @@ impl Dashboard {
             if let Some(finding) = &row.finding {
                 lines.extend(wrapped(format!("! {finding}"), YELLOW()));
             }
-            for about in &row.about {
-                lines.extend(wrapped(about.clone(), SUBTEXT()));
+            // One line per row; the selected row shows all of its detail.
+            if chosen {
+                for about in &row.about {
+                    lines.extend(wrapped(about.clone(), SUBTEXT()));
+                }
+            } else if let Some(about) = row.about.first() {
+                lines.push(detail(super::render::clip_text(about, room), SUBTEXT()));
             }
             if chosen && !row.child && !row.path.is_empty() {
                 lines.push(detail(format!("key: {}", row.path), MUTED()));
+            }
+            if chosen && row.child && row.reset.is_some() {
+                let reorder = if row.id.starts_with("picker_roots[") {
+                    "[ ] move · "
+                } else {
+                    ""
+                };
+                lines.push(detail(format!("{reorder}x remove"), MUTED()));
             }
             if chosen {
                 selected = Some((start, lines.len() - start - 1));
@@ -1381,20 +1416,108 @@ mod tests {
         assert_eq!(row(&set, "picker_roots+").path, "picker_roots[2]");
     }
 
+    /// The Server's off state names the TOML key (the CLI prints it); the editor says
+    /// what Enter does instead, and keeps the consent's side effect.
     #[test]
-    fn save_uncommitted_work_row_names_the_consent_sentence() {
-        let row = row(
-            &items(&report(Settings::default(), Vec::new()), &[]),
-            "save_uncommitted_work",
+    fn consent_rows_say_how_to_turn_on_here_not_which_key_to_write() {
+        let mut reading = report(
+            Settings::default(),
+            vec![
+                (
+                    "save_uncommitted_work",
+                    Some("false"),
+                    SettingSource::Default,
+                ),
+                ("title_model", None, SettingSource::Default),
+            ],
         );
-        assert_eq!(row.value, "off");
+        reading.rows[0].off_state = Some(ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF.into());
+        reading.rows[1].off_state = Some(ovrcr_protocol::TITLES_OFF.into());
+        let rows = items(&reading, &[]);
+        let save = row(&rows, "save_uncommitted_work");
+        assert_eq!(save.value, "off");
+        assert_eq!(save.about[0], "Off · Enter to turn on");
         assert!(
-            row.about
-                .iter()
-                .any(|line| line == ovrcr_protocol::SAVE_UNCOMMITTED_WORK_OFF),
+            save.about[1].contains("origin/wip/<branch>"),
             "{:?}",
-            row.about
+            save.about
         );
+        let titles = row(&rows, "title_model");
+        assert_eq!(titles.about[0], "Off · Enter to set the title model");
+        assert!(titles.about.iter().any(|line| line.contains("paid calls")));
+        for row in &rows {
+            assert!(
+                row.about
+                    .iter()
+                    .all(|line| !line.contains("dashboard.toml") && !line.contains(" = ")),
+                "{} tells the editor's user to edit TOML: {:?}",
+                row.id,
+                row.about
+            );
+        }
+        // While the document cannot be edited, Enter does nothing.
+        reading.unparseable = true;
+        assert_eq!(
+            row(&items(&reading, &[]), "save_uncommitted_work").about[0],
+            "Off"
+        );
+    }
+
+    #[test]
+    fn rows_show_one_description_line_and_the_selected_row_shows_its_detail() {
+        let mut d = editor(false);
+        let text = |d: &super::super::Dashboard| -> Vec<String> {
+            d.editor_lines(0, 100)
+                .0
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect()
+                })
+                .collect()
+        };
+        let has = |lines: &[String], text: &str| lines.iter().any(|line| line.contains(text));
+        // The first row starts selected.
+        let lines = text(&d);
+        assert!(has(&lines, "may show an OS notification permission prompt"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim() == "key: desktop_notifications")
+        );
+        assert!(has(
+            &lines,
+            "A separate opt-in for selecting the existing iTerm"
+        ));
+        assert!(!has(&lines, "Banner clicks never request it"), "{lines:#?}");
+        let probe: Vec<_> = lines
+            .iter()
+            .filter(|line| line.contains("Starts a hidden Claude Code run"))
+            .collect();
+        assert_eq!(probe.len(), 1, "{lines:#?}");
+        assert!(probe[0].ends_with('…'), "{probe:?}");
+
+        d.settings_editor.selected = Some("iterm_focus".into());
+        let lines = text(&d);
+        assert!(has(&lines, "Banner clicks never request it"));
+        assert!(!has(
+            &lines,
+            "may show an OS notification permission prompt"
+        ));
+
+        // Child rows name the keys the header leaves out.
+        d.settings_editor.selected = Some("picker_roots[1]".into());
+        assert!(
+            text(&d)
+                .iter()
+                .any(|line| line.trim() == "[ ] move · x remove")
+        );
+        d.settings_editor.selected = Some("agents[0]".into());
+        assert!(text(&d).iter().any(|line| line.trim() == "x remove"));
+        d.settings_editor.selected = Some("agents+".into());
+        assert!(!has(&text(&d), "x remove"));
     }
 
     #[test]

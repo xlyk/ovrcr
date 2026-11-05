@@ -108,7 +108,7 @@ impl Dashboard {
             .and_then(|id| find_session(self, id))
             .cloned();
         if let Some(reason) = transition_denial(selected.as_ref(), take) {
-            self.set_error(reason);
+            self.set_limit(reason);
             return DashboardAction::Redraw;
         }
         let session = selected.expect("validated selected session");
@@ -117,7 +117,7 @@ impl Dashboard {
                 && pane.run == Some(session.run)
                 && self.pane_ready(pane)
         }) {
-            self.set_error("waiting for acknowledged screen");
+            self.set_limit("waiting for acknowledged screen");
             return DashboardAction::Redraw;
         }
         let view = session.assignment_control.expect("validated assignment");

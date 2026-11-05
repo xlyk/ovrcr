@@ -28,7 +28,9 @@ acceptance; the ordinary demo does not enable native collection.
 
 ## Using the window
 
-Click the terminal to focus it. Select a session and press `Enter`, then type
+Click the terminal to focus it. The click that activates the window only focuses
+it and never reaches the dashboard, so it cannot select a row or enter Terminal
+mode; click again to act. Select a session and press `Enter`, then type
 commands or paste with `Cmd-V`. `Ctrl-g` returns to Browse mode, where sidebar
 clicks select sessions and `q` detaches. `Cmd-K` opens the key popup anywhere in
 the window and moves keyboard focus into it. Click **Restart dashboard** to

@@ -32,6 +32,7 @@ pub mod task_tui {
     pub use ovrcr_tui::task_tui::*;
 }
 pub mod tui {
+    pub use ovrcr_tui::{ConnectStatus, ConnectStatusFn};
     pub use ovrcr_tui::{
         DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding, PaneRects,
         Settings, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,
@@ -39,14 +40,23 @@ pub mod tui {
         render_terminal, write_clipboard,
     };
 
+    /// `status_off` is the startup note while agent status is off; `connect_status`
+    /// installs it from the palette.
     pub fn run_dashboard(
         stream: std::os::unix::net::UnixStream,
-        startup_warning: Option<String>,
+        status_off: Option<String>,
+        connect_status: ovrcr_tui::ConnectStatusFn,
     ) -> anyhow::Result<()> {
         let paths = (
             crate::config::RegistryPath::resolve()?.0,
             crate::server::ServerPaths::resolve()?.socket,
         );
-        ovrcr_tui::run_dashboard(stream, crate::task_cli::request, paths, startup_warning)
+        ovrcr_tui::run_dashboard(
+            stream,
+            crate::task_cli::request,
+            paths,
+            status_off,
+            connect_status,
+        )
     }
 }

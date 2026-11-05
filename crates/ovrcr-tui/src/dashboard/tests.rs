@@ -1171,7 +1171,7 @@ fn copy_selection_joins_soft_wraps_and_preserves_unicode() {
     explicit_selection.cursor = CopyPoint { row: 0, col: 0 };
     explicit_selection.set_anchor();
     explicit_selection.cursor = CopyPoint { row: 0, col: 2 };
-    assert_eq!(explicit_selection.selected_text().as_deref(), Some("a  "));
+    assert_eq!(explicit_selection.selected_text().as_deref(), Some("a"));
 
     let empty_cells = vt100::Parser::new(1, 3, 0);
     let mut empty_selection = CopySelection::capture(SessionId(9), empty_cells.screen());
@@ -1189,6 +1189,19 @@ fn copy_selection_joins_soft_wraps_and_preserves_unicode() {
         restored_selection.selected_text().as_deref(),
         Some("A界e\u{301}Z\nQ")
     );
+}
+
+/// Oh My Pi pads every row to the pane width with spaces. A copied line ends at its last
+/// character, as in a terminal; spaces inside a line or at a soft wrap stay.
+#[test]
+fn copy_selection_trims_padding_at_line_ends_only() {
+    let mut parser = vt100::Parser::new(3, 4, 0);
+    parser.process(b"abc d\r\nx y ");
+    let mut selection = CopySelection::capture(SessionId(9), parser.screen());
+    selection.cursor = CopyPoint { row: 0, col: 0 };
+    selection.set_anchor();
+    selection.cursor = CopyPoint { row: 2, col: 3 };
+    assert_eq!(selection.selected_text().as_deref(), Some("abc d\nx y"));
 }
 
 #[test]
@@ -1731,28 +1744,35 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             .map(|cell| cell.symbol())
             .collect()
     };
+    // Line 2 of the single pane, read from its own cells: the title no longer repeats there.
+    let metrics_line = |dashboard: &Dashboard,
+                        width: u16|
+     -> (String, Vec<ratatui::style::Color>) {
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, dashboard, now))
+            .unwrap();
+        let rect = super::pane_rects(Rect::new(0, 0, width, 24), 1, 0)[0].metadata;
+        let cells = (rect.x..rect.right()).map(|x| &terminal.backend().buffer()[(x, rect.y + 1)]);
+        (
+            cells.clone().map(|cell| cell.symbol()).collect::<String>(),
+            cells.map(|cell| cell.fg).collect(),
+        )
+    };
     let fresh = drawn(&dashboard, 180);
     assert!(
-        fresh.contains("tokens conv partial 711654  cost conv estimate $0.47"),
-        "a stamp one second old carries no label: {fresh}"
+        fresh.contains("ctx 10% · 712k tokens · ~$0.47"),
+        "a stamp one second old carries no age: {fresh}"
     );
-    assert!(!fresh.contains("stale"), "{fresh}");
-
-    // Narrowing tiers: `est` first, then `tok` with one separator space dropped.
-    // The visible title and separator reserve nine cells before metrics.
-    let est = drawn(&dashboard, 97);
-    assert!(
-        est.contains("tokens conv partial 711654  cost conv est $0.47"),
-        "{est}"
-    );
-    let tok = drawn(&dashboard, 95);
-    assert!(
-        tok.contains("tok conv partial 711654 cost conv est $0.47"),
-        "{tok}"
-    );
+    for internal in ["conv", "partial", "estimate", "stale", "ago"] {
+        assert!(!fresh.contains(internal), "{internal}: {fresh}");
+    }
+    let (line, _) = metrics_line(&dashboard, 180);
+    assert!(line.starts_with("ctx 10% · 712k"), "{line}");
+    assert!(!line.contains("claude"), "no title on line 2: {line}");
 
     // Both sides of the five-minute boundary, on the stamp the runtime handed us.
-    let age = |dashboard: &mut Dashboard, age_ms: u64| {
+    let age = |dashboard: &mut Dashboard, usage_ms: u64, cost_ms: u64| {
         let metrics = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
             .agent
             .as_mut()
@@ -1760,19 +1780,341 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             .metrics
             .as_mut()
             .unwrap();
-        metrics.usage_received_unix_ms = now - age_ms;
-        metrics.cost_received_unix_ms = now - age_ms;
+        metrics.usage_received_unix_ms = now - usage_ms;
+        metrics.cost_received_unix_ms = now - cost_ms;
     };
-    age(&mut dashboard, freshness::STALE_AFTER_MS - 1);
+    let edge = freshness::STALE_AFTER_MS;
+    age(&mut dashboard, edge - 1, edge - 1);
     let almost = drawn(&dashboard, 180);
-    assert!(!almost.contains("stale"), "one millisecond short: {almost}");
-    age(&mut dashboard, freshness::STALE_AFTER_MS);
-    let stale = drawn(&dashboard, 180);
-    assert_eq!(
-        stale.matches(" stale").count(),
-        2,
-        "usage and cost each label their own age: {stale}"
+    assert!(!almost.contains("ago"), "one millisecond short: {almost}");
+    // Usage and cost each carry their own age and go muted; the fresh context does not.
+    age(&mut dashboard, edge, edge + 180_000);
+    let (line, colors) = metrics_line(&dashboard, 180);
+    assert!(
+        line.starts_with("ctx 10% · 712k tokens (5m ago) · ~$0.47 (8m ago)"),
+        "{line}"
     );
+    let muted = ratatui::style::Color::Rgb(108, 112, 134);
+    let cell = |needle: &str| line[..line.find(needle).unwrap()].chars().count();
+    assert_ne!(colors[0], muted, "fresh context keeps its colour: {line}");
+    assert_eq!(colors[cell("712k")], muted, "{line}");
+    assert_eq!(colors[cell("~$")], muted, "{line}");
+
+    // A narrow pane drops the ages first, then values from the right.
+    for (width, expected) in [
+        (70, "ctx 10% · 712k tokens · ~$0.47"),
+        (58, "ctx 10% · 712k tokens"),
+        (40, "ctx 10%"),
+    ] {
+        let (line, _) = metrics_line(&dashboard, width);
+        assert_eq!(line.trim_end(), expected, "window width {width}");
+    }
+}
+
+/// A focused session alone in its workspace, for reading its pane header.
+fn header_dashboard(session: crate::protocol::SessionSummary) -> Dashboard {
+    use crate::protocol::*;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 180,
+    });
+    let id = session.id;
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "p".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "p".into(),
+            name: "w".into(),
+            id: "w".into(),
+            root: false,
+            warning: None,
+            path: "/tmp/w".into(),
+            sessions: vec![session],
+        }],
+    });
+    dashboard.select_session(id);
+    dashboard
+}
+
+fn header_session(
+    name: &str,
+    kind: crate::protocol::SessionKind,
+    label: &str,
+    started: u64,
+) -> crate::protocol::SessionSummary {
+    use crate::protocol::*;
+    SessionSummary {
+        scope: ovrcr_protocol::SessionScope::Workspace,
+        archived: false,
+        cwd: "/work".into(),
+        id: SessionId(7),
+        run: crate::protocol::SessionRunId(1),
+        kind,
+        recovery: None,
+        project: "p".into(),
+        workspace: "w".into(),
+        name: name.into(),
+        title: None,
+        manual_title: None,
+        assignment_control: None,
+        label: label.into(),
+        pid: Some(4242),
+        started_unix_ms: Some(started),
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+        agent: None,
+        agent_epoch: 1,
+        unread: None,
+    }
+}
+
+/// A bound Claude reporter: `activity` and `model` as given, nothing else known.
+fn header_agent(
+    activity: Option<crate::protocol::AgentActivity>,
+    model: Option<&str>,
+) -> crate::protocol::AgentSnapshot {
+    use crate::protocol::*;
+    AgentSnapshot {
+        binding: AgentBinding {
+            provider: AgentProvider::Claude,
+            invocation: "i".into(),
+            conversation: "c".into(),
+            generation: 1,
+        },
+        activity: activity.map(|state| ActivitySample {
+            state,
+            quality: SampleQuality::Observed,
+            turn: Some("t".into()),
+        }),
+        metrics: model.map(|model| MetricsSnapshot {
+            sample: MetricsSample {
+                model: Some(model.into()),
+                context: crate::protocol::Measurement {
+                    value: ContextSample {
+                        used_tokens: None,
+                        capacity_tokens: None,
+                        quality: SampleQuality::Observed,
+                    },
+                    source: "fixture".into(),
+                },
+                usage: crate::protocol::Measurement {
+                    value: UsageTotals {
+                        scope: UsageScope::Conversation,
+                        coverage: UsageCoverage::Partial,
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
+                        reasoning_output_tokens: None,
+                    },
+                    source: "fixture".into(),
+                },
+                cost: crate::protocol::Measurement {
+                    value: None,
+                    source: "fixture".into(),
+                },
+            },
+            received_unix_ms: 0,
+            context_received_unix_ms: 0,
+            usage_received_unix_ms: 0,
+            cost_received_unix_ms: 0,
+        }),
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 1,
+        health_revision: 0,
+        input_requests: Vec::new(),
+        input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
+    }
+}
+
+/// Line 1 of the single pane at `window` columns, read from its own cells.
+fn header_row(dashboard: &Dashboard, window: u16, now: u64) -> String {
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(window, 24)).unwrap();
+    terminal
+        .draw(|frame| super::draw_dashboard_at(frame, dashboard, now))
+        .unwrap();
+    let rect = super::pane_rects(Rect::new(0, 0, window, 24), 1, 0)[0].metadata;
+    (rect.x..rect.right())
+        .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+        .collect()
+}
+
+#[test]
+fn pane_header_reads_in_plain_words() {
+    use crate::protocol::*;
+    let minute = 60_000;
+    // A plain shell: no `agent unknown`, no leading `pid:`; the pid sits at the far right.
+    let shell = header_dashboard(header_session("local", SessionKind::Terminal, "zsh", 0));
+    let row = header_row(&shell, 180, 16 * minute);
+    assert!(row.starts_with("local  shell · 16m  "), "{row}");
+    assert!(row.trim_end().ends_with("  pid 4242"), "{row}");
+    for internal in ["agent", "unknown", "pid:", "elapsed:"] {
+        assert!(!row.contains(internal), "{internal}: {row}");
+    }
+
+    // A just-launched agent says `starting…` until its first report, even while Claude's
+    // reporter reads Unavailable for want of a transcript.
+    let claude = SessionKind::Agent {
+        name: "claude".into(),
+    };
+    let mut launched = header_session("feature/ux-review", claude.clone(), "claude", 0);
+    let mut dashboard = header_dashboard(launched.clone());
+    let row = header_row(&dashboard, 180, 10_000);
+    assert!(
+        row.starts_with("feature/ux-review  claude  starting… · 0m"),
+        "{row}"
+    );
+    let mut transcriptless = header_agent(None, None);
+    transcriptless.health = HealthSample {
+        state: ReporterHealth::Unavailable,
+        reason: Some("source_unavailable".into()),
+    };
+    launched.agent = Some(transcriptless);
+    dashboard = header_dashboard(launched.clone());
+    let row = header_row(&dashboard, 180, 10_000);
+    assert!(
+        row.starts_with("feature/ux-review  claude  starting… · 0m"),
+        "{row}"
+    );
+    assert!(!row.contains("source_unavailable") && !row.contains("unavailable"));
+    // An agent that never bound has no reporting once the grace is over.
+    launched.agent = None;
+    dashboard = header_dashboard(launched);
+    let row = header_row(&dashboard, 180, 2 * minute);
+    assert!(
+        row.starts_with("feature/ux-review  claude  status off · 2m"),
+        "{row}"
+    );
+
+    // A reporting agent: the model joins the label and the state is a word.
+    let mut working = header_session("verify spinner", claude, "claude", 0);
+    working.agent = Some(header_agent(
+        Some(AgentActivity::Busy),
+        Some("claude-opus-5-5"),
+    ));
+    let mut dashboard = header_dashboard(working.clone());
+    let row = header_row(&dashboard, 180, 2 * minute);
+    assert!(
+        row.starts_with("verify spinner  claude:opus-5-5  Working · 2m"),
+        "{row}"
+    );
+    assert!(!row.contains("observed"), "{row}");
+    // The state carries the colour the sidebar glyph does.
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(180, 24)).unwrap();
+    terminal
+        .draw(|frame| super::draw_dashboard_at(frame, &dashboard, 2 * minute))
+        .unwrap();
+    let rect = super::pane_rects(Rect::new(0, 0, 180, 24), 1, 0)[0].metadata;
+    let state_x =
+        rect.x + u16::try_from("verify spinner  claude:opus-5-5  ".chars().count()).unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(state_x, rect.y)].fg,
+        super::render::GREEN()
+    );
+
+    // Ready with an Unread reply, then an open Input request.
+    let snapshot = working.agent.as_mut().unwrap();
+    snapshot.activity.as_mut().unwrap().state = AgentActivity::ResponseReady;
+    working.unread = Some(ReadyObservation {
+        binding: snapshot.binding.clone(),
+        turn: Some("t".into()),
+        activity_revision: 1,
+    });
+    dashboard = header_dashboard(working.clone());
+    let row = header_row(&dashboard, 180, 2 * minute);
+    assert!(
+        row.starts_with("verify spinner  claude:opus-5-5  Ready · unread reply · 2m"),
+        "{row}"
+    );
+    working.unread = None;
+    working.agent.as_mut().unwrap().input_requests = vec![InputRequest {
+        id: "prompt:1".into(),
+        kind: InputKind::Confirm,
+    }];
+    dashboard = header_dashboard(working);
+    let row = header_row(&dashboard, 180, 2 * minute);
+    assert!(
+        row.starts_with("verify spinner  claude:opus-5-5  Waiting for input · 2m"),
+        "{row}"
+    );
+}
+
+#[test]
+fn pane_header_names_the_selected_project_or_workspace_above_its_card() {
+    let mut dashboard = header_dashboard(header_session(
+        "local",
+        crate::protocol::SessionKind::Terminal,
+        "zsh",
+        0,
+    ));
+    dashboard.select_container(super::TreeRow::Workspace {
+        project: "p".into(),
+        id: "w".into(),
+    });
+    assert_eq!(dashboard.focused_session(), None);
+    assert_eq!(header_row(&dashboard, 120, 0).trim_end(), "p / w");
+    dashboard.select_container(super::TreeRow::Project { name: "p".into() });
+    assert_eq!(header_row(&dashboard, 120, 0).trim_end(), "p");
+}
+
+#[test]
+fn pane_header_gives_up_pid_elapsed_model_and_label_before_the_state() {
+    use crate::protocol::*;
+    let mut session = header_session(
+        "verify spinner",
+        SessionKind::Agent {
+            name: "claude".into(),
+        },
+        "claude",
+        0,
+    );
+    session.agent = Some(header_agent(
+        Some(AgentActivity::Busy),
+        Some("claude-opus-5-5"),
+    ));
+    let dashboard = header_dashboard(session);
+    let full = "verify spinner  claude:opus-5-5  Working · 2m";
+    // Window widths chosen so the pane is 55, 54, 44, 36, 35, 30, 20 and 5 columns wide.
+    let row = header_row(&dashboard, 95, 120_000);
+    assert!(row.starts_with(full) && row.ends_with("pid 4242"), "{row}");
+    for (window, expected) in [
+        (94, full),
+        (84, "verify spinner  claude  Working · 2m"),
+        (72, "verify spinner  claude  Working · 2m"),
+        (70, "verify spinner  claude  Working"),
+        (60, "verify spinner  Working"),
+        (40, "verify spi…  Working"),
+        (10, "Work…"),
+    ] {
+        assert_eq!(
+            header_row(&dashboard, window, 120_000).trim_end(),
+            expected,
+            "window {window}"
+        );
+    }
+}
+
+#[test]
+fn compact_metric_counts_keep_three_significant_digits() {
+    for (count, expected) in [
+        (0, "0"),
+        (999, "999"),
+        (1_000, "1k"),
+        (82_590, "83k"),
+        (417_181, "417k"),
+        (999_499, "999k"),
+        (999_500, "1.0M"),
+        (1_234_567, "1.2M"),
+        (u128::from(u64::MAX) * 2, "36893488147419.1M"),
+    ] {
+        assert_eq!(super::render::compact_count(count), expected, "{count}");
+    }
 }
 
 #[test]
@@ -1897,13 +2239,17 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .collect()
     }
     let text = drawn(&dashboard, now, 180);
-    for expected in ["agent idle observed", "tokens conv partial 25", "cost —"] {
+    // Unknown context and cost are left out, never invented; the quality word stays private.
+    for expected in ["Idle", "25 tokens"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    for absent in ["observed", "cost", "$", "—"] {
+        assert!(!text.contains(absent), "{absent}: {text}");
     }
     assert!(!text.contains("ctx "));
     assert!(!text.contains("99%"));
     assert!(!text.contains("private-"));
-    // Ready keeps its observed quality and unknown metrics independently of reporter health.
+    // Ready keeps its unknown metrics independently of reporter health.
     let original = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
     {
         let session = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
@@ -1913,11 +2259,17 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         agent.metrics = None;
     }
     let ready_text = drawn(&dashboard, now, 180);
-    assert!(
-        ready_text.contains("response ready · observed"),
-        "{ready_text}"
-    );
-    assert!(ready_text.contains("tokens —  cost —"));
+    assert!(ready_text.contains("Ready"), "{ready_text}");
+    assert!(!ready_text.contains("observed"), "{ready_text}");
+    // No metrics at all: line 2 is the plain rule, with no dashes standing in for values.
+    let rect = super::pane_rects(Rect::new(0, 0, 180, 24), 1, 0)[0].metadata;
+    let line2: String = ready_text
+        .chars()
+        .skip(usize::from(rect.y + 1) * 180 + usize::from(rect.x))
+        .take(usize::from(rect.width))
+        .collect();
+    assert_eq!(line2, "─".repeat(usize::from(rect.width)), "{ready_text}");
+    assert!(!ready_text.contains("tokens"), "{ready_text}");
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -1954,7 +2306,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
-        // the literal state and health text live on the metadata line.
+        // the literal state and health text live on the metadata line. The attention
+        // strip above the quota line counts it without moving the tree.
         let cell = &terminal.backend().buffer()[(5, 4)];
         assert_eq!(
             cell.symbol(),
@@ -1967,6 +2320,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect()
         };
+        assert_eq!(row(21).trim_end(), " ✓ 1 ready", "width {width}");
         // A label too long to share the name's line is kept on the line under it.
         assert!(
             row(5).contains("long Codex label"),
@@ -2000,14 +2354,24 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             let row: String = (rect.x..rect.right())
                 .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
                 .collect();
-            assert!(
-                row.contains(if exited { "pid: closed" } else { "pid: 1" }),
-                "{row}"
-            );
-            assert!(
-                row.contains("unavailable") && row.contains("response ready"),
-                "single width={width}: {row}"
-            );
+            // The state and reporting health survive every width; the pid only while the
+            // whole line fits, and never as a leading `pid:` field.
+            if exited {
+                assert!(
+                    row.starts_with("claude  ") && row.contains("Exited"),
+                    "{row}"
+                );
+                assert!(!row.contains("status off") && !row.contains("pid"), "{row}");
+            } else {
+                assert!(
+                    row.contains("Ready · status off"),
+                    "single width={width}: {row}"
+                );
+                assert_eq!(row.trim_end().ends_with("pid 1"), width == 120, "{row}");
+            }
+            for internal in ["pid:", "unavailable", "response ready", "observed"] {
+                assert!(!row.contains(internal), "single width={width}: {row}");
+            }
         }
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Exited {
@@ -2015,11 +2379,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         signal: None,
     };
     let exited_text = drawn(&dashboard, now, 180);
-    assert!(exited_text.contains("closed"), "{exited_text}");
-    assert!(
-        exited_text.contains("response ready · observed"),
-        "{exited_text}"
-    );
+    assert!(exited_text.contains("Exited"), "{exited_text}");
+    assert!(!exited_text.contains("observed"), "{exited_text}");
     for width in [1, 2, 10, 40, 80] {
         let text = drawn(&dashboard, now, width);
         assert_eq!(text.chars().count(), usize::from(width) * 24);
@@ -2070,19 +2431,27 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                         rect.metadata.width
                     );
                     assert!(
-                        row.contains(if exited { "pid: closed" } else { "pid: 1" }),
+                        row.contains(if exited { "Exited" } else { "Ready" }),
                         "{context}"
                     );
-                    assert!(row.contains("response ready"), "{context}");
-                    assert_eq!(row.contains("unavailable"), unavailable, "{context}");
-                    if rect.metadata.width >= 62 {
-                        assert!(row.contains("response ready · observed"), "{context}");
-                    }
-                    if unavailable && rect.metadata.width == 40 {
+                    // The label yields before the state and its reporting health do.
+                    assert_eq!(
+                        row.contains("Ready · status off"),
+                        unavailable && !exited,
+                        "{context}"
+                    );
+                    assert_eq!(row.contains("status off"), unavailable && !exited);
+                    if exited {
+                        assert!(!row.contains("pid"), "{context}");
+                    } else if rect.metadata.width >= 80 {
                         assert!(
-                            row.ends_with('…'),
-                            "readiness quality is visibly clipped: {context}"
+                            row.trim_end().ends_with(" pid 1")
+                                || row.trim_end().ends_with(" pid 2"),
+                            "{context}"
                         );
+                    }
+                    for internal in ["pid:", "unavailable", "response ready", "observed"] {
+                        assert!(!row.contains(internal), "{context}");
                     }
                 }
             }
@@ -2106,13 +2475,11 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     metrics.usage_received_unix_ms = 1;
     metrics.sample.context.value.used_tokens = Some(50);
     let text = drawn(&dashboard, now, 180);
-    for expected in [
-        "agent idle confirmed",
-        "tokens conv partial 25 stale",
-        "cost inv $0.00",
-    ] {
+    // Each component keeps its own age: only the old usage is stale.
+    for expected in ["Idle", "ctx 50% · 25 tokens (6m ago) · $0.00"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
+    assert!(!text.contains("confirmed"), "{text}");
     let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -2121,7 +2488,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     let metrics = agent.metrics.as_mut().unwrap();
     metrics.sample.cost.value.as_mut().unwrap().kind = CostKind::Estimated;
     let text = drawn(&dashboard, now, 180);
-    for expected in ["agent unavailable", "estimate $0.00"] {
+    for expected in ["Idle · status off", "· ~$0.00"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
     for width in [1, 2, 10, 40, 80] {
@@ -2134,8 +2501,12 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .push(second);
     assert!(dashboard.split_pane());
     let text = drawn(&dashboard, now, 240);
-    assert_eq!(text.matches("tokens conv partial 25 stale").count(), 2);
-    assert_eq!(text.matches("cost inv estimate $0.00").count(), 2);
+    assert_eq!(
+        text.matches("ctx 50% · 25 tokens (6m ago) · ~$0.00")
+            .count(),
+        2,
+        "{text}"
+    );
     for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
         let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
         metrics.sample.usage.value.input_tokens = Some(711_653);
@@ -2158,10 +2529,10 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     assert_eq!(pane_widths, [62, 63]);
     let text = drawn(&dashboard, now, 166);
     assert_eq!(
-        text.matches("tokens conv partial 711654 stale  cost conv est $0.47 stale")
+        text.matches("ctx 50% · 712k tokens (6m ago) · ~$0.47 (6m ago)")
             .count(),
         2,
-        "split metrics must preserve both freshness labels: {text}"
+        "split metrics must preserve both ages: {text}"
     );
     for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
         let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
@@ -2173,11 +2544,11 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     }
     let text = drawn(&dashboard, now, 166);
     assert_eq!(
-        text.matches("tokens conv partial 82590  cost conv estimate $0.06")
-            .count(),
+        text.matches("ctx 50% · 83k tokens · ~$0.06").count(),
         2,
-        "62-column split metrics must preserve scope and values, with no stale label: {text}"
+        "62-column split metrics must preserve the values, with no age: {text}"
     );
+    assert!(!text.contains("ago"), "{text}");
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -3209,7 +3580,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('t', "p", Action::Pause),
         ('t', "r", Action::Resume),
         ('t', "R", Action::MarkReviewed),
-        ('t', "x", Action::CloseTerminal),
+        ('t', "X", Action::CloseTerminal),
         ('t', "c", Action::CopyScreen),
         ('t', "h", Action::History),
         ('w', "n", Action::CreateTerminal),
@@ -3224,21 +3595,38 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         );
     }
     // A group row answers to the group's key, and the bare key keeps its own action.
-    let close = bindings
-        .into_iter()
-        .find(|binding| binding.action == Action::CloseTerminal)
-        .unwrap();
-    let bare = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE);
-    let grouped = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-    assert!(close.matches(bare) && !close.matches(grouped));
-    let close = close.with_group_key("x");
-    assert!(close.matches(grouped) && !close.matches(bare));
+    let binding = |action: Action| {
+        keymap(&dashboard)
+            .into_iter()
+            .flat_map(|group| group.keys)
+            .find(|binding| binding.action == action)
+            .unwrap()
+    };
+    let shifted = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT);
+    let lower = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    // `x` never closes a session: Browse `x` and `Space v x` hide a pane, and
+    // the session closes only on `X`, bare or as `Space t X`.
+    let close = binding(Action::CloseTerminal);
+    let slot = close.group.expect("Space t lists Close terminal").key;
+    assert_eq!(slot, "X");
+    let close = close.with_group_key(slot);
+    assert!(close.matches(shifted) && !close.matches(lower));
     assert_eq!(close.action, Action::CloseTerminal);
+    let pane = binding(Action::ClosePane);
+    let slot = pane.group.expect("Space v lists Close pane").key;
+    let pane = pane.with_group_key(slot);
+    assert!(pane.matches(lower) && !pane.matches(shifted));
     assert_eq!(
         dashboard
-            .key_binding_for(grouped)
+            .key_binding_for(lower)
             .map(|binding| binding.action),
         Some(Action::ClosePane)
+    );
+    assert_eq!(
+        dashboard
+            .key_binding_for(shifted)
+            .map(|binding| binding.action),
+        Some(Action::CloseTerminal)
     );
 }
 
@@ -3856,12 +4244,12 @@ fn root_workspace_sorts_first_regardless_of_name() {
 }
 
 #[test]
-fn browse_footer_lists_only_the_menu_search_and_help_keys() {
+fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     use crate::protocol::SessionPhase;
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Search  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help"
     );
     // Hints drop from the right when the footer is narrow.
     assert_eq!(super::hints::footer(&dashboard, 20), "BROWSE  Space Menu");
@@ -3874,11 +4262,15 @@ fn browse_footer_lists_only_the_menu_search_and_help_keys() {
     assert_eq!(binding_named(&dashboard, "v").reason, Some("already split"));
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Search  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help"
     );
     dashboard.mode = InputMode::Terminal;
     assert_eq!(
         super::hints::footer(&dashboard, 120),
+        "Terminal mode  Ctrl-g browse  then s Agents, Ctrl-o Quick message"
+    );
+    assert_eq!(
+        super::hints::footer(&dashboard, 50),
         "Terminal mode  Ctrl-g browse  then s Agents"
     );
 }
@@ -4225,4 +4617,214 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
         text.contains("New Conversation"),
         "native creation form must be visible: {text}"
     );
+}
+
+/// Two projects with the same branch, one workspace each under a Server-generated id, and a
+/// titled session `#13`, for the error presenter.
+fn hashed_workspace_dashboard() -> Dashboard {
+    use crate::protocol::*;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    let mut session = header_session("s", SessionKind::Terminal, "zsh", 0);
+    session.id = SessionId(13);
+    session.project = "consigint".into();
+    session.workspace = "7833bc0a230c03372aecca12545fec60".into();
+    session.title = Some("verify spinner".into());
+    for (project, id, sessions) in [
+        (
+            "consigint",
+            "7833bc0a230c03372aecca12545fec60",
+            vec![session],
+        ),
+        ("spacelift", "aaaabbbbccccddddeeeeffff00001111", Vec::new()),
+    ] {
+        dashboard.hierarchy.projects.push(ProjectSummary {
+            name: project.into(),
+            workspaces: vec![WorkspaceSummary {
+                project: project.into(),
+                name: "feature/status-check".into(),
+                id: id.into(),
+                root: false,
+                warning: None,
+                path: "/tmp/w".into(),
+                sessions,
+            }],
+        });
+    }
+    dashboard
+}
+
+/// The footer row's text and the colour of each of its cells.
+fn footer_cells(dashboard: &Dashboard) -> (String, Vec<ratatui::style::Color>) {
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| super::draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let cells = (0..120).map(|x| terminal.backend().buffer()[(x, 23)].clone());
+    (
+        cells
+            .clone()
+            .map(|cell| cell.symbol().to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string(),
+        cells.map(|cell| cell.fg).collect(),
+    )
+}
+
+#[test]
+fn server_refusals_read_in_plain_words_and_expected_limits_are_not_errors() {
+    let mut dashboard = hashed_workspace_dashboard();
+    // A typed blocker is an expected limit: no code, `project / branch` for the workspace
+    // id, the session's title for `#13`, muted, no marker.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 77,
+        response: Response::Error {
+            code: ErrorCode::SessionsRemain,
+            message: "sessions block removal of workspace consigint/7833bc0a230c03372aecca12545fec60: live: #13; kill or close them".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(
+        footer,
+        "sessions block removal of workspace consigint / feature/status-check: live: verify spinner; kill or close them"
+    );
+    assert_eq!(colors[0], super::render::SUBTEXT());
+    // `Conflict` is the Server's catch-all for failed work: red, still without the code.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 78,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "spawn claude: No such file or directory".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(footer, "ERROR: spawn claude: No such file or directory");
+    assert_eq!(colors[0], super::render::RED());
+    assert_eq!(colors["ERROR: ".len()], super::render::TEXT());
+    // Two projects with the same branch stay apart; an id nothing names stays as written.
+    assert_eq!(
+        dashboard.plain_error(
+            "workspace spacelift/aaaabbbbccccddddeeeeffff00001111 and other/0123456789abcdef0123456789abcdef"
+        ),
+        "workspace spacelift / feature/status-check and other/0123456789abcdef0123456789abcdef"
+    );
+    // A worktree folder named after its id is a real path: it is never rewritten.
+    let path = "worktree directory /home/w/consigint/7833bc0a230c03372aecca12545fec60 is missing but Git does not report it prunable";
+    assert_eq!(dashboard.plain_error(path), path);
+    // Nor is a relative path that starts with `project/<id>`, or an id inside a longer word.
+    for kept in [
+        "cd consigint/7833bc0a230c03372aecca12545fec60/src first",
+        "commit 7833bc0a230c03372aecca12545fec6012345678 and myconsigint/7833bc0a230c03372aecca12545fec60",
+    ] {
+        assert_eq!(dashboard.plain_error(kept), kept);
+    }
+    // A sentence may end right after the workspace.
+    assert_eq!(
+        dashboard.plain_error("removed 'consigint/7833bc0a230c03372aecca12545fec60'."),
+        "removed 'consigint / feature/status-check'."
+    );
+    // A bare id outside a path reads as its branch; `#` without a known session stays.
+    assert_eq!(
+        dashboard.plain_error("workspace 7833bc0a230c03372aecca12545fec60 has #99 and #"),
+        "workspace feature/status-check has #99 and #"
+    );
+}
+
+#[test]
+fn footer_banners_clear_themselves_after_their_lifetime() {
+    use std::time::Instant;
+    let lifetime = super::state::BANNER_LIFETIME;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    // A failure that lands while nobody is typing waits for them.
+    dashboard.set_error("socket hiccup");
+    dashboard.show_notice("queued notice");
+    assert_eq!(dashboard.error_since, None);
+    dashboard.expire_banner(Instant::now() + lifetime * 100);
+    assert_eq!(dashboard.error.as_deref(), Some("socket hiccup"));
+    // Its clock starts at the first key press while it shows.
+    dashboard.key(KeyCode::Null);
+    let seen = dashboard
+        .error_since
+        .expect("the key press starts the clock");
+    dashboard.expire_banner(seen + lifetime - Duration::from_millis(1));
+    assert_eq!(dashboard.error.as_deref(), Some("socket hiccup"));
+    dashboard.expire_banner(seen + lifetime);
+    assert_eq!(dashboard.error, None);
+    assert_eq!(
+        dashboard.desktop.notice.as_deref(),
+        Some("queued notice"),
+        "the notice waiting behind the banner shows next"
+    );
+
+    // A limit's clock starts when it goes up; the production draw path is its clock.
+    let footer = |terminal: &Terminal<ratatui::backend::TestBackend>| -> String {
+        (0..120)
+            .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+            .collect()
+    };
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    dashboard.set_limit("Pane is loading; retry history");
+    assert!(dashboard.error_since.is_some());
+    dashboard.error_since = Instant::now().checked_sub(lifetime);
+    dashboard.draw(&mut terminal).unwrap();
+    assert!(
+        !footer(&terminal).contains("Pane is loading"),
+        "{}",
+        footer(&terminal)
+    );
+    assert!(dashboard.error.is_none());
+    dashboard.set_error("fresh failure");
+    dashboard.draw(&mut terminal).unwrap();
+    assert!(
+        footer(&terminal).starts_with("ERROR: fresh failure"),
+        "{}",
+        footer(&terminal)
+    );
+}
+
+#[test]
+fn a_failed_recovery_relaunch_is_an_error_not_a_limit() {
+    let mut hierarchy = session_hierarchy(&[1]);
+    let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+    session.kind = crate::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    session.phase = SessionPhase::Interrupted;
+    session.recovery = Some(crate::protocol::SessionRecovery {
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+        attached: false,
+        conversation: None,
+    });
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.select_session(SessionId(1));
+    dashboard.request_view_at(Rect::new(0, 0, 120, 24));
+    let recover = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|r| matches!(r.request, Request::RecoverSession { .. }))
+        .expect("first display asks for the relaunch");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: recover.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "spawn claude: No such file or directory".into(),
+        },
+    });
+    let (footer, colors) = footer_cells(&dashboard);
+    assert_eq!(footer, "ERROR: spawn claude: No such file or directory");
+    assert_eq!(colors[0], super::render::RED());
 }

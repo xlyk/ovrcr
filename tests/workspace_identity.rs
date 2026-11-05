@@ -117,6 +117,212 @@ fn workspace_tracks_checkout_without_replacing_its_directory() {
     assert_eq!(workspace.sessions[0].id, shell.id);
 }
 
+#[test]
+fn worktree_folders_follow_the_branch_and_id_folders_keep_working() {
+    let fixture = Live::idle();
+    let root = fixture.workspace_root.clone();
+    // A workspace from before branch-named folders: <workspace root>/<32-hex id>.
+    let legacy = ovrcr::protocol::new_workspace_id().unwrap();
+    let legacy_dir = root.join(&legacy);
+    git(
+        &fixture.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/legacy",
+            legacy_dir.to_str().unwrap(),
+            "main",
+        ],
+    );
+    ovrcr::config::save_registry_atomic(
+        &ovrcr::config::Registry {
+            projects: vec![ovrcr::config::ProjectRecord {
+                name: "fixture".into(),
+                repo: fixture.repo.clone(),
+                workspace_root: root.clone(),
+                workspaces: vec![ovrcr::config::WorkspaceRecord {
+                    id: legacy.clone(),
+                    path: legacy_dir.clone(),
+                    branch: "feature/legacy".into(),
+                    git_identity: Some(ovrcr::git::capture_worktree_identity(&legacy_dir).unwrap()),
+                    setup_pending: false,
+                }],
+            }],
+        },
+        &fixture.config,
+    )
+    .unwrap();
+    fixture.start_binary();
+    let first = ovrcr::protocol::new_workspace_id().unwrap();
+    let second = ovrcr::protocol::new_workspace_id().unwrap();
+    let new_branch = |branch: &str| BranchRequest::New {
+        branch: branch.into(),
+        base: "main".into(),
+    };
+    // The Dashboard's own request runs as a Lifecycle job on its connection.
+    let mut dashboard = ovrcr::protocol::connect_server(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    assert!(matches!(
+        ovrcr::protocol::client::request(&mut dashboard, 1, Request::DashboardHello).unwrap(),
+        Response::Hierarchy(_)
+    ));
+    ovrcr::protocol::write_frame(
+        &mut dashboard,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 2,
+            request: Request::CreateWorkspaceWithLaunch {
+                project: "fixture".into(),
+                id: first.clone(),
+                branch: new_branch("feature/Slug.Name"),
+                launch: None,
+            },
+        },
+    )
+    .unwrap();
+    let (mut accepted, mut completed) = (false, false);
+    while !(accepted && completed) {
+        match ovrcr::protocol::read_frame::<ovrcr::protocol::ServerMessage>(&mut dashboard)
+            .expect("the Dashboard's create must complete")
+        {
+            ovrcr::protocol::ServerMessage::Response {
+                request_id: 2,
+                response,
+            } => {
+                assert_eq!(response, Response::Ok);
+                accepted = true;
+            }
+            ovrcr::protocol::ServerMessage::Event(
+                ovrcr::protocol::ServerEvent::LifecycleCompleted {
+                    client_token: 2,
+                    outcome,
+                    ..
+                },
+            ) => {
+                assert_eq!(outcome, ovrcr::protocol::LifecycleOutcome::Succeeded);
+                completed = true;
+            }
+            _ => {}
+        }
+    }
+    drop(dashboard);
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            id: second.clone(),
+            branch: new_branch("feature/slug-name"),
+        }),
+        Response::Ok
+    );
+    let expected = [
+        (legacy.as_str(), legacy_dir.clone()),
+        (first.as_str(), root.join("feature-slug-name")),
+        (second.as_str(), root.join("feature-slug-name-2")),
+    ];
+    let assert_folders = || {
+        let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+            panic!("expected hierarchy");
+        };
+        for (id, path) in &expected {
+            let workspace = hierarchy.projects[0]
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == *id)
+                .unwrap_or_else(|| panic!("workspace {id} missing"));
+            assert_eq!(workspace.path, *path);
+        }
+    };
+    assert_folders();
+    let Response::CreatedSession(shell) = launch(&fixture, &first) else {
+        panic!("expected a shell in the branch-named folder");
+    };
+    command_output(
+        &fixture,
+        shell.id,
+        "printf 'DIR_%s\\n' \"$(basename \"$(pwd -P)\")\"",
+        "DIR_feature-slug-name",
+    );
+
+    // Restart recovers each id and folder from the registry; nothing is derived from the id.
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    fixture.join();
+    fixture.start_binary();
+    assert_folders();
+
+    // Removal handles the old id folder, a branch folder and a branch folder deleted outside OVRCR.
+    std::fs::remove_dir_all(&expected[2].1).unwrap();
+    for (id, path) in &expected {
+        assert_eq!(
+            fixture.request(Request::RemoveWorkspace {
+                project: "fixture".into(),
+                name: (*id).into(),
+                force: false,
+            }),
+            Response::Ok,
+            "{id}"
+        );
+        assert!(!path.exists(), "{}", path.display());
+    }
+    let listed = git(&fixture.repo, &["worktree", "list", "--porcelain"]);
+    for (_, path) in &expected {
+        assert!(!listed.contains(path.to_str().unwrap()), "{listed}");
+    }
+    for branch in ["feature/legacy", "feature/Slug.Name", "feature/slug-name"] {
+        git(
+            &fixture.repo,
+            &["show-ref", "--verify", &format!("refs/heads/{branch}")],
+        );
+    }
+}
+
+#[test]
+fn projects_sharing_a_workspace_root_never_share_a_checkout_folder() {
+    let fixture = Live::binary();
+    assert_eq!(register(&fixture), Response::Ok);
+    let other_repo = fixture.root.path().join("other-repo");
+    std::fs::create_dir(&other_repo).unwrap();
+    live::init_repo(&other_repo);
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "other".into(),
+            repo: other_repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    let create = |project: &str| {
+        let id = ovrcr::protocol::new_workspace_id().unwrap();
+        assert_eq!(
+            fixture.request(Request::CreateWorkspace {
+                project: project.into(),
+                id: id.clone(),
+                branch: BranchRequest::New {
+                    branch: "fix-login".into(),
+                    base: "main".into(),
+                },
+            }),
+            Response::Ok
+        );
+        fixture.workspace_path(&id)
+    };
+    // The other project's folder is deleted and pruned outside OVRCR; its record remains.
+    let theirs = create("other");
+    assert_eq!(theirs, fixture.workspace_root.join("fix-login"));
+    std::fs::remove_dir_all(&theirs).unwrap();
+    git(&other_repo, &["worktree", "prune"]);
+    let ours = create("fixture");
+    assert_eq!(
+        ours,
+        fixture.workspace_root.join("fix-login-2"),
+        "a stale record of another project keeps its folder name"
+    );
+}
+
 fn register(fixture: &Live) -> Response {
     fixture.request(Request::AddProject {
         name: "fixture".into(),
@@ -504,7 +710,7 @@ fn missing_replacement_worktree_cannot_be_pruned_by_the_old_registration() {
         }),
         Response::Ok
     );
-    let directory = fixture.workspace_root.join("owned");
+    let directory = fixture.workspace_path("owned");
     let old_admin = git(&directory, &["rev-parse", "--absolute-git-dir"]);
     // Keep the removed inode alive so the replacement cannot reuse its identity.
     let _old_admin = std::fs::File::open(old_admin.trim()).unwrap();
@@ -812,7 +1018,7 @@ fn a_repository_root_cannot_be_removed_through_another_projects_workspace() {
         }),
         Response::Ok
     );
-    let nested = fixture.workspace_root.join("nested");
+    let nested = fixture.workspace_path("nested");
     git(&fixture.repo, &["switch", "-c", "feature/root-drift"]);
     git(&nested, &["switch", "main"]);
     assert_eq!(

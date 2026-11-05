@@ -71,8 +71,9 @@ percent-encoded, every byte outside `A-Za-z0-9-_.~`). No hook, transcript watche
 history discovery or newest-file lookup exists; a directory whose encoded name Grok
 replaces with a slug simply never matches. Resume, continue, fork, an explicit
 `--session-id`, headless output, `--cwd`, worktrees and subcommands run with native
-argv unchanged and retain nothing. The launch reports no activity; the row shows
-`agent unknown`.
+argv unchanged and retain nothing. The launch reports no activity; after `starting…`
+the pane header shows no state, or `status off` a minute after launch when the binding was
+refused.
 
 The identity check, `grok_recovery::validate_history`, is fixed before any reader
 exists: the first line of `updates.jsonl` is one ACP session update whose

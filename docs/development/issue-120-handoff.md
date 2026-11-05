@@ -112,7 +112,7 @@ Linux evidence remain separate, unverified gates.
 
 1. Inspect the fixture's `OVRCR_CONFIG` and `OVRCR_SOCKET`; both must point into
    this launch's disposable root. Use only this checkout's `target/debug/ovrcr`.
-2. Select a live fixture workspace. Use `Space w x`, accept the picker, inspect
+2. Select a live fixture workspace. Use `Space w X`, accept the picker, inspect
    the archive warning, cancel once, then confirm. Verify live work blocks removal.
 3. Stop every terminal in that workspace through the fixture CLI (`terminal kill
    ID`), retaining active stopped records. Verify recorded owned processes stopped.

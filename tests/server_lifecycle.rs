@@ -1236,8 +1236,9 @@ fn client_with_wrong_protocol_version_is_refused() {
     let fixture = Live::thread();
 
     // Both divergent integration parents and a newer client must fail before
-    // decoding any frame with their incompatible Cursor/Operator layouts.
-    for version in [68, 69, PROTOCOL_VERSION + 1] {
+    // decoding any frame with their incompatible Cursor/Operator layouts; 70 has
+    // no Transcript request.
+    for version in [68, 69, 70, PROTOCOL_VERSION + 1] {
         let mut stream = UnixStream::connect(&fixture.socket).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -1635,7 +1636,12 @@ fn workspace_remove_succeeds_after_directory_deleted() {
         }),
         Response::Ok
     );
-    let workspace_dir = fixture.workspace_root.join("work");
+    let workspace_dir = fixture.workspace_path("work");
+    assert_eq!(
+        workspace_dir,
+        fixture.workspace_root.join("feature-vanished-dir"),
+        "the folder is named after the branch"
+    );
     std::fs::remove_dir_all(&workspace_dir).unwrap();
 
     delete_fixture_archive(&fixture);
@@ -1941,7 +1947,7 @@ fn forced_workspace_removal_acknowledges_uncertain_rows_but_never_live_ones() {
         }),
         Response::Ok
     );
-    let worktree = fixture.workspace_root.join("work");
+    let worktree = fixture.workspace_path("work");
     std::fs::write(worktree.join("dirty"), "discard me").unwrap();
     let remove = |force: bool| Request::RemoveWorkspace {
         project: "fixture".into(),
@@ -4369,6 +4375,70 @@ fn history_reattach_reads_retained_output() {
         Response::Ok
     );
     drop(reattached);
+
+    fixture.shutdown_kill();
+    for pgid in fixture.owned_groups() {
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
+    }
+}
+
+/// Pi and Oh My Pi repaint with `ESC[H ESC[2J ESC[3J` on every resize. History must hold
+/// the repainted transcript once, not the erased one with each repaint stacked after it.
+#[test]
+fn history_drops_saved_lines_a_repaint_erases() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, "feature/history-repaint");
+    let summary = fixture.create_session_summary(
+        "history-repaint",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "i=0; while [ \"$i\" -lt 60 ]; do printf 'ERASED_%04d\\n' \"$i\"; i=$((i+1)); done; printf 'REPAINT_READY\\n'; read gate; printf '\\033[H\\033[2J\\033[3J'; i=0; while [ \"$i\" -lt 40 ]; do printf 'REPAINTED_%04d\\n' \"$i\"; i=$((i+1)); done; printf 'REPAINT_DONE\\n'; read gate".into(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    let session = summary.id;
+    fixture.wait_terminal_contains(session, "REPAINT_READY");
+
+    // Select first: a later resize would cut rows off the bottom of the screen.
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let screen = history_request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+        },
+    );
+    assert!(matches!(screen, Response::Screen { .. }));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "go".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, "REPAINT_DONE");
+
+    let begin = history_request(&mut dashboard, 3, Request::HistoryBegin { session });
+    let Response::HistoryOpened(opened) = begin else {
+        panic!("history begin returned {begin:?}");
+    };
+    let rows = history_page_all(&mut dashboard, session, opened.snapshot, &opened, &mut 4);
+    let text = history_rows_text(&rows);
+    assert!(
+        !text.contains("ERASED_"),
+        "erased lines stayed in History: {text}"
+    );
+    assert_eq!(text.matches("REPAINTED_0000").count(), 1, "{text}");
+    assert!(text.contains("REPAINTED_0039"), "{text}");
+    assert!(text.contains("REPAINT_DONE"), "{text}");
 
     fixture.shutdown_kill();
     for pgid in fixture.owned_groups() {
@@ -8725,21 +8795,11 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .map(|y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n");
+    // The sidebar's last row is the one-line quota summary: Claude by its more constrained
+    // window, five-hour 58% under seven-day 82%.
     assert!(
-        sidebar.contains("QUOTA LEFT"),
-        "quota block missing: {sidebar}"
-    );
-    assert!(
-        sidebar
-            .lines()
-            .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
+        sidebar.lines().nth(30).unwrap().starts_with(" Claude 58%"),
         "five-hour remaining allowance missing: {sidebar}"
-    );
-    assert!(
-        sidebar
-            .lines()
-            .any(|row| row.contains("7d") && row.contains("82%")),
-        "seven-day remaining allowance missing: {sidebar}"
     );
     dashboard.key(crossterm::event::KeyCode::Char('u'));
     terminal
@@ -8757,18 +8817,25 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         details.contains("Quota details"),
         "details action missing: {details}"
     );
+    // The real session-sourced reading, in plain words: windows by length, its age, and no
+    // provenance (the session, run and Reporting generation stay on the wire).
     assert!(
-        details.contains(&format!("session #{}", summary.id.0)),
-        "source missing: {details}"
+        details.contains("5-hour  58% left") && details.contains("weekly  82% left"),
+        "windows missing: {details}"
     );
     assert!(
-        details.contains("Reporting generation"),
-        "generation missing: {details}"
+        details.contains("  as of "),
+        "reading age missing: {details}"
     );
-    assert!(
-        details.contains("last observation") && details.contains("reset:"),
-        "provenance missing: {details}"
-    );
+    for internal in [
+        format!("session #{}", summary.id.0),
+        "Reporting generation".into(),
+        "source:".into(),
+        "five_hour".into(),
+        "seven_day".into(),
+    ] {
+        assert!(!details.contains(&internal), "{internal}: {details}");
+    }
 }
 
 #[test]
@@ -11620,6 +11687,8 @@ printf '%s\n' "$reply"
     }
 
     fn select(&mut self, name: &str, terminal_marker: &str) {
+        // Aim at a whole frame, not part of one.
+        self.settle();
         let screen = self.parser.screen().contents();
         let row = screen
             .lines()
@@ -11627,6 +11696,18 @@ printf '%s\n' "$reply"
             .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
         self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
         self.wait_screen(|screen| screen.contains(terminal_marker));
+    }
+
+    /// Apply output until the Dashboard has been quiet for 200 ms (at most 3 s), so a whole
+    /// frame is on screen rather than part of one.
+    fn settle(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            match self.received.recv_timeout(Duration::from_millis(200)) {
+                Ok(bytes) => self.parser.process(&bytes),
+                Err(_) => return,
+            }
+        }
     }
 
     fn resize(&mut self, cols: u16) {
@@ -11892,7 +11973,7 @@ printf '%s\n' "$reply"
     #[cfg(target_os = "macos")]
     fn open_sound_choices(&mut self) {
         self.send(b" v,");
-        self.wait_screen(|screen| screen.contains("Settings · Enter edit"));
+        self.wait_screen(|screen| screen.contains("Settings · ↑/↓ move · Enter edit"));
         self.send(b"/ready_sound_choice\r\r");
         self.wait_screen(|screen| {
             screen.contains("System default")
@@ -12551,7 +12632,8 @@ fn desktop_notifications_bridge_click_focuses_existing_split_without_duplicating
     }
     let ticket = desktop_navigation_ticket(&dashboard.wait_bridge_delivery(1)[0]);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
-    dashboard.send(b"v");
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r");
     dashboard.select("setup", "HOOK_READY");
     dashboard
         .wait_screen(|screen| screen.contains("HOOK_READY") && screen.contains("CODEX_CALLBACK=1"));
@@ -14065,14 +14147,14 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
 
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         first,
         "opening the response does not acknowledge it"
     );
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = first.clone();
     reviewed.unread = None;
     assert_eq!(
@@ -14153,7 +14235,7 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     assert_eq!(fixture.session_summary(summary.id), busy);
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=7");
-    dashboard.wait_screen(|screen| screen.contains("Unread") && screen.contains("busy observed"));
+    dashboard.wait_screen(|screen| screen.contains("Working · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         busy,
@@ -14168,8 +14250,9 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         Response::Ok
     );
     fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    // A narrow header lets the activity word yield: the Unread and the lost reporting stay.
     dashboard.resize(80);
-    dashboard.wait_screen(|screen| screen.contains("Unread Unavailable"));
+    dashboard.wait_screen(|screen| screen.contains("Unread · status off"));
     let lost = fixture.session_summary(summary.id);
     assert_eq!(lost.unread, busy.unread);
     assert_eq!(
@@ -14181,7 +14264,8 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         !screen.contains("Unread") && screen.contains("CODEX_NATIVE_EXIT=17")
     });
     dashboard.resize(180);
-    dashboard.wait_screen(|screen| screen.contains("unavailable"));
+    // The recovery explanation sits between the state and the reporting words.
+    dashboard.wait_screen(|screen| screen.contains("Working · ") && screen.contains("status off"));
     let mut expected = lost;
     expected.unread = None;
     assert_eq!(
@@ -14190,6 +14274,54 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         "review cannot revive a lost reporter or complete native work"
     );
     dashboard.detach();
+}
+
+#[test]
+fn codex_unread_is_reviewed_by_the_next_prompt_typed_in_the_real_dashboard() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let first = fixture.session_summary(summary.id);
+    assert!(first.unread.is_some(), "native Ready is unread");
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.wait_screen(|screen| screen.contains("✓ 1 ready"));
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.send(b"\r");
+    dashboard.wait_screen(|screen| screen.contains("Terminal mode"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        first,
+        "viewing and focusing the response do not review it"
+    );
+    // The reply is the next prompt, typed into the session through the Dashboard.
+    dashboard.send(b"UserPromptSubmit:root:b\r");
+    fixture.wait_terminal_contains(summary.id, &format!("CODEX_CALLBACK={index}"));
+    let replied = fixture.session_summary(summary.id);
+    assert_eq!(
+        replied.activity,
+        ovrcr::protocol::AgentActivity::Busy,
+        "the typed prompt reached the agent"
+    );
+    assert_eq!(
+        replied.unread, None,
+        "the reply reviewed the response it answered"
+    );
+    dashboard.wait_screen(|screen| !screen.contains("1 ready"));
+    dashboard.send(b"\x07");
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
 }
 
 #[test]
@@ -14312,14 +14444,14 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
     // Opening the pane does not acknowledge; R reviews exactly the presented identity.
     dashboard.select("pi-hooks", "PI_CALLBACK=4");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(
         fixture.session_summary(summary.id),
         first,
         "viewing does not acknowledge"
     );
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = first.clone();
     reviewed.unread = None;
     assert_eq!(fixture.session_summary(summary.id), reviewed);
@@ -16431,10 +16563,10 @@ fn claude_ready_alerts_once_per_root_turn_with_unread_and_continuation() {
 
     // Explicit review clears only the presented identity; viewing does not.
     dashboard.select("claude-hooks", "ADMISSION_CALLBACK=12");
-    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · unread reply"));
     assert_eq!(fixture.session_summary(summary.id), second);
     dashboard.send(b"\x07R");
-    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    dashboard.wait_screen(|screen| !screen.contains("unread reply") && screen.contains("Ready · "));
     let mut reviewed = second.clone();
     reviewed.unread = None;
     assert_eq!(fixture.session_summary(summary.id), reviewed);
@@ -17169,7 +17301,8 @@ fn desktop_notifications_managed_completion_reaches_host_once_including_visible_
     }
     dashboard.wait_calls(4, summary.id);
 
-    dashboard.send(b"v");
+    // Return keeps the new pane's suggested session.
+    dashboard.send(b"v\r");
     dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=13"));
     dashboard.send(b"\t");
     // Visible unfocused split pane still delivers.
@@ -17547,7 +17680,8 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
     // Enable through the actual Settings editor and accepted Server snapshot.
     dashboard.send(b" v,");
     dashboard.wait_screen(|screen| {
-        screen.contains("Settings · Enter edit") && screen.contains("› Desktop notifications")
+        screen.contains("Settings · ↑/↓ move · Enter edit")
+            && screen.contains("› Desktop notifications")
     });
     dashboard.send(b"\r");
     dashboard.wait_bridge_controls(&["status", "authorize"]);
@@ -17930,23 +18064,23 @@ fn desktop_notifications_bridge_cancels_queued_ready_and_input_without_replay() 
         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
     }
     dashboard.select("codex-queued", "CODEX_CALLBACK=1");
-    dashboard.wait_screen(|screen| screen.contains("ready"));
+    dashboard.wait_screen(|screen| screen.contains("Ready · "));
     desktop_codex_callback(
         &fixture,
         queued.id,
         &mut queued_index,
         "UserPromptSubmit:root:b",
     );
-    dashboard.wait_screen(|screen| screen.contains("busy"));
+    dashboard.wait_screen(|screen| screen.contains("Working"));
     desktop_codex_callback(
         &fixture,
         queued.id,
         &mut queued_index,
         "PermissionRequest:root:b",
     );
-    dashboard.wait_screen(|screen| screen.contains("input"));
+    dashboard.wait_screen(|screen| screen.contains("Waiting for"));
     desktop_codex_callback(&fixture, queued.id, &mut queued_index, "PostToolUse:root:b");
-    dashboard.wait_screen(|screen| screen.contains("busy"));
+    dashboard.wait_screen(|screen| screen.contains("Working"));
     assert!(group_exists(blocked), "the delivery barrier released early");
     std::fs::write(dashboard.record.with_extension("release"), "release").unwrap();
     dashboard.wait_named_calls(1, first.id, "codex-hooks");
@@ -18433,7 +18567,7 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
                 == Some(ReadySoundChoice::Tap)
     });
     dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
     let reading = ovrcr::settings::load_document(&fixture.config, &document);
     assert_eq!(
         reading.settings.ready_sound_choice,
@@ -18471,7 +18605,7 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
                     == Some(choice)
         });
         dashboard.send(b"\x07");
-        dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+        dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
         let reading = ovrcr::settings::load_document(&fixture.config, &document);
         assert_eq!(reading.settings.ready_sound_choice, Some(choice));
         assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
@@ -18563,7 +18697,7 @@ fn desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_
     assert!(String::from_utf8_lossy(&refused.stderr).contains("could not save ready_sound_choice"));
     assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
     dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · Enter edit"));
+    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
     let mut index = 0;
     let mut expected = Vec::new();
     for command in [
@@ -19940,5 +20074,255 @@ fn iterm_setup_real_palette_denial_and_missing_identity_preserve_notification_pr
         assert!(saved.contains("desktop_notifications = false"));
         assert!(saved.contains("ready_sound = false"));
         assert!(!dashboard.record.with_extension("fallback").exists());
+    }
+}
+
+#[test]
+fn transcript_reads_only_the_retained_conversation_and_rejects_stale_pages() {
+    use ovrcr::protocol::{
+        AgentCommand, AgentOperationResult, AgentProvider, AgentSecret, ClaudeConversation,
+        CodexConversation, ConversationReference, ReserveAgent, SessionKind, SessionRunId,
+        SupervisorAuth, SupervisorRequest, TranscriptEntry,
+    };
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.ready("transcript");
+    let mut dashboard = connect_dashboard(&fixture.socket, 50);
+    dashboard.set_read_timeout(fixture.timeout()).unwrap();
+    dashboard.set_write_timeout(fixture.timeout()).unwrap();
+    let mut request_id = 100;
+    for (name, provider, conversation) in [
+        (
+            "claude",
+            AgentProvider::Claude,
+            "00000000-0000-4000-8000-000000000333",
+        ),
+        (
+            "codex",
+            AgentProvider::Codex,
+            "00000000-0000-4000-8000-000000000444",
+        ),
+    ] {
+        let token = fixture.root.path().join(format!("{name}.capability"));
+        let summary = fixture.create_session_with_kind(
+            SessionKind::Agent { name: name.into() }, name,
+            vec!["/bin/sh".into(), "-c".into(),
+                r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$1"; printf 'TRANSCRIPT_AGENT_READY\n'; while IFS= read -r line; do printf 'TRANSCRIPT_ACK:%s\n' "$line"; done"#.into(),
+                "transcript-fixture".into(), token.clone().into_os_string()],
+        );
+        fixture.record_process_group(&summary);
+        fixture.wait_terminal_contains(summary.id, "TRANSCRIPT_AGENT_READY");
+        let capability =
+            parse_hook_capability(std::fs::read_to_string(token).unwrap().trim()).unwrap();
+        let mut reporting = connect_server(&fixture.socket).unwrap();
+        reporting.set_read_timeout(fixture.timeout()).unwrap();
+        reporting.set_write_timeout(fixture.timeout()).unwrap();
+        let reservation = client::request(
+            &mut reporting,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
+                session: summary.id,
+                capability: AgentSecret(capability),
+                operation: "transcript-reserve".into(),
+                expected_epoch: 0,
+                invocation: format!("transcript-{name}"),
+                provider,
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = reservation
+        else {
+            panic!("{reservation:?}");
+        };
+        let auth = SupervisorAuth {
+            session: summary.id,
+            lease: reservation.lease,
+        };
+        let binding = client::request(
+            &mut reporting,
+            2,
+            Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "transcript-bind".into(),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: conversation.into(),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = binding else {
+            panic!("{binding:?}");
+        };
+        let history = fixture.root.path().join(format!("{name}.jsonl"));
+        let body = if provider == AgentProvider::Claude {
+            format!(
+                "{{\"type\":\"user\",\"sessionId\":\"{conversation}\",\"message\":{{\"content\":\"synthetic prompt\"}}}}\n{{\"type\":\"assistant\",\"sessionId\":\"{conversation}\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"synthetic reply\"}}]}}}}\n"
+            )
+        } else {
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"synthetic prompt\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"synthetic reply\"}}}}\n"
+            )
+        };
+        std::fs::write(&history, &body).unwrap();
+        let reference = if provider == AgentProvider::Claude {
+            ConversationReference::Claude(ClaudeConversation {
+                conversation: conversation.into(),
+                executable: "/bin/sh".into(),
+                history: history.clone(),
+                config_dir: fixture.root.path().into(),
+                options: vec![],
+            })
+        } else {
+            ConversationReference::Codex(CodexConversation {
+                conversation: conversation.into(),
+                executable: "/bin/sh".into(),
+                history: Some(history.clone()),
+                config_dir: fixture.root.path().into(),
+                options: vec![],
+            })
+        };
+        assert_eq!(
+            client::request(
+                &mut reporting,
+                3,
+                Request::Supervisor(SupervisorRequest {
+                    auth: auth.clone(),
+                    operation: "transcript-retain".into(),
+                    command: AgentCommand::RetainConversation {
+                        binding: binding.clone(),
+                        reference: Box::new(reference.clone())
+                    },
+                })
+            )
+            .unwrap(),
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        );
+        assert!(matches!(
+            fixture.request(Request::Transcript {
+                session: summary.id,
+                run: summary.run,
+                identity: None,
+                before: None,
+            }),
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+        let mut read = |run, identity, before| {
+            request_id += 1;
+            dashboard_request(
+                &mut dashboard,
+                request_id,
+                Request::Transcript {
+                    session: summary.id,
+                    run,
+                    identity,
+                    before,
+                },
+            )
+        };
+        let Response::Transcript(page) = read(summary.run, None, None) else {
+            panic!("missing {name} transcript");
+        };
+        assert_eq!(page.identity, reference);
+        assert_eq!(page.start, 0);
+        assert_eq!(
+            page.entries,
+            [
+                TranscriptEntry::User("synthetic prompt".into()),
+                TranscriptEntry::Assistant("synthetic reply".into())
+            ]
+        );
+        assert!(matches!(
+            read(SessionRunId(summary.run.0 + 1), None, None),
+            Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+        assert!(matches!(
+            read(summary.run, None, Some(1)),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        let mut wrong = reference.clone();
+        match &mut wrong {
+            ConversationReference::Claude(value) => value.conversation = "other".into(),
+            ConversationReference::Codex(value) => value.conversation = "other".into(),
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            read(summary.run, Some(wrong), Some(1)),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        assert!(
+            matches!(read(summary.run, Some(reference.clone()), Some(0)), Response::Transcript(page) if page.entries.is_empty() && page.start == 0)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&history).unwrap(),
+            body,
+            "Transcript never writes provider history"
+        );
+        assert_eq!(fixture.session_summary(summary.id).run, summary.run);
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "still-live".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "TRANSCRIPT_ACK:still-live");
+        let moved = fixture.root.path().join(format!("{name}-moved.jsonl"));
+        std::fs::copy(&history, &moved).unwrap();
+        let mut replacement = reference.clone();
+        match &mut replacement {
+            ConversationReference::Claude(value) => value.history = moved.clone(),
+            ConversationReference::Codex(value) => value.history = Some(moved.clone()),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            client::request(
+                &mut reporting,
+                4,
+                Request::Supervisor(SupervisorRequest {
+                    auth,
+                    operation: "transcript-moved".into(),
+                    command: AgentCommand::RetainConversation {
+                        binding,
+                        reference: Box::new(replacement)
+                    },
+                })
+            )
+            .unwrap(),
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        );
+        assert!(
+            matches!(
+                read(summary.run, Some(reference), Some(1)),
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "a same-run reference change cannot splice pages"
+        );
+        std::fs::remove_file(moved).unwrap();
+        std::fs::remove_file(history).unwrap();
+        assert!(matches!(
+            read(summary.run, None, None),
+            Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
     }
 }

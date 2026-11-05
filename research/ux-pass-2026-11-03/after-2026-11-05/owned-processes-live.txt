@@ -1,0 +1,6 @@
+38285 28878 28832 /Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+39452 38285 28832 /Users/xlyk/Code/ovrcr/.worktrees/ux-pass-integration/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+43342 38285 43342 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-HUgck4/dashboard-client/ovrcr
+81607 39452 81607 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-HUgck4/dashboard-client/ovrcr agent run claude -- /private/tmp/ovrcr-ux-resume/native/claude --dangerously-skip-permissions -- CUA synthetic transcript
+81730 81607 81730 /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /private/tmp/ovrcr-ux-resume/native/claude --session-id c197e9bd-b5e0-46bf-a2b6-4b830c8f6e10 --dangerously-skip-permissions -- CUA synthetic transcript
+81801 81607 81801 /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-HUgck4/dashboard-client/ovrcr __agent-collector
