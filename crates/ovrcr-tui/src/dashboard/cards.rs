@@ -208,7 +208,10 @@ impl Dashboard {
                 } else {
                     label
                 };
-                (label, session_counts(&workspace.sessions))
+                (
+                    label,
+                    session_counts(&workspace.sessions, width.saturating_sub(4 + NAME_FLOOR)),
+                )
             })
             .collect();
         let label_width = rows
@@ -612,7 +615,7 @@ fn workspace_root(project: &ProjectSummary) -> Option<&Path> {
 
 /// `2 sessions · ? 1 needs input · ✓ 1 ready`: the count, then the attention strip's own
 /// words and order from [`attention`].
-fn session_counts(sessions: &[SessionSummary]) -> Vec<Span<'static>> {
+fn session_counts(sessions: &[SessionSummary], width: usize) -> Vec<Span<'static>> {
     let (input, ready) =
         sessions
             .iter()
@@ -632,7 +635,8 @@ fn session_counts(sessions: &[SessionSummary]) -> Vec<Span<'static>> {
     if input + ready > 0 {
         spans.push(Span::styled(" ·", Style::default().fg(MUTED())));
         // The strip's line leads with its own space.
-        spans.extend(attention_line(input, ready, usize::MAX).spans);
+        let used = spans.iter().map(Span::width).sum::<usize>();
+        spans.extend(attention_line(input, ready, width.saturating_sub(used)).spans);
     }
     spans
 }
@@ -1117,6 +1121,21 @@ mod tests {
         let lines = text(&dashboard, 2 * MINUTE, Room { width: 40, ..WIDE });
         let row = lines.iter().find(|line| line.starts_with("  ✓ ")).unwrap();
         assert!(row.ends_with("Ready · unread reply · 2m"), "{row:?}");
+        assert!(cells(row) <= 40, "{row:?}");
+    }
+
+    #[test]
+    fn a_narrow_project_row_keeps_both_attention_counts() {
+        let mut dashboard = fixture(the_workspace());
+        select(
+            &mut dashboard,
+            TreeRow::Project {
+                name: "demo".into(),
+            },
+        );
+        let lines = text(&dashboard, 0, Room { width: 40, ..WIDE });
+        let row = lines.iter().find(|line| line.contains("feature/")).unwrap();
+        assert!(row.ends_with("4 sessions · ? 1 · ✓ 1"), "{row:?}");
         assert!(cells(row) <= 40, "{row:?}");
     }
 

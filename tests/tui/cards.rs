@@ -275,6 +275,7 @@ fn an_80_column_window_keeps_each_row_state_and_age_in_its_40_column_pane() {
         turn: Some("card-turn".into()),
         activity_revision: 1,
     });
+    hierarchy.projects[1].workspaces[1].sessions[1].activity = AgentActivity::WaitingInput;
     dashboard.install_hierarchy(hierarchy);
     let card = pane_rows(&dashboard, 0, small, false);
     let row = card
@@ -282,4 +283,8 @@ fn an_80_column_window_keeps_each_row_state_and_age_in_its_40_column_pane() {
         .find(|line| line.contains("unread reply"))
         .unwrap_or_else(|| panic!("{card:#?}"));
     assert!(row.ends_with("Ready · unread reply · 0m"), "{card:#?}");
+    dashboard.key(KeyCode::Char('k'));
+    let card = pane_rows(&dashboard, 0, small, false);
+    let row = card.iter().find(|line| line.contains("auth")).unwrap();
+    assert!(row.ends_with("2 sessions · ? 1 · ✓ 1"), "{card:#?}");
 }

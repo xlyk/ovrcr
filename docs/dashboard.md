@@ -891,7 +891,8 @@ names comes from the same key table as the footer and the menu.
 
 A card fits its pane. In a narrow pane the model label goes first, then the
 agent, and titles and branch names end in `…`, so each row keeps its state
-and elapsed time. When rows run out, the list ends with `+N more` and the next
+and elapsed time. Project attention counts shorten to `? 1 · ✓ 1` when their
+words do not fit. When rows run out, the list ends with `+N more` and the next
 steps stay. In a split the pane header says only `no session`, so the card in
 the emptied pane names the project or workspace itself; `j` opens the session
 in the focused pane, and the emptied pane then shows the projects.
