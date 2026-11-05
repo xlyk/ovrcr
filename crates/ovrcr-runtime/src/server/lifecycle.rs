@@ -21,6 +21,7 @@ pub(super) enum JobKind {
         force: bool,
     },
     CreateSession(ovrcr_protocol::CreateSessionRequest),
+    CreateAgentSession(ovrcr_protocol::CreateAgentSessionRequest),
     CloseTerminal {
         session: SessionId,
         expected_run: SessionRunId,
@@ -33,7 +34,7 @@ impl JobKind {
             Self::CreateWorkspace { .. } => LifecycleOp::CreateWorkspace,
             Self::CreateWorkspaceWithLaunch { .. } => LifecycleOp::CreateWorkspaceWithLaunch,
             Self::RemoveWorkspace { .. } => LifecycleOp::RemoveWorkspace,
-            Self::CreateSession(_) => LifecycleOp::CreateSession,
+            Self::CreateSession(_) | Self::CreateAgentSession(_) => LifecycleOp::CreateSession,
             Self::CloseTerminal { .. } => LifecycleOp::CloseTerminal,
         }
     }
@@ -186,6 +187,10 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
                 Err(error) => outcome_from_error(error),
             },
+            JobKind::CreateAgentSession(request) => match state.create_agent_session(request) {
+                Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
+                Err(error) => outcome_from_error(error),
+            },
             JobKind::CloseTerminal {
                 session,
                 expected_run,
@@ -267,6 +272,120 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "job did not finish");
             std::thread::sleep(Duration::from_millis(10));
         }
+        state.lifecycle.detach();
+    }
+
+    #[test]
+    fn model_query_and_create_reject_a_stale_dashboard_owner_without_effects() {
+        let sink = DashboardSink::new();
+        let (server_stream, _client) = UnixStream::pair().unwrap();
+        let current_owner = Arc::new(());
+        let state =
+            crate::server::tests::test_state(Some(sink), Some((current_owner, server_stream)));
+        let _worker = attach_worker(&state);
+        let stale_owner = Arc::new(());
+
+        let query = handle_request_with_id(
+            &state,
+            &mut ClientRole::Dashboard,
+            Request::QueryAgentModels {
+                preset: "claude".into(),
+                origin: ovrcr_protocol::AgentLaunchOrigin::Detected,
+                argv: vec!["/bin/true".into()],
+                project: "p".into(),
+                workspace: "w".into(),
+            },
+            50,
+            Some(&stale_owner),
+        );
+        assert!(matches!(
+            query,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+
+        let unowned_query = handle_request_with_id(
+            &state,
+            &mut ClientRole::Dashboard,
+            Request::QueryAgentModels {
+                preset: "claude".into(),
+                origin: ovrcr_protocol::AgentLaunchOrigin::Detected,
+                argv: vec!["/bin/true".into()],
+                project: "p".into(),
+                workspace: "w".into(),
+            },
+            52,
+            None,
+        );
+        assert!(matches!(
+            unowned_query,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+
+        let create = handle_request_with_id(
+            &state,
+            &mut ClientRole::Dashboard,
+            Request::CreateAgentSession(ovrcr_protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "stale-owner".into(),
+                    label: Some("claude".into()),
+                    argv: vec!["/bin/true".into()],
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            }),
+            51,
+            Some(&stale_owner),
+        );
+        assert!(matches!(
+            create,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+
+        let unowned_create = handle_request_with_id(
+            &state,
+            &mut ClientRole::Dashboard,
+            Request::CreateAgentSession(ovrcr_protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "unowned-session".into(),
+                    label: Some("claude".into()),
+                    argv: vec!["/bin/true".into()],
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            }),
+            53,
+            None,
+        );
+        assert!(matches!(
+            unowned_create,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+        assert_eq!(state.lifecycle.inflight_token(), None);
+        assert!(state.sessions.lock().unwrap().is_empty());
         state.lifecycle.detach();
     }
 

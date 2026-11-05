@@ -1,4 +1,6 @@
-use super::agents::{AgentSource, apply_overrides, detect_agents};
+use super::agents::{AgentOrigin, AgentSource, apply_overrides, detect_agents};
+
+const HARNESS_DEFAULT_MODEL: &str = "@harness-default";
 use super::input::is_browse_key;
 use super::keymap::{Action, KeyBinding, keymap};
 use super::picker::{
@@ -181,7 +183,9 @@ pub(super) struct Palette {
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
-    failed_launch: Option<CreateSessionRequest>,
+    failed_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    model_capabilities: Option<crate::protocol::AgentModelCapabilities>,
+    model_status: Option<String>,
     launch_project: Option<String>,
     suggestions: Suggestions,
     /// Submit was pressed while Git suggestions were still loading.
@@ -647,6 +651,8 @@ impl Palette {
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
+            model_capabilities: None,
+            model_status: None,
             launch_project: None,
             suggestions: Suggestions::default(),
             submit_when_ready: false,
@@ -757,27 +763,35 @@ fn task_slug(task: &str) -> String {
 
 /// The recovery-safe launch and remembered choice: the agent or Terminal,
 /// never its one-off first message.
-fn remember_launch(palette: &mut Palette, launch: CreateSessionRequest, task: &str) {
+fn remember_launch(
+    palette: &mut Palette,
+    launch: ovrcr_protocol::CreateAgentSessionRequest,
+    task: &str,
+) {
     palette.launch_preference = Some((
-        launch.project.clone(),
-        match &launch.label {
-            Some(label) => super::settings::LaunchChoice::Agent(label.clone()),
+        launch.session.project.clone(),
+        match &launch.session.label {
+            Some(label) => super::settings::LaunchChoice::Agent {
+                preset: label.clone(),
+                model_policy: launch.model_policy.clone(),
+            },
             None => super::settings::LaunchChoice::Terminal,
         },
     ));
     let mut launch = launch;
     if !task.is_empty()
         && launch
+            .session
             .label
             .as_deref()
             .is_some_and(super::agents::takes_task)
-        && launch.argv.len() >= 2
-        && launch.argv[launch.argv.len() - 2] == "--"
-        && launch.argv.last().is_some_and(|arg| arg == task)
+        && launch.session.argv.len() >= 2
+        && launch.session.argv[launch.session.argv.len() - 2] == "--"
+        && launch.session.argv.last().is_some_and(|arg| arg == task)
     {
         // Keep explicit recovery retries from retaining the one-off first message.
-        let args_without_task = launch.argv.len() - 2;
-        launch.argv.truncate(args_without_task);
+        let args_without_task = launch.session.argv.len() - 2;
+        launch.session.argv.truncate(args_without_task);
     }
     palette.failed_launch = Some(launch);
 }
@@ -804,6 +818,107 @@ fn pick_field(label: &'static str, value: String, items: Vec<PickItem>) -> Field
     let mut field = text_field(label, value, true);
     field.kind = FieldKind::Pick(list);
     field
+}
+
+fn set_model_options(
+    fields: &mut [Field],
+    capabilities: Option<&crate::protocol::AgentModelCapabilities>,
+) {
+    let Some(field) = fields.iter_mut().find(|field| field.label == "Model") else {
+        return;
+    };
+    let selected = field.value.clone();
+    let query = match &field.kind {
+        FieldKind::Pick(list) => list.query.clone(),
+        _ => String::new(),
+    };
+    let mut items = vec![PickItem {
+        label: "Harness default".into(),
+        value: HARNESS_DEFAULT_MODEL.into(),
+    }];
+    if let Some(capabilities) = capabilities
+        && capabilities.binding.is_some()
+        && capabilities.reason.is_none()
+    {
+        items.extend(capabilities.models.iter().map(|model| PickItem {
+            label: format!("{} · {}", model.alias, model.resolved),
+            value: model.alias.clone(),
+        }));
+    }
+    let mut list = PickList::new(items);
+    list.query = query.clone();
+    if list.filtered().iter().any(|item| item.value == selected) {
+        list.select_value(&selected);
+    } else if query.is_empty() {
+        list.query = selected.clone();
+    }
+    field.value = list
+        .accepted()
+        .map(|item| item.value.clone())
+        .unwrap_or(selected);
+    field.kind = FieldKind::Pick(list);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelQueryTarget {
+    preset: String,
+    origin: AgentOrigin,
+    argv: Vec<OsString>,
+    project: String,
+    workspace: String,
+    identity: String,
+}
+
+fn model_query_target(
+    command: &Command,
+    fields: &[Field],
+    agents: &[super::agents::AgentEntry],
+) -> Result<Option<ModelQueryTarget>, String> {
+    if field_value(fields, "Start") != "Agent" {
+        return Ok(None);
+    }
+    let preset = field_value(fields, "Agent");
+    if preset.is_empty() {
+        return Err("Choose an agent harness to check its model support.".into());
+    }
+    if !matches!(command, Command::CreateTerminal) {
+        return Err("Explicit models require an already registered workspace.".into());
+    }
+    let (project, workspace) = split_workspace_pick(&field_value(fields, "Workspace"));
+    if project.is_empty() || workspace.is_empty() {
+        return Err("Select a registered workspace to check explicit models.".into());
+    }
+    let Some(entry) = agents.iter().find(|entry| entry.name == preset) else {
+        return Err(unavailable_agent(&preset));
+    };
+    match entry.origin {
+        AgentOrigin::Configured => {
+            return Err(
+                "This named launcher is configured; its arguments and model policy are read-only."
+                    .into(),
+            );
+        }
+        AgentOrigin::Cloud => {
+            return Err(
+                "This cloud account has a pinned model and does not support overrides.".into(),
+            );
+        }
+        AgentOrigin::Detected => {}
+    }
+    if preset != "claude" {
+        return Err(
+            "Verified explicit model selection is not available for this harness yet.".into(),
+        );
+    }
+    let identity = format!("{preset}|{project}|{workspace}|{entry:?}");
+    Ok(Some(ModelQueryTarget {
+        preset,
+        origin: entry.origin,
+        argv: entry.argv.clone(),
+        project,
+        workspace,
+        identity,
+    }))
 }
 
 fn visible_indices(fields: &[Field]) -> Vec<usize> {
@@ -1054,10 +1169,12 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
-        self.palette = Some(Palette {
+        let mut palette = Palette {
             page: self.palette_form(Command::CreateTerminal),
             ..Palette::new()
-        });
+        };
+        self.refresh_model_query(&mut palette);
+        self.palette = Some(palette);
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
     }
@@ -1676,6 +1793,7 @@ impl Dashboard {
         let mut palette = self.palette.take().unwrap();
         palette.insert(text);
         self.refresh_workspace_form(&mut palette);
+        self.refresh_model_query(&mut palette);
         self.palette = Some(palette);
         self.refresh_active_path_listing();
         DashboardAction::Redraw
@@ -2648,9 +2766,11 @@ impl Dashboard {
                             .hierarchy
                             .projects
                             .iter()
-                            .find(|p| p.name == previous.project)
+                            .find(|p| p.name == previous.session.project)
                             .is_some_and(|p| {
-                                p.workspaces.iter().any(|w| w.id == previous.workspace)
+                                p.workspaces
+                                    .iter()
+                                    .any(|w| w.id == previous.session.workspace)
                             })
                         {
                             palette.error = Some("Workspace not yet registered; wait for the hierarchy update before retrying.".into());
@@ -2659,7 +2779,7 @@ impl Dashboard {
                         }
                         match fields[0].value.as_str() {
                             "Choose another agent" => {
-                                *fields = self.launch_fields(&previous.project, false);
+                                *fields = self.launch_fields(&previous.session.project, false);
                                 fields[0] = pick_field(
                                     "Start",
                                     "Agent".into(),
@@ -2678,16 +2798,23 @@ impl Dashboard {
                                 return action;
                             }
                             "Open shell" => {
-                                previous.argv = self.shell_argv();
-                                previous.label = None;
+                                previous.session.argv = self.shell_argv();
+                                previous.session.label = None;
+                                previous.session.kind = SessionKind::Terminal;
+                                previous.model_policy =
+                                    ovrcr_protocol::AgentModelPolicy::HarnessDefault;
+                                previous.model_binding = None;
+                                previous.expected_model = None;
                             }
                             _ => {}
                         }
-                        action = self.palette_submit(
-                            &mut palette,
-                            Request::CreateSession(previous),
-                            history_before_request,
-                        );
+                        let request = if matches!(&previous.session.kind, SessionKind::Agent { .. })
+                        {
+                            Request::CreateAgentSession(previous)
+                        } else {
+                            Request::CreateSession(previous.session)
+                        };
+                        action = self.palette_submit(&mut palette, request, history_before_request);
                         self.palette = Some(palette);
                         return action;
                     }
@@ -2723,14 +2850,18 @@ impl Dashboard {
                         } else {
                             form_task(fields)
                         };
-                        let mut chained = None;
+                        let mut chained: Option<ovrcr_protocol::CreateAgentSessionRequest> = None;
                         let selected_launch = if matches!(
                             command,
                             Command::CreateTerminal
                                 | Command::CreateWorkspace
                                 | Command::RecoverLaunch
                         ) {
-                            match self.selected_launch(fields, &task) {
+                            match self.selected_launch(
+                                fields,
+                                &task,
+                                palette.model_capabilities.as_ref(),
+                            ) {
                                 Ok(launch) => launch,
                                 Err(error) => {
                                     palette.error = Some(error);
@@ -2741,6 +2872,21 @@ impl Dashboard {
                         } else {
                             None
                         };
+                        if matches!(command, Command::CreateWorkspace)
+                            && selected_launch.as_ref().is_some_and(|launch| {
+                                matches!(
+                                    &launch.model_policy,
+                                    ovrcr_protocol::AgentModelPolicy::Explicit(_)
+                                )
+                            })
+                        {
+                            palette.error = Some(
+                                "Explicit model selection requires an already registered workspace."
+                                    .into(),
+                            );
+                            self.palette = Some(palette);
+                            return action;
+                        }
                         let request = match command {
                             Command::CreateTerminal => {
                                 let (project, id) = split_workspace_pick(&field("Workspace"));
@@ -2756,7 +2902,8 @@ impl Dashboard {
                                     return action;
                                 }
                                 let name = field("Name");
-                                Request::CreateSession(CreateSessionRequest {
+                                let selected = selected_launch.as_ref().unwrap();
+                                let session = CreateSessionRequest {
                                     project: workspace.project.clone(),
                                     workspace: workspace.id.clone(),
                                     name: if name.is_empty() {
@@ -2764,10 +2911,22 @@ impl Dashboard {
                                     } else {
                                         name
                                     },
-                                    argv: selected_launch.as_ref().unwrap().argv.clone(),
-                                    label: selected_launch.as_ref().unwrap().label.clone(),
-                                    kind: selected_launch.as_ref().unwrap().kind.clone(),
-                                })
+                                    argv: selected.argv.clone(),
+                                    label: selected.label.clone(),
+                                    kind: selected.kind.clone(),
+                                };
+                                if matches!(&session.kind, SessionKind::Agent { .. }) {
+                                    Request::CreateAgentSession(
+                                        ovrcr_protocol::CreateAgentSessionRequest {
+                                            session,
+                                            model_policy: selected.model_policy.clone(),
+                                            model_binding: selected.model_binding.clone(),
+                                            expected_model: selected.expected_model.clone(),
+                                        },
+                                    )
+                                } else {
+                                    Request::CreateSession(session)
+                                }
                             }
                             Command::RenameTerminal(session) => Request::SetSessionTitle {
                                 session: *session,
@@ -2800,13 +2959,18 @@ impl Dashboard {
                                     selected_launch.clone()
                                 } else {
                                     chained = selected_launch.clone().map(|launch| {
-                                        CreateSessionRequest {
-                                            project: field("Project"),
-                                            workspace: id.clone(),
-                                            name: task_name(&task),
-                                            argv: launch.argv,
-                                            label: launch.label,
-                                            kind: launch.kind,
+                                        ovrcr_protocol::CreateAgentSessionRequest {
+                                            session: CreateSessionRequest {
+                                                project: field("Project"),
+                                                workspace: id.clone(),
+                                                name: task_name(&task),
+                                                argv: launch.argv,
+                                                label: launch.label,
+                                                kind: launch.kind,
+                                            },
+                                            model_policy: launch.model_policy,
+                                            model_binding: launch.model_binding,
+                                            expected_model: launch.expected_model,
                                         }
                                     });
                                     None
@@ -2829,22 +2993,38 @@ impl Dashboard {
                             }
                             Command::RecoverLaunch => {
                                 let previous = palette.failed_launch.as_ref().unwrap();
-                                let registered =
-                                    find_workspace(self, &previous.project, &previous.workspace)
-                                        .is_some();
+                                let registered = find_workspace(
+                                    self,
+                                    &previous.session.project,
+                                    &previous.session.workspace,
+                                )
+                                .is_some();
                                 if !registered {
                                     palette.error = Some("Workspace is not yet registered in the dashboard. Wait for the hierarchy update before retrying.".into());
                                     self.palette = Some(palette);
                                     return action;
                                 }
-                                Request::CreateSession(CreateSessionRequest {
-                                    project: previous.project.clone(),
-                                    workspace: previous.workspace.clone(),
-                                    name: previous.name.clone(),
-                                    argv: selected_launch.as_ref().unwrap().argv.clone(),
-                                    label: selected_launch.as_ref().unwrap().label.clone(),
-                                    kind: selected_launch.as_ref().unwrap().kind.clone(),
-                                })
+                                let selected = selected_launch.as_ref().unwrap();
+                                let session = CreateSessionRequest {
+                                    project: previous.session.project.clone(),
+                                    workspace: previous.session.workspace.clone(),
+                                    name: previous.session.name.clone(),
+                                    argv: selected.argv.clone(),
+                                    label: selected.label.clone(),
+                                    kind: selected.kind.clone(),
+                                };
+                                if matches!(&session.kind, SessionKind::Agent { .. }) {
+                                    Request::CreateAgentSession(
+                                        ovrcr_protocol::CreateAgentSessionRequest {
+                                            session,
+                                            model_policy: selected.model_policy.clone(),
+                                            model_binding: selected.model_binding.clone(),
+                                            expected_model: selected.expected_model.clone(),
+                                        },
+                                    )
+                                } else {
+                                    Request::CreateSession(session)
+                                }
                             }
                             Command::RegisterProject => Request::AddProject {
                                 name: field("Name"),
@@ -2926,6 +3106,10 @@ impl Dashboard {
     }
 
     pub(super) fn detected_agents(&self) -> Vec<super::agents::AgentEntry> {
+        #[cfg(test)]
+        if let Some(entries) = &self.model_agent_entries {
+            return entries.clone();
+        }
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
         let launcher = std::env::current_exe().ok();
@@ -2954,6 +3138,7 @@ impl Dashboard {
                                 account.name.clone().into(),
                             ],
                             source: AgentSource::Detected,
+                            origin: super::agents::AgentOrigin::Cloud,
                         },
                     );
                 }
@@ -2980,6 +3165,10 @@ impl Dashboard {
                 field.hidden = start != "Agent";
                 field.required = start == "Agent";
             }
+            if field.label == "Model" {
+                field.hidden = start != "Agent";
+                field.required = start == "Agent";
+            }
             if field.label == "Command" {
                 field.hidden = start != "Terminal";
                 field.required = false;
@@ -2987,10 +3176,117 @@ impl Dashboard {
         }
     }
 
+    fn refresh_model_query(&mut self, palette: &mut Palette) {
+        let Page::Form {
+            command, fields, ..
+        } = &palette.page
+        else {
+            palette.model_capabilities = None;
+            palette.model_status = None;
+            return;
+        };
+        let target = match model_query_target(command, fields, &self.detected_agents()) {
+            Ok(None) => {
+                palette.model_capabilities = None;
+                palette.model_status = None;
+                if let Page::Form { fields, .. } = &mut palette.page {
+                    set_model_options(fields, None);
+                }
+                return;
+            }
+            Err(reason) => {
+                let preset = field_value(fields, "Agent");
+                let capabilities = crate::protocol::AgentModelCapabilities {
+                    preset,
+                    binding: None,
+                    models: Vec::new(),
+                    reason: Some(reason.clone()),
+                };
+                palette.model_capabilities = Some(capabilities.clone());
+                palette.model_status = Some(reason);
+                if let Page::Form { fields, .. } = &mut palette.page {
+                    set_model_options(fields, Some(&capabilities));
+                }
+                return;
+            }
+            Ok(Some(target)) => target,
+        };
+        if let Some((_, current)) = &self.model_query {
+            if current == &target.identity {
+                palette.model_capabilities = None;
+                palette.model_status =
+                    Some("Waiting for the current model lookup to finish…".into());
+                return;
+            }
+            palette.model_capabilities = None;
+            palette.model_status = Some("Waiting for the previous model lookup to finish…".into());
+            if let Page::Form { fields, .. } = &mut palette.page {
+                set_model_options(fields, None);
+            }
+            return;
+        }
+        let request_id = self.next_request_id();
+        self.model_query = Some((request_id, target.identity));
+        palette.model_capabilities = None;
+        palette.model_status = Some("Loading verified model choices…".into());
+        if let Page::Form { fields, .. } = &mut palette.page {
+            set_model_options(fields, None);
+        }
+        self.push_request(ClientMessage {
+            request_id,
+            request: Request::QueryAgentModels {
+                preset: target.preset,
+                origin: target.origin,
+                argv: target.argv,
+                project: target.project,
+                workspace: target.workspace,
+            },
+        });
+    }
+
+    pub(super) fn agent_models_event(
+        &mut self,
+        request_id: u64,
+        capabilities: crate::protocol::AgentModelCapabilities,
+    ) {
+        let Some((current_request, requested_identity)) = self.model_query.as_ref() else {
+            return;
+        };
+        if *current_request != request_id {
+            return;
+        }
+        let requested_identity = requested_identity.clone();
+        self.model_query = None;
+        let Some(mut palette) = self.palette.take() else {
+            return;
+        };
+        let current_identity = match &palette.page {
+            Page::Form {
+                command, fields, ..
+            } => model_query_target(command, fields, &self.detected_agents())
+                .ok()
+                .flatten()
+                .map(|target| target.identity),
+            _ => None,
+        };
+        if current_identity.as_deref() == Some(requested_identity.as_str())
+            && matches!(&palette.page, Page::Form { fields, .. } if field_value(fields, "Agent") == capabilities.preset)
+        {
+            if let Page::Form { fields, .. } = &mut palette.page {
+                set_model_options(fields, Some(&capabilities));
+            }
+            palette.model_status = capabilities.reason.clone();
+            palette.model_capabilities = Some(capabilities);
+        } else {
+            self.refresh_model_query(&mut palette);
+        }
+        self.palette = Some(palette);
+    }
+
     fn launch_fields(&self, project: &str, empty: bool) -> Vec<Field> {
         let choice = self.settings.launch_choices.get(project);
         let start = match choice {
-            Some(super::settings::LaunchChoice::Agent(_)) => "Agent",
+            Some(super::settings::LaunchChoice::Agent { .. }) => "Agent",
             _ => "Terminal",
         };
         let mut choices = vec!["Agent", "Terminal"];
@@ -3008,8 +3304,15 @@ impl Dashboard {
             })
             .collect::<Vec<_>>();
         let agent = match choice {
-            Some(super::settings::LaunchChoice::Agent(name)) => name.clone(),
+            Some(super::settings::LaunchChoice::Agent { preset, .. }) => preset.clone(),
             _ => agents.first().map(|a| a.name.clone()).unwrap_or_default(),
+        };
+        let model = match choice {
+            Some(super::settings::LaunchChoice::Agent {
+                model_policy: ovrcr_protocol::AgentModelPolicy::Explicit(model),
+                ..
+            }) => model.clone(),
+            _ => HARNESS_DEFAULT_MODEL.into(),
         };
         let mut fields = vec![
             pick_field(
@@ -3034,6 +3337,14 @@ impl Dashboard {
                     })
                     .collect(),
             ),
+            pick_field(
+                "Model",
+                model,
+                vec![PickItem {
+                    label: "Harness default".into(),
+                    value: HARNESS_DEFAULT_MODEL.into(),
+                }],
+            ),
             text_field("Command", String::new(), false),
         ];
         self.refresh_terminal_form(&mut fields, false);
@@ -3052,6 +3363,7 @@ impl Dashboard {
         &self,
         fields: &[Field],
         task: &str,
+        model_capabilities: Option<&crate::protocol::AgentModelCapabilities>,
     ) -> Result<Option<SessionLaunch>, String> {
         let value = |label| {
             fields
@@ -3062,26 +3374,53 @@ impl Dashboard {
         };
         match value("Start") {
             "Nothing yet" => Ok(None),
-            "Agent" => self
-                .detected_agents()
-                .into_iter()
-                .find(|a| {
-                    a.name == value("Agent")
-                        && a.source != AgentSource::Shell
-                        && a.source != AgentSource::Custom
-                        && a.name != "shell"
-                        && a.name != "Custom"
-                })
-                .map(|a| {
-                    Some(SessionLaunch {
-                        argv: super::agents::with_task(&a.name, a.argv, task),
-                        kind: SessionKind::Agent {
-                            name: a.name.clone(),
-                        },
-                        label: Some(a.name),
+            "Agent" => {
+                let agent = self
+                    .detected_agents()
+                    .into_iter()
+                    .find(|a| {
+                        a.name == value("Agent")
+                            && a.source != AgentSource::Shell
+                            && a.source != AgentSource::Custom
+                            && a.name != "shell"
+                            && a.name != "Custom"
                     })
-                })
-                .ok_or_else(|| unavailable_agent(value("Agent"))),
+                    .ok_or_else(|| unavailable_agent(value("Agent")))?;
+                let (model_policy, model_binding, expected_model) =
+                    if value("Model") == HARNESS_DEFAULT_MODEL {
+                        (ovrcr_protocol::AgentModelPolicy::HarnessDefault, None, None)
+                    } else {
+                        let capabilities = model_capabilities.ok_or_else(|| {
+                            "Verified models are still loading for this launcher.".to_string()
+                        })?;
+                        if let Some(reason) = &capabilities.reason {
+                            return Err(reason.clone());
+                        }
+                        let model = capabilities
+                            .models
+                            .iter()
+                            .find(|model| model.alias == value("Model"))
+                            .ok_or_else(|| {
+                                "The selected model is no longer verified; refresh the model list."
+                                    .to_string()
+                            })?;
+                        (
+                            ovrcr_protocol::AgentModelPolicy::Explicit(model.alias.clone()),
+                            capabilities.binding.clone(),
+                            Some(model.resolved.clone()),
+                        )
+                    };
+                Ok(Some(SessionLaunch {
+                    argv: super::agents::with_task(&agent.name, agent.argv, task),
+                    kind: SessionKind::Agent {
+                        name: agent.name.clone(),
+                    },
+                    label: Some(agent.name),
+                    model_policy,
+                    model_binding,
+                    expected_model,
+                }))
+            }
             "Terminal" => Ok(Some(SessionLaunch {
                 argv: if value("Command").is_empty() {
                     self.shell_argv()
@@ -3094,6 +3433,9 @@ impl Dashboard {
                 },
                 label: None,
                 kind: SessionKind::Terminal,
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
             })),
             _ => Err("Choose Agent, Terminal, or Nothing yet".into()),
         }
@@ -3115,6 +3457,7 @@ impl Dashboard {
             {
                 Some(match field.label {
                     "Agent" => unavailable_agent(value),
+                    "Model" => "Model is not in the verified choices for this launcher".into(),
                     "Branch" => "Branch not found in repository".into(),
                     label => format!("{label} not found in available choices"),
                 })
@@ -3187,15 +3530,26 @@ impl Dashboard {
                 id: name,
                 launch: Some(launch),
                 ..
-            } => Some(CreateSessionRequest {
-                project: project.clone(),
-                workspace: name.clone(),
-                name: String::new(),
-                argv: launch.argv.clone(),
-                label: launch.label.clone(),
-                kind: launch.kind.clone(),
+            } => Some(ovrcr_protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: project.clone(),
+                    workspace: name.clone(),
+                    name: String::new(),
+                    argv: launch.argv.clone(),
+                    label: launch.label.clone(),
+                    kind: launch.kind.clone(),
+                },
+                model_policy: launch.model_policy.clone(),
+                model_binding: launch.model_binding.clone(),
+                expected_model: launch.expected_model.clone(),
             }),
-            Request::CreateSession(session) => Some(session.clone()),
+            Request::CreateAgentSession(launch) => Some(launch.clone()),
+            Request::CreateSession(session) => Some(ovrcr_protocol::CreateAgentSessionRequest {
+                session: session.clone(),
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            }),
             _ => None,
         };
         if let Some(launch) = launch {
@@ -3226,7 +3580,11 @@ impl Dashboard {
     /// Starts `session` once the workspace job just submitted succeeds. Until
     /// then an empty workspace is not finished, and a failure of the session
     /// offers the same recovery as a launch the workspace request carried.
-    fn chain_session(&mut self, palette: &mut Palette, session: CreateSessionRequest) {
+    fn chain_session(
+        &mut self,
+        palette: &mut Palette,
+        launch: ovrcr_protocol::CreateAgentSessionRequest,
+    ) {
         let Some(row) = self
             .lifecycle_pending
             .as_mut()
@@ -3239,12 +3597,12 @@ impl Dashboard {
         {
             *launch = true;
         }
-        row.then = vec![Request::CreateSession(session.clone())];
+        row.then = vec![Request::CreateAgentSession(launch.clone())];
         let task = match &palette.page {
             Page::Form { fields, .. } => form_task(fields),
             _ => String::new(),
         };
-        remember_launch(palette, session, &task);
+        remember_launch(palette, launch, &task);
     }
 
     fn palette_form(&self, command: Command) -> Page {
@@ -3273,6 +3631,7 @@ impl Dashboard {
                 };
                 let mut launch = self.launch_fields(&launch_project, false);
                 let command = launch.pop().unwrap();
+                let model = launch.pop().unwrap();
                 let agent = launch.pop().unwrap();
                 let start = launch.pop().unwrap();
                 vec![
@@ -3289,6 +3648,7 @@ impl Dashboard {
                     text("Name", String::new(), false),
                     command,
                     agent,
+                    model,
                 ]
             }
             Command::RenameTerminal(id) => vec![text(
@@ -3952,6 +4312,17 @@ impl Dashboard {
                         format!("{} {text}", if index == *active { "›" } else { " " }),
                         Style::default().fg(if index == *active { MAUVE() } else { TEXT() }),
                     ));
+                    if field.label == "Model"
+                        && let Some(status) = palette
+                            .model_status
+                            .as_deref()
+                            .or_else(|| palette.model_capabilities.as_ref()?.reason.as_deref())
+                    {
+                        lines.push(Line::styled(
+                            format!("  {status}"),
+                            Style::default().fg(MUTED()),
+                        ));
+                    }
                     if let Some((_, problem)) =
                         palette.invalid.as_ref().filter(|(at, _)| *at == index)
                     {
@@ -4289,7 +4660,7 @@ impl Dashboard {
             error.clone()
         } else if palette.submit_when_ready {
             "Waiting for Git suggestions before creating… · Esc cancel".to_owned()
-        } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields, "").is_err())
+        } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields, "", palette.model_capabilities.as_ref()).is_err())
         {
             "Remembered/selected agent unavailable. Choose another agent or select Terminal explicitly.".to_owned()
         } else if let Some(note) = &palette.suggestions.note {
@@ -5344,9 +5715,17 @@ mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
     use crate::protocol::{
-        AgentActivity, ErrorCode, ProjectSummary, ServerEvent, ServerMessage, SessionId,
-        SessionKind, SessionPhase, SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
+        AgentActivity, AgentModelPolicy, ErrorCode, ProjectSummary, ServerEvent, ServerMessage,
+        SessionId, SessionKind, SessionPhase, SessionRecovery, SessionSummary, TerminalSize,
+        WorkspaceSummary,
     };
+
+    fn agent_choice(preset: &str) -> LaunchChoice {
+        LaunchChoice::Agent {
+            preset: preset.into(),
+            model_policy: AgentModelPolicy::HarnessDefault,
+        }
+    }
 
     fn dashboard() -> Dashboard {
         let mut d = Dashboard::new(TerminalSize {
@@ -5377,7 +5756,7 @@ mod launch_tests {
         for preference in [
             None,
             Some(LaunchChoice::Terminal),
-            Some(LaunchChoice::Agent("fixture-agent".into())),
+            Some(agent_choice("fixture-agent")),
         ] {
             let mut d = dashboard();
             d.settings.agents.push(AgentOverride {
@@ -5400,9 +5779,11 @@ mod launch_tests {
                 ..Palette::new()
             });
             let message = request(&mut d);
-            let Request::CreateSession(created) = message.request else {
+            let Request::CreateAgentSession(created) = message.request else {
                 panic!("new conversation must create a separate session");
             };
+            assert_eq!(created.model_policy, AgentModelPolicy::HarnessDefault);
+            let created = created.session;
             assert_eq!(created.project, "demo");
             assert_eq!(created.workspace, "root");
             assert_eq!(
@@ -5630,7 +6011,7 @@ mod launch_tests {
             .value = "Agent".into();
         let field = fields.iter_mut().find(|f| f.label == "Agent").unwrap();
         field.value = "cursor-cloud:work".into();
-        let launch = d.selected_launch(&fields, "").unwrap().unwrap();
+        let launch = d.selected_launch(&fields, "", None).unwrap().unwrap();
         assert_eq!(
             launch.kind,
             SessionKind::Agent {
@@ -5640,6 +6021,296 @@ mod launch_tests {
         assert_eq!(
             &launch.argv[1..],
             ["agent", "run", "cursor-cloud", "--", "work"].map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn agent_form_offers_harness_default_before_catalog_arrives() {
+        let d = dashboard();
+        let fields = d.launch_fields("demo", false);
+        let model = fields.iter().find(|field| field.label == "Model").unwrap();
+        assert_eq!(model.value, HARNESS_DEFAULT_MODEL);
+        let FieldKind::Pick(list) = &model.kind else {
+            panic!("Model must be a picker");
+        };
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].label, "Harness default");
+    }
+
+    #[test]
+    fn model_catalog_completion_preserves_a_typed_filter() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
+        d.open_create_terminal();
+        let query = d.drain_one_request().expect("catalog lookup is pending");
+        let model_index = match &mut d.palette.as_mut().unwrap().page {
+            Page::Form { fields, active, .. } => {
+                let index = fields
+                    .iter()
+                    .position(|field| field.label == "Model")
+                    .unwrap();
+                *active = index;
+                index
+            }
+            _ => panic!("Agent creation should show a form"),
+        };
+        for character in "opu".chars() {
+            d.palette_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        let FieldKind::Pick(list) = &fields[model_index].kind else {
+            panic!("Model must remain a picker");
+        };
+        assert_eq!(list.query, "opu");
+
+        d.agent_models_event(
+            query.request_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("binding".into()),
+                models: vec![crate::protocol::AgentModelOption {
+                    alias: "opus".into(),
+                    resolved: "claude-opus-v1".into(),
+                }],
+                reason: None,
+            },
+        );
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        let model = &fields[model_index];
+        let FieldKind::Pick(list) = &model.kind else {
+            panic!("Model must remain a picker");
+        };
+        assert_eq!(list.query, "opu");
+        assert_eq!(model.value, "opus");
+        assert_eq!(
+            list.accepted().map(|item| item.value.as_str()),
+            Some("opus")
+        );
+    }
+
+    #[test]
+    fn model_query_coalesces_target_changes_across_cancel_and_reopen() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
+        d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+            project: "demo".into(),
+            name: "other".into(),
+            id: "other".into(),
+            root: false,
+            warning: None,
+            path: "/tmp/other".into(),
+            sessions: vec![],
+        });
+
+        d.open_create_terminal();
+        let first = d
+            .drain_one_request()
+            .expect("form starts one catalog lookup");
+        let first_id = first.request_id;
+        assert!(matches!(
+            first.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                argv: ref selected,
+                project,
+                workspace,
+            } if preset == "claude" && selected == &argv && project == "demo" && workspace == "root"
+        ));
+
+        // Changing the destination while native discovery is in flight keeps
+        // one outstanding request and leaves the latest target in the form.
+        set(&mut d, "Workspace", "demo/other");
+        let mut palette = d.palette.take().unwrap();
+        d.refresh_model_query(&mut palette);
+        d.palette = Some(palette);
+        assert!(d.drain_one_request().is_none());
+        assert_eq!(d.model_query.as_ref().unwrap().0, first_id);
+
+        // Cancel and reopen do not lose ownership of the outstanding lookup.
+        d.palette = None;
+        d.open_create_terminal();
+        set(&mut d, "Workspace", "demo/other");
+        let mut palette = d.palette.take().unwrap();
+        d.refresh_model_query(&mut palette);
+        d.palette = Some(palette);
+        assert!(d.drain_one_request().is_none());
+
+        d.agent_models_event(
+            first_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("root-binding".into()),
+                models: vec![crate::protocol::AgentModelOption {
+                    alias: "opus".into(),
+                    resolved: "claude-opus".into(),
+                }],
+                reason: None,
+            },
+        );
+        let second = d
+            .drain_one_request()
+            .expect("latest destination is queried next");
+        let second_id = second.request_id;
+        assert!(matches!(
+            second.request,
+            Request::QueryAgentModels { project, workspace, .. }
+                if project == "demo" && workspace == "other"
+        ));
+        assert_ne!(second_id, first_id);
+        assert_eq!(d.palette.as_ref().unwrap().model_capabilities, None);
+
+        d.agent_models_event(
+            second_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("other-binding".into()),
+                models: vec![crate::protocol::AgentModelOption {
+                    alias: "opus".into(),
+                    resolved: "claude-opus".into(),
+                }],
+                reason: None,
+            },
+        );
+        assert_eq!(
+            d.palette
+                .as_ref()
+                .unwrap()
+                .model_capabilities
+                .as_ref()
+                .unwrap()
+                .binding,
+            Some("other-binding".into())
+        );
+    }
+
+    #[test]
+    fn refused_explicit_model_launch_does_not_remember_the_choice() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
+        d.open_create_terminal();
+        let query = d.drain_one_request().unwrap();
+        let Request::QueryAgentModels { .. } = query.request else {
+            panic!("expected the selected Claude model query");
+        };
+        d.agent_models_event(
+            query.request_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("launch-binding".into()),
+                models: vec![crate::protocol::AgentModelOption {
+                    alias: "opus".into(),
+                    resolved: "claude-opus-v1".into(),
+                }],
+                reason: None,
+            },
+        );
+        set(&mut d, "Start", "Agent");
+        set(&mut d, "Agent", "claude");
+        set(&mut d, "Model", "opus");
+        let launch = request(&mut d);
+        let Request::CreateAgentSession(launch_request) = &launch.request else {
+            panic!("explicit Agent launch must keep its model policy");
+        };
+        assert_eq!(
+            launch_request.model_policy,
+            AgentModelPolicy::Explicit("opus".into())
+        );
+        assert_eq!(
+            launch_request.expected_model.as_deref(),
+            Some("claude-opus-v1")
+        );
+        assert_eq!(
+            launch_request.model_binding.as_deref(),
+            Some("launch-binding")
+        );
+
+        d.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
+            client_token: launch.request_id,
+            op: crate::protocol::LifecycleOp::CreateSession,
+            outcome: crate::protocol::LifecycleOutcome::Failed {
+                code: crate::protocol::ErrorCode::InvalidRequest,
+                message: "Claude selected model resolution changed".into(),
+            },
+        }));
+        assert!(
+            d.drain_outbox()
+                .iter()
+                .all(|message| { !matches!(message.request, Request::SetSetting { .. }) })
+        );
+        assert_eq!(
+            d.settings.launch_choices.get("demo"),
+            Some(&LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            })
         );
     }
 
@@ -5736,7 +6407,7 @@ mod launch_tests {
             let project = "project.with-dots_and-punctuation";
             d.hierarchy.projects[0].name = project.into();
             d.hierarchy.projects[0].workspaces[0].project = project.into();
-            let other = LaunchChoice::Agent("other".into());
+            let other = agent_choice("other");
             d.settings
                 .launch_choices
                 .insert("other.project".into(), other.clone());
@@ -5750,7 +6421,7 @@ mod launch_tests {
             );
             let (saves, _) = saves(sent);
             let expected = if start == "Agent" {
-                LaunchChoice::Agent("fixture-agent".into())
+                agent_choice("fixture-agent")
             } else {
                 LaunchChoice::Terminal
             };
@@ -5813,7 +6484,7 @@ mod launch_tests {
     fn successful_agent_choice_survives_restart_and_empty_workspace_leaves_it_intact() {
         let mut d = dashboard();
         let (saves, _) = saves(launch(&mut d, "Agent"));
-        let saved = LaunchChoice::Agent("fixture-agent".into());
+        let saved = agent_choice("fixture-agent");
         assert_eq!(
             saves[0].request,
             super::super::settings::launch_choice_request("demo", &saved)
@@ -5844,7 +6515,7 @@ mod launch_tests {
         });
         assert_eq!(
             restarted.settings.launch_choices.get("demo"),
-            Some(&LaunchChoice::Agent("fixture-agent".into()))
+            Some(&agent_choice("fixture-agent"))
         );
     }
 
@@ -5994,10 +6665,9 @@ mod launch_tests {
     #[test]
     fn unavailable_remembered_agent_requires_explicit_replacement() {
         let mut d = dashboard();
-        d.settings.launch_choices.insert(
-            "demo".into(),
-            LaunchChoice::Agent("missing-fixture-agent".into()),
-        );
+        d.settings
+            .launch_choices
+            .insert("demo".into(), agent_choice("missing-fixture-agent"));
         start_workspace(&mut d, "Agent");
         assert!(matches!(submit(&mut d), DashboardAction::Redraw));
         assert!(d.drain_outbox().is_empty());
@@ -6058,8 +6728,10 @@ mod launch_tests {
                 set(&mut d, "Agent", "fixture-agent");
             }
             let m = request(&mut d);
-            let Request::CreateSession(s) = m.request else {
-                panic!("recovery must never recreate the workspace")
+            let s = match m.request {
+                Request::CreateAgentSession(launch) => launch.session,
+                Request::CreateSession(session) if recovery == "Open shell" => session,
+                request => panic!("recovery must never recreate the workspace: {request:?}"),
             };
             assert_eq!(s.workspace, "new-work");
             assert_eq!(
@@ -6509,7 +7181,7 @@ mod launch_tests {
         });
         set(&mut d, "Recovery", "Retry");
         assert!(
-            matches!(request(&mut d).request, Request::CreateSession(_)),
+            matches!(request(&mut d).request, Request::CreateAgentSession(_)),
             "Retry recovers by creating in the existing workspace, without stopped-process acknowledgement"
         );
     }
@@ -7187,8 +7859,14 @@ mod form_tests {
             },
         };
         let mut palette = Palette::new();
-        remember_launch(&mut palette, request.clone(), "");
-        assert_eq!(palette.failed_launch, Some(request.clone()));
+        let remembered = ovrcr_protocol::CreateAgentSessionRequest {
+            session: request.clone(),
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        remember_launch(&mut palette, remembered.clone(), "");
+        assert_eq!(palette.failed_launch, Some(remembered));
         palette.page = Page::Form {
             command: Command::RecoverLaunch,
             fields: vec![pick_field(
@@ -7211,11 +7889,15 @@ mod form_tests {
             .drain_outbox()
             .into_iter()
             .find_map(|message| match message.request {
-                Request::CreateSession(session) => Some(session),
+                Request::CreateAgentSession(launch) => Some(launch),
                 _ => None,
             })
             .expect("Retry must submit the remembered launch");
-        assert_eq!(retry.argv, request.argv);
+        assert_eq!(retry.session.argv, request.argv);
+        assert_eq!(
+            retry.model_policy,
+            ovrcr_protocol::AgentModelPolicy::HarnessDefault
+        );
     }
 
     #[test]

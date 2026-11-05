@@ -143,7 +143,14 @@ fn count(entries: usize) -> String {
 fn choice_text(choice: &LaunchChoice) -> String {
     match choice {
         LaunchChoice::Terminal => "Terminal".into(),
-        LaunchChoice::Agent(preset) => format!("Agent: {preset}"),
+        LaunchChoice::Agent {
+            preset,
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+        } => format!("Agent: {preset} · Harness default"),
+        LaunchChoice::Agent {
+            preset,
+            model_policy: ovrcr_protocol::AgentModelPolicy::Explicit(model),
+        } => format!("Agent: {preset} · {model}"),
     }
 }
 
@@ -340,7 +347,10 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 for (project, choice) in &settings.launch_choices {
                     let path = format!("launch_choices.{}", toml_edit::Key::new(project.as_str()));
                     let mut choices = vec![LaunchChoice::Terminal];
-                    choices.extend(presets.iter().cloned().map(LaunchChoice::Agent));
+                    choices.extend(presets.iter().cloned().map(|preset| LaunchChoice::Agent {
+                        preset,
+                        model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                    }));
                     if !choices.contains(choice) {
                         choices.push(choice.clone());
                     }

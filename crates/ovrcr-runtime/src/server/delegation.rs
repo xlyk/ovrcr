@@ -1593,6 +1593,9 @@ impl ServerState {
                                     argv,
                                     label: Some("Pi coding".into()),
                                     kind: SessionKind::Agent { name: "pi".into() },
+                                    model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                                    model_binding: None,
+                                    expected_model: None,
                                 }),
                                 Some(&handle),
                                 // The coding intent saved <workspace root>/<workspace id>.

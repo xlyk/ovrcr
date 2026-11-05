@@ -773,6 +773,9 @@ fn combined_workspace_launch_refusal_retains_exact_registered_git_generation() {
             ],
             label: None,
             kind: SessionKind::Agent { name: "pi".into() },
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
         }),
     };
     let failed = fixture.live.request(request.clone());

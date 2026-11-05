@@ -43,7 +43,8 @@ fn workspace(launch: Option<SessionLaunch>) -> Request {
 fn title_program() -> SessionLaunch {
     SessionLaunch { kind: ovrcr_protocol::SessionKind::Terminal, argv: vec!["/bin/sh".into(), "-c".into(),
         "stty -echo; printf 'TITLE-READY\\n'; while IFS= read -r title; do [ \"$title\" = EXIT ] && exit 0; printf '\\033]2;%s\\007applied:%s\\n' \"$title\" \"$title\"; done".into()],
-    label: Some("owned title fixture".into()), }
+    label: Some("owned title fixture".into()), model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+    model_binding: None, expected_model: None }
 }
 
 fn server_log(live: &Live) -> std::path::PathBuf {
@@ -3123,6 +3124,9 @@ fn workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace()
         kind: ovrcr_protocol::SessionKind::Terminal,
         argv: vec!["/does-not-exist/ovrcr-owned-test".into()],
         label: None,
+        model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+        model_binding: None,
+        expected_model: None,
     })));
     assert!(
         matches!(

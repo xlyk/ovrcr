@@ -1034,7 +1034,10 @@ fn fixture_agents(dashboard: &mut Dashboard) {
             .collect(),
         launch_choices: [(
             "consigint".to_owned(),
-            ovrcr_protocol::LaunchChoice::Agent("fixture-a".into()),
+            ovrcr_protocol::LaunchChoice::Agent {
+                preset: "fixture-a".into(),
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            },
         )]
         .into(),
         ..Default::default()
@@ -5216,7 +5219,10 @@ fn task_agents(dashboard: &mut Dashboard) -> tempfile::TempDir {
         agents,
         launch_choices: [(
             "consigint".to_owned(),
-            ovrcr_protocol::LaunchChoice::Agent("claude".into()),
+            ovrcr_protocol::LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            },
         )]
         .into(),
         ..Default::default()
