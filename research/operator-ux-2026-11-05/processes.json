@@ -1,0 +1,98 @@
+[
+  {
+    "pid": 64262,
+    "ppid": 63733,
+    "pgid": 63691,
+    "command": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 65130,
+    "ppid": 64262,
+    "pgid": 63691,
+    "command": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 87458,
+    "ppid": 65130,
+    "pgid": 87458,
+    "command": "codex -s read-only -a never app-server"
+  },
+  {
+    "pid": 66858,
+    "ppid": 65130,
+    "pgid": 66858,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 69756,
+    "ppid": 65130,
+    "pgid": 69756,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 67475,
+    "ppid": 65130,
+    "pgid": 67475,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 68045,
+    "ppid": 65130,
+    "pgid": 68045,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 68584,
+    "ppid": 65130,
+    "pgid": 68584,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 69137,
+    "ppid": 65130,
+    "pgid": 69137,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 70287,
+    "ppid": 65130,
+    "pgid": 70287,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 72459,
+    "ppid": 65130,
+    "pgid": 72459,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 70787,
+    "ppid": 65130,
+    "pgid": 70787,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 71306,
+    "ppid": 65130,
+    "pgid": 71306,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 71945,
+    "ppid": 65130,
+    "pgid": 71945,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73051,
+    "ppid": 65130,
+    "pgid": 73051,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73307,
+    "ppid": 64262,
+    "pgid": 73307,
+    "command": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-4gTtOv/dashboard-client/ovrcr"
+  }
+]

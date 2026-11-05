@@ -1,0 +1,33 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]       [Ctrl-o]                                               [Actions] [Menu]
+Show which sessions need my attention and explain why. · chat_gpt / gpt-6.1-sol · error           
+❯ You                                                                                             
+  ▸ Context · consigint / main / #1 run 1                                                         
+  Show which sessions need my attention and explain why.                                          
+                
+		3 text (settable) 󰚩 OVRCR Operator [o]       [Ctrl-o]                                               [Actions] [Menu]
+		4 text (settable) Show which sessions need my attention and explain why. · chat_gpt / gpt-6.1-sol · error           
+		5 text (settable) ❯ You                                                                                             
+		6 text (settable)   ▸ Context · consigint / main / #1 run 1                                                         
+		7 text (settable)   Show which sessions need my attention and explain why.                                          
+		8 text (settable) │ Error: sign in to the operator provider first                                                   
+		9 text (settable)  Managing consigint / main / #1 run 1                                                             
+		10 text (settable)  ──────────────────────────────────────────────────────────────────────────────────────────────── 
+		11 text (settable)  > ▏                                                                                              
+		12 text (settable)  ──────────────────────────────────────────────────────────────────────────────────────────────── 
+		13 text (settable) OPERATOR  Shift-Enter Newline  Ctrl-g Browse                                                      
+	14 close button
+	15 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	16 minimize button
+	17 text OVRCR GUI
+18 menu bar
+	19 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]       [Ctrl-o]                                               [Actions] [Menu]
+Show which sessions need my attention and explain why. · chat_gpt / gpt-6.1-sol · error           
+❯ You                                                                                             
+  ▸ Context · consigint / main / #1 run 1                                                         
+  Show which sessions need my attention and explain why.                                          
+                

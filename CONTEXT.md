@@ -44,6 +44,14 @@ _Avoid_: custom command as a third session category
 A detected or configured agent selected for launch. This launch choice alone does not establish reporting support or determine everything that may later run in the session.
 _Avoid_: any arbitrary command as an agent
 
+**Initial prompt**:
+The optional instruction the user supplies when creating an Agent session and authorizes it to run by starting that session. An empty initial prompt leaves the agent open for interactive use.
+_Avoid_: session name, reusable prompt template, conversation resume, setup or trust answer
+
+**Harness default**:
+A model choice that uses the selected agent launcher's own default instead of a model explicitly selected in OVRCR. It names a policy, not a promise that the resolved model stays the same.
+_Avoid_: a pinned model, the last observed model, a silently substituted model
+
 **Cursor cloud account**:
 A nonsecret named selection policy containing one explicit Keychain credential reference, model and allowed repositories or owners. Selecting it does not attest a remote billing identity. Local `cursor-agent` is a separate provider.
 

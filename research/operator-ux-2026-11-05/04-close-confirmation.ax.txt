@@ -1,0 +1,31 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! Show which sessions need my att… [x]│❯ You                                                                                                                         
+ CONSIGINT
+~		32 text (settable) ▌! Show which sessions need my att… [x]│❯ You                                                                                                                         
+~		24 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │  ┌ Confirm action ────────────────────────────────────────────────────────────────┐                                          
+~		25 text (settable)      $ local                           │  │Close Operator Show which sessions need my attention and explain why. (#1 /     │                                          
+~		26 text (settable)      - review scope qu…  codex:gpt-5.4 │  │session 13 / run 1). Archive its history.                                       │                                          
+~		38 text (settable)                                        │  │                                                                                │                                          
+~		27 text (settable)                                        │  │                                                                                │                                          
+~		28 text (settable)                                        │  │                                                                                │                                          
+~		29 text (settable)                                        │  │                                                                                │                                          
+~		30 text (settable)                                        │  │                                                                                │                                          
+~		39 text (settable)                                        │  │                                                                                │                                          
+~		40 text (settable)                                        │  │                                                                                │                                          
+~		41 text (settable)                                        │  │                                                                                │                                          
+~		42 text (settable)                                        │  │                                                                                │                                          
+~		43 text (settable)                                        │  │                                                                                │                                          
+~		44 text (settable)                                        │  │Enter confirm · Esc cancel                                                      │                                          
+~		45 text (settable)                                        │  │                                                                                │                                          
+~		46 text (settable)                                        │  │                                                                                │                                          
+~		47 text (settable)                                        │  │                                                                                │                                          
+~		48 text (settable)                                        │  │[Confirm] [Cancel]                                                              │                                          
+~		49 text (settable)                                        │  └────────────────────────────────────────────────────────────────────────────────┘                                          
+~		67 text (settable)  Grok   wk ━━━━━━━━━━━━━━━━━━━━──  89% │ ·                                                                                                                            
+~		70 text (settable) OPERATOR  Enter Open composer  Ctrl-g Browse                                                                                                                          
+The focused UI element is 9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! Show which sessions need my att… [x]│❯ You                                                                                                                         
+ CONSIGINT

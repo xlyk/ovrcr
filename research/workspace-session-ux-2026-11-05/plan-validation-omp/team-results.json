@@ -1,0 +1,26 @@
+[
+  {
+    "role": "feasibility",
+    "model": "ollama-cloud/deepseek-v4.1-flash",
+    "exit_code": 0,
+    "phase": "finalize",
+    "verdict": "NEEDS REVISION",
+    "events": "feasibility-finalize-1793903867827018000-events.jsonl"
+  },
+  {
+    "role": "ux-lifecycle",
+    "model": "ollama-cloud/deepseek-v4.1-flash",
+    "exit_code": 0,
+    "phase": "finalize",
+    "verdict": "NEEDS REVISION",
+    "events": "ux-lifecycle-finalize-1793903865434110000-events.jsonl"
+  },
+  {
+    "role": "acceptance",
+    "model": "ollama-cloud/deepseek-v4.1-flash",
+    "exit_code": 0,
+    "phase": "finalize",
+    "verdict": "NEEDS REVISION",
+    "events": "acceptance-finalize-1793903866072151000-events.jsonl"
+  }
+]

@@ -1,0 +1,152 @@
+[
+  {
+    "id": 1,
+    "slug": "claude-model-launch",
+    "title": "Choose and launch a verified Claude Code model",
+    "blocked": [],
+    "what": "From the existing Agent creation flow, choose a verified Claude Code model or explicitly use Harness default, launch in the selected registered workspace, and remember the successful choice for that project. Preserve existing launchers and Terminal behavior while adding the first complete model-capable path.",
+    "criteria": [
+      "Before shared native-option composition, record the bounded model/prompt/default/setup contract matrix for Claude Code, Codex, Pi and omp using installed-artifact/offline inspection first; unknown required contracts are explicit blockers, not guessed flags. Native or paid calls require explicit fixture scope.",
+      "Provide a current-Dashboard capability query bound to the exact resolved executable, arguments and detected/configured/cloud origin; do not impersonate a delegated session or infer capabilities from a display name. Keep discovery off input-reader/lifecycle-lock paths.",
+      "The actual Agent form presents verified Claude models and Harness default, applies the selected policy through the Server/managed launch path, and rejects stale or missing explicit models without substitution.",
+      "Preserve named overrides and cloud account pins; unknown launcher configurations expose an honest unsupported/read-only model state without rewriting their existing arguments or broadening native trust.",
+      "Remember model policy and harness per project only after successful launch. Update the existing settings loader/catalog/editor/writer/matrix together, retain old Agent/Terminal documents, and do not store one-off commands.",
+      "Update affected wire callers, protocol version and exact snapshots together; matching peers work and incompatible versions fail explicitly.",
+      "Production Dashboard-to-Server tests demonstrate valid/default/stale model paths, changed configuration, current-owner checks, successful-only project memory and unchanged shell behavior.",
+      "Record actual Claude Code installed version, applied model/default policy, provider-visible resolved model or refusal, native setup behavior and owned-fixture cleanup. Mocks and a launcher banner do not satisfy this proof; CUA covers the changed model field."
+    ]
+  },
+  {
+    "id": 2,
+    "slug": "claude-initial-prompt",
+    "title": "Run a Claude Code Initial prompt safely through reconnects",
+    "blocked": [
+      1
+    ],
+    "what": "In the existing Agent form, optionally compose a multiline Initial prompt and run it when starting Claude Code. Keep pending launch state recoverable through Dashboard reconnect, with honest refusal/uncertainty and no automatic replay after a Server restart.",
+    "criteria": [
+      "Blank prompt opens interactive use; nonblank Start authorizes execution through the supported Claude mechanism identified in the native contract matrix, preserving native trust/sign-in/approval behavior.",
+      "Use a real multiline editor: Enter inserts newline, the visible verified submit chord submits once, picker Enter only accepts a choice, paste/cursor/grapheme editing preserves text, and modal bytes/clicks cannot reach the underlying PTY.",
+      "The Server owns frozen target/options/prompt under a connection-independent accepted launch intent, then binds it to the exact session/run. Repeated accepted intents reconcile status rather than spawn or send again; use the existing lifecycle/mutation owner.",
+      "A bounded current-Dashboard reconciliation/read path discovers pending intents without the old connection token, distinguishes pending/accepted/refused/unknown state, and exposes recoverable draft text only when non-delivery is known.",
+      "Keep prompt text in memory for the current launch/run and Server lifetime; clear it at the actual boundary. No ordinary settings, retained metadata, OVRCR Events or diagnostic logs contain it; redact prompt-bearing debug/error paths. Do not add durable prompt storage.",
+      "Dashboard reconnect retains pending state; Server restart or missing/retired state does not establish non-delivery or trigger resend. Do not treat view readiness, elapsed time, screen text or response-cycle Ready as native prompt acceptance.",
+      "Production live-server/PTY tests force duplicate Start, lost response, reconnect, stale run, refusal and uncertainty. A unique synthetic marker verifies restart non-replay and absence from OVRCR-owned stores/logs; provider conversation history is a separate contract.",
+      "Record installed Claude model/prompt receipt or executed response and setup/trust interruption, plus native CUA proof of the editor/chord and cleanup. Gate unsupported launchers honestly while preserving typed text; include shared wire compatibility checks."
+    ]
+  },
+  {
+    "id": 3,
+    "slug": "codex-model-and-prompt",
+    "title": "Choose Codex models and run Initial prompts from session setup",
+    "blocked": [
+      2
+    ],
+    "what": "Use the same session-creation controls to choose a Codex model or Harness default and optionally run an Initial prompt, with the shared reconnect and no-replay behavior.",
+    "criteria": [
+      "Implement the proven Codex adapter across capability query, actual UI choices and Server/managed launch; safely reuse native discovery primitives without borrowing delegation authority.",
+      "Explicit/default model selection works and is remembered after success per project; invalid, changed or unavailable choices refuse without substitution.",
+      "Blank prompt opens interactive Codex; a nonblank prompt reaches the intended provider through its supported mechanism, preserving configured native arguments and setup/trust boundaries.",
+      "Use the existing shared launch-intent/run ownership and pending/refused/accepted/unknown semantics; no duplicate dispatch, durable prompt storage or uncertain automatic replay.",
+      "Configured overrides remain capability-bound to the actual launcher rather than its name; unsupported controls retain useful text and explain why Start cannot proceed.",
+      "Production Dashboard-to-Server tests cover capability invalidation, option composition, model/default policy, prompt/refusal and the shared reconnect/privacy contract for this adapter; no incompatible wire or settings regression.",
+      "Record actual installed Codex version, applied options, resolved model/refusal, unique Initial-prompt receipt/executed response, setup interruption and owned cleanup. CUA verifies the Codex UI path; stand-ins alone cannot close this ticket."
+    ]
+  },
+  {
+    "id": 4,
+    "slug": "pi-model-and-prompt",
+    "title": "Choose Pi models and run Initial prompts from session setup",
+    "blocked": [
+      2
+    ],
+    "what": "Choose a Pi model or Harness default and optionally run an Initial prompt through the real creation flow, retaining per-project choices and the shared pending-delivery guarantees.",
+    "criteria": [
+      "Implement Pi capability discovery and option composition through the actual UI/Server/managed-launch path, reusing appropriate native primitives without forging delegated-session authority.",
+      "Show verified Pi choices and explicitly labeled Harness default; reject invalid/stale choices and write project memory only after successful launch.",
+      "Blank prompt opens interactive Pi; a nonblank Initial prompt reaches the intended provider via its supported mechanism. Preserve native extension/argument boundaries and configured trust behavior.",
+      "Reuse the shared intent/run and reconciliation contract; reconnect cannot duplicate execution, and restart or delivery uncertainty cannot authorize automatic replay or durable prompt storage.",
+      "Preserve configured launchers and gate unknown configurations honestly rather than injecting guessed model or prompt arguments.",
+      "Production-path tests cover Pi discovery/configuration invalidation, explicit/default model application, multiline prompt/refusal, reconnect/privacy and existing reporting/launch behavior.",
+      "Record actual installed Pi version, applied options, resolved model/refusal, unique prompt receipt/executed response, setup interruption and cleanup; CUA verifies this selection and launch path. Mocks alone do not prove native support."
+    ]
+  },
+  {
+    "id": 5,
+    "slug": "omp-model-and-prompt",
+    "title": "Choose Oh My Pi models and run Initial prompts from session setup",
+    "blocked": [
+      2
+    ],
+    "what": "Use Oh My Pi (omp) as a fully supported model-and-prompt harness in session creation, independently of Pi, with the same per-project defaults and reconnect behavior.",
+    "criteria": [
+      "Prove and implement omp-specific discovery, default/explicit model and Initial-prompt contracts; do not infer support from Pi or treat reporting-only support as launch-capability proof.",
+      "Connect actual omp capability results to UI model choices and the Server/managed invocation, binding them to the resolved launcher and preserving configured arguments/trust.",
+      "Explicit models and Harness default work without silent substitutions; blank prompt opens interactive use and nonblank prompt is delivered through the supported omp mechanism.",
+      "Reuse shared project memory, stable launch intent/session-run correlation and pending/refused/accepted/unknown state. Reconnect does not repeat effects; restart does not persist/replay prompt text.",
+      "Unknown overrides remain available with honest capability limits; native wrapper/separator/extension arguments cannot be confused with model or prompt input.",
+      "Production Dashboard-to-Server tests cover omp-specific composition/discovery, removed models, setup/refusal, reconnect/privacy and preserved native reporting/session ownership.",
+      "Record installed omp version, applied options, resolved model/refusal, unique Initial-prompt receipt/executed response, setup interruption and cleanup; CUA verifies the omp UI path. Pi evidence and the prior reviewer-team CLI runs are not acceptance for this feature."
+    ]
+  },
+  {
+    "id": 6,
+    "slug": "registered-branch-session-dialog",
+    "title": "Start agents from a branch-based registered-workspace dialog",
+    "blocked": [
+      2
+    ],
+    "what": "Open New agent session with Branch, Agent harness, Model and optional Prompt as its four main controls, and start an agent in a registered checkout selected by its current branch label. Keep secondary options collapsed and preserve separate shell creation.",
+    "criteria": [
+      "Build picker membership from existing inventory/registry data joined to live hierarchy labels by project/workspace identity. Search registered workspaces only, exclude retained-only synthetic rows, and distinguish registered-but-unavailable checkouts.",
+      "Group by project; preselect the current eligible feature checkout; label root/detached states. Missing/unavailable current targets require a deliberate choice rather than silent retargeting, and an empty instance exposes existing registration.",
+      "Opening the form is independent of selected-target launch permission: n works for a registered project without a launchable current workspace. Start still checks root/default branch, registry identity, checkout existence and ownership.",
+      "Follow the same checkout if its branch changes, refresh its label without a drift confirmation, and show an inline running-agent/shared-files notice without another confirmation.",
+      "Use the shared proven harness/model/prompt capabilities; preserve named/cloud choices and honest unsupported states. Apply destination defaults only to untouched choices and preserve explicit dependent harness/model/prompt/name edits.",
+      "Expose the four main controls and collapsed Advanced options, with predictable focus, keyboard/mouse input isolation and no picker-Enter form submission. The child-creation entry is added by the following slice, not shipped as a dead control here.",
+      "n, dispatch, labels, availability and Actions/Menu agree; New terminal/custom command remains separately discoverable with its existing guards. Preserve ordinary program input and the return-to-Browse boundary.",
+      "Production compiled Dashboard/Server tests cover membership, unavailable/root-drifted opening versus Start, project defaults, branch-label drift and actual target input. Native CUA verifies selection/focus and responsive 80\u00d724/60-column/minimum/undersized states with screenshots/AX and owned cleanup."
+    ]
+  },
+  {
+    "id": 7,
+    "slug": "create-branch-child-dialog",
+    "title": "Create a branch in a child dialog and return to the intact session draft",
+    "blocked": [
+      6
+    ],
+    "what": "Select the single Create new branch entry, create a real branch and registered workspace in a focused child dialog, then return with that exact destination selected and the parent session draft intact. Reuse the same creation flow for standalone w.",
+    "criteria": [
+      "Exactly one Create new branch entry opens the child; only one dialog is visible/interactive. Project is preselected and changeable, Branch name starts empty with an example, and Base is inside collapsed Workspace options.",
+      "Reuse local default-branch discovery without assuming main, automatic fetch/update or an invalid prefix. Loading/failure is explicit; Create requires resolved or explicitly valid Base. Preserve project setup and automatic-local-terminal policy without starting the requested agent.",
+      "Keep parent/child draft and focus under the existing form owner. Accepted lifecycle Ok must not clear this child or let provisional/hierarchy auto-attachment select early; preserve unrelated lifecycle behavior.",
+      "Keep the child visible while creating, show pending state and reject duplicate Submit/pending cancellation without claiming an abort. Validation/Git failures keep useful inputs; partial success and unknown outcomes reconcile before retry.",
+      "Retain the submitted project/workspace ID and correlation token; only matching successful completion plus matching registered hierarchy/inventory selects it. Force both completion/hierarchy orders, including early events before acceptance, and never infer success from a row alone.",
+      "Cancel before submission restores the old target/draft with no creation. Success restores harness/model/prompt/name and focuses the next unfinished control; later parent Cancel retains the committed workspace. Agent retry reuses it rather than recreating it.",
+      "Standalone w uses the same creation semantics, selects the new workspace and returns to Browse. Preserve root/identity restrictions, one noncancellable lifecycle worker and live input in unrelated sessions.",
+      "Production Git/socket/PTY and compiled Dashboard tests cover real mutations, duplicate branch/Base failure, event ordering, partial failure, retry and draft preservation. Native CUA covers both entry points, mouse/keyboard, narrow/error/pending states, actual target output and cleanup."
+    ]
+  },
+  {
+    "id": 8,
+    "slug": "integrated-creation-acceptance",
+    "title": "Verify the complete four-harness branch-to-agent creation flow",
+    "blocked": [
+      3,
+      4,
+      5,
+      7
+    ],
+    "what": "Demonstrate the finished branch-to-agent journey across all four required harnesses and close the combined feature acceptance against the parent specification. This integrates already-proven slices rather than deferring their correctness or native tests.",
+    "criteria": [
+      "Each preceding slice has its own end-to-end and native evidence; missing required Claude/Codex/Pi/omp model-and-prompt proof blocks completion rather than being replaced by a mock or capability-disabled field.",
+      "Exercise the integrated existing-workspace and create-child\u2192return\u2192Start journeys, including per-project explicit/default choices and multiline Initial prompts, across all four harnesses.",
+      "Cross-check pending creation, both completion/hierarchy orders, failure/partial registration, accepted launch response loss/reconnect, stale run and restart/uncertain delivery for preserved drafts and no duplicate effects.",
+      "Confirm unique prompt markers are absent from ordinary settings, retained metadata and OVRCR Events/diagnostic logs; verify the intended native provider receives them without answering setup/trust prompts as text.",
+      "Native CUA from the reviewed checkout proves keyboard/mouse, Enter/chord/picker isolation, root/detached/unavailable selection, sharing notice, 80\u00d724/60-column/minimum/undersized layouts and actual session input with screenshots/AX.",
+      "Preserve separate Terminal/custom command, standalone provisioning, retained sessions, configured overrides/cloud pins, root protection and input responsiveness; compatibility/settings round trips and current protocol checks pass.",
+      "Update affected user/development/help/settings documentation and report current-revision required regression/build/lint/hosted checks, separating Linux, native GUI, stand-in and installed-provider evidence. No skipped/unrun requirement counts as passed.",
+      "Close only task-owned resources and verify process/socket/directory cleanup. Deliver a reviewable implementation PR with evidence/gaps and updated diary; do not bypass reviews/checks, merge without authorization, or modify/close the parent issue as part of ticket completion."
+    ]
+  }
+]
