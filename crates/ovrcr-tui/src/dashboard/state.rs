@@ -607,6 +607,9 @@ impl Dashboard {
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
+            model_query: None,
+            #[cfg(test)]
+            model_agent_entries: None,
             whichkey: None,
             selected_container: None,
             configuration_paths: None,
@@ -3748,6 +3751,10 @@ impl Dashboard {
                 | ServerEvent::NotificationNavigation(_)
                 | ServerEvent::ITermFocus(_) => {}
                 ServerEvent::OperatorChanged(id) => self.operator_changed(id),
+                ServerEvent::AgentModels {
+                    request_id,
+                    capabilities,
+                } => self.agent_models_event(request_id, capabilities),
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);

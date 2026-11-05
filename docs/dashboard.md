@@ -1130,8 +1130,15 @@ name alone does not prove what program it launches or whether reporting is suppo
 Successful launches update a per-project `launch_choices` table in this file.
 For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
 terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
-These entries contain no one-off command text. Failed launches and Nothing yet
-leave the remembered choice unchanged.
+Agent entries may include `model_policy = "HarnessDefault"` or
+`model_policy = { Explicit = "opus" }`. The default leaves model selection to
+the native launcher. A concrete model choice is offered only when the Server
+can verify the detected Claude launcher's model list; the Server checks the
+selected alias and its resolved model again before starting the session. If
+that resolution changes, the launch is refused and the remembered choice is
+left unchanged. Older Agent entries without `model_policy` keep using the
+Harness default. These entries contain no one-off command text. Failed launches
+and Nothing yet leave the remembered choice unchanged.
 
 ### Settings writer
 

@@ -2657,6 +2657,7 @@ fn test_state_with_dispatch(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2709,6 +2710,7 @@ pub(super) fn test_state_with_socket(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -5367,6 +5369,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -5590,6 +5593,7 @@ fn session_output_flows_while_another_session_spawns() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -8646,6 +8650,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
@@ -9039,7 +9044,7 @@ impl Drop for ProvisioningCleanup {
 }
 
 #[test]
-fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
+fn workspace_explicit_model_refusal_precedes_mutation_and_default_branch_policy_is_preserved() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "trunk");
@@ -9070,6 +9075,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
@@ -9106,6 +9112,48 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         .id
         .clone();
     assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
+
+    let sessions_before = state.session_summaries().len();
+    let refusal = state
+        .create_workspace_with_launch(
+            "fixture".into(),
+            "model-refused".into(),
+            BranchRequest::New {
+                branch: "feature/model-refused".into(),
+                base: "trunk".into(),
+            },
+            Some(ovrcr_protocol::SessionLaunch {
+                argv: vec!["/bin/true".into()],
+                label: Some("claude".into()),
+                kind: ovrcr_protocol::SessionKind::Agent {
+                    name: "claude".into(),
+                },
+                model_policy: ovrcr_protocol::AgentModelPolicy::Explicit("opus".into()),
+                model_binding: Some("binding".into()),
+                expected_model: Some("claude-opus".into()),
+            }),
+        )
+        .expect_err("explicit models require a registered workspace");
+    assert!(format!("{refusal:#}").contains("already registered workspace"));
+    assert_eq!(state.session_summaries().len(), sessions_before);
+    assert!(
+        !state
+            .registry
+            .lock()
+            .unwrap()
+            .project("fixture")
+            .unwrap()
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == "model-refused")
+    );
+    let branch = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["show-ref", "--verify", "refs/heads/feature/model-refused"])
+        .output()
+        .unwrap();
+    assert!(!branch.status.success(), "refused branch must not exist");
 
     state
         .create_workspace(
@@ -9170,6 +9218,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -9275,6 +9324,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),

@@ -985,6 +985,19 @@ pub(super) fn handle_request_with_id(
             },
         ),
         Request::CreateWorkspaceWithLaunch {
+            launch: Some(launch),
+            ..
+        } if matches!(
+            launch.model_policy,
+            ovrcr_protocol::AgentModelPolicy::Explicit(_)
+        ) =>
+        {
+            error_response(
+                ErrorCode::InvalidRequest,
+                "explicit models require a registered workspace before launch",
+            )
+        }
+        Request::CreateWorkspaceWithLaunch {
             project,
             id: name,
             branch,
@@ -1106,6 +1119,47 @@ pub(super) fn handle_request_with_id(
                     )));
                 Response::Ok
             },
+        ),
+        Request::QueryAgentModels {
+            preset,
+            origin,
+            argv,
+            project,
+            workspace,
+        } => super::agent_models::request(
+            state, dashboard, owner, request_id, preset, origin, argv, project, workspace,
+        ),
+        Request::CreateAgentSession(request)
+            if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner))
+                && state.lifecycle.async_ready() =>
+        {
+            lifecycle::try_accept(
+                state,
+                request_id,
+                lifecycle::JobKind::CreateAgentSession(request),
+            )
+        }
+        Request::CreateAgentSession(request)
+            if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner))
+                && matches!(
+                    request.model_policy,
+                    ovrcr_protocol::AgentModelPolicy::HarnessDefault
+                ) =>
+        {
+            state
+                .create_agent_session(request)
+                .map_or_else(error_for_lifecycle, |summary| {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                    Response::CreatedSession(Box::new(summary))
+                })
+        }
+        Request::CreateAgentSession(_) => error_response(
+            ErrorCode::InvalidRequest,
+            "model-aware session creation requires the current Dashboard lifecycle worker",
         ),
         Request::CreateSession(request) if dashboard && state.lifecycle.async_ready() => {
             lifecycle::try_accept(

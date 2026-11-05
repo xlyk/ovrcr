@@ -111,6 +111,13 @@ impl Provisional {
                 label: session.label.clone(),
                 kind: session.kind.clone(),
             },
+            Request::CreateAgentSession(request) => ProvisionalKind::CreatingSession {
+                project: request.session.project.clone(),
+                workspace: request.session.workspace.clone(),
+                name: request.session.name.clone(),
+                label: request.session.label.clone(),
+                kind: request.session.kind.clone(),
+            },
             Request::CloseTerminal { session, .. } => {
                 ProvisionalKind::ClosingSession { session: *session }
             }

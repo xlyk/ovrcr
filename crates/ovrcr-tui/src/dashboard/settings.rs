@@ -37,9 +37,22 @@ pub(super) fn launch_choice_request(project: &str, choice: &LaunchChoice) -> Req
         LaunchChoice::Terminal => {
             entry.insert("kind", "Terminal".into());
         }
-        LaunchChoice::Agent(preset) => {
+        LaunchChoice::Agent {
+            preset,
+            model_policy,
+        } => {
             entry.insert("kind", "Agent".into());
             entry.insert("preset", preset.as_str().into());
+            match model_policy {
+                ovrcr_protocol::AgentModelPolicy::HarnessDefault => {
+                    entry.insert("model_policy", "HarnessDefault".into());
+                }
+                ovrcr_protocol::AgentModelPolicy::Explicit(model) => {
+                    let mut explicit = toml_edit::InlineTable::new();
+                    explicit.insert("Explicit", model.as_str().into());
+                    entry.insert("model_policy", toml_edit::Value::InlineTable(explicit));
+                }
+            }
         }
     }
     Request::SetSetting {
@@ -56,10 +69,19 @@ mod tests {
     #[test]
     fn launch_choice_requests_quote_the_project_and_name_every_field() {
         assert_eq!(
-            launch_choice_request("project.with.dots", &LaunchChoice::Agent("new".into())),
+            launch_choice_request(
+                "project.with.dots",
+                &LaunchChoice::Agent {
+                    preset: "new".into(),
+                    model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                }
+            ),
             Request::SetSetting {
                 path: "launch_choices.\"project.with.dots\"".into(),
-                value: Some("{ kind = \"Agent\", preset = \"new\" }".into()),
+                value: Some(
+                    "{ kind = \"Agent\", preset = \"new\", model_policy = \"HarnessDefault\" }"
+                        .into()
+                ),
             }
         );
         assert_eq!(

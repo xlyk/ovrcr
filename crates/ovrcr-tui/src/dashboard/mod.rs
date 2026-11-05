@@ -322,6 +322,12 @@ pub struct Dashboard {
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
+    /// One native model lookup may outlive its palette or owning socket. Keep
+    /// its identity here so a reopened form can wait and coalesce one latest
+    /// target after the result arrives.
+    model_query: Option<(u64, String)>,
+    #[cfg(test)]
+    model_agent_entries: Option<Vec<agents::AgentEntry>>,
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,

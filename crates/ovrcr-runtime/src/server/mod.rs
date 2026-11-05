@@ -1,3 +1,4 @@
+mod agent_models;
 pub(crate) mod delegation;
 mod delegation_coding;
 mod delegation_fallback;
@@ -256,6 +257,7 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
+    pub(super) agent_model_catalog: agent_models::CatalogQueue,
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
     quota_refresh: Mutex<quota::Refresh>,
     settings: Mutex<watch::Watched>,
@@ -844,6 +846,15 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.create_session_locked(request, None, None)
+    }
+
+    pub fn create_agent_session(
+        &self,
+        request: ovrcr_protocol::CreateAgentSessionRequest,
+    ) -> Result<SessionSummary> {
+        let request = agent_models::prepare_session(self, request)
+            .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
+        self.create_session(request)
     }
 
     #[cfg(test)]
@@ -1622,6 +1633,7 @@ impl ServerState {
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             retained: parking_lot::Mutex::new(retained),
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
@@ -2178,6 +2190,18 @@ impl ServerState {
         branch: BranchRequest,
         launch: Option<ovrcr_protocol::SessionLaunch>,
     ) -> Result<Option<SessionSummary>> {
+        if launch.as_ref().is_some_and(|launch| {
+            !matches!(
+                &launch.model_policy,
+                ovrcr_protocol::AgentModelPolicy::HarnessDefault
+            ) || launch.model_binding.is_some()
+                || launch.expected_model.is_some()
+        }) {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                "explicit model selection requires an already registered workspace",
+            ));
+        }
         self.create_workspace_inner(
             project,
             name,
@@ -2313,6 +2337,9 @@ impl ServerState {
                         argv: vec![shell],
                         label: None,
                         kind: SessionKind::Terminal,
+                        model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
                     },
                     "local".into(),
                 )

@@ -226,62 +226,58 @@ fn models(value: &serde_json::Value) -> Result<Vec<(String, String)>> {
     Ok(found.into_iter().collect())
 }
 
-/// This remains preflight evidence, never a proof of managed-TUI tool inventory,
-/// native authentication, helper access or actual model inference.
-pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelProof)> {
-    ensure!(native_id(requested), "invalid native model request");
-    let executable = executable()?;
-    let file = file_identity(&executable)?;
-    let target = executable.canonicalize()?;
-    let mut binary = Vec::new();
-    File::open(&target)?
-        .take(512 * 1024 * 1024 + 1)
-        .read_to_end(&mut binary)?;
-    ensure!(
-        binary.len() <= 512 * 1024 * 1024 && file_identity(&executable)? == file,
-        "native executable exceeds bounds or changed"
-    );
-    let binary_digest = format!("{:x}", Sha256::digest(&binary));
-    drop(binary);
-    let profile_entry = crate::claude_recovery::config_dir()?;
-    let profile = profile_entry.canonicalize()?;
-    let meta = fs::metadata(&profile)?;
-    ensure!(meta.is_dir(), "native profile unavailable");
+/// Start the native initialize handshake used by bounded catalog discovery.
+/// The caller supplies the native launch policy; this helper adds only the
+/// stream transport and enforces bounded output, time and process cleanup.
+fn initialized_catalog(command: Command) -> Result<(Vec<(String, String)>, String)> {
+    initialized_catalog_inner(
+        command,
+        &std::sync::atomic::AtomicBool::new(false),
+        true,
+        |_| {},
+    )
+}
+
+pub(crate) fn initialized_catalog_cancellable(
+    command: Command,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<(Vec<(String, String)>, String)> {
+    initialized_catalog_inner(command, cancelled, false, |_| {})
+}
+
+#[cfg(test)]
+pub(crate) fn initialized_catalog_cancellable_with_pid(
+    command: Command,
+    cancelled: &std::sync::atomic::AtomicBool,
+    started: std::sync::mpsc::Sender<u32>,
+) -> Result<(Vec<(String, String)>, String)> {
+    initialized_catalog_inner(command, cancelled, false, move |pid| {
+        let _ = started.send(pid);
+    })
+}
+
+fn initialized_catalog_inner<F>(
+    mut command: Command,
+    cancelled: &std::sync::atomic::AtomicBool,
+    inject_postwait_fault: bool,
+    spawned: F,
+) -> Result<(Vec<(String, String)>, String)>
+where
+    F: FnOnce(u32),
+{
     let request_id = crate::agent_runner::private_identifier()?;
     let frame = format!(
         "{}\n",
         serde_json::json!({"type":"control_request","request_id":request_id,
         "request":{"subtype":"initialize","hooks":null}})
     );
-    let mut command = Command::new(&executable);
     command
-        .args([
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--input-format",
-            "stream-json",
-            "--model",
-            requested,
-            "--permission-mode",
-            "default",
-            "--tools",
-            "",
-            "--strict-mcp-config",
-            "--mcp-config",
-            r#"{"mcpServers":{}}"#,
-            "--setting-sources",
-            "",
-            "--settings",
-            "{}",
-        ])
-        .env("CLAUDE_CONFIG_DIR", &profile_entry)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    // The native account/profile routing stays opaque. Parent and assignment
-    // capabilities never enter a preallocation discovery process.
+    // The native account/profile route remains opaque. OVRCR authority and
+    // delegation capabilities never enter a catalog process.
     for name in [
         "OVRCR_AGENT_SOCKET",
         "OVRCR_AGENT_TOKEN",
@@ -299,6 +295,7 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
     let mut child = command
         .spawn()
         .context("native model discovery unavailable")?;
+    spawned(child.id());
     let deadline = Instant::now() + Duration::from_secs(20);
     let result = (|| -> Result<(Vec<(String, String)>, String)> {
         let mut stdout = child
@@ -317,8 +314,6 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
                 "native discovery pipe unavailable"
             );
         }
-        // Native account/error bodies remain in bounded memory only. No raw
-        // account, transcript or stderr is written to a temporary file or log.
         let mut bytes = Vec::new();
         let mut error_bytes = 0usize;
         child
@@ -327,9 +322,17 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
             .context("native discovery stdin unavailable")?
             .write_all(frame.as_bytes())?;
         loop {
+            ensure!(
+                !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                "native model discovery cancelled"
+            );
             ensure!(Instant::now() < deadline, "native model discovery deadline");
             let mut buffer = [0; 16384];
             loop {
+                ensure!(
+                    !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                    "native model discovery cancelled"
+                );
                 ensure!(Instant::now() < deadline, "native model discovery deadline");
                 match stdout.read(&mut buffer) {
                     Ok(0) => break,
@@ -420,9 +423,11 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
         }
     })();
     drop(child.stdin.take());
-    // Let ordinary native shutdown release its own profile/refresh locks first.
-    // The leader stays unreaped, anchoring the known task-owned group throughout.
-    let grace = deadline.min(Instant::now() + Duration::from_secs(2));
+    let grace = if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        Instant::now()
+    } else {
+        deadline.min(Instant::now() + Duration::from_secs(2))
+    };
     while Instant::now() < grace {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let observed = unsafe {
@@ -447,7 +452,6 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
         }
         std::thread::park_timeout(Duration::from_millis(10));
     }
-    // Keep the leader unreaped while deciding whether a signal is necessary.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let observed = unsafe {
         libc::waitid(
@@ -475,11 +479,10 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
         };
         ensure!(
             cleanup == 0 || (cleanup == -1 && cleanup_errno == Some(libc::ESRCH)),
-            "native discovery cleanup is uncertain"
+            "native discovery cleanup is uncertain (process-group signal errno {cleanup_errno:?})"
         );
     }
     let waited = child.wait();
-    // Never send a nonzero signal after reap. Surviving/unknown groups refuse.
     let absent = unsafe { libc::kill(-(child.id() as i32), 0) };
     let absence_errno = if absent == -1 {
         std::io::Error::last_os_error().raw_os_error()
@@ -487,8 +490,8 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
         None
     };
     let known_absent = waited.is_ok() && absent == -1 && absence_errno == Some(libc::ESRCH);
-    // Acceptance-only synthetic uncertainty never skips the actual wait/probe.
     let injected_unknown = known_absent
+        && inject_postwait_fault
         && crate::server::delegation::take_fault(
             "claude-discovery-postwait-unknown",
             "preallocation",
@@ -498,7 +501,113 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
         known_absent && !injected_unknown,
         "native discovery cleanup is uncertain"
     );
-    let (catalog, native_version) = result?;
+    result
+}
+
+/// Query the catalog under a verified detected Claude launcher. Native trust
+/// flags are deliberately omitted; transport-only flags disable prompt input,
+/// tools, MCP and user/project/local hooks while preserving model settings.
+pub(crate) fn dashboard_catalog(
+    executable: &Path,
+    native_argv: &[std::ffi::OsString],
+    cwd: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<(String, String)>> {
+    let query_args = dashboard_catalog_args(native_argv)?;
+    ensure!(
+        native_argv
+            .first()
+            .is_some_and(|arg| arg == executable.as_os_str()),
+        "Claude executable does not match its resolved launch argv"
+    );
+    let profile_entry = crate::claude_recovery::config_dir()?;
+    let profile = profile_entry.canonicalize()?;
+    ensure!(
+        fs::metadata(&profile)?.is_dir(),
+        "native profile unavailable"
+    );
+    let working_directory = cwd.canonicalize()?;
+    ensure!(
+        fs::metadata(&working_directory)?.is_dir(),
+        "Claude workspace is unavailable"
+    );
+    let mut command = Command::new(executable);
+    command
+        .current_dir(working_directory)
+        .args(query_args.iter().skip(1))
+        .env("CLAUDE_CONFIG_DIR", &profile_entry);
+    initialized_catalog_cancellable(command, cancelled).map(|(catalog, _)| catalog)
+}
+
+fn dashboard_catalog_args(native_argv: &[std::ffi::OsString]) -> Result<Vec<std::ffi::OsString>> {
+    ensure!(
+        native_argv.len() == 2 && native_argv[1] == "--dangerously-skip-permissions",
+        "Claude launch options are not a supported detected configuration"
+    );
+    Ok([
+        native_argv[0].clone(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--verbose".into(),
+        "--input-format".into(),
+        "stream-json".into(),
+        "--tools".into(),
+        "".into(),
+        "--strict-mcp-config".into(),
+        "--mcp-config".into(),
+        r#"{"mcpServers":{}}"#.into(),
+        "--settings".into(),
+        r#"{"disableAllHooks":true}"#.into(),
+    ]
+    .into_iter()
+    .collect())
+}
+
+/// This remains preflight evidence, never a proof of managed-TUI tool inventory,
+/// native authentication, helper access or actual model inference.
+pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelProof)> {
+    ensure!(native_id(requested), "invalid native model request");
+    let executable = executable()?;
+    let file = file_identity(&executable)?;
+    let target = executable.canonicalize()?;
+    let mut binary = Vec::new();
+    File::open(&target)?
+        .take(512 * 1024 * 1024 + 1)
+        .read_to_end(&mut binary)?;
+    ensure!(
+        binary.len() <= 512 * 1024 * 1024 && file_identity(&executable)? == file,
+        "native executable exceeds bounds or changed"
+    );
+    let binary_digest = format!("{:x}", Sha256::digest(&binary));
+    drop(binary);
+    let profile_entry = crate::claude_recovery::config_dir()?;
+    let profile = profile_entry.canonicalize()?;
+    let meta = fs::metadata(&profile)?;
+    ensure!(meta.is_dir(), "native profile unavailable");
+    let mut command = Command::new(&executable);
+    command
+        .args([
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+            "--model",
+            requested,
+            "--permission-mode",
+            "default",
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            r#"{"mcpServers":{}}"#,
+            "--setting-sources",
+            "",
+            "--settings",
+            "{}",
+        ])
+        .env("CLAUDE_CONFIG_DIR", &profile_entry);
+    let (catalog, native_version) = initialized_catalog(command)?;
     let resolved = catalog
         .iter()
         .find(|(alias, _)| alias == requested)
@@ -525,6 +634,118 @@ pub(crate) fn discover(requested: &str) -> Result<(Vec<(String, String)>, ModelP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::Instant;
+
+    #[test]
+    fn dashboard_catalog_preserves_default_model_policy_and_disables_user_effects() {
+        let native = [
+            std::ffi::OsString::from("/bin/claude"),
+            std::ffi::OsString::from("--dangerously-skip-permissions"),
+        ];
+        let args = dashboard_catalog_args(&native).unwrap();
+        assert_eq!(args[0], "/bin/claude");
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--model" || arg == "--setting-sources")
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--dangerously-skip-permissions")
+        );
+        assert!(
+            args.windows(2).any(|pair| {
+                pair[0] == "--settings" && pair[1] == r#"{"disableAllHooks":true}"#
+            })
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--tools" && pair[1].is_empty())
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| { pair[0] == "--mcp-config" && pair[1] == r#"{"mcpServers":{}}"# })
+        );
+    }
+
+    #[test]
+    fn dashboard_catalog_rejects_ambiguous_native_model_flags() {
+        let args = [
+            std::ffi::OsString::from("/bin/claude"),
+            std::ffi::OsString::from("--model"),
+            std::ffi::OsString::from("opus"),
+        ];
+        assert!(dashboard_catalog_args(&args).is_err());
+    }
+
+    #[test]
+    fn server_shutdown_cancels_a_held_native_catalog_process_group() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("pid");
+        let script = root.path().join("held-catalog");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > {}\nexec /bin/sleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let child_shutdown = Arc::clone(&shutdown);
+        let child_script = script.clone();
+        let child_cwd = root.path().to_path_buf();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut command = Command::new(child_script);
+            command.current_dir(child_cwd);
+            initialized_catalog_cancellable_with_pid(command, &child_shutdown, started_tx)
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !pid_file.exists() {
+            assert!(Instant::now() < deadline, "fake catalog did not start");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pid: i32 = started_rx.recv_timeout(Duration::from_secs(1)).unwrap() as i32;
+        let script_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        assert_eq!(script_pid, pid, "fake CLI pid differs from owned child");
+        assert_eq!(
+            unsafe { libc::getpgid(pid) },
+            pid,
+            "fake CLI was not group leader"
+        );
+        shutdown.store(true, Ordering::Release);
+        let finished = Instant::now() + Duration::from_millis(250);
+        while !worker.is_finished() && Instant::now() < finished {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let cancelled = worker.is_finished();
+        if !cancelled {
+            // Keep the red test bounded and remove the task-owned fake child.
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+        let result = worker.join().unwrap();
+        assert!(
+            cancelled,
+            "server shutdown must cancel and join catalog work"
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "native model discovery cancelled"
+        );
+    }
+
     #[test]
     fn native_catalog_preserves_alias_and_refuses_missing_or_conflicting_resolution() {
         assert_eq!(
