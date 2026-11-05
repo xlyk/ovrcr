@@ -52,3 +52,7 @@ Transcript intentionally skips individual JSONL records over 512 KiB, shortens p
 Fresh serial run on `78ce52fd`: **2,599 passed, 0 failed, 32 ignored**, across 53 test binaries; exit 0. [Machine-readable result](verification-2026-11-05/final-result.json), [full log](verification-2026-11-05/integrated-workspace-final.log), [all saved attempts](verification-2026-11-05/attempts.json). This supersedes the earlier in-progress status, while preserving the failed first run. Ignored checks are not passes; explicit installed-provider/capacity/memory gates remain unrun.
 
 The native walkthrough and both cleanup receipts are complete. The final evidence commit changes only this research record, not the tested product or acceptance source. Original untracked `before/` captures and `.superpowers/` recovery state are preserved separately. No publication/main merge performed.
+
+### Hosted CI follow-up — 2026-11-05
+
+PR #390’s first hosted run failed a new main-branch archived-name regression because one test request still derived an ID-named checkout path. Synced main as `18af854a`, reproduced the exact `NotFound` versus `AlreadyExists` failure, and corrected only the fixture to use `Live::workspace_path`. The unchanged test passed, then all retained-ownership cases passed (13 passed, 1 helper ignored). [Failure, correction and receipts](ci-fix-2026-11-05/README.md). No production change or weakened assertion. A new hosted run is required before the user-authorized merge.

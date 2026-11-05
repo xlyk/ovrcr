@@ -96,7 +96,7 @@ fn archived_names_are_reusable_but_active_names_still_conflict() {
     json(&live, &["terminal", "close", &first_id]);
     let second = create_terminal(&live, "reusable", &["/bin/sh"]);
     assert_ne!(first["id"], second["id"]);
-    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = live.workspace_path(live::WORKSPACE);
     let duplicate = json_error(
         &live,
         &[
