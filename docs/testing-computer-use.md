@@ -374,7 +374,7 @@ OSC52 when the GUI helper cannot deliver it.
 
 ### Application forwarding
 
-Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
+Stay on `consigint / gui-consigint-auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Each further wheel-up tick moves the header's `row a-b` up three rows. Wheel down at the newest row returns to the live prompt.
 
 In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History and must show no error (alternate screen); PageUp then shows the muted footer line `History isn't available while <title> is full-screen`, without `ERROR:` or `Conflict`. Quit Vim before repeating the plain-shell History check.
 

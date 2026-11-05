@@ -1171,7 +1171,7 @@ fn copy_selection_joins_soft_wraps_and_preserves_unicode() {
     explicit_selection.cursor = CopyPoint { row: 0, col: 0 };
     explicit_selection.set_anchor();
     explicit_selection.cursor = CopyPoint { row: 0, col: 2 };
-    assert_eq!(explicit_selection.selected_text().as_deref(), Some("a  "));
+    assert_eq!(explicit_selection.selected_text().as_deref(), Some("a"));
 
     let empty_cells = vt100::Parser::new(1, 3, 0);
     let mut empty_selection = CopySelection::capture(SessionId(9), empty_cells.screen());
@@ -1189,6 +1189,19 @@ fn copy_selection_joins_soft_wraps_and_preserves_unicode() {
         restored_selection.selected_text().as_deref(),
         Some("A界e\u{301}Z\nQ")
     );
+}
+
+/// Oh My Pi pads every row to the pane width with spaces. A copied line ends at its last
+/// character, as in a terminal; spaces inside a line or at a soft wrap stay.
+#[test]
+fn copy_selection_trims_padding_at_line_ends_only() {
+    let mut parser = vt100::Parser::new(3, 4, 0);
+    parser.process(b"abc d\r\nx y ");
+    let mut selection = CopySelection::capture(SessionId(9), parser.screen());
+    selection.cursor = CopyPoint { row: 0, col: 0 };
+    selection.set_anchor();
+    selection.cursor = CopyPoint { row: 2, col: 3 };
+    assert_eq!(selection.selected_text().as_deref(), Some("abc d\nx y"));
 }
 
 #[test]
@@ -4254,6 +4267,10 @@ fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     dashboard.mode = InputMode::Terminal;
     assert_eq!(
         super::hints::footer(&dashboard, 120),
+        "Terminal mode  Ctrl-g browse  then s Agents, Ctrl-o Quick message"
+    );
+    assert_eq!(
+        super::hints::footer(&dashboard, 50),
         "Terminal mode  Ctrl-g browse  then s Agents"
     );
 }

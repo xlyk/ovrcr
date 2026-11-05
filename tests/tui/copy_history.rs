@@ -2146,3 +2146,33 @@ fn a_failed_resume_is_an_error_not_a_limit() {
         "ERROR: could not continue the session's process group"
     );
 }
+
+/// The first visible History row, from the header's `row a-b`.
+fn history_top_row(dashboard: &Dashboard) -> u32 {
+    let rendered = draw_text(dashboard, 180, 40);
+    let (_, rest) = rendered.split_once("· row ").expect("History header row");
+    rest.split('-').next().unwrap().parse().unwrap()
+}
+
+#[test]
+fn history_wheel_scrolls_three_rows_per_tick() {
+    let mut frozen = numbered_frozen();
+    let opened = frozen.opened().clone();
+    let mut dashboard = screen_ready(b"");
+    let requests = open_history(&mut dashboard, opened);
+    pump_frozen(&mut dashboard, &mut frozen, requests);
+    let area = Rect::new(0, 0, 180, 40);
+    let inner = focused_terminal(&dashboard, area);
+    let top = history_top_row(&dashboard);
+    assert!(top > 6, "History opened near the tail: {top}");
+    let wheel = |dashboard: &mut Dashboard, frozen: &mut _, kind| {
+        let action = dashboard.mouse_action(mouse_event(kind, inner.x + 2, inner.y + 2), area);
+        pump_frozen_action(dashboard, frozen, action);
+    };
+    wheel(&mut dashboard, &mut frozen, MouseEventKind::ScrollUp);
+    assert_eq!(history_top_row(&dashboard), top - 3);
+    wheel(&mut dashboard, &mut frozen, MouseEventKind::ScrollUp);
+    assert_eq!(history_top_row(&dashboard), top - 6);
+    wheel(&mut dashboard, &mut frozen, MouseEventKind::ScrollDown);
+    assert_eq!(history_top_row(&dashboard), top - 3);
+}

@@ -23,8 +23,11 @@ input needed` or `i Next ready`, naming where it goes.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. Click the title bar's Commands control to open the palette
-or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
+only key it intercepts. `Ctrl-o` reaches the program there (Oh My Pi expands tool
+output with it, Claude Code opens its transcript), so Operator **Quick message** is
+`Ctrl-g` then `Ctrl-o`; the Terminal footer shows this when space permits. Click the
+title bar's Commands control to open the palette or Menu to open the action menu.
+Press `Ctrl-g` first to use dashboard shortcuts.
 
 ### Footer messages
 
@@ -43,7 +46,8 @@ you are away waits for you. A notice that waited behind it shows next.
 
 ## Operator chat
 
-Browse `o` or the pinned Operator title-bar control opens native chat. It has its
+Browse `o` or the pinned Operator title-bar control opens native chat. `Ctrl-o`
+opens Quick message from every view except Terminal mode. It has its
 own multiline composer and conversation history, independent of terminal panes.
 `Ctrl-g` or `Esc` leaves it for the terminal panes in Browse; every draft stays
 with its conversation for the next `o`.
@@ -111,8 +115,8 @@ history request that has not opened yet.
 
 Press lowercase `s` in Browse, `Space v s` from the View menu, or sequentially
 `Ctrl-g` then `s` while typing into a terminal. When space permits, the Terminal
-footer shows this sequence. Uppercase `S` still toggles ready sound; `:` still
-opens the full command palette.
+footer shows this sequence and `Ctrl-o` for Quick message after it. Uppercase
+`S` still toggles ready sound; `:` still opens the full command palette.
 
 The Agents picker includes nonarchived Agent-launch sessions with a running,
 unpaused process, regardless of activity or reporting health. It includes every
@@ -306,6 +310,10 @@ Motion waits when a target cell still needs loading.
   and History stays closed while an application is on the alternate screen. PageUp
   there says so in a muted footer line, `History isn't available while <title> is
   full-screen`; a wheel tick over the pane does nothing, with no error.
+- An application that erases the saved lines (`ESC[3J`) empties History, as a
+  terminal's scrollback would be. `clear` sends it, and Pi and Oh My Pi send it
+  before every full repaint (a resize, a new or resumed session), then write
+  their transcript again, so History holds that transcript once.
 - Retained history lives in memory with the session and is lost when the server
   exits. It is not persisted to disk.
 
@@ -317,8 +325,9 @@ notice `Clipboard request sent; paste to verify` confirms only that the request
 was written, so verify it by pasting in the destination application. Terminals
 that disable or lack OSC52 can ignore the request silently. Selections remain
 available after clipboard or size errors. Soft-wrapped rows join without added
-newlines; hard line breaks, explicit spaces, and stored Unicode text are
-preserved.
+newlines; hard line breaks, spaces inside a line, and stored Unicode text are
+preserved. Spaces at the end of each copied line are dropped, as terminals do:
+Oh My Pi pads every row to the pane width.
 
 ## Panes
 
@@ -474,8 +483,9 @@ In Browse and Terminal modes:
   hidden sidebar has no border to drag, and clicks in its former area reach
   the pane.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
-  move one row; wheel-down at the newest row returns to the live pane. Over a
-  full-screen application on the alternate screen the wheel does nothing.
+  move three rows (keys move one); wheel-down at the newest row returns to the
+  live pane.
+  Over a full-screen application on the alternate screen the wheel does nothing.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling

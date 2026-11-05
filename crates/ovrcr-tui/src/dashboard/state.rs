@@ -25,6 +25,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+const HISTORY_WHEEL_ROWS: i32 = 3;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryBegin {
     pub request_id: u64,
@@ -1605,8 +1607,23 @@ impl Dashboard {
         action
     }
 
+    /// Ctrl-o opens Quick message, except where keys go to the terminal program
+    /// (Terminal mode with nothing over the pane): Oh My Pi expands output and Claude
+    /// Code opens its transcript with it. Ctrl-g then Ctrl-o still opens Quick message.
+    fn opens_operator_quick(&self, key: KeyEvent) -> bool {
+        super::keymap::is_operator_quick_key(key)
+            && !(self.mode == InputMode::Terminal
+                && !self.operator_quick_visible()
+                && self.agent_typing.is_none()
+                && self.tasks.is_none()
+                && self.details.is_none()
+                && self.palette.is_none()
+                && self.whichkey.is_none()
+                && !self.operator_is_editing())
+    }
+
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
-        if super::keymap::is_operator_quick_key(key) {
+        if self.opens_operator_quick(key) {
             return if key.kind == KeyEventKind::Press {
                 self.open_operator_quick_message()
             } else {
@@ -2403,7 +2420,7 @@ impl Dashboard {
             return DashboardAction::None;
         }
         if let Event::Key(key) = event
-            && (super::keymap::is_operator_quick_key(key) || self.operator_quick_visible())
+            && (self.opens_operator_quick(key) || self.operator_quick_visible())
         {
             return self.key_action(key);
         }
@@ -3243,6 +3260,7 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    /// A wheel tick moves History three rows, as terminals scroll; keys move one.
     fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         let Some(inner) = self
             .pane_rects(area)
@@ -3256,7 +3274,7 @@ impl Dashboard {
             return DashboardAction::None;
         }
         match mouse.kind {
-            MouseEventKind::ScrollUp => self.history_scroll_rows(-1),
+            MouseEventKind::ScrollUp => self.history_scroll_rows(-HISTORY_WHEEL_ROWS),
             MouseEventKind::ScrollDown => {
                 let size = history_view_size(self.focused_size());
                 let at_tail = self.history.as_ref().is_some_and(|view| {
@@ -3266,7 +3284,7 @@ impl Dashboard {
                 if at_tail {
                     self.leave_history()
                 } else {
-                    self.history_scroll_rows(1)
+                    self.history_scroll_rows(HISTORY_WHEEL_ROWS)
                 }
             }
             _ => DashboardAction::None,

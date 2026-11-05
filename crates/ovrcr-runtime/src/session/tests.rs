@@ -1466,6 +1466,166 @@ fn application_titles_are_consumed_without_changing_titles_or_output() {
     }
 }
 
+fn session_parser(rows: u16, cols: u16) -> vt100::Parser<SessionTitles> {
+    vt100::Parser::new_with_callbacks(rows, cols, HISTORY_ROWS, SessionTitles::default())
+}
+
+fn history_rows(parser: &vt100::Parser<SessionTitles>) -> u32 {
+    FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(1),
+        1,
+        parser.screen().clone(),
+    )
+    .unwrap()
+    .opened()
+    .history_rows
+}
+
+/// Pi-TUI agents (Pi, Oh My Pi) and `clear` repaint with `ESC[H ESC[2J ESC[3J`. Without ED3
+/// every repaint left the whole earlier transcript in History and stacked a fresh copy on it.
+#[test]
+fn erase_saved_lines_empties_history_and_keeps_the_screen() {
+    let mut parser = session_parser(3, 12);
+    parser.process(b"\x1b[?2004h\x1b[?1hold-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+    assert_eq!(history_rows(&parser), 2);
+
+    parser.process(b"\x1b[H\x1b[2J\x1b[3J\x1b[31mnew-1\r\nnew-");
+    assert_eq!(history_rows(&parser), 0);
+    let screen = parser.screen();
+    assert_eq!(screen.contents(), "new-1\nnew-");
+    assert_eq!(screen.cursor_position(), (1, 4));
+    assert!(screen.bracketed_paste());
+    assert!(screen.application_cursor());
+
+    // Drawing continues with the attributes and position in force before the erase, and
+    // later output scrolls into History again.
+    parser.process(b"2\r\nnew-3\r\nnew-4");
+    let screen = parser.screen();
+    assert_eq!(screen.cell(0, 4).unwrap().contents(), "2");
+    assert_eq!(screen.cell(0, 4).unwrap().fgcolor(), vt100::Color::Idx(1));
+    assert_eq!(history_rows(&parser), 1);
+    let history = FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(1),
+        1,
+        parser.screen().clone(),
+    );
+    let mut history = history.unwrap();
+    let rows = history.page(0, 4, 0, 12).unwrap().rows;
+    let text: Vec<String> = rows
+        .iter()
+        .map(|row| row.cells.iter().map(|cell| cell.text.as_str()).collect())
+        .collect();
+    assert_eq!(text, ["new-1", "new-2", "new-3", "new-4"]);
+}
+
+#[test]
+fn erase_saved_lines_preserves_terminal_state_and_frozen_history() {
+    let mut parser = vt100::Parser::new_with_callbacks(
+        5,
+        12,
+        HISTORY_ROWS,
+        SessionTitles {
+            pinned: Some("Pinned title".into()),
+            ..SessionTitles::default()
+        },
+    );
+    parser.process(b"old-0\r\nold-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+    assert_eq!(history_rows(&parser), 1);
+    parser.process(b"\x1b[?3J");
+    assert_eq!(history_rows(&parser), 1, "DECSED 3 is not ED3");
+    let mut frozen = FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(2),
+        1,
+        parser.screen().clone(),
+    )
+    .unwrap();
+    let frozen_rows = frozen.page(0, 1, 0, 12).unwrap();
+    assert!(
+        frozen_rows.rows[0]
+            .cells
+            .iter()
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+            .contains("old-0")
+    );
+
+    let setup = "\x1b[2;4r\x1b[?6h\x1b=\x1b[?1h\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[?25l\
+                \x1b[1;1H\x1b[31;44;1mX界\x1b[2;3H\x1b[32;45mSAVE\x1b7\x1b[2;7H\x1b[34;43;3mNEXT";
+    parser.process(setup.as_bytes());
+    let before_contents = parser.screen().contents();
+    let before_cursor = parser.screen().cursor_position();
+    parser.process(b"\x1b[3J");
+
+    assert_eq!(history_rows(&parser), 0);
+    let screen = parser.screen();
+    assert_eq!(screen.contents(), before_contents);
+    assert_eq!(screen.cursor_position(), before_cursor);
+    assert_eq!(screen.fgcolor(), vt100::Color::Idx(4));
+    assert_eq!(screen.bgcolor(), vt100::Color::Idx(3));
+    assert!(screen.bold());
+    assert!(screen.italic());
+    assert!(screen.application_keypad());
+    assert!(screen.application_cursor());
+    assert!(screen.bracketed_paste());
+    assert!(screen.hide_cursor());
+    assert_eq!(
+        screen.mouse_protocol_mode(),
+        vt100::MouseProtocolMode::ButtonMotion
+    );
+    assert_eq!(
+        screen.mouse_protocol_encoding(),
+        vt100::MouseProtocolEncoding::Sgr
+    );
+    assert_eq!(screen.cell(1, 1).unwrap().contents(), "界");
+    assert!(screen.cell(1, 1).unwrap().is_wide());
+    assert_eq!(parser.callbacks().pinned.as_deref(), Some("Pinned title"));
+
+    parser.process(b"\x1b8");
+    assert_eq!(parser.screen().cursor_position(), (2, 6));
+    assert_eq!(parser.screen().fgcolor(), vt100::Color::Idx(2));
+    assert_eq!(parser.screen().bgcolor(), vt100::Color::Idx(5));
+    parser.process(b"!");
+    assert_eq!(parser.screen().cell(2, 6).unwrap().contents(), "!");
+    assert_eq!(
+        parser.screen().cell(2, 6).unwrap().fgcolor(),
+        vt100::Color::Idx(2)
+    );
+
+    // The saved cursor also captured origin mode. Addressing row 1 stays at the
+    // scroll-region top, then a line feed at its bottom scrolls only that region.
+    parser.process(b"\x1b[1;1HO");
+    assert_eq!(parser.screen().cell(1, 0).unwrap().contents(), "O");
+    parser.process(b"\x1b[3;1H\n");
+    assert_eq!(parser.screen().cell(0, 0).unwrap().contents(), "o");
+    assert_eq!(parser.screen().cell(4, 0).unwrap().contents(), "o");
+    assert_eq!(history_rows(&parser), 0);
+
+    let frozen_again = frozen.page(0, 1, 0, 12).unwrap();
+    assert!(
+        frozen_again.rows[0]
+            .cells
+            .iter()
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+            .contains("old-0")
+    );
+}
+
+/// The alternate screen has no saved lines of its own; an erase there must not drop the
+/// normal screen the program returns to.
+#[test]
+fn erase_saved_lines_on_the_alternate_screen_keeps_the_normal_screen() {
+    let mut parser = session_parser(3, 12);
+    parser.process(b"keep-1\r\nkeep-2\r\nkeep-3\r\nkeep-4");
+    let history_before = history_rows(&parser);
+    parser.process(b"\x1b[?1049h\x1b[H\x1b[2J\x1b[3Jfull\x1b[?1049l");
+    assert_eq!(parser.screen().contents(), "keep-2\nkeep-3\nkeep-4");
+    assert_eq!(history_rows(&parser), history_before);
+}
+
 #[test]
 fn manual_titles_are_sanitized_and_bounded() {
     assert_eq!(

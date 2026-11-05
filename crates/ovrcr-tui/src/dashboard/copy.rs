@@ -156,9 +156,14 @@ impl CopySelection {
             .filter(|cell| cell.is_wide())
             .map_or(1, |_| 2);
         let end_col = end.col.saturating_add(width).min(cols);
+        let text = self
+            .screen
+            .contents_between(start.row, start.col, end.row, end_col);
         Some(
-            self.screen
-                .contents_between(start.row, start.col, end.row, end_col),
+            text.split('\n')
+                .map(|line| line.trim_end_matches(' '))
+                .collect::<Vec<_>>()
+                .join("\n"),
         )
     }
 
@@ -434,9 +439,11 @@ impl HistoryCopyJob {
         }
         self.pending_blanks = 0;
         if self.next_row == self.end.row {
+            trim_line_end(&mut self.output);
             return Ok(true);
         }
         if !row.wrapped {
+            trim_line_end(&mut self.output);
             append_history_text(&mut self.output, "\n")?;
         }
         self.next_row = self
@@ -456,6 +463,12 @@ impl HistoryCopyJob {
             text: self.output,
         }
     }
+}
+
+/// Drops the spaces that end a copied line, as terminals do. Programs such as Oh My Pi pad
+/// every row to the pane width; a soft-wrapped row keeps them, since its line goes on.
+fn trim_line_end(output: &mut String) {
+    output.truncate(output.trim_end_matches(' ').len());
 }
 
 fn invalid_history_data(message: &str) -> io::Error {
@@ -716,6 +729,32 @@ mod tests {
         assert_eq!(tiled_pending, 0);
     }
 
+    /// Oh My Pi pads rows with spaces to the pane width. Copied lines end at their last
+    /// character; spaces inside a line and at a soft wrap stay.
+    #[test]
+    fn history_copy_job_trims_padding_at_line_ends_only() {
+        let text = |cells: &str| -> Vec<HistoryCell> {
+            cells.chars().map(|c| cell(&c.to_string(), 1)).collect()
+        };
+        let mut job = HistoryCopyJob::new(
+            6,
+            range(
+                HistoryCopyPoint { row: 0, col: 0 },
+                HistoryCopyPoint { row: 2, col: 3 },
+            ),
+        );
+        for (index, (cells, wrapped)) in [("ab  ", false), ("c d ", true), ("e   ", false)]
+            .into_iter()
+            .enumerate()
+        {
+            let done = job
+                .consume_page(&page(index as u32, 0, row(4, text(cells), wrapped)))
+                .unwrap();
+            assert_eq!(done, index == 2);
+        }
+        assert_eq!(job.into_completion().text, "ab\nc d e");
+    }
+
     #[test]
     fn history_copy_job_streams_overlapping_tiles_and_soft_wraps() {
         let mut job = HistoryCopyJob::new(
@@ -863,7 +902,8 @@ mod tests {
                 ))
                 .unwrap()
         );
-        assert_eq!(trailing_spaces.into_completion().text, "x   ");
+        // Spaces that end the copied line are dropped, explicit or not.
+        assert_eq!(trailing_spaces.into_completion().text, "x");
 
         let mut empty_middle = HistoryCopyJob::new(
             9,

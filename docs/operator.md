@@ -25,8 +25,10 @@ Use the global `--json` flag for status, models or logout, for example
 
 ## Run concurrent conversations
 
-Press `Ctrl-o` from any Dashboard view, including a terminal, Tasks or another
-dialog, to open **Quick message**. The title-bar `[Ctrl-o]` control, sidebar `[+]`
+Press `Ctrl-o` from any Dashboard view, including Tasks or another dialog, to
+open **Quick message**. In Terminal mode `Ctrl-o` goes to the program (Oh My Pi
+expands tool output, Claude Code opens its transcript), so press `Ctrl-g` then
+`Ctrl-o`. The title-bar `[Ctrl-o]` control, sidebar `[+]`
 and Quick message palette action open the same form. It captures the current
 workspace/session run (or selected chat context) and configured provider/model
 defaults when opened. Type a message and press Enter to create and send once.

@@ -31,10 +31,16 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         InputMode::History if history.is_some_and(|v| v.anchor.is_some()) => "HISTORY SELECT",
         InputMode::History => "HISTORY",
         InputMode::Terminal => {
+            // Ctrl-o goes to the program here, so Quick message is reached from Browse.
             let mut text = "Terminal mode  Ctrl-g browse".to_owned();
             let agents = super::keymap::agents_binding();
-            let hint = format!("  then {} {}", agents.key, agents.name);
-            if text.width() + hint.width() <= usize::from(width) {
+            for hint in [
+                format!("  then {} {}", agents.key, agents.name),
+                ", Ctrl-o Quick message".into(),
+            ] {
+                if text.width() + hint.width() > usize::from(width) {
+                    break;
+                }
                 text.push_str(&hint);
             }
             return text;
