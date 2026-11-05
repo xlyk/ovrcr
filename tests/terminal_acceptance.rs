@@ -2617,6 +2617,8 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         |screen| screen.contains("mouse") && dashboard_header_visible(screen),
         wait_deadline(),
     )?;
+    // An unbound F12 clears the startup note without masking an incorrect Terminal mode.
+    reattached.send(b"\x1b[24~")?;
     reattached.wait_for_screen(
         |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("Terminal mode"),
         wait_deadline(),
