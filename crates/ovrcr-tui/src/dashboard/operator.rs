@@ -173,7 +173,7 @@ enum Pending {
 
 /// Display escaped control characters literally. In particular ESC, OSC, CSI and bidi controls
 /// can never reach the terminal backend as active controls. Newlines and tabs retain structure.
-fn display_text(text: &str) -> String {
+pub(super) fn display_text(text: &str) -> String {
     let mut safe = String::new();
     for ch in text.chars() {
         if ch == '\n' {

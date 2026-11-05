@@ -28,6 +28,7 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 pub(crate) mod text_cursor;
+mod transcript;
 mod unread;
 mod view_handshake;
 mod whichkey;
@@ -268,6 +269,7 @@ pub struct Dashboard {
     quotas: Option<crate::protocol::QuotaSnapshot>,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
+    transcript: transcript::View,
     /// The Server's latest settings reading; `settings` is its typed half.
     settings_report: Option<Box<crate::protocol::SettingsReport>>,
     settings_editor: settings_editor::Editor,

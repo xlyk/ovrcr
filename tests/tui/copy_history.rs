@@ -1971,22 +1971,113 @@ fn history_copy_joins_soft_wrap_without_hard_newline() {
 }
 
 /// The Server's answer to History over a program on the alternate screen.
-fn alternate_screen_refusal(dashboard: &mut Dashboard, request: &ClientMessage) {
+fn alternate_screen_refusal(
+    dashboard: &mut Dashboard,
+    request: &ClientMessage,
+) -> Vec<ClientMessage> {
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Error {
             code: ErrorCode::Conflict,
             message: "History is unavailable on the alternate screen".into(),
         },
-    });
+    })
 }
 
 #[test]
-fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel() {
-    // PageUp: a muted line that names the session, not a red error.
+fn full_screen_page_up_opens_a_read_only_transcript_and_escape_closes_it() {
     let mut dashboard = copy_ready();
     let begin = history_begin(&mut dashboard);
-    alternate_screen_refusal(&mut dashboard, &begin);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    let request_id = request.request_id;
+    let Request::Transcript {
+        session,
+        run,
+        identity,
+        before,
+    } = request.request
+    else {
+        panic!("expected Transcript request: {:?}", request.request);
+    };
+    assert_eq!(session, SessionId(1));
+    assert_eq!(run, ovrcr::protocol::SessionRunId(1));
+    assert!(identity.is_none());
+    assert!(before.is_none());
+    assert!(!matches!(
+        dashboard.key(KeyCode::Char('x')),
+        DashboardAction::PtyBytes(_)
+    ));
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("must stay in the Dashboard".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    dashboard.ctrl('o');
+    let loading = draw_text(&dashboard, 120, 40);
+    assert!(loading.contains("Loading transcript"), "{loading}");
+    assert!(
+        !loading.contains("Quick message"),
+        "Ctrl-o escaped the modal: {loading}"
+    );
+    let identity =
+        ovrcr::protocol::ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: "conversation-1".into(),
+            executable: "/claude".into(),
+            history: "/history.jsonl".into(),
+            config_dir: "/config".into(),
+            options: Vec::new(),
+        });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![
+                ovrcr::protocol::TranscriptEntry::User("fix the redirect".into()),
+                ovrcr::protocol::TranscriptEntry::Assistant(
+                    "Reading the auth handler.\u{1b}]2;title\u{7}".into(),
+                ),
+                ovrcr::protocol::TranscriptEntry::Tool {
+                    name: "Bash".into(),
+                    input: "rg redirect src".into(),
+                },
+            ],
+            start: 0,
+            identity,
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    for text in [
+        "Transcript",
+        "fix the redirect",
+        "Reading the auth handler",
+        "Bash",
+        "\\u{1b}",
+    ] {
+        assert!(screen.contains(text), "missing {text}: {screen}");
+    }
+    assert!(
+        !screen.contains("title\u{7}"),
+        "terminal controls must be escaped"
+    );
+    dashboard.key(KeyCode::Esc);
+    assert!(!draw_text(&dashboard, 120, 40).contains("Transcript"));
+
+    // Without a provider transcript PageUp retains its muted explanation.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "History is unavailable on the alternate screen".into(),
+        },
+    });
+    let request = only_request(request);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "no transcript for this session".into(),
+        },
+    });
     let message = "History isn't available while review is full-screen";
     assert_eq!(footer(&dashboard, 120, 40), message);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -2003,7 +2094,7 @@ fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel(
         assert!(!screen.contains(absent), "{absent}: {screen}");
     }
 
-    // A wheel tick asked for nothing in particular: no banner at all, and History stays closed.
+    // Wheel-up on the pane requests the same read-only transcript at the newest page.
     let mut dashboard = copy_ready();
     let area = Rect::new(0, 0, 88, 38);
     let pane = focused_terminal(&dashboard, area);
@@ -2020,15 +2111,125 @@ fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel(
     ));
     let before = footer(&dashboard, 120, 40);
     assert!(before.starts_with("BROWSE"), "{before}");
-    alternate_screen_refusal(&mut dashboard, &begin);
-    assert_eq!(footer(&dashboard, 120, 40), before);
-    assert!(!draw_text(&dashboard, 120, 40).contains("HISTORY"));
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "wheel transcript".into(),
+            )],
+            start: 0,
+            identity: ovrcr::protocol::ConversationReference::Claude(
+                ovrcr::protocol::ClaudeConversation {
+                    conversation: "conversation-1".into(),
+                    executable: "/claude".into(),
+                    history: "/history.jsonl".into(),
+                    config_dir: "/config".into(),
+                    options: Vec::new(),
+                },
+            ),
+        }),
+    });
+    assert!(draw_text(&dashboard, 120, 40).contains("wheel transcript"));
 
-    // A begin cancelled by Copy stays silent too, and Copy keeps the keys.
+    // A later page uses the exact reference returned by the opening page. If the
+    // conversation changes inside one run, the view keeps its original entries.
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    let identity =
+        ovrcr::protocol::ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: "conversation-a".into(),
+            executable: "/claude".into(),
+            history: "/history.jsonl".into(),
+            config_dir: "/config".into(),
+            options: Vec::new(),
+        });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: (0..80)
+                .map(|index| ovrcr::protocol::TranscriptEntry::User(format!("entry-{index}")))
+                .collect(),
+            start: 42,
+            identity: identity.clone(),
+        }),
+    });
+    dashboard.key(KeyCode::Home);
+    let request = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        request.request,
+        Request::Transcript {
+            session: SessionId(1),
+            run: ovrcr::protocol::SessionRunId(1),
+            identity: Some(ref current),
+            before: Some(42),
+        } if current == &identity
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "wrong conversation".into(),
+            )],
+            start: 0,
+            identity: ovrcr::protocol::ConversationReference::Claude(
+                ovrcr::protocol::ClaudeConversation {
+                    conversation: "conversation-b".into(),
+                    executable: "/claude".into(),
+                    history: "/history.jsonl".into(),
+                    config_dir: "/config".into(),
+                    options: Vec::new(),
+                },
+            ),
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(
+        screen.contains("entry-0"),
+        "original page was lost: {screen}"
+    );
+    assert!(screen.contains("This conversation changed"), "{screen}");
+    assert!(!screen.contains("wrong conversation"), "{screen}");
+    let mut changed = fixture_hierarchy()
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|summary| summary.id == SessionId(1))
+        .unwrap();
+    changed.run = ovrcr::protocol::SessionRunId(2);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        changed,
+    ))));
+    assert!(!draw_text(&dashboard, 120, 40).contains("Transcript"));
+
+    // If no transcript exists, wheel-up remains quiet.
+    let mut dashboard = copy_ready();
+    let area = Rect::new(0, 0, 88, 38);
+    let pane = focused_terminal(&dashboard, area);
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::ScrollUp, pane.x + 2, pane.y + 2),
+        area,
+    );
+    let begin = only_request(dashboard.drain_outbox());
+    let before = footer(&dashboard, 120, 40);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "no transcript for this session".into(),
+        },
+    });
+    assert_eq!(footer(&dashboard, 120, 40), before);
+    assert!(!draw_text(&dashboard, 120, 40).contains("Transcript"));
+
+    // A begin cancelled by Copy stays silent and Copy keeps the keys.
     let mut dashboard = copy_ready();
     let begin = history_begin(&mut dashboard);
     dashboard.key(KeyCode::Char('['));
-    alternate_screen_refusal(&mut dashboard, &begin);
+    assert!(alternate_screen_refusal(&mut dashboard, &begin).is_empty());
     assert!(footer(&dashboard, 120, 40).starts_with("COPY"));
 
     // Any other History failure is still an error.
@@ -2044,6 +2245,236 @@ fn history_over_a_full_screen_program_explains_on_page_up_and_is_quiet_on_wheel(
     assert_eq!(
         footer(&dashboard, 120, 40),
         "ERROR: history snapshot id overflow"
+    );
+}
+
+#[test]
+fn transcript_escape_cancels_a_pending_open_without_leaving_an_empty_modal() {
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+
+    dashboard.key(KeyCode::Esc);
+    assert!(!draw_text(&dashboard, 120, 40).contains("Transcript"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "late response after close".into(),
+            )],
+            start: 0,
+            identity: ovrcr::protocol::ConversationReference::Claude(
+                ovrcr::protocol::ClaudeConversation {
+                    conversation: "conversation-1".into(),
+                    executable: "/claude".into(),
+                    history: "/history.jsonl".into(),
+                    config_dir: "/config".into(),
+                    options: Vec::new(),
+                },
+            ),
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(
+        !screen.contains("Transcript"),
+        "stale open remained: {screen}"
+    );
+    assert!(
+        !screen.contains("late response after close"),
+        "stale page rendered: {screen}"
+    );
+}
+
+#[test]
+fn transcript_end_supersedes_an_older_page_request_and_reloads_latest() {
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    let identity =
+        ovrcr::protocol::ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: "conversation-1".into(),
+            executable: "/claude".into(),
+            history: "/history.jsonl".into(),
+            config_dir: "/config".into(),
+            options: Vec::new(),
+        });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: (0..80)
+                .map(|index| ovrcr::protocol::TranscriptEntry::User(format!("entry-{index}")))
+                .collect(),
+            start: 42,
+            identity: identity.clone(),
+        }),
+    });
+
+    dashboard.key(KeyCode::Home);
+    let older = only_request(dashboard.drain_outbox());
+    dashboard.key(KeyCode::End);
+    let newest = only_request(dashboard.drain_outbox());
+    assert_ne!(older.request_id, newest.request_id);
+    assert!(matches!(
+        newest.request,
+        Request::Transcript {
+            session: SessionId(1),
+            run: ovrcr::protocol::SessionRunId(1),
+            identity: None,
+            before: None,
+        }
+    ));
+
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: older.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "superseded older page".into(),
+            )],
+            start: 0,
+            identity: identity.clone(),
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(
+        screen.contains("entry-79"),
+        "current tail was lost: {screen}"
+    );
+    assert!(
+        !screen.contains("superseded older page"),
+        "stale page appended: {screen}"
+    );
+
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: newest.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "newest messages".into(),
+            )],
+            start: 0,
+            identity,
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(
+        screen.contains("newest messages"),
+        "tail was not reloaded: {screen}"
+    );
+    assert!(
+        !screen.contains("entry-0"),
+        "End should replace older content: {screen}"
+    );
+}
+
+#[test]
+fn transcript_window_stays_bounded_while_loading_older_and_end_reloads_latest() {
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    let identity =
+        ovrcr::protocol::ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: "conversation-1".into(),
+            executable: "/claude".into(),
+            history: "/history.jsonl".into(),
+            config_dir: "/config".into(),
+            options: Vec::new(),
+        });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: (0..9_000)
+                .map(|index| ovrcr::protocol::TranscriptEntry::User(format!("message-{index}")))
+                .collect(),
+            start: 42,
+            identity: identity.clone(),
+        }),
+    });
+    dashboard.key(KeyCode::Home);
+    let older = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        older.request,
+        Request::Transcript {
+            identity: Some(_),
+            before: Some(42),
+            ..
+        }
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: older.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: (0..9_000)
+                .map(|index| ovrcr::protocol::TranscriptEntry::User(format!("older-{index}")))
+                .collect(),
+            start: 21,
+            identity: identity.clone(),
+        }),
+    });
+
+    dashboard.key(KeyCode::Home);
+    let earlier = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        earlier.request,
+        Request::Transcript {
+            identity: Some(_),
+            before: Some(21),
+            ..
+        }
+    ));
+    assert!(draw_text(&dashboard, 120, 40).contains("Bounded window"));
+
+    dashboard.key(KeyCode::End);
+    let request = only_request(dashboard.drain_outbox());
+    assert_ne!(earlier.request_id, request.request_id);
+    assert!(matches!(
+        request.request,
+        Request::Transcript {
+            session: SessionId(1),
+            run: ovrcr::protocol::SessionRunId(1),
+            identity: None,
+            before: None,
+        }
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::User(
+                "newest messages".into(),
+            )],
+            start: 0,
+            identity,
+        }),
+    });
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(screen.contains("newest messages"), "{screen}");
+    assert!(!screen.contains("Bounded window"), "{screen}");
+}
+
+#[test]
+fn transcript_render_scrolls_to_true_tail_beyond_u16_rows() {
+    let mut dashboard = copy_ready();
+    let begin = history_begin(&mut dashboard);
+    let request = only_request(alternate_screen_refusal(&mut dashboard, &begin));
+    let identity =
+        ovrcr::protocol::ConversationReference::Claude(ovrcr::protocol::ClaudeConversation {
+            conversation: "conversation-1".into(),
+            executable: "/claude".into(),
+            history: "/history.jsonl".into(),
+            config_dir: "/config".into(),
+            options: Vec::new(),
+        });
+    let transcript = format!("{}\ntranscript-tail-marker", "line\n".repeat(70_000));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Transcript(ovrcr::protocol::TranscriptPage {
+            entries: vec![ovrcr::protocol::TranscriptEntry::Assistant(transcript)],
+            start: 0,
+            identity,
+        }),
+    });
+
+    let screen = draw_text(&dashboard, 120, 40);
+    assert!(
+        screen.contains("transcript-tail-marker"),
+        "tail clipped: {screen}"
     );
 }
 
