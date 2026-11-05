@@ -691,7 +691,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
     }
     if !dashboard.operator.visible {
-        dashboard.draw_start_screen(frame);
+        dashboard.draw_start_screen(frame, now_unix_ms);
     }
     dashboard.draw_operator(frame, now_unix_ms);
     dashboard.draw_palette(frame);
@@ -700,65 +700,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_operator_quick_message(frame);
 }
 
-impl Dashboard {
-    fn draw_start_screen(&self, frame: &mut Frame<'_>) {
-        if self.mode != InputMode::Browse || self.focused_session().is_some() {
-            return;
-        }
-        let Some(rect) = self
-            .pane_rects(frame.area())
-            .into_iter()
-            .find(|r| r.pane_index == self.focused_pane)
-        else {
-            return;
-        };
-        let groups = super::keymap::keymap(self);
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
-        let mut lines = Vec::new();
-        if self.hierarchy.projects.is_empty() {
-            lines.push(Line::from("Welcome to OVRCR"));
-            lines.push(Line::from(""));
-            for key in ["a", ":", "?"] {
-                if let Some(hint) = hints.iter().find(|h| h.key == key) {
-                    lines.push(Line::from(format!("{}  {}", hint.key, hint.name)));
-                    lines.push(Line::from(hint.description.clone()));
-                }
-            }
-            lines.push(Line::from(""));
-            let (config, socket) = self
-                .configuration_paths
-                .as_ref()
-                .map(|(c, s)| (c.display().to_string(), s.display().to_string()))
-                .unwrap_or_else(|| ("not supplied".into(), "not supplied".into()));
-            lines.push(Line::from(format!("Home: {config}")));
-            lines.push(Line::from(format!("Socket: {socket}")));
-        } else if let Some(super::TreeRow::Workspace { project, id }) = &self.selected_container
-            && let Some(workspace) = find_workspace(self, project, id)
-        {
-            if let Some(warning) = &workspace.warning {
-                lines.push(Line::from(workspace_heading(self, workspace)));
-                lines.push(Line::from(warning.clone()));
-            } else if workspace.sessions.is_empty()
-                && let Some(hint) = hints.iter().find(|h| h.key == "n")
-            {
-                lines.push(Line::from(format!(
-                    "{}: press {} to start a terminal here",
-                    workspace_heading(self, workspace),
-                    hint.key
-                )));
-                lines.push(Line::from(hint.description.clone()));
-            }
-        }
-        frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(ratatui::widgets::Wrap { trim: false })
-                .style(Style::default().fg(TEXT())),
-            rect.terminal,
-        );
-    }
-}
-
-fn clipped_session_title(
+pub(super) fn clipped_session_title(
     dashboard: &Dashboard,
     session: &crate::session::SessionSummary,
     width: usize,
@@ -1296,11 +1238,7 @@ fn tree_line_text(
                 );
             }
             if session.name == "local" && session.display_name() == "local" {
-                // A shell is quiet unless a hook reports real activity inside it.
-                let (glyph, glyph_color) = match (status.glyph, status.color) {
-                    ('-' | ' ', _) => ('$', SUBTEXT()),
-                    reported => reported,
-                };
+                let (glyph, glyph_color) = shell_glyph(&status);
                 let subtext = Style::default().fg(SUBTEXT());
                 (
                     vec![
@@ -1539,9 +1477,18 @@ fn harness_agent_name(session: &SessionSummary) -> Option<&str> {
     }
 }
 
+/// A local shell is quiet unless a hook reports real activity inside it: `$` stands in for
+/// the blank or unknown glyph. The sidebar row and the workspace card both draw it.
+pub(super) fn shell_glyph(status: &SessionStatus) -> (char, Color) {
+    match status.glyph {
+        '-' | ' ' => ('$', SUBTEXT()),
+        glyph => (glyph, status.color),
+    }
+}
+
 /// The agent name and its `:model` suffix (empty when no model is known), or `None`
 /// for a quiet local shell or a session without an agent label.
-fn sidebar_agent_label(session: &SessionSummary) -> Option<(String, String)> {
+pub(super) fn sidebar_agent_label(session: &SessionSummary) -> Option<(String, String)> {
     let agent = harness_agent_name(session)?;
     let reported = session
         .agent

@@ -113,7 +113,7 @@ impl Dashboard {
 }
 
 /// ` ? 1 needs input · ✓ 2 ready`, in jump order, or only the counts when the words do not fit.
-fn attention_line(input: usize, ready: usize, width: usize) -> Line<'static> {
+pub(super) fn attention_line(input: usize, ready: usize, width: usize) -> Line<'static> {
     let line = |words: bool| {
         let mut spans = vec![Span::raw(" ")];
         for (count, glyph, color, label) in [

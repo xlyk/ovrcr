@@ -1,6 +1,7 @@
 mod agents;
 mod assignment_control;
 mod attention;
+mod cards;
 mod copy;
 mod desktop;
 mod event_loop;

@@ -56,7 +56,7 @@ that, run a second isolated `ovrcr` Dashboard in a fixture shell after
 Select `consigint / gui-consigint-auth-handoff / local`, then press Return to enter terminal mode. Paste this command through the GUI and press Return:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' INPUT_OK
+printf 'CUA_%s\n' INPUT_OK
 ```
 
 Confirm a separate output line containing `CUA_INPUT_OK`; the echoed command alone is insufficient. Inspect both the screenshot and accessibility text for readable rows, correct selection, and overlapping or clipped content. Resize the window and check the layout again. `Ctrl-g` returns to browse mode; `j`/`k` select sessions and Return resumes terminal input.
@@ -64,7 +64,7 @@ Confirm a separate output line containing `CUA_INPUT_OK`; the echoed command alo
 Check Unicode in the same shell:
 
 ```sh
-rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
+printf '\033[31mRED 界🙂 END\033[0m\n'
 ```
 
 Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, Enter (keeps the suggested session in the new pane), then Enter again to type, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
@@ -73,8 +73,8 @@ Check modified, composed, and dead keys in the same shell. Put the PTY in raw
 mode so the line editor cannot consume the escapes:
 
 ```sh
-rtk proxy stty -icanon -echo min 1
-rtk proxy cat -v
+stty -icanon -echo min 1
+cat -v
 ```
 
 Press Ctrl-Left, Shift-Enter, Alt-Backspace, and Option-b. Confirm `^[[1;5D`,
@@ -93,7 +93,7 @@ either the composition is correct for this helper or `option_as_alt` must be set
 Press Ctrl-C, then restore the shell:
 
 ```sh
-rtk proxy stty sane
+stty sane
 ```
 
 At the restored prompt, select a CJK input method and type a composition (with
@@ -130,7 +130,13 @@ terminal-close confirmation, cancelling both; confirm lowercase `x` in `Space t`
 `Space w` and `Space p` does nothing. Open tasks with `Ctrl-t`, press
 `n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
 Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
-confirm `Space` shows only their applicable groups. Resize the window and scroll to
+confirm `Space` shows only their applicable groups. The pane must show a card,
+never a blank screen: the project card lists the repository path and each
+workspace with its session count; with a workspace selected the pane header
+names `project / branch` and the card shows the `~` path, its sessions with
+status, title, agent and state, and the next keys. Narrow the window to 80
+columns and confirm each session row still ends with its state and age. With a workspace selected, press `j` and confirm it opens the session the
+card's `j open …` line names. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
 Confirm the Space group list holds only the groups, Register project and Detach,
 with no notification or sound toggles.
@@ -151,7 +157,7 @@ Press Space then `w` then `n`; confirm the key popup closes and the terminal for
 On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' N_SHELL_OK
+printf 'CUA_%s\n' N_SHELL_OK
 ```
 
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
@@ -169,7 +175,7 @@ single new terminal is selected
 in terminal mode under `feature/cua-workspace`. Paste and execute:
 
 ```sh
-rtk proxy printf 'CUA_%s\n' W_SHELL_OK
+printf 'CUA_%s\n' W_SHELL_OK
 ```
 
 Confirm a separate `CUA_W_SHELL_OK` output line. Run `pwd` and confirm it ends in
@@ -180,11 +186,21 @@ process group with the other fixture processes before cleanup. Return to
 
 Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Press Tab once more: focus moves to Name instead of descending into the checkout. Escape without submitting if this run should not register a project; otherwise one Enter registers it.
 
+For the first run, start a second Dashboard with its own empty `OVRCR_HOME` and
+`OVRCR_SOCKET` in a fixture shell, as `nested-ladder.sh` does. Confirm the
+welcome card shows `1  a  Register a repository`, `2  w  Start an agent in a new
+workspace` and `Space actions · : commands · ? keys`, and no Home or Socket
+path. Press `Space v e` and confirm `Home:` and `Socket:` head the Events list
+and name that fixture's directories. Escape, register a disposable repository
+with `a`, and confirm the pane then shows its project card leading with
+`Next: press w to start your first agent`.
+
 ### Workspace launch and titles
 
 In the disposable fixture, also verify:
 
-1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions.
+1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions,
+   and that its card says `No sessions yet` and offers `n new agent or terminal here`.
 2. Create a workspace with Terminal and a custom command that prints a unique
    marker and waits for input. Confirm exactly one session and its actual output.
 3. In that session emit `printf '\033]2;CUA title 界\007'` followed by a unique
@@ -208,17 +224,17 @@ In the disposable fixture, also verify:
    execution marker. An older capture without this acknowledgement is not
    evidence for the current recovery policy.
 9. Select the `feature/cua-workspace` session created above, then run
-   `rtk proxy git checkout -b cua-switched`. Confirm the workspace row becomes
+   `git checkout -b cua-switched`. Confirm the workspace row becomes
    `cua-switched` without replacing that session. Paste a unique printf in the
    same shell and confirm its output. The old branch label must not remain as
    that workspace's name.
 10. Select consigint's root workspace (`main` with the root marker). From there,
     `w` then `X` must be unavailable (`repository-root workspace cannot be
-    removed`). In its `local` shell, run `rtk proxy git checkout -b cua-root-drift`.
+    removed`). In its `local` shell, run `git checkout -b cua-root-drift`.
     Confirm the root warning, that `n` is unavailable (`root workspace is not on
     the default branch`), and that the existing shell still accepts a unique
     printf. Repeat the removal check while drifted. Restore with
-    `rtk proxy git checkout main`, confirm `n` is available again, and leave
+    `git checkout main`, confirm `n` is available again, and leave
     the root on `main`.
 11. Press `w`, keep Branch mode `new` and name an existing branch (for example
     `feature/cua-workspace` again). Confirm the form returns with the typed values
@@ -319,11 +335,11 @@ the form and menu checks in a short window to exercise scrolling and clipping.
 
 1. Open the action menu with its visible control and open a second terminal pane;
    press Return in the chooser that opens to keep the suggested session.
-   Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
-   `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
+   Click each pane and run `printf 'MOUSE_%s\n' LEFT_OK` or
+   `printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.
 2. Drag the sidebar border and confirm the pane narrows and widens with it.
-   Drag the divider left and right. In each pane run `rtk proxy stty size` and
+   Drag the divider left and right. In each pane run `stty size` and
    compare the reported columns with the drawn terminal width. Make the window
    too narrow for both panes, widen it again, and confirm assignments and the
    chosen split survive. Release the drag outside the terminal and confirm the
@@ -369,8 +385,8 @@ Computer-use tools often cannot hold a mouse button across Ctrl-g. Skip that ges
 First inspect each inherited path separately; macOS `printenv` accepts one name:
 
 ```sh
-rtk proxy printenv OVRCR_CONFIG
-rtk proxy printenv OVRCR_SOCKET
+printenv OVRCR_CONFIG
+printenv OVRCR_SOCKET
 ```
 
 Confirm both paths belong to this launch's disposable directory, ending in `config.toml` and `server.sock`. Stop if either is missing or points elsewhere. Do not try a config-only CLI command: config selection does not select the server socket.
@@ -379,13 +395,13 @@ In that same shell, replace the binary path below with this checkout's absolute 
 
 ```sh
 c=/absolute/checkout/target/debug/ovrcr
-rtk proxy "$c" project get consigint --json
-rtk proxy "$c" workspace get --project consigint --branch gui-consigint-auth-handoff --json
-rtk proxy "$c" terminal list --json
-t=$(rtk proxy "$c" terminal create --project consigint --workspace gui-consigint-auth-handoff --name cua-check -- /bin/sh)
-rtk proxy "$c" terminal list --json
-rtk proxy "$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
-rtk proxy "$c" terminal read "$t" --json
+"$c" project get consigint --json
+"$c" workspace get --project consigint --branch gui-consigint-auth-handoff --json
+"$c" terminal list --json
+t=$("$c" terminal create --project consigint --workspace gui-consigint-auth-handoff --name cua-check -- /bin/sh)
+"$c" terminal list --json
+"$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
+"$c" terminal read "$t" --json
 ```
 
 Confirm the new sidebar row and `CUA_BACKGROUND_OK` in the read result. The original terminal must remain selected. If output has not arrived, read again after observing progress. Reads contain the current screen only.
@@ -395,7 +411,7 @@ Use `Ctrl-g`, select `cua-check`, and press Return. Confirm the marker in its vi
 Return to the original `local` shell, where `$c` and `$t` are still set:
 
 ```sh
-rtk proxy "$c" terminal close "$t" --json
+"$c" terminal close "$t" --json
 ```
 
 Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell can take several seconds.

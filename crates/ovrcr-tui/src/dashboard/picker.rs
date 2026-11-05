@@ -371,7 +371,7 @@ pub(crate) fn expand_path(input: &str) -> PathBuf {
     }
 }
 
-fn display_path(path: &Path) -> String {
+pub(super) fn display_path(path: &Path) -> String {
     let home = home_dir();
     if path == home {
         "~".into()

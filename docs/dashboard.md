@@ -856,11 +856,47 @@ restored. It does not switch Git.
 
 ## Empty states
 
-With no project registered, the dashboard shows `Welcome to OVRCR`, the `a`, `:`,
-and `?` shortcuts, and the resolved config and socket paths. Clicking an empty
-workspace shows how to start a terminal there and prefills that workspace in the
-terminal form. A root-workspace warning disables `n` and other new launches
-there; existing sessions stay usable. OVRCR does not switch the checkout.
+A pane with no session shows a card instead of a blank screen. Cards only
+display the hierarchy the Dashboard already has; they send no request and do
+not change which keys work or what input a pane accepts. Every key a card
+names comes from the same key table as the footer and the menu.
+
+- **No project registered:** `Welcome to OVRCR` with two numbered steps,
+  `1  a  Register a repository` and `2  w  Start an agent in a new workspace`,
+  then `Space actions · : commands · ? keys`. The instance directory and
+  socket paths are at the top of [Events](#events).
+- **Workspace row selected:** the pane header names `project / branch`; the
+  card shows its path with `~` for your home directory (and `· root` on the
+  repository-root workspace), any root warning, and its sessions in sidebar
+  order: status glyph, title, `agent:model`, the header's state words
+  (`Working`, `Ready · unread reply`, `Waiting for input`, …; a plain shell has
+  none) and elapsed time. Then
+  the next steps: `j open <session>` while the row below is that workspace's
+  first session (`j` selects the next row), `Enter expand…` when the workspace
+  is collapsed, `n new agent or terminal here`, `w new workspace` and
+  `Space w more`. A key that is unavailable there is left out; a root warning
+  removes `n`, because new launches are blocked until the checkout is back on
+  the default branch. Existing sessions stay usable; OVRCR does not switch the
+  checkout. `n` prefills that workspace in the terminal form.
+- **Project row selected:** the pane header names the project; the card shows
+  its repository path, its workspace root (read from where its worktrees are,
+  so it appears once the project has one), and each workspace with its session
+  count and attention in the sidebar strip's words and order:
+  `? 1 needs input` for a running agent waiting on you, `✓ 1 ready` for an
+  Unread reply. Then
+  `w new workspace` and `a register another project`. While the project has no
+  agent yet, the card leads with `Next: press w to start your first agent`.
+- **Nothing selected,** for example right after registering a project: every
+  project's card, each led by its name, then the same two keys.
+
+A card fits its pane. In a narrow pane the model label goes first, then the
+agent, and titles and branch names end in `…`, so each row keeps its state
+and elapsed time. When rows run out, the list ends with `+N more` and the next
+steps stay. In a split the pane header says only `no session`, so the card in
+the emptied pane names the project or workspace itself; `j` opens the session
+in the focused pane, and the emptied pane then shows the projects.
+
+Enter on a project or workspace row still collapses or expands it.
 
 ## Dashboard settings
 
@@ -1087,7 +1123,10 @@ panel as Quota details. It lists the Server's event ring, oldest first and
 newest last. Opening it asks the Server for that ring. The Dashboard does not
 read `events.jsonl`, and this view does not change the file.
 
-Each line is the local time, the component (`titles`, `settings`, or `quota`),
+The list starts with the Dashboard's instance directory (`Home:`) and Server
+socket (`Socket:`), with `~` for your home directory. They scroll with the
+list; the Home key brings them back. Each event line is the local time, the
+component (`titles`, `settings`, or `quota`),
 the subject when there is one, and the message. While the popup is open, an
 event the Server records is appended. Events recorded while it is closed appear
 the next time it opens. The list opens on the newest line and stays there until

@@ -378,11 +378,18 @@ fn empty_hierarchy_shows_start_screen() {
     let dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
     let text = palette_text(&dashboard);
     assert!(text.contains("Welcome to OVRCR"));
-    assert!(text.contains("a  Register project"));
-    assert!(text.contains(":  Commands"));
-    assert!(text.contains("?  Help"));
-    assert!(text.contains("Home:"));
-    assert!(text.contains("Socket:"));
+    assert!(text.contains("1  a  Register a repository"), "{text}");
+    assert!(
+        text.contains("2  w  Start an agent in a new workspace"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Space actions · : commands · ? keys"),
+        "{text}"
+    );
+    // The instance paths moved to the Events list.
+    assert!(!text.contains("Home:"), "{text}");
+    assert!(!text.contains("Socket:"), "{text}");
 }
 
 #[test]
@@ -722,7 +729,13 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(palette_text(&dashboard).contains("press n to start a terminal here"));
+    let card = palette_text(&dashboard);
+    assert!(card.contains("spacelift-agent / empty"), "{card}");
+    assert!(card.contains("No sessions yet"), "{card}");
+    assert!(
+        card.contains("n        new agent or terminal here"),
+        "{card}"
+    );
     dashboard.key(KeyCode::Char('n'));
     assert!(palette_text(&dashboard).contains("spacelift-agent / empty"));
 }
@@ -3002,10 +3015,12 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         );
         assert!(outgoing.iter().any(|m| matches!(&m.request, Request::SetView { view } if view.focused.is_none() && view.panes.is_empty())));
         let text = palette_text(&dashboard);
+        assert!(text.contains("consigint / feature/pick-demo"), "{text}");
         assert!(
-            text.contains("consigint / feature/pick-demo: press n to start a terminal here"),
+            text.contains("n        new agent or terminal here"),
             "{text}"
         );
+        assert!(text.contains("No sessions yet"), "{text}");
         assert!(!text.contains("┌ Create workspace"), "{text}");
         dashboard.key(KeyCode::Char('n'));
         assert!(palette_text(&dashboard).contains("consigint / feature/pick-demo"));
@@ -4801,12 +4816,22 @@ fn workspace_selection_and_fold_survive_branch_relabel() {
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy,
     )));
-    let text = rendered_rows(&dashboard, 88, 38).join("\n");
+    let rows = rendered_rows(&dashboard, 88, 38);
+    let text = rows.join("\n");
     assert!(text.contains("feature/auth-renamed"), "{text}");
     assert!(text.contains("▸"), "{text}");
+    // The fold belongs to the sidebar; the selected workspace's card in the pane
+    // still lists what is inside it.
+    assert!(text.contains("consigint / feature/auth-renamed"), "{text}");
+    let pane_x = dashboard.pane_rects(Rect::new(0, 0, 88, 38))[0].terminal.x;
+    let sidebar = rows
+        .iter()
+        .map(|row| row.chars().take(usize::from(pane_x)).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        !text.contains("review"),
-        "folded workspace must keep sessions hidden: {text}"
+        !sidebar.contains("review"),
+        "folded workspace must keep sessions hidden: {sidebar}"
     );
 }
 
