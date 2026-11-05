@@ -627,15 +627,15 @@ session immediately.
 
 With Start = Agent the form also shows **Task**, and opens on it. A task names
 the session when Name is blank (one line, at most 60 characters) and, for agents
-whose CLI takes a first message, starts the agent with it: the managed argv ends
+whose CLI takes a first message, starts the agent with it: the launch arguments end
 with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
 `codex`, `pi`, `omp` and `grok`. Hermes (`-z` is one-shot only), Cursor (a
 prompt turns its reporting off) and other agents start without it; the footer
 says which applies (`Names the session; claude gets it as its first message`,
 `Only names the session; hermes starts without it`). The task is one-off: it is
-never part of the remembered launch choice, and Reopen, resume and server-restart
-recovery never send it again (every recovery parser stops at `--`). Only Retry of
-a launch that never started sends it once more. `n` and other new launches are unavailable when the selected
+never part of the remembered launch choice, and Retry, Reopen, resume and
+server-restart recovery never send it again (recovery keeps only provider launch
+options before `--`). `n` and other new launches are unavailable when the selected
 root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi

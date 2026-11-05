@@ -1181,7 +1181,7 @@ fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
             .to_owned()
     };
     assert!(title(&dashboard).contains("Start: Agent (fixture-a)"));
-    dashboard.key(KeyCode::BackTab); // Start; the form opened on Task
+    dashboard.key(KeyCode::Tab); // Start follows Task
     // No Tab or Enter: the arrow is the choice, and the form follows it.
     dashboard.key(KeyCode::Down);
     assert!(
@@ -5173,7 +5173,7 @@ fn task_agents(dashboard: &mut Dashboard) -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let mut agents = Vec::new();
-    for name in ["claude", "hermes"] {
+    for name in ["claude", "codex", "hermes"] {
         let path = dir.path().join(name);
         std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -5356,6 +5356,7 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
     // Start = Agent (remembered claude): the form opens on Task.
     dashboard.event_action(Event::Paste("Write the release notes".into()));
     let words = palette_words(&dashboard);
+    assert_in_order(&words, &["Task", "Start", "Workspace"]);
     assert!(
         words.contains("Names the session; claude gets it as its first message"),
         "{words}"
@@ -5382,12 +5383,12 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
     let mut dashboard = dashboard_fixture();
     let agents = task_agents(&mut dashboard);
     dashboard.key(KeyCode::Char('n'));
-    for _ in 0..3 {
-        dashboard.key(KeyCode::Tab); // Workspace, Name, Agent
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Tab); // Start, Workspace, Name, Agent
     }
     dashboard.event_action(Event::Paste("hermes".into()));
-    for _ in 0..3 {
-        dashboard.key(KeyCode::BackTab); // Name, Workspace, Task
+    for _ in 0..4 {
+        dashboard.key(KeyCode::BackTab); // Name, Workspace, Start, Task
     }
     dashboard.event_action(Event::Paste("Tidy the docs".into()));
     let words = palette_words(&dashboard);
@@ -5396,6 +5397,7 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
         "{words}"
     );
     // A typed Name wins over the task.
+    dashboard.key(KeyCode::Tab); // Start
     dashboard.key(KeyCode::Tab); // Workspace
     dashboard.key(KeyCode::Tab); // Name
     dashboard.event_action(Event::Paste("docs".into()));
@@ -5414,14 +5416,14 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
     let mut dashboard = dashboard_fixture();
     task_agents(&mut dashboard);
     dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::BackTab); // Start
+    dashboard.key(KeyCode::Tab); // Start follows Task
     dashboard.key(KeyCode::Down); // Terminal
     let words = palette_words(&dashboard);
     assert!(!words.contains("Task"), "{words}");
 }
 
 #[test]
-fn a_task_session_that_fails_to_start_offers_recovery_and_retry_resends_it() {
+fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
     use ovrcr::protocol::LifecycleOutcome;
     let mut dashboard = dashboard_fixture();
     let agents = task_agents(&mut dashboard);
@@ -5438,6 +5440,17 @@ fn a_task_session_that_fails_to_start_offers_recovery_and_retry_resends_it() {
     publish_empty_workspace(&mut dashboard, &id);
     let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
     let first = only_request(outgoing(&mut dashboard, answered));
+    let Request::CreateSession(request) = &first.request else {
+        panic!("{:?}", first.request);
+    };
+    assert_eq!(
+        request.argv,
+        vec![
+            agent_path(&agents, "claude"),
+            "--".into(),
+            "status check".into()
+        ]
+    );
     accept(&mut dashboard, &first);
     let answered = lifecycle_completed(
         &mut dashboard,
@@ -5461,10 +5474,14 @@ fn a_task_session_that_fails_to_start_offers_recovery_and_retry_resends_it() {
         words.contains("Couldn't start the session: Launch failed before a process started"),
         "{words}"
     );
-    // Retry: the launch never started, so it may carry the task again.
+    // Retry preserves the session name and launch choice, but never replays Task.
     dashboard.key(KeyCode::Enter);
     let retry = only_request(dashboard.drain_outbox());
-    assert_eq!(retry.request, first.request);
+    let Request::CreateSession(request) = &retry.request else {
+        panic!("{:?}", retry.request);
+    };
+    assert_eq!(request.name, "status check");
+    assert_eq!(request.argv, vec![agent_path(&agents, "claude")]);
     accept(&mut dashboard, &retry);
     lifecycle_completed(
         &mut dashboard,
@@ -5474,16 +5491,16 @@ fn a_task_session_that_fails_to_start_offers_recovery_and_retry_resends_it() {
             message: "still failing".into(),
         },
     );
-    // Another agent keeps the session's name; hermes does not take the task.
+    // A different verified agent also keeps the name without receiving Task.
     assert!(dashboard.drain_outbox().is_empty());
     dashboard.key(KeyCode::Down); // Choose another agent
     dashboard.key(KeyCode::Enter); // opens on Agent
-    dashboard.event_action(Event::Paste("hermes".into()));
+    dashboard.event_action(Event::Paste("codex".into()));
     dashboard.key(KeyCode::Enter);
     let other = only_request(dashboard.drain_outbox());
     let Request::CreateSession(request) = &other.request else {
         panic!("{:?}", other.request);
     };
     assert_eq!(request.name, "status check");
-    assert_eq!(request.argv, vec![agent_path(&agents, "hermes")]);
+    assert_eq!(request.argv, vec![agent_path(&agents, "codex")]);
 }

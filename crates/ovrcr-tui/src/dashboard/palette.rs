@@ -181,8 +181,6 @@ pub(super) struct Palette {
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
-    /// The submitted Task, for a retry with another agent. One-off: never remembered.
-    task: String,
     launch_project: Option<String>,
     suggestions: Suggestions,
     /// Submit was pressed while Git suggestions were still loading.
@@ -648,7 +646,6 @@ impl Palette {
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
-            task: String::new(),
             launch_project: None,
             suggestions: Suggestions::default(),
             submit_when_ready: false,
@@ -757,9 +754,9 @@ fn task_slug(task: &str) -> String {
     slug.trim_end_matches('-').to_owned()
 }
 
-/// The launch a retry resends and the choice a success remembers: the agent
-/// or Terminal, never the task.
-fn remember_launch(palette: &mut Palette, launch: CreateSessionRequest) {
+/// The recovery-safe launch and remembered choice: the agent or Terminal,
+/// never its one-off first message.
+fn remember_launch(palette: &mut Palette, launch: CreateSessionRequest, task: &str) {
     palette.launch_preference = Some((
         launch.project.clone(),
         match &launch.label {
@@ -767,6 +764,20 @@ fn remember_launch(palette: &mut Palette, launch: CreateSessionRequest) {
             None => super::settings::LaunchChoice::Terminal,
         },
     ));
+    let mut launch = launch;
+    if !task.is_empty()
+        && launch
+            .label
+            .as_deref()
+            .is_some_and(super::agents::takes_task)
+        && launch.argv.len() >= 2
+        && launch.argv[launch.argv.len() - 2] == "--"
+        && launch.argv.last().is_some_and(|arg| arg == task)
+    {
+        // Keep explicit recovery retries from retaining the one-off first message.
+        let args_without_task = launch.argv.len() - 2;
+        launch.argv.truncate(args_without_task);
+    }
     palette.failed_launch = Some(launch);
 }
 
@@ -2705,11 +2716,12 @@ impl Dashboard {
                                 .map(|f| f.value.trim().to_string())
                                 .unwrap_or_default()
                         };
-                        // One-off: kept only for this form's own retry, never remembered.
-                        if !matches!(command, Command::RecoverLaunch) {
-                            palette.task = form_task(fields);
-                        }
-                        let task = palette.task.clone();
+                        // Recovery is a new launch, never a replay of the initial message.
+                        let task = if matches!(command, Command::RecoverLaunch) {
+                            String::new()
+                        } else {
+                            form_task(fields)
+                        };
                         let mut chained = None;
                         let selected_launch = if matches!(
                             command,
@@ -3186,7 +3198,15 @@ impl Dashboard {
             _ => None,
         };
         if let Some(launch) = launch {
-            remember_launch(palette, launch);
+            let task = match &palette.page {
+                Page::Form {
+                    command: Command::RecoverLaunch,
+                    ..
+                } => String::new(),
+                Page::Form { fields, .. } => form_task(fields),
+                _ => String::new(),
+            };
+            remember_launch(palette, launch, &task);
         }
         let request_id = self.next_request_id();
         palette.pending = Some(request_id);
@@ -3219,7 +3239,11 @@ impl Dashboard {
             *launch = true;
         }
         row.then = vec![Request::CreateSession(session.clone())];
-        remember_launch(palette, session);
+        let task = match &palette.page {
+            Page::Form { fields, .. } => form_task(fields),
+            _ => String::new(),
+        };
+        remember_launch(palette, session, &task);
     }
 
     fn palette_form(&self, command: Command) -> Page {
@@ -3249,9 +3273,10 @@ impl Dashboard {
                 let mut launch = self.launch_fields(&launch_project, false);
                 let command = launch.pop().unwrap();
                 let agent = launch.pop().unwrap();
+                let start = launch.pop().unwrap();
                 vec![
-                    launch.pop().unwrap(),
                     text("Task", String::new(), false),
+                    start,
                     Field {
                         label: "Workspace",
                         value: workspace_value,
@@ -3341,6 +3366,7 @@ impl Dashboard {
         let active = fields
             .iter()
             .position(|field| field.label == "Task" && !field.hidden)
+            .or_else(|| fields.iter().position(|field| !field.hidden))
             .unwrap_or(0);
         Page::Form {
             command,
@@ -7174,6 +7200,54 @@ mod form_tests {
         }
         let slug = task_slug(&"abc ".repeat(40));
         assert!(slug.len() <= 50 && !slug.ends_with('-'), "{slug}");
+    }
+
+    #[test]
+    fn a_blank_task_retry_preserves_configured_claude_arguments_after_double_dash() {
+        let request = CreateSessionRequest {
+            project: "consigint".into(),
+            workspace: ID.into(),
+            name: "session".into(),
+            argv: vec![
+                "custom-claude".into(),
+                "--".into(),
+                "configured message".into(),
+            ],
+            label: Some("claude".into()),
+            kind: SessionKind::Agent {
+                name: "claude".into(),
+            },
+        };
+        let mut palette = Palette::new();
+        remember_launch(&mut palette, request.clone(), "");
+        assert_eq!(palette.failed_launch, Some(request.clone()));
+        palette.page = Page::Form {
+            command: Command::RecoverLaunch,
+            fields: vec![pick_field(
+                "Recovery",
+                "Retry".into(),
+                vec![PickItem {
+                    label: "Retry".into(),
+                    value: "Retry".into(),
+                }],
+            )],
+            active: 0,
+            name_edited: false,
+            root_edited: false,
+        };
+
+        let mut d = dashboard();
+        d.palette = Some(palette);
+        d.key(KeyCode::Enter);
+        let retry = d
+            .drain_outbox()
+            .into_iter()
+            .find_map(|message| match message.request {
+                Request::CreateSession(session) => Some(session),
+                _ => None,
+            })
+            .expect("Retry must submit the remembered launch");
+        assert_eq!(retry.argv, request.argv);
     }
 
     #[test]
