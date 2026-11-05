@@ -1190,6 +1190,24 @@ pub(super) fn handle_request_with_id(
             await_view_completion(receiver)
         }
         Request::Events { .. } => Response::Events(state.event_snapshot()),
+        Request::Transcript {
+            session,
+            run,
+            identity,
+            before,
+        } => {
+            let Some(owner) = owner.filter(|_| dashboard) else {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "transcript requires the current Dashboard",
+                );
+            };
+            if !state.dashboard.owns(owner) {
+                error_response(ErrorCode::Conflict, "dashboard is disconnected")
+            } else {
+                super::transcript::page(state, session, run, identity, before)
+            }
+        }
         Request::SaveWorkspaceWip { project, name } => state
             .save_workspace_wip(&project, &name)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),

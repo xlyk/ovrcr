@@ -394,6 +394,19 @@ In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Cli
 
 Computer-use tools often cannot hold a mouse button across Ctrl-g. Skip that gesture here; the TUI test `ctrl_g_releases_held_buttons_before_switching` covers it.
 
+### Full-screen agent Transcript
+
+Use a task-owned synthetic Claude/Codex conversation fixture, never a paid turn just
+to populate this check. Record its accepted conversation reference and private source
+file. With its program on the alternate screen, press PageUp and confirm Transcript
+shows the synthetic user prompt, assistant reply and tool name/input. Check wheel-up
+also opens it. Scroll with keys and the wheel, use End to reload the tail, and close
+with Esc. While loading and open, type, paste and click over the terminal: no input
+may reach the program. After closing, send a unique marker and confirm its separate
+acknowledgement. Keep source bytes unchanged, matching screenshots/AX, and the fixture
+process groups for cleanup. A plain full-screen program without a recorded supported
+conversation still gives PageUp's muted explanation and leaves wheel-up quiet.
+
 ## 4. Exercise CLI controls through the GUI
 
 First inspect each inherited path separately; macOS `printenv` accepts one name:

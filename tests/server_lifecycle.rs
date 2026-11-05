@@ -1236,8 +1236,9 @@ fn client_with_wrong_protocol_version_is_refused() {
     let fixture = Live::thread();
 
     // Both divergent integration parents and a newer client must fail before
-    // decoding any frame with their incompatible Cursor/Operator layouts.
-    for version in [68, 69, PROTOCOL_VERSION + 1] {
+    // decoding any frame with their incompatible Cursor/Operator layouts; 70 has
+    // no Transcript request.
+    for version in [68, 69, 70, PROTOCOL_VERSION + 1] {
         let mut stream = UnixStream::connect(&fixture.socket).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -20073,5 +20074,255 @@ fn iterm_setup_real_palette_denial_and_missing_identity_preserve_notification_pr
         assert!(saved.contains("desktop_notifications = false"));
         assert!(saved.contains("ready_sound = false"));
         assert!(!dashboard.record.with_extension("fallback").exists());
+    }
+}
+
+#[test]
+fn transcript_reads_only_the_retained_conversation_and_rejects_stale_pages() {
+    use ovrcr::protocol::{
+        AgentCommand, AgentOperationResult, AgentProvider, AgentSecret, ClaudeConversation,
+        CodexConversation, ConversationReference, ReserveAgent, SessionKind, SessionRunId,
+        SupervisorAuth, SupervisorRequest, TranscriptEntry,
+    };
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.ready("transcript");
+    let mut dashboard = connect_dashboard(&fixture.socket, 50);
+    dashboard.set_read_timeout(fixture.timeout()).unwrap();
+    dashboard.set_write_timeout(fixture.timeout()).unwrap();
+    let mut request_id = 100;
+    for (name, provider, conversation) in [
+        (
+            "claude",
+            AgentProvider::Claude,
+            "00000000-0000-4000-8000-000000000333",
+        ),
+        (
+            "codex",
+            AgentProvider::Codex,
+            "00000000-0000-4000-8000-000000000444",
+        ),
+    ] {
+        let token = fixture.root.path().join(format!("{name}.capability"));
+        let summary = fixture.create_session_with_kind(
+            SessionKind::Agent { name: name.into() }, name,
+            vec!["/bin/sh".into(), "-c".into(),
+                r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$1"; printf 'TRANSCRIPT_AGENT_READY\n'; while IFS= read -r line; do printf 'TRANSCRIPT_ACK:%s\n' "$line"; done"#.into(),
+                "transcript-fixture".into(), token.clone().into_os_string()],
+        );
+        fixture.record_process_group(&summary);
+        fixture.wait_terminal_contains(summary.id, "TRANSCRIPT_AGENT_READY");
+        let capability =
+            parse_hook_capability(std::fs::read_to_string(token).unwrap().trim()).unwrap();
+        let mut reporting = connect_server(&fixture.socket).unwrap();
+        reporting.set_read_timeout(fixture.timeout()).unwrap();
+        reporting.set_write_timeout(fixture.timeout()).unwrap();
+        let reservation = client::request(
+            &mut reporting,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                pi_resume: None,
+                session: summary.id,
+                capability: AgentSecret(capability),
+                operation: "transcript-reserve".into(),
+                expected_epoch: 0,
+                invocation: format!("transcript-{name}"),
+                provider,
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = reservation
+        else {
+            panic!("{reservation:?}");
+        };
+        let auth = SupervisorAuth {
+            session: summary.id,
+            lease: reservation.lease,
+        };
+        let binding = client::request(
+            &mut reporting,
+            2,
+            Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "transcript-bind".into(),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: conversation.into(),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = binding else {
+            panic!("{binding:?}");
+        };
+        let history = fixture.root.path().join(format!("{name}.jsonl"));
+        let body = if provider == AgentProvider::Claude {
+            format!(
+                "{{\"type\":\"user\",\"sessionId\":\"{conversation}\",\"message\":{{\"content\":\"synthetic prompt\"}}}}\n{{\"type\":\"assistant\",\"sessionId\":\"{conversation}\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"synthetic reply\"}}]}}}}\n"
+            )
+        } else {
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{conversation}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"synthetic prompt\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"synthetic reply\"}}}}\n"
+            )
+        };
+        std::fs::write(&history, &body).unwrap();
+        let reference = if provider == AgentProvider::Claude {
+            ConversationReference::Claude(ClaudeConversation {
+                conversation: conversation.into(),
+                executable: "/bin/sh".into(),
+                history: history.clone(),
+                config_dir: fixture.root.path().into(),
+                options: vec![],
+            })
+        } else {
+            ConversationReference::Codex(CodexConversation {
+                conversation: conversation.into(),
+                executable: "/bin/sh".into(),
+                history: Some(history.clone()),
+                config_dir: fixture.root.path().into(),
+                options: vec![],
+            })
+        };
+        assert_eq!(
+            client::request(
+                &mut reporting,
+                3,
+                Request::Supervisor(SupervisorRequest {
+                    auth: auth.clone(),
+                    operation: "transcript-retain".into(),
+                    command: AgentCommand::RetainConversation {
+                        binding: binding.clone(),
+                        reference: Box::new(reference.clone())
+                    },
+                })
+            )
+            .unwrap(),
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        );
+        assert!(matches!(
+            fixture.request(Request::Transcript {
+                session: summary.id,
+                run: summary.run,
+                identity: None,
+                before: None,
+            }),
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+        let mut read = |run, identity, before| {
+            request_id += 1;
+            dashboard_request(
+                &mut dashboard,
+                request_id,
+                Request::Transcript {
+                    session: summary.id,
+                    run,
+                    identity,
+                    before,
+                },
+            )
+        };
+        let Response::Transcript(page) = read(summary.run, None, None) else {
+            panic!("missing {name} transcript");
+        };
+        assert_eq!(page.identity, reference);
+        assert_eq!(page.start, 0);
+        assert_eq!(
+            page.entries,
+            [
+                TranscriptEntry::User("synthetic prompt".into()),
+                TranscriptEntry::Assistant("synthetic reply".into())
+            ]
+        );
+        assert!(matches!(
+            read(SessionRunId(summary.run.0 + 1), None, None),
+            Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+        assert!(matches!(
+            read(summary.run, None, Some(1)),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        let mut wrong = reference.clone();
+        match &mut wrong {
+            ConversationReference::Claude(value) => value.conversation = "other".into(),
+            ConversationReference::Codex(value) => value.conversation = "other".into(),
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            read(summary.run, Some(wrong), Some(1)),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        assert!(
+            matches!(read(summary.run, Some(reference.clone()), Some(0)), Response::Transcript(page) if page.entries.is_empty() && page.start == 0)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&history).unwrap(),
+            body,
+            "Transcript never writes provider history"
+        );
+        assert_eq!(fixture.session_summary(summary.id).run, summary.run);
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "still-live".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "TRANSCRIPT_ACK:still-live");
+        let moved = fixture.root.path().join(format!("{name}-moved.jsonl"));
+        std::fs::copy(&history, &moved).unwrap();
+        let mut replacement = reference.clone();
+        match &mut replacement {
+            ConversationReference::Claude(value) => value.history = moved.clone(),
+            ConversationReference::Codex(value) => value.history = Some(moved.clone()),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            client::request(
+                &mut reporting,
+                4,
+                Request::Supervisor(SupervisorRequest {
+                    auth,
+                    operation: "transcript-moved".into(),
+                    command: AgentCommand::RetainConversation {
+                        binding,
+                        reference: Box::new(replacement)
+                    },
+                })
+            )
+            .unwrap(),
+            Response::AgentOperation(AgentOperationResult::ConversationRetained)
+        );
+        assert!(
+            matches!(
+                read(summary.run, Some(reference), Some(1)),
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "a same-run reference change cannot splice pages"
+        );
+        std::fs::remove_file(moved).unwrap();
+        std::fs::remove_file(history).unwrap();
+        assert!(matches!(
+            read(summary.run, None, None),
+            Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
     }
 }

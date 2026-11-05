@@ -20,6 +20,7 @@ pub(super) enum Details {
     Quota,
     Settings,
     Events,
+    Transcript,
 }
 
 impl Dashboard {
@@ -38,6 +39,12 @@ impl Dashboard {
     }
 
     pub(super) fn details_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Transcript)
+        {
+            return self.transcript_key(key);
+        }
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
@@ -69,6 +76,12 @@ impl Dashboard {
     }
 
     pub(super) fn details_mouse(&mut self, mouse: MouseEvent) -> DashboardAction {
+        if self
+            .details
+            .is_some_and(|(details, _)| details == Details::Transcript)
+        {
+            return self.transcript_mouse(mouse);
+        }
         if self
             .details
             .is_some_and(|(details, _)| details == Details::Settings)
@@ -106,6 +119,9 @@ impl Dashboard {
         if details == Details::Events {
             return self.draw_events(frame);
         }
+        if details == Details::Transcript {
+            return self.draw_transcript(frame);
+        }
         let outer = frame.area();
         let width = outer.width.saturating_sub(4).min(82);
         let height = outer.height.saturating_sub(2).min(30);
@@ -122,6 +138,7 @@ impl Dashboard {
             ),
             Details::Settings => unreachable!("drawn by settings_editor"),
             Details::Events => unreachable!("drawn by events"),
+            Details::Transcript => unreachable!("drawn by transcript"),
         };
         let block = Block::bordered().title(title).style(
             Style::default()

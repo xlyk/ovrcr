@@ -572,6 +572,7 @@ impl Dashboard {
             unread: Default::default(),
             quotas: Some(QuotaSnapshot::default()),
             details: None,
+            transcript: Default::default(),
             settings_report: None,
             settings_editor: Default::default(),
             events: Default::default(),
@@ -1623,6 +1624,14 @@ impl Dashboard {
     }
 
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
+        // Transcript is a read-only modal, including while its first page is loading.
+        // Route it before the global Operator quick-message shortcut.
+        if self
+            .details
+            .is_some_and(|(details, _)| details == super::quota::Details::Transcript)
+        {
+            return self.details_key(key);
+        }
         if self.opens_operator_quick(key) {
             return if key.kind == KeyEventKind::Press {
                 self.open_operator_quick_message()
@@ -1906,20 +1915,12 @@ impl Dashboard {
     }
 
     /// History cannot freeze a program on the alternate screen, such as a full-screen agent.
-    /// A wheel tick over it asked for nothing in particular, so it does nothing; PageUp says
-    /// why in a muted line. This is the one place that decides it, which the transcript view
-    /// for full-screen agents replaces.
+    /// The read-only Transcript view can show an agent's provider-owned conversation instead.
     fn alternate_screen_history(&mut self, begin: &PendingHistoryBegin) {
-        if begin.cancelled || begin.at_tail {
+        if begin.cancelled {
             return;
         }
-        let title = find_session(self, begin.session).map_or_else(
-            || "this session".to_string(),
-            |session| self.session_display_name(session),
-        );
-        self.set_limit(format!(
-            "History isn't available while {title} is full-screen"
-        ));
+        self.open_transcript(begin.session, begin.at_tail);
     }
 
     pub(super) fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
@@ -3458,6 +3459,14 @@ impl Dashboard {
         {
             return self.drain_outbox();
         }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.transcript_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response { request_id, .. } = &message
             && self.ignored_responses.remove(request_id)
         {
@@ -3611,7 +3620,8 @@ impl Dashboard {
                 | Response::AssignedRead(_)
                 | Response::Operator(_)
                 | Response::OperatorExchange(_)
-                | Response::OperatorWorker(_) => {}
+                | Response::OperatorWorker(_)
+                | Response::Transcript(_) => {}
                 Response::HistoryOpened(opened) => {
                     self.accept_history_opened(request_id, opened);
                 }
@@ -3838,6 +3848,11 @@ impl Dashboard {
                             break;
                         }
                     }
+                    if self.transcript.session == Some(summary.id)
+                        && self.transcript.run != Some(summary.run)
+                    {
+                        self.close_transcript();
+                    }
                     // The attention strip comes and goes with sessions; keep the selection shown.
                     if tree != self.sidebar_rects(self.outer_area).tree {
                         self.ensure_selection_visible(&self.visible_rows());
@@ -4018,6 +4033,11 @@ impl Dashboard {
         self.observe_desktop_responses(&hierarchy);
         let tree = self.sidebar_rects(self.outer_area).tree;
         self.hierarchy = hierarchy;
+        if self.transcript.session.is_some_and(|id| {
+            !find_session(self, id).is_some_and(|summary| Some(summary.run) == self.transcript.run)
+        }) {
+            self.close_transcript();
+        }
         if tree != self.sidebar_rects(self.outer_area).tree {
             self.ensure_selection_visible(&self.visible_rows());
         }

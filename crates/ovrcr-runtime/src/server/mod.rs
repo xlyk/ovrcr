@@ -53,6 +53,7 @@ mod quota_probe;
 mod reporting_queue;
 mod startup;
 mod title;
+mod transcript;
 mod watch;
 
 use connections::{

@@ -21,6 +21,7 @@ input needed` or `i Next ready`, naming where it goes.
 | Terminal | `Enter` on a running session | `Ctrl-g` |
 | Copy | `[` in Browse | `Esc`, `q`, or `Ctrl-g` |
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
+| Transcript | `PageUp` or wheel-up on full-screen Claude Code or Codex | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
 only key it intercepts. `Ctrl-o` reaches the program there (Oh My Pi expands tool
@@ -306,10 +307,10 @@ Motion waits when a target cell still needs loading.
   does not reflow or rewrite captured rows; use horizontal navigation to reveal
   columns captured outside the viewport.
 - The history view is capped at 64 rows by 256 columns inside a larger pane.
-- Alternate-screen (full-screen) applications do not provide a history transcript,
-  and History stays closed while an application is on the alternate screen. PageUp
-  there says so in a muted footer line, `History isn't available while <title> is
-  full-screen`; a wheel tick over the pane does nothing, with no error.
+- Full-screen applications on the alternate screen cannot supply terminal History.
+  Claude Code and Codex can open their provider-owned [Transcript](#transcript-keys)
+  instead. Without a readable conversation, PageUp gives a muted explanation and
+  wheel-up stays quiet.
 - An application that erases the saved lines (`ESC[3J`) empties History, as a
   terminal's scrollback would be. `clear` sends it, and Pi and Oh My Pi send it
   before every full repaint (a resize, a new or resumed session), then write
@@ -328,6 +329,28 @@ available after clipboard or size errors. Soft-wrapped rows join without added
 newlines; hard line breaks, spaces inside a line, and stored Unicode text are
 preserved. Spaces at the end of each copied line are dropped, as terminals do:
 Oh My Pi pads every row to the pane width.
+
+## Transcript keys
+
+On full-screen Claude Code or Codex, PageUp or wheel-up opens a read-only view of
+the session's recorded conversation: user prompts, assistant text, and a short
+line for each tool call. Inline agents such as Pi and Oh My Pi keep terminal
+History. Reading Transcript does not write the provider file or replay commands.
+
+Up/Down or `k`/`j` scroll one row; PageUp/PageDown scroll a viewport; the wheel
+moves three rows. Scrolling to the top loads earlier messages. Home moves toward
+the loaded beginning; End reloads the newest page. Esc, `q`, or Ctrl-g closes it.
+Keyboard, paste, and mouse input stay in the view while loading and reading.
+Changing the session run closes it; pages from another conversation cannot be
+joined to the current view.
+
+The view keeps at most 1 MiB or 16,384 entries, dropping newest entries as you
+page further back; End returns to the latest messages. It does not update live.
+Individual JSONL records over 512 KiB are skipped, prose is shortened after
+16,384 characters, and tool input summaries after 160 characters. Tool results,
+private reasoning, and image data are omitted. If the provider has no readable
+recorded conversation, PageUp explains that History is unavailable and wheel-up
+leaves the pane alone.
 
 ## Panes
 
@@ -485,7 +508,8 @@ In Browse and Terminal modes:
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
   move three rows (keys move one); wheel-down at the newest row returns to the
   live pane.
-  Over a full-screen application on the alternate screen the wheel does nothing.
+  On full-screen Claude Code or Codex, wheel-up opens Transcript when its recorded
+  conversation is available; other full-screen applications stay unchanged.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling

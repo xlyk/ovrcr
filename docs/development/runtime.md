@@ -214,3 +214,11 @@ authenticity proof. Untagged private legacy records remain recognized for stale
 replacement but cannot equal the new algorithm; unknown algorithm names or fields
 remain refused. Full verification and metadata rechecks precede socket binding
 and identity publication, including `/proc/self/exe` on Linux.
+
+Protocol 71 appends read-only Transcript pages for the current Dashboard owner.
+`server::transcript` selects the retained provider reference, checks its run and
+continuation identity, reads outside retained/Session locks, then rechecks authority.
+Only regular files are opened, with nonblocking flags, and Codex header/Claude record
+identities must match. Reads use 512 KiB windows and a 4 MiB scan budget; oversized
+records are skipped and displayed text/tool summaries are bounded. No transcript
+content is persisted or written to Events.

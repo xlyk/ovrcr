@@ -183,3 +183,12 @@ Complete without that proof displays finishing/stop-unconfirmed. History commits
 completion Unread only after a successful unobscured tail draw, with sufficient
 transcript geometry. Model/tool strings escape terminal and directional controls
 before rendering, including tool output with explicit empty-success results.
+
+The read-only `dashboard::transcript` view replaces an alternate-screen History refusal
+with provider-owned Claude/Codex conversation pages. Its loading and loaded states use
+`Details::Transcript`, ahead of terminal and Operator shortcuts. Captured session/run,
+request id and exact `ConversationReference` fence page application; cancel, a changed
+run and superseding End requests retire their pending responses. Text uses Operator's
+control escaping. The byte/entry-bounded window slides toward older pages, while End
+reloads the tail; rendering skips whole wrapped logical lines before its u16 scroll
+remainder so long views reach their actual tail. No page causes input, review or launch.

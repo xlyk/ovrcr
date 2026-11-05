@@ -2,8 +2,9 @@ use super::*;
 use ovrcr_protocol::{AgentProvider, ConversationReference};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::SystemTime;
@@ -776,14 +777,15 @@ enum CallResult {
     Failed(CallFailure),
 }
 
-struct Candidate {
-    provider: AgentProvider,
-    conversation: String,
-    history: PathBuf,
+/// A retained session's current conversation and the provider file that holds it.
+pub(super) struct Candidate {
+    pub(super) provider: AgentProvider,
+    pub(super) conversation: String,
+    pub(super) history: PathBuf,
 }
 
 impl Candidate {
-    fn from_record(record: &RetainedSession) -> Option<Self> {
+    pub(super) fn from_record(record: &RetainedSession) -> Option<Self> {
         let SessionKind::Agent { name } = &record.metadata.kind else {
             return None;
         };
@@ -933,8 +935,25 @@ fn truncate_to_char_boundary(value: &mut String, limit: usize) {
     value.truncate(end);
 }
 
-fn first_line_matches(path: &Path, matches: impl FnOnce(&Value) -> bool) -> Result<bool> {
-    let mut file = File::open(path)?;
+pub(super) fn first_line_matches(
+    path: &Path,
+    matches: impl FnOnce(&Value) -> bool,
+) -> Result<bool> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    first_line_matches_file(&mut file, matches)
+}
+
+pub(super) fn first_line_matches_file(
+    file: &mut File,
+    matches: impl FnOnce(&Value) -> bool,
+) -> Result<bool> {
+    if !file.metadata()?.is_file() {
+        bail!("not a regular file");
+    }
+    file.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();
     let mut one = [0; 1];
     while file.read(&mut one)? == 1 {
