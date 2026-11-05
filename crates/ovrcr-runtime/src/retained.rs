@@ -113,6 +113,42 @@ pub(crate) fn has_table(connection: &Connection, name: &str) -> Result<bool> {
     )?)
 }
 
+/// Names are display metadata; retained IDs remain unique across archive and restore.
+pub(crate) fn migrate_reusable_names(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE retained_sessions_rebuilt (
+            id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id > 0),
+            run INTEGER NOT NULL CHECK (run >= 0),
+            project TEXT NOT NULL,
+            workspace TEXT NOT NULL,
+            name TEXT NOT NULL,
+            label TEXT NOT NULL,
+            cwd BLOB NOT NULL,
+            kind TEXT NOT NULL,
+            pinned_title TEXT,
+            application_title TEXT,
+            title_revision INTEGER NOT NULL CHECK (title_revision >= 0),
+            boot_id TEXT,
+            stopped INTEGER NOT NULL CHECK (stopped IN (0, 1)),
+            failure TEXT,
+            disposition INTEGER NOT NULL DEFAULT 0 CHECK (disposition IN (0, 1, 2)),
+            scope TEXT NOT NULL DEFAULT '\"Workspace\"'
+        );
+        INSERT INTO retained_sessions_rebuilt
+            (id, run, project, workspace, name, label, cwd, kind, pinned_title,
+             application_title, title_revision, boot_id, stopped, failure, disposition, scope)
+        SELECT id, run, project, workspace, name, label, cwd, kind, pinned_title,
+             application_title, title_revision, boot_id, stopped, failure, disposition, scope
+        FROM retained_sessions;
+        UPDATE sqlite_sequence SET seq = max(seq, coalesce(
+            (SELECT seq FROM sqlite_sequence WHERE name = 'retained_sessions'), 0))
+            WHERE name = 'retained_sessions_rebuilt';
+        DROP TABLE retained_sessions;
+        ALTER TABLE retained_sessions_rebuilt RENAME TO retained_sessions;",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn has_disposition(connection: &Connection) -> Result<bool> {
     Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name = 'disposition')", [], |row| row.get(0))?)
 }
@@ -1254,6 +1290,169 @@ mod tests {
     use super::*;
     const BOOT_A: &str = "11111111-2222-3333-4444-555555555555";
     const BOOT_B: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+    #[test]
+    fn reusable_name_migration_preserves_high_water_when_all_rows_were_deleted() {
+        let root = tempfile::tempdir().unwrap();
+        let connection = crate::config::open_writable_registry(root.path()).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO retained_sessions
+                (id, run, project, workspace, name, label, cwd, kind, title_revision, stopped)
+                VALUES (100, 0, 'p', 'w', 'deleted', 'sh', X'2F', '\"Terminal\"', 0, 1);
+             DELETE FROM retained_sessions;
+             PRAGMA user_version = 27;",
+            )
+            .unwrap();
+        drop(connection);
+        let connection = crate::config::open_writable_registry(root.path()).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO retained_sessions
+                (run, project, workspace, name, label, cwd, kind, title_revision, stopped)
+                VALUES (0, 'p', 'w', 'new', 'sh', X'2F', '\"Terminal\"', 0, 1);",
+            )
+            .unwrap();
+        assert_eq!(connection.last_insert_rowid(), 101);
+    }
+
+    #[test]
+    fn reusable_name_migration_preserves_references_and_deleted_id_high_water() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("instance");
+        let mut store = SessionStore::open(&config).unwrap();
+        let metadata = SessionMetadata {
+            scope: ovrcr_protocol::SessionScope::Workspace,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "saved".into(),
+            label: "sh".into(),
+            cwd: root.path().to_path_buf(),
+            kind: SessionKind::Terminal,
+            pinned_title: Some("my title".into()),
+            application_title: None,
+        };
+        let saved = store.create(metadata.clone()).unwrap();
+        let deleted = store
+            .create(SessionMetadata {
+                name: "deleted".into(),
+                ..metadata.clone()
+            })
+            .unwrap();
+        store.remove(deleted.id, deleted.run).unwrap();
+        store.set_archived(saved.id, saved.run, true).unwrap();
+        let expected = store.get(saved.id).unwrap().summary(store.boot_id());
+        drop(store);
+        let connection = Connection::open(crate::config::database_path(&config)).unwrap();
+        // Reconstruct schema 27, including its table-level uniqueness constraint.
+        connection
+            .execute_batch(
+                "CREATE TEMP TABLE saved_rows AS SELECT * FROM retained_sessions;
+            DROP TABLE retained_sessions;",
+            )
+            .unwrap();
+        create_schema(&connection).unwrap();
+        operator::create_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO retained_sessions SELECT * FROM saved_rows;
+            DROP TABLE saved_rows; PRAGMA user_version = 27;",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE sqlite_sequence SET seq=?1 WHERE name='retained_sessions'",
+                [sql_integer(deleted.id.0).unwrap()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO agent_conversations VALUES (?1, NULL, 1)",
+                [sql_integer(saved.id.0).unwrap()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO conversation_subjects VALUES (?1, 'conversation', 'topic', 0, 1, 1)",
+                [sql_integer(saved.id.0).unwrap()],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO operator_conversations (session, provider, model, title) VALUES (?1, 'chat_gpt', 'model', 'journal')", [sql_integer(saved.id.0).unwrap()]).unwrap();
+        drop(connection);
+
+        let mut store = SessionStore::open(&config).unwrap();
+        let actual = store.get(saved.id).unwrap();
+        assert_eq!(actual.summary(store.boot_id()), expected);
+        assert!(actual.identity_invalid);
+        assert_eq!(
+            actual.subjects["conversation"].topic.as_deref(),
+            Some("topic")
+        );
+        assert_eq!(
+            store
+                .connection
+                .query_row("SELECT count(*) FROM operator_conversations", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(
+            !store
+                .connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        assert!(
+            store
+                .connection
+                .pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))
+                .unwrap()
+        );
+        let new = store.create(metadata).unwrap();
+        assert!(new.id.0 > deleted.id.0);
+    }
+
+    #[test]
+    fn archived_session_name_can_be_reused_without_losing_the_old_row() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("instance");
+        let mut store = SessionStore::open(&config).unwrap();
+        let metadata = SessionMetadata {
+            scope: ovrcr_protocol::SessionScope::Workspace,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "local".into(),
+            label: "sh".into(),
+            cwd: root.path().to_path_buf(),
+            kind: SessionKind::Terminal,
+            pinned_title: None,
+            application_title: None,
+        };
+        let first = store.create(metadata.clone()).unwrap();
+        store.set_archived(first.id, first.run, true).unwrap();
+        let archived = store.get(first.id).unwrap().clone();
+        let second = store.create(metadata.clone()).unwrap();
+        assert_ne!(first.id, second.id);
+        store.set_archived(second.id, second.run, true).unwrap();
+        let third = store.create(metadata).unwrap();
+        drop(store);
+        let mut store = SessionStore::open(&config).unwrap();
+        assert_eq!(store.records().count(), 3);
+        assert_eq!(
+            store.get(first.id).unwrap().disposition,
+            Disposition::Archived
+        );
+        assert_eq!(store.get(third.id).unwrap().metadata.name, "local");
+        // Restoring history keeps its identity even after another session reused its name.
+        store.set_archived(first.id, archived.run, false).unwrap();
+        assert_eq!(store.get(first.id).unwrap().metadata.name, "local");
+        assert_eq!(
+            store.get(first.id).unwrap().disposition,
+            Disposition::Returned
+        );
+    }
 
     #[test]
     fn only_two_verified_different_boot_ids_prove_prior_processes_gone() {

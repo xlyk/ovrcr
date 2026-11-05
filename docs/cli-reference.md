@@ -327,6 +327,11 @@ stop succeeds; failure keeps an actionable active record. The Dashboard asks for
 confirmation before stopping live work. Close captures the current run, and stale
 requests cannot stop a replacement run.
 
+Archiving releases the original session name for new sessions in that workspace,
+including automatically generated names. Active and returned rows still reserve
+their names for creation. Unarchiving keeps the old row's original name and ID,
+even if a newer session has reused that name; use the session ID to address it.
+
 Use `terminal list --archived` to inspect the archive, including offline.
 `terminal unarchive ID` returns a stopped row without executing anything.
 `terminal remove ID` deletes the record; it never deletes provider history files.
