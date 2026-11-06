@@ -97,7 +97,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| `Cmd+1`–`Cmd+9` | Hold Command to show temporary labels on visible running Agent rows, then choose that exact row by its digit |
+| `Cmd+digit` | Hold Command to show temporary labels on visible eligible Agent rows, then choose one label. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Command never reveals it |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -121,6 +121,8 @@ Command and modified digits reach the application. Verify the exact terminal
 version and keyboard configuration with Command-down, a labeled digit, and
 Command-up before listing that setup as supported. If no modifier event arrives,
 the Dashboard leaves input alone and `s` Agents search remains available.
+The same gesture works from an unobscured Operator view when the shared sidebar is
+already visible; Operator conversation rows do not receive Agent labels.
 
 ## Search other running agents
 
