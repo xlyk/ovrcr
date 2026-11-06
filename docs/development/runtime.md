@@ -116,6 +116,13 @@ transient launch path, are redacted from Debug/errors, and are not retained in
 ordinary session metadata, settings, or Events. Successful harness/model memory
 uses the existing settings owner.
 
+Detected Oh My Pi model choices come from its native `omp models --json`
+catalog for the selected workspace. The bounded adapter keeps the effective OMP
+profile and configured provider extensions, rejects diagnostics or malformed
+JSON, and verifies the exact provider/model selector again before Start. OMP's
+own `--model` resolver can fuzzy-match after its exact lookup, so this fresh
+preflight does not prove the model that a later native process will apply.
+
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt
 intents atomically before effects. A tombstone gates new and resumed Accepted

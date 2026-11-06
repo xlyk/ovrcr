@@ -227,7 +227,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             "Only detected launchers can expose verified model choices.",
         );
     }
-    if !matches!(input.preset.as_str(), "claude" | "pi") {
+    if !matches!(input.preset.as_str(), "claude" | "pi" | "omp") {
         return unsupported(
             input.preset.clone(),
             "Verified explicit model selection is not available for this harness yet.",
@@ -319,7 +319,7 @@ fn find_executable(path: &std::ffi::OsStr, name: &str) -> anyhow::Result<PathBuf
 
 fn native_argv(preset: &str, executable: &Path) -> anyhow::Result<Vec<std::ffi::OsString>> {
     anyhow::ensure!(
-        matches!(preset, "claude" | "pi"),
+        matches!(preset, "claude" | "pi" | "omp"),
         "detected model selection is not supported for this harness"
     );
     let mut argv = vec![executable.as_os_str().to_owned()];
@@ -355,6 +355,9 @@ fn dashboard_catalog(
             crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
         }
         "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
+        "omp" => {
+            crate::omp_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled)
+        }
         _ => anyhow::bail!("verified model discovery is not available for this harness"),
     }
 }
@@ -417,7 +420,7 @@ pub(super) fn prepare_initial_prompt_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "omp"))
         .context("Initial prompts require a supported detected harness")?;
     anyhow::ensure!(
         !state
@@ -507,7 +510,7 @@ pub(super) fn prepare_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "omp"))
         .context("explicit model selection is not supported for this harness")?;
     anyhow::ensure!(
         matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
@@ -560,10 +563,10 @@ pub(super) fn prepare_session(
         request.model_binding.as_deref() == Some(current_binding.as_str()),
         "model capability is stale; refresh the model list"
     );
-    if preset == "pi" {
+    if matches!(preset, "pi" | "omp") {
         anyhow::ensure!(
             ovrcr_protocol::DelegationSettings::valid_model(model),
-            "Pi explicit models require an exact provider/model ID"
+            "{preset} explicit models require an exact provider/model ID"
         );
     }
     let catalog = dashboard_catalog(
@@ -757,29 +760,31 @@ mod tests {
 
     #[test]
     fn configured_origin_never_reaches_native_model_discovery() {
-        let capabilities = discover_capabilities(
-            &QueryInput {
-                preset: "claude".into(),
-                origin: AgentLaunchOrigin::Configured,
-                argv: Vec::new(),
-                project: "p".into(),
-                workspace: "w".into(),
-                cwd: PathBuf::new(),
-                git_identity: String::new(),
-                path: std::ffi::OsString::new(),
-                launcher: PathBuf::new(),
-                configured_override: false,
-            },
-            &AtomicBool::new(false),
-        );
-        assert!(capabilities.binding.is_none());
-        assert!(capabilities.models.is_empty());
-        assert!(
-            capabilities
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("Only detected launchers"))
-        );
+        for preset in ["claude", "omp"] {
+            let capabilities = discover_capabilities(
+                &QueryInput {
+                    preset: preset.into(),
+                    origin: AgentLaunchOrigin::Configured,
+                    argv: Vec::new(),
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    cwd: PathBuf::new(),
+                    git_identity: String::new(),
+                    path: std::ffi::OsString::new(),
+                    launcher: PathBuf::new(),
+                    configured_override: false,
+                },
+                &AtomicBool::new(false),
+            );
+            assert!(capabilities.binding.is_none());
+            assert!(capabilities.models.is_empty());
+            assert!(
+                capabilities
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("Only detected launchers"))
+            );
+        }
     }
 
     #[test]
