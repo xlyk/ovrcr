@@ -587,8 +587,7 @@ fn state_row(provider: &ProviderQuota, width: u16, now: u64) -> Vec<(Line<'stati
 /// Reserve the same rows for current, stale, and reset-due states, without a clock-driven resize.
 fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<'static>, u16)> {
     let reserve_stale = any_provider_stale(quota, now);
-    // Reserve the same row count before and after readings become stale.
-    let n = bar_width(width, true).and_then(|_| bar_width(width, reserve_stale));
+    let n = bar_width(width, reserve_stale);
     let mut rows = vec![(header_line(width), 1)];
     for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
         if !provider.windows.iter().any(|window| window.general) {
@@ -607,9 +606,11 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<
                     ""
                 };
                 let label_extra = Span::raw(window.label.clone()).width().saturating_sub(2);
-                let n = n
-                    .and_then(|cells| cells.checked_sub(label_extra))
-                    .filter(|cells| *cells >= 6);
+                // Keep the same row mode as readings become stale, including long labels.
+                let n = bar_width(width, true)
+                    .filter(|cells| *cells >= label_extra + 6)
+                    .and(n)
+                    .map(|cells| cells - label_extra);
                 if n.is_none() {
                     // Narrow ladder: keep identity readable before decorative bars.
                     let prefix = format!("{name:6} {:2}", window.label);
@@ -901,7 +902,7 @@ mod layout_tests {
     #[test]
     fn stale_windows_stay_inside_quota_hitbox_at_intermediate_widths() {
         use ratatui::{Terminal, backend::TestBackend};
-        for width in 23..=33 {
+        for width in 23..=35 {
             let mut dashboard = Dashboard::new(TerminalSize {
                 rows: 40,
                 cols: 120,
@@ -928,6 +929,7 @@ mod layout_tests {
                     })
                     .collect();
             }
+            quota.cursor.windows[0].label = "plan".into();
             dashboard.quotas = Some(quota);
             // Drive the same sidebar width used by render and mouse handling.
             let area = Rect::new(0, 0, 120, 40);
@@ -955,10 +957,16 @@ mod layout_tests {
             }
             let rects = dashboard.sidebar_rects(area);
             assert_eq!(rects.quota.width, width);
+            let mut previous_height = None;
             for now in [0, 2_000_000] {
                 let rows = sidebar_quota_rows(dashboard.quotas.as_ref().unwrap(), width, now);
+                let content_height = rows.iter().map(|(_, height)| height).sum::<u16>();
+                if let Some(previous) = previous_height {
+                    assert_eq!(content_height, previous, "width {width}");
+                }
+                previous_height = Some(content_height);
                 assert!(
-                    rows.iter().map(|(_, height)| height).sum::<u16>() <= rects.quota.height,
+                    content_height <= rects.quota.height,
                     "width {width}, now {now}"
                 );
                 let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
