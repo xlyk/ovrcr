@@ -30,6 +30,15 @@ struct CatalogRequest {
     sink: Arc<DashboardSink>,
 }
 
+pub(super) struct QueryRequest {
+    pub(super) request_id: u64,
+    pub(super) preset: String,
+    pub(super) origin: AgentLaunchOrigin,
+    pub(super) argv: Vec<std::ffi::OsString>,
+    pub(super) project: String,
+    pub(super) workspace: String,
+}
+
 #[derive(Default)]
 struct CatalogQueueState {
     pending: Option<CatalogRequest>,
@@ -50,10 +59,10 @@ impl CatalogQueue {
         self.ready.notify_all();
     }
 
-    fn enqueue(&self, request: CatalogRequest) -> Result<Option<CatalogRequest>, CatalogRequest> {
+    fn enqueue(&self, request: CatalogRequest) -> Result<Option<CatalogRequest>, ()> {
         let mut state = self.state.lock().unwrap();
         if !state.attached || state.stopped {
-            return Err(request);
+            return Err(());
         }
         let replaced = state.pending.replace(request);
         self.ready.notify_one();
@@ -112,13 +121,16 @@ pub(super) fn request(
     state: &ServerState,
     dashboard: bool,
     owner: Option<&Arc<()>>,
-    request_id: u64,
-    preset: String,
-    origin: AgentLaunchOrigin,
-    argv: Vec<std::ffi::OsString>,
-    project: String,
-    workspace: String,
+    query: QueryRequest,
 ) -> Response {
+    let QueryRequest {
+        request_id,
+        preset,
+        origin,
+        argv,
+        project,
+        workspace,
+    } = query;
     let Some(owner) = owner else {
         return error_response(
             ErrorCode::InvalidRequest,
@@ -781,18 +793,10 @@ mod tests {
             sink: DashboardSink::new(),
         };
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut request = Some(request);
-        while let Some(next) = request.take() {
-            match state.agent_model_catalog.enqueue(next) {
-                Ok(None) => break,
-                Ok(Some(_)) => panic!("unexpected replaced model request"),
-                Err(next) => {
-                    request = Some(next);
-                    assert!(Instant::now() < deadline, "catalog worker did not attach");
-                    thread::sleep(Duration::from_millis(5));
-                }
-            }
-        }
+        state
+            .agent_model_catalog
+            .enqueue(request)
+            .expect("catalog queue is attached before the worker starts");
         while !pid_file.exists() {
             assert!(Instant::now() < deadline, "fake catalog did not start");
             thread::sleep(Duration::from_millis(5));

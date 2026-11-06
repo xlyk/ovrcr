@@ -44,7 +44,7 @@ struct Pending {
 #[derive(Debug)]
 pub(super) enum Desire {
     Send {
-        request: ClientMessage,
+        request: Box<ClientMessage>,
         owns_error: bool,
     },
     Coalesced,
@@ -223,7 +223,7 @@ impl ViewHandshake {
             parser_discarded: false,
         });
         Ok(Desire::Send {
-            request,
+            request: Box::new(request),
             owns_error,
         })
     }

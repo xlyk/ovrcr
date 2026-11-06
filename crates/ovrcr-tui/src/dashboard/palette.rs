@@ -921,6 +921,19 @@ fn model_query_target(
     }))
 }
 
+fn resolve_agent_launcher(
+    server_executable: Option<PathBuf>,
+    current_executable: Option<PathBuf>,
+    current_directory: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let path = server_executable.or(current_executable)?;
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(current_directory?.join(path))
+    }
+}
+
 fn visible_indices(fields: &[Field]) -> Vec<usize> {
     fields
         .iter()
@@ -2117,6 +2130,14 @@ impl Dashboard {
     }
 
     pub(super) fn palette_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        let previous_inputs = self.current_model_query_inputs();
+        let action = self.palette_mouse_inner(mouse, area);
+        self.refresh_active_path_listing();
+        self.refresh_model_query_if_inputs_changed(previous_inputs);
+        action
+    }
+
+    fn palette_mouse_inner(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         if self
             .palette
             .as_ref()
@@ -2132,13 +2153,15 @@ impl Dashboard {
             let cancel = label.rfind('[').unwrap() as u16;
             let x = mouse.column - buttons.x;
             if x >= cancel && x < label.len() as u16 {
-                return self.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return self
+                    .palette_key_inner(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true);
             }
             if x < cancel.saturating_sub(1)
                 && palette.pending.is_none()
                 && !palette.submit_when_ready
             {
-                return self.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                return self
+                    .palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
             }
             return DashboardAction::Redraw;
         }
@@ -2161,14 +2184,17 @@ impl Dashboard {
                         && matches!(target, PaletteTarget::Option(..))
                 });
             if matches!(palette.page, Page::Search { .. }) || over_option {
-                return self.palette_key(KeyEvent::new(
-                    if delta < 0 {
-                        KeyCode::Up
-                    } else {
-                        KeyCode::Down
-                    },
-                    KeyModifiers::NONE,
-                ));
+                return self.palette_key_inner(
+                    KeyEvent::new(
+                        if delta < 0 {
+                            KeyCode::Up
+                        } else {
+                            KeyCode::Down
+                        },
+                        KeyModifiers::NONE,
+                    ),
+                    true,
+                );
             }
             let max = lines.len().saturating_sub(body.height as usize);
             let next = scroll.saturating_add_signed(delta).min(max);
@@ -2247,16 +2273,17 @@ impl Dashboard {
         }
         self.palette = Some(palette);
         if let Some(code) = key {
-            self.palette_key(KeyEvent::new(code, KeyModifiers::NONE))
+            self.palette_key_inner(KeyEvent::new(code, KeyModifiers::NONE), true)
         } else {
-            self.refresh_active_path_listing();
             DashboardAction::Redraw
         }
     }
 
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let previous_inputs = self.current_model_query_inputs();
         let action = self.palette_key_inner(key, true);
         self.refresh_active_path_listing();
+        self.refresh_model_query_if_inputs_changed(previous_inputs);
         action
     }
 
@@ -3112,7 +3139,11 @@ impl Dashboard {
         }
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
-        let launcher = std::env::current_exe().ok();
+        let launcher = resolve_agent_launcher(
+            std::env::var_os("OVRCR_SERVER_EXECUTABLE").map(PathBuf::from),
+            std::env::current_exe().ok(),
+            std::env::current_dir().ok(),
+        );
         let mut entries = apply_overrides(
             detect_agents(&path, shell.as_deref(), launcher.as_deref()),
             &self.settings.agents,
@@ -3173,6 +3204,52 @@ impl Dashboard {
                 field.hidden = start != "Terminal";
                 field.required = false;
             }
+        }
+    }
+
+    // Keep keystrokes cheap: full launcher discovery reads PATH and inspects executable files.
+    fn current_model_query_inputs(
+        &self,
+    ) -> Option<(&'static str, String, String, Option<Vec<String>>)> {
+        let Page::Form {
+            command, fields, ..
+        } = &self.palette.as_ref()?.page
+        else {
+            return None;
+        };
+        if field_value(fields, "Start") != "Agent" {
+            return None;
+        }
+        let command = match command {
+            Command::CreateTerminal => "terminal",
+            Command::CreateWorkspace => "workspace",
+            _ => return None,
+        };
+        let preset = field_value(fields, "Agent");
+        let configured_argv = self
+            .settings
+            .agents
+            .iter()
+            .find(|agent| agent.name == preset)
+            .map(|agent| agent.argv.clone());
+        Some((
+            command,
+            preset,
+            field_value(fields, "Workspace"),
+            configured_argv,
+        ))
+    }
+
+    fn refresh_model_query_if_inputs_changed(
+        &mut self,
+        previous_inputs: Option<(&'static str, String, String, Option<Vec<String>>)>,
+    ) {
+        if self.current_model_query_inputs() == previous_inputs {
+            return;
+        }
+        if let Some(mut palette) = self.palette.take() {
+            self.refresh_model_query(&mut palette);
+            self.palette = Some(palette);
         }
     }
 
@@ -6038,6 +6115,101 @@ mod launch_tests {
     }
 
     #[test]
+    fn detected_agent_launcher_matches_the_server_override() {
+        let server = PathBuf::from("/managed/ovrcr");
+        let copied_dashboard = PathBuf::from("/fixture/dashboard-client/ovrcr");
+        assert_eq!(
+            resolve_agent_launcher(Some(server.clone()), Some(copied_dashboard.clone()), None,),
+            Some(server),
+            "agent argv must identify the executable the Server verifies"
+        );
+        assert_eq!(
+            resolve_agent_launcher(
+                Some(PathBuf::from("bin/ovrcr")),
+                Some(copied_dashboard),
+                Some(PathBuf::from("/work")),
+            ),
+            Some(PathBuf::from("/work/bin/ovrcr"))
+        );
+    }
+
+    #[test]
+    fn mouse_selection_of_agent_starts_a_catalog_lookup() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.open_create_terminal();
+        assert!(d.drain_one_request().is_none());
+
+        for _ in 0..8 {
+            let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+                panic!("Agent creation should remain a form");
+            };
+            if fields[*active].label == "Start" {
+                break;
+            }
+            d.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let area = Rect::new(0, 0, 100, 30);
+        let (_, _, body, _) = palette_geometry(area);
+        let (_, targets, scroll) = d.palette_body(body);
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        let start = fields
+            .iter()
+            .position(|field| field.label == "Start")
+            .unwrap();
+        let FieldKind::Pick(list) = &fields[start].kind else {
+            panic!("Start must be a picker");
+        };
+        let agent = list
+            .items
+            .iter()
+            .position(|item| item.value == "Agent")
+            .unwrap();
+        let row = targets
+            .iter()
+            .find_map(|(row, target)| match target {
+                PaletteTarget::Option(field, option) if *field == start && *option == agent => {
+                    Some(*row)
+                }
+                _ => None,
+            })
+            .expect("Agent option should be visible");
+        assert!(row >= scroll && row - scroll < usize::from(body.height));
+        d.palette_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: body.x + 4,
+                row: body.y + (row - scroll) as u16,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        let query = d
+            .drain_outbox()
+            .into_iter()
+            .find(|message| matches!(message.request, Request::QueryAgentModels { .. }))
+            .expect("mouse selection of Agent starts a catalog lookup");
+        assert!(
+            matches!(query.request, Request::QueryAgentModels { preset, .. } if preset == "claude")
+        );
+    }
+
+    #[test]
     fn model_catalog_completion_preserves_a_typed_filter() {
         let argv = vec![
             "/fixture/ovrcr".into(),
@@ -6131,13 +6303,9 @@ mod launch_tests {
             source: AgentSource::Detected,
             origin: AgentOrigin::Detected,
         }]);
-        d.settings.launch_choices.insert(
-            "demo".into(),
-            LaunchChoice::Agent {
-                preset: "claude".into(),
-                model_policy: AgentModelPolicy::HarnessDefault,
-            },
-        );
+        d.settings
+            .launch_choices
+            .insert("demo".into(), LaunchChoice::Terminal);
         d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
             project: "demo".into(),
             name: "other".into(),
@@ -6149,9 +6317,27 @@ mod launch_tests {
         });
 
         d.open_create_terminal();
+        assert!(
+            d.drain_one_request().is_none(),
+            "Terminal setup needs no catalog"
+        );
+        for _ in 0..8 {
+            let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+                panic!("Agent creation should remain a form");
+            };
+            if fields[*active].label == "Start" {
+                break;
+            }
+            d.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        assert_eq!(fields[*active].label, "Start");
+        d.palette_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         let first = d
             .drain_one_request()
-            .expect("form starts one catalog lookup");
+            .expect("keyboard selection of Agent starts a catalog lookup");
         let first_id = first.request_id;
         assert!(matches!(
             first.request,
@@ -6164,22 +6350,47 @@ mod launch_tests {
             } if preset == "claude" && selected == &argv && project == "demo" && workspace == "root"
         ));
 
-        // Changing the destination while native discovery is in flight keeps
-        // one outstanding request and leaves the latest target in the form.
-        set(&mut d, "Workspace", "demo/other");
-        let mut palette = d.palette.take().unwrap();
-        d.refresh_model_query(&mut palette);
-        d.palette = Some(palette);
+        // Follow the same keyboard path as the visible form and leave its
+        // Model field in the loading state while discovery is in flight.
+        for _ in 0..4 {
+            d.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let palette = d.palette.as_ref().unwrap();
+        assert_eq!(
+            palette.model_status.as_deref(),
+            Some("Loading verified model choices…")
+        );
+        let Page::Form { fields, active, .. } = &palette.page else {
+            panic!("Agent creation should remain a form");
+        };
+        assert_eq!(fields[*active].label, "Model");
+        assert_eq!(fields[*active].value, HARNESS_DEFAULT_MODEL);
+        let FieldKind::Pick(models) = &fields[*active].kind else {
+            panic!("Model must remain a picker");
+        };
+        assert_eq!(models.items.len(), 1);
+
+        // Changing the destination through keyboard dispatch keeps one
+        // outstanding request and leaves the latest target in the form.
+        for _ in 0..3 {
+            d.palette_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        }
+        d.palette_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        assert_eq!(fields[*active].label, "Workspace");
+        assert_eq!(fields[*active].value, "demo/other");
         assert!(d.drain_one_request().is_none());
         assert_eq!(d.model_query.as_ref().unwrap().0, first_id);
 
-        // Cancel and reopen do not lose ownership of the outstanding lookup.
+        // Cancel and reopen preserve the in-flight lookup; keyboard selection
+        // of its latest target still coalesces behind it.
         d.palette = None;
         d.open_create_terminal();
-        set(&mut d, "Workspace", "demo/other");
-        let mut palette = d.palette.take().unwrap();
-        d.refresh_model_query(&mut palette);
-        d.palette = Some(palette);
+        d.palette_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        d.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        d.palette_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert!(d.drain_one_request().is_none());
 
         d.agent_models_event(
