@@ -1655,13 +1655,12 @@ impl Dashboard {
         }
         let shared = destination_workspace
             .map(|workspace| {
-                let names = workspace
+                workspace
                     .sessions
                     .iter()
                     .filter(|session| running_agent(session))
                     .map(|session| session.display_name().to_owned())
-                    .collect::<Vec<_>>();
-                names
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         if let Some(notice) = fields
