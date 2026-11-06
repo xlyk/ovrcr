@@ -587,7 +587,8 @@ fn state_row(provider: &ProviderQuota, width: u16, now: u64) -> Vec<(Line<'stati
 /// Reserve the same rows for current, stale, and reset-due states, without a clock-driven resize.
 fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<'static>, u16)> {
     let reserve_stale = any_provider_stale(quota, now);
-    let n = bar_width(width, reserve_stale);
+    // Reserve the same row count before and after readings become stale.
+    let n = bar_width(width, true).and_then(|_| bar_width(width, reserve_stale));
     let mut rows = vec![(header_line(width), 1)];
     for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
         if !provider.windows.iter().any(|window| window.general) {
@@ -605,6 +606,10 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<
                 } else {
                     ""
                 };
+                let label_extra = Span::raw(window.label.clone()).width().saturating_sub(2);
+                let n = n
+                    .and_then(|cells| cells.checked_sub(label_extra))
+                    .filter(|cells| *cells >= 6);
                 if n.is_none() {
                     // Narrow ladder: keep identity readable before decorative bars.
                     let prefix = format!("{name:6} {:2}", window.label);
@@ -893,6 +898,86 @@ mod bar_math_tests {
 mod layout_tests {
     use super::*;
     use crate::protocol::TerminalSize;
+    #[test]
+    fn stale_windows_stay_inside_quota_hitbox_at_intermediate_widths() {
+        use ratatui::{Terminal, backend::TestBackend};
+        for width in 23..=33 {
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 120,
+            });
+            let mut quota = QuotaSnapshot::default();
+            for provider in [
+                &mut quota.claude,
+                &mut quota.codex,
+                &mut quota.grok,
+                &mut quota.cursor,
+            ] {
+                provider.state = QuotaState::Current;
+                provider.observed_unix_ms = Some(0);
+                provider.checked_unix_ms = Some(0);
+                provider.windows = ["5h", "7d"]
+                    .into_iter()
+                    .map(|label| QuotaWindow {
+                        id: label.into(),
+                        label: label.into(),
+                        general: true,
+                        used_basis_points: Some(5000),
+                        over_limit: false,
+                        resets_unix_ms: None,
+                    })
+                    .collect();
+            }
+            dashboard.quotas = Some(quota);
+            // Drive the same sidebar width used by render and mouse handling.
+            let area = Rect::new(0, 0, 120, 40);
+            dashboard.install_area(area);
+            use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::Drag(MouseButton::Left),
+                MouseEventKind::Up(MouseButton::Left),
+            ] {
+                let column = if matches!(kind, MouseEventKind::Down(_)) {
+                    39
+                } else {
+                    width
+                };
+                dashboard.mouse_action(
+                    MouseEvent {
+                        kind,
+                        column,
+                        row: 10,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    area,
+                );
+            }
+            let rects = dashboard.sidebar_rects(area);
+            assert_eq!(rects.quota.width, width);
+            for now in [0, 2_000_000] {
+                let rows = sidebar_quota_rows(dashboard.quotas.as_ref().unwrap(), width, now);
+                assert!(
+                    rows.iter().map(|(_, height)| height).sum::<u16>() <= rects.quota.height,
+                    "width {width}, now {now}"
+                );
+                let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+                terminal
+                    .draw(|frame| super::super::draw_dashboard_at(frame, &dashboard, now))
+                    .unwrap();
+                let footer: String = (0..120)
+                    .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
+                    .collect();
+                assert!(
+                    footer.starts_with("BROWSE"),
+                    "width {width}, now {now}: {footer}"
+                );
+                assert_eq!(dashboard.sidebar_rects(area).tree, rects.tree);
+                assert_eq!(dashboard.sidebar_rects(area).quota, rects.quota);
+            }
+        }
+    }
+
     #[test]
     fn a_click_on_the_quota_section_opens_the_details_that_u_opens() {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};

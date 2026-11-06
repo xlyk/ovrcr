@@ -732,3 +732,18 @@ fn clock(stamp: u64) -> String {
     };
     local(stamp).format(pattern).to_string()
 }
+
+#[test]
+fn cursor_plan_bar_keeps_its_complete_remaining_percentage() {
+    let mut dashboard = dashboard_fixture();
+    let mut quota = QuotaSnapshot::default();
+    quota.cursor.state = QuotaState::Current;
+    quota.cursor.checked_unix_ms = Some(NOW);
+    quota.cursor.observed_unix_ms = Some(NOW);
+    quota.cursor.windows = vec![window("plan", 3000)];
+    publish_quota(&mut dashboard, quota);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    let row = rows.iter().find(|row| row.contains("Cursor plan")).unwrap();
+    assert!(row.ends_with("70%"), "{row}");
+    assert!(row.contains('━'), "{row}");
+}
