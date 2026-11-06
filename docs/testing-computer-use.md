@@ -170,10 +170,14 @@ options and confirm Base appears. Type `feature/cua-workspace` as the Branch
 name and wait for Base detection to finish. Submit; confirm the branch is created
 without starting an Agent from this form and the workspace is selected in Browse.
 Then press `n`, confirm the registered branch is selected in New agent session,
-and press Enter to open the Branch choices. Verify the Agent harness, Model,
-Initial prompt, Start agent, and Cancel controls remain visible while the picker
-is open at the supported 60×18 floor. Press Escape once to close the picker and
-again to cancel without starting a provider session.
+and press Enter to open the Branch choices. Verify the dialog and field rows
+stay in the same positions at 80×24 and the supported 60×18 floor; the bounded
+menu is anchored to Branch and may temporarily cover nearby fields. Check that
+its highlighted option is visible and clickable, and that the form's Start and
+Cancel controls stay in the footer. Click another visible picker field once to
+switch the anchored menu, then click outside the menu and confirm it closes
+without sending input to the terminal. Reopen Branch, press Escape once to
+close only the menu, and again to cancel without starting a provider session.
 
 ```sh
 printf 'CUA_%s\n' W_SHELL_OK
