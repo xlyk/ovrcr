@@ -3634,9 +3634,11 @@ impl Dashboard {
                     palette.cursor = Default::default();
                 }
                 *active = index;
-                palette.scroll = None;
                 let field = &mut fields[index];
                 let new_agent_pick = compact_picker_field(command, field);
+                // A field click already identifies a visible anchor. Keep its
+                // viewport while toggling or switching an anchored menu.
+                palette.scroll = (new_agent_pick || picker_was_open).then_some(scroll);
                 if new_agent_pick {
                     if was_active && picker_was_open {
                         reset_compact_picker(field);
@@ -3687,8 +3689,13 @@ impl Dashboard {
                 }
             }
             (Page::Form { fields, active, .. }, PaletteTarget::MultilineLine(index, line)) => {
+                let picker_was_open = palette.new_agent_picker_open;
+                if picker_was_open {
+                    reset_compact_picker(&mut fields[*active]);
+                    palette.new_agent_picker_open = false;
+                }
                 *active = index;
-                palette.scroll = None;
+                palette.scroll = picker_was_open.then_some(scroll);
                 if matches!(&fields[index].kind, FieldKind::Multiline) {
                     palette.cursor.click_line(
                         &fields[index].value,
@@ -3768,6 +3775,38 @@ impl Dashboard {
         key: KeyEvent,
         history_before_request: bool,
     ) -> DashboardAction {
+        let picker_scroll = self.palette.as_ref().and_then(|palette| {
+            let Page::Form {
+                command,
+                fields,
+                active,
+                ..
+            } = &palette.page
+            else {
+                return None;
+            };
+            if !compact_picker_field(command, &fields[*active])
+                || matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+            {
+                return None;
+            }
+            let (_, _, body, _) = palette_geometry_for(self.outer_area, Some(palette));
+            let (_, targets, scroll) = self.palette_body(body);
+            targets
+                .iter()
+                .any(|(row, target)| {
+                    *row >= scroll
+                        && *row < scroll + usize::from(body.height)
+                        && match target {
+                            PaletteTarget::Field(index, true) => index == active,
+                            PaletteTarget::FieldPair(left, right, true) => {
+                                left == active || right == active
+                            }
+                            _ => false,
+                        }
+                })
+                .then_some(scroll)
+        });
         let mut palette = self.palette.take().unwrap();
         if key.code != KeyCode::Esc && creation_form_below_minimum(&palette.page, self.outer_area) {
             self.palette = Some(palette);
@@ -3873,7 +3912,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         self.refresh_workspace_form(&mut palette);
-        palette.scroll = None;
+        palette.scroll = picker_scroll;
         let multiline_active = matches!(
             &palette.page,
             Page::Form { fields, active, .. }
@@ -3906,7 +3945,7 @@ impl Dashboard {
             && matches!(key.code, KeyCode::Enter | KeyCode::Up | KeyCode::Down))
         {
             palette.cursor = Default::default();
-            palette.scroll = None;
+            palette.scroll = picker_scroll;
         }
         // Editing or choosing a value retracts the complaint about that field.
         if let Page::Form { fields, active, .. } = &palette.page
@@ -8223,6 +8262,26 @@ impl Dashboard {
             palette.error.as_ref().map_or_else(
                 || "Resize to at least 60×18; the draft will be kept.".to_owned(),
                 |error| format!("{error} · resize to at least 60×18; the draft will be kept"),
+            )
+        } else if picker_popup.is_some()
+            && let Some(problem) = palette.error.as_deref().or_else(|| {
+                palette
+                    .invalid
+                    .as_ref()
+                    .map(|(_, problem)| problem.as_str())
+            })
+        {
+            // The overlay may cover the inline refusal. Keep its explanation
+            // and the menu's actual controls in the fixed three-row footer.
+            let filter_help = match &palette.page {
+                Page::Form { fields, active, .. } if matches!(&fields[*active].kind, FieldKind::Pick(list) if !list.query.is_empty()) => {
+                    "↑/↓ choose · type filter · Ctrl-U clear"
+                }
+                _ => "↑/↓ choose · type filter",
+            };
+            format!(
+                "{}\nEnter accept · Esc close picker · Tab fields\n{filter_help}",
+                clip_text(problem, usize::from(status_area.width))
             )
         } else if let Some(error) = &palette.error {
             error.clone()
@@ -15913,6 +15972,216 @@ mod creation_form_visual_tests {
         assert_eq!(line.spans[3].style.bg, Some(CRUST()));
         assert_ne!(line.spans[3].style.bg, line.spans[0].style.bg);
         assert_ne!(line.spans[3].style.bg, line.spans[4].style.bg);
+    }
+
+    #[test]
+    fn anchored_menu_events_keep_a_manually_scrolled_visible_form() {
+        let mut dashboard = new_agent_dashboard();
+        let area = Rect::new(0, 0, 80, 24);
+        dashboard.install_area(area);
+        dashboard.palette.as_mut().unwrap().model_status =
+            Some("Model choices are loading.".into());
+        if let Page::Form { fields, .. } = &mut dashboard.palette.as_mut().unwrap().page {
+            fields
+                .iter_mut()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value = "first prompt line\nsecond prompt line\nthird prompt line".into();
+        }
+        // Enter the paired picker through the form's real focus path, then
+        // create a nonzero viewport through the mouse wheel.
+        dashboard.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            new_agent_fields(&dashboard).0[new_agent_fields(&dashboard).1].label,
+            "Agent harness"
+        );
+        let (_, _, body, _) = palette_geometry_for_dashboard(&dashboard, area);
+        let (lines, _, _) = dashboard.palette_body(body);
+        assert!(
+            lines.len() > usize::from(body.height),
+            "fixture must scroll"
+        );
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: body.x,
+                row: body.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        let closed = form_geometry(&base_form_snapshot(&dashboard, 80, 24));
+        assert!(
+            closed.5 > 0,
+            "fixture must exercise a real scrolled viewport"
+        );
+
+        dashboard.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(dashboard.palette.as_ref().unwrap().new_agent_picker_open);
+        assert_eq!(
+            form_geometry(&base_form_snapshot(&dashboard, 80, 24)),
+            closed
+        );
+        dashboard.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            form_geometry(&base_form_snapshot(&dashboard, 80, 24)),
+            closed
+        );
+
+        let buffer = render(&dashboard, 80, 24);
+        let harness = find_label(&buffer, "Claude Code");
+        click(&mut dashboard, harness.0, harness.1, 80, 24);
+        assert_eq!(
+            form_geometry(&base_form_snapshot(&dashboard, 80, 24)),
+            closed
+        );
+        let buffer = render(&dashboard, 80, 24);
+        let model = find_label(&buffer, "Harness default");
+        click(&mut dashboard, model.0, model.1, 80, 24);
+        assert!(dashboard.palette.as_ref().unwrap().new_agent_picker_open);
+        assert_eq!(
+            new_agent_fields(&dashboard).0[new_agent_fields(&dashboard).1].label,
+            "Model"
+        );
+        assert_eq!(
+            form_geometry(&base_form_snapshot(&dashboard, 80, 24)),
+            closed
+        );
+
+        let buffer = render(&dashboard, 80, 24);
+        let prompt = find_label(&buffer, "Prompt (optional)");
+        click(&mut dashboard, prompt.0 + 9, prompt.1 + 2, 80, 24);
+        assert!(!dashboard.palette.as_ref().unwrap().new_agent_picker_open);
+        assert_eq!(
+            new_agent_fields(&dashboard).0[new_agent_fields(&dashboard).1].label,
+            "Initial prompt"
+        );
+        let prompt_value = new_agent_fields(&dashboard)
+            .0
+            .iter()
+            .find(|field| field.label == "Initial prompt")
+            .unwrap()
+            .value
+            .as_str();
+        assert!(
+            dashboard
+                .palette
+                .as_ref()
+                .unwrap()
+                .cursor
+                .position(prompt_value)
+                > "first prompt line\n".len(),
+            "clicking the visible prompt text must place its insertion cursor"
+        );
+        assert_eq!(
+            form_geometry(&base_form_snapshot(&dashboard, 80, 24)),
+            closed
+        );
+    }
+
+    #[test]
+    fn anchored_menu_reveals_an_offscreen_keyboard_anchor() {
+        let mut dashboard = new_agent_dashboard();
+        dashboard.palette.as_mut().unwrap().model_status = Some("Loading models".into());
+        dashboard.palette.as_mut().unwrap().scroll = Some(3);
+        assert!(base_form_snapshot(&dashboard, 80, 24).6 > 0);
+        dashboard.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let (_, popup, _, rows) = creation_popup_snapshot(&dashboard, 80, 24);
+        assert!(popup.height >= 3);
+        assert!(
+            !rows.is_empty(),
+            "keyboard opening must show selectable choices"
+        );
+    }
+
+    #[test]
+    fn anchored_child_menu_keeps_refusal_and_controls_visible_at_the_floor() {
+        let mut dashboard = branch_dashboard();
+        let area = Rect::new(0, 0, 60, 18);
+        dashboard.install_area(area);
+        dashboard
+            .palette
+            .as_mut()
+            .unwrap()
+            .suggestions
+            .cache
+            .insert(
+                "consigint".into(),
+                Ok(super::super::git_hints::Hints {
+                    branches: vec!["main".into()],
+                    base: "main".into(),
+                }),
+            );
+        dashboard.palette_paste("bad..branch");
+        dashboard.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let invalid = dashboard
+            .palette
+            .as_ref()
+            .unwrap()
+            .invalid
+            .as_ref()
+            .expect("real branch validation refusal")
+            .1
+            .clone();
+        let project = find_label(&render(&dashboard, 60, 18), "consigint");
+        click(&mut dashboard, project.0, project.1, 60, 18);
+        assert!(dashboard.palette.as_ref().unwrap().new_agent_picker_open);
+        let buffer = render(&dashboard, 60, 18);
+        let visible = (0..18)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains(&invalid), "{visible}");
+        for hint in ["Enter accept", "Esc close picker", "Tab fields"] {
+            assert!(visible.contains(hint), "missing {hint}:\n{visible}");
+        }
+
+        dashboard.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(dashboard.palette.is_some());
+        assert!(!dashboard.palette.as_ref().unwrap().new_agent_picker_open);
+
+        let mut refused = branch_dashboard();
+        refused.install_area(area);
+        refused.palette.as_mut().unwrap().suggestions.cache.insert(
+            "consigint".into(),
+            Ok(super::super::git_hints::Hints {
+                branches: vec!["main".into()],
+                base: "main".into(),
+            }),
+        );
+        refused.palette_paste("feature/already-used");
+        refused.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let request_id = refused.palette.as_ref().unwrap().pending.unwrap();
+        assert!(
+            refused
+                .palette_response(
+                    request_id,
+                    &Response::Error {
+                        code: crate::protocol::ErrorCode::AlreadyExists,
+                        message: "branch already exists".into(),
+                    },
+                )
+                .is_some()
+        );
+        let refusal = refused
+            .palette
+            .as_ref()
+            .unwrap()
+            .error
+            .as_deref()
+            .expect("non-partial branch refusal")
+            .to_owned();
+        let project = find_label(&render(&refused, 60, 18), "consigint");
+        click(&mut refused, project.0, project.1, 60, 18);
+        let buffer = render(&refused, 60, 18);
+        let visible = (0..18)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains(&refusal), "{visible}");
+        for hint in ["Enter accept", "Esc close picker", "Tab fields"] {
+            assert!(visible.contains(hint), "missing {hint}:\n{visible}");
+        }
     }
 
     #[test]
