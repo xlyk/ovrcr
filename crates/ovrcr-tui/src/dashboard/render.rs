@@ -1309,20 +1309,10 @@ fn tree_line_text(
                 let indent = dashboard.sidebar_jump_label(*id).map_or_else(
                     || vec![Span::raw(SESSION_INDENT)],
                     |label| {
-                        let code_width = dashboard.sidebar_jump_code_width().unwrap_or(1);
-                        let badge = format!("[{label:0width$}]", width = code_width);
-                        let (color, modifier) = match dashboard.sidebar_jump_prefix() {
-                            Some(prefix) if badge.starts_with(&format!("[{prefix}")) => {
-                                (MAUVE(), Modifier::BOLD)
-                            }
-                            Some(_) => (MUTED(), Modifier::DIM),
-                            None => (MAUVE(), Modifier::empty()),
-                        };
-                        let trailing_space = if code_width == 1 { " " } else { "" };
                         vec![
                             Span::raw(" "),
-                            Span::styled(badge, Style::default().fg(color).add_modifier(modifier)),
-                            Span::raw(trailing_space),
+                            Span::styled(format!("[{label}]"), Style::default().fg(MAUVE())),
+                            Span::raw(" "),
                         ]
                     },
                 );

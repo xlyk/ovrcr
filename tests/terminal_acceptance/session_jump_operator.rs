@@ -1,20 +1,20 @@
 use super::*;
 use anyhow::Context;
 
-fn command_press() -> &'static [u8] {
-    b"\x1b[57444;1:1u"
+fn control_press() -> &'static [u8] {
+    b"\x1b[57442;1:1u"
 }
 
-fn command_release() -> &'static [u8] {
-    b"\x1b[57444;1:3u"
+fn control_release() -> &'static [u8] {
+    b"\x1b[57442;1:3u"
 }
 
-fn command_digit(digit: char, kind: u8) -> Vec<u8> {
-    format!("\x1b[{};9:{kind}u", u32::from(digit)).into_bytes()
+fn control_digit(digit: char, kind: u8) -> Vec<u8> {
+    format!("\x1b[{};5:{kind}u", u32::from(digit)).into_bytes()
 }
 
 #[test]
-fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() -> Result<()> {
+fn operator_control_jump_uses_the_live_agent_and_preserves_its_unsent_draft() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     let target = create_search_agent(&mut fixture, "operator-agent")?;
@@ -54,7 +54,7 @@ fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
     dashboard.send(b"OPERATOR_DRAFT")?;
     dashboard.wait_for_screen(|screen| screen.contains("OPERATOR_DRAFT"), wait_deadline())?;
 
-    dashboard.send(command_press())?;
+    dashboard.send(control_press())?;
     dashboard.wait_for_screen(
         |screen| {
             screen.lines().any(|line| {
@@ -65,15 +65,15 @@ fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
         },
         wait_deadline(),
     )?;
-    dashboard.send(&command_digit('1', 1))?;
+    dashboard.send(&control_digit('1', 1))?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Session selected"),
         wait_deadline(),
     )?;
     // A repeat and another code after selection cannot type into the composer or target.
-    dashboard.send(&command_digit('1', 2))?;
-    dashboard.send(&command_digit('2', 1))?;
-    dashboard.send(command_release())?;
+    dashboard.send(&control_digit('1', 2))?;
+    dashboard.send(&control_digit('2', 1))?;
+    dashboard.send(control_release())?;
     dashboard.wait_for_screen(
         |screen| screen.contains("READY_operator-agent") && screen.contains("Terminal mode"),
         wait_deadline(),
@@ -89,7 +89,7 @@ fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
     assert!(
         !target_text.contains("RECEIVED_operator-agent_1")
             && !target_text.contains("RECEIVED_operator-agent_2"),
-        "Command codes or repeats reached the target Agent: {target_text}"
+        "Control digits or repeats reached the target Agent: {target_text}"
     );
     let old_text = fixture.read_terminal(old_program.id)?;
     assert!(
@@ -113,7 +113,7 @@ fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
     );
     assert!(
         !returned.contains("OPERATOR_DRAFT1") && !returned.contains("OPERATOR_DRAFT2"),
-        "Command codes or repeats became composer text: {returned}"
+        "Control digits or repeats became composer text: {returned}"
     );
 
     eprintln!(

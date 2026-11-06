@@ -79,16 +79,16 @@ fn jump_digit(screen: &str, title: &str) -> Result<char> {
         .with_context(|| format!("title row {title:?} has no jump label:\n{line}"))
 }
 
-fn command_press() -> &'static [u8] {
-    b"\x1b[57444;1:1u"
+fn control_press() -> &'static [u8] {
+    b"\x1b[57442;1:1u"
 }
 
-fn command_release() -> &'static [u8] {
-    b"\x1b[57444;1:3u"
+fn control_release() -> &'static [u8] {
+    b"\x1b[57442;1:3u"
 }
 
-fn command_digit(digit: char) -> Vec<u8> {
-    format!("\x1b[{};9:1u", u32::from(digit)).into_bytes()
+fn control_digit(digit: char) -> Vec<u8> {
+    format!("\x1b[{};5:1u", u32::from(digit)).into_bytes()
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         |screen| screen.contains("retained-agent") && screen.contains("running-agent"),
         wait_deadline(),
     )?;
-    dashboard.send(command_press())?;
+    dashboard.send(control_press())?;
     dashboard.wait_for_screen(
         |screen| {
             screen.lines().any(|line| {
@@ -133,13 +133,13 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
     )?;
     let retained_code = jump_digit(&dashboard.rendered(), "retained-agent");
     let retained_code = retained_code?;
-    dashboard.send(&command_digit(retained_code))?;
+    dashboard.send(&control_digit(retained_code))?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Session selected"),
         wait_deadline(),
     )?;
     dashboard.send(b"RETAINED_SELECTION_LEAK\r")?;
-    dashboard.send(command_release())?;
+    dashboard.send(control_release())?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE") && !screen.contains("Session selected"),
         wait_deadline(),
@@ -172,7 +172,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         "keys held after retained selection must not reach an Agent"
     );
 
-    dashboard.send(command_press())?;
+    dashboard.send(control_press())?;
     dashboard.wait_for_screen(
         |screen| {
             screen.lines().any(|line| {
@@ -185,12 +185,12 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         wait_deadline(),
     )?;
     let running_code = jump_digit(&dashboard.rendered(), "running-agent")?;
-    dashboard.send(&command_digit(running_code))?;
+    dashboard.send(&control_digit(running_code))?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Session selected"),
         wait_deadline(),
     )?;
-    dashboard.send(command_release())?;
+    dashboard.send(control_release())?;
     dashboard.wait_for_screen(
         |screen| screen.contains("READY_running-agent") && screen.contains("Terminal mode"),
         wait_deadline(),

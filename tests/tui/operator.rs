@@ -6,9 +6,9 @@ use ovrcr_protocol::{
     SessionKind, SessionRunId,
 };
 
-fn command_event(kind: KeyEventKind) -> Event {
+fn control_event(kind: KeyEventKind) -> Event {
     Event::Key(KeyEvent::new_with_kind(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         kind,
     ))
@@ -44,8 +44,8 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
     dashboard.drain_outbox();
 
     // The initial New Conversation form keeps its ordinary key priority.
-    dashboard.event_action(command_event(KeyEventKind::Press));
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Release));
     let initial = rendered_rows(&dashboard, 120, 40).join("\n");
     assert!(initial.contains("New Conversation"), "{initial}");
     assert!(
@@ -55,7 +55,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
 
     // A form saved behind Browse is not a modal until Operator is visible again.
     dashboard.ctrl('g');
-    dashboard.event_action(command_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Press));
     let browse = rendered_rows(&dashboard, 120, 40);
     assert!(
         browse
@@ -64,7 +64,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
             .is_some_and(|row| row.contains("[1]")),
         "a hidden Operator form cannot block the shared Browse gesture: {browse:?}"
     );
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(control_event(KeyEventKind::Release));
     dashboard.key(KeyCode::Char('o'));
     dashboard.drain_outbox();
 
@@ -152,7 +152,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
         "{before}"
     );
 
-    dashboard.event_action(command_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Press));
     let held = rendered_rows(&dashboard, 120, 40);
     let agent_row = held
         .iter()
@@ -163,7 +163,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
         "Operator exposes the Agent label: {agent_row}"
     );
     assert!(
-        rendered_footer(&dashboard, 120).contains("Cmd+digit jump"),
+        rendered_footer(&dashboard, 120).contains("Ctrl+1–9 jump"),
         "Operator footer explains the active gesture"
     );
     if let Some(chat_row) = held.iter().find(|row| row.contains("operator-chat")) {
@@ -172,7 +172,34 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
             "Operator chat rows are not targets: {chat_row}"
         );
     }
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    let after_ctrl_c = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        !after_ctrl_c.contains("draft"),
+        "Ctrl+C keeps its ordinary Operator draft-clear behavior: {after_ctrl_c}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(dashboard.drain_outbox().is_empty());
+    dashboard.event_action(control_event(KeyEventKind::Release));
+
+    dashboard.event_action(Event::Paste("draft 界".into()));
+    dashboard.key(KeyCode::Left);
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Backspace,
+        KeyModifiers::SUPER,
+    )));
+    let after_cmd_backspace = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        after_cmd_backspace.contains("draft ▏界"),
+        "Command+Backspace remains separate and preserves the draft: {after_cmd_backspace}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(dashboard.drain_outbox().is_empty());
+    dashboard.event_action(control_event(KeyEventKind::Release));
     dashboard.key(KeyCode::Char('!'));
     let after = rendered_rows(&dashboard, 120, 40).join("\n");
     assert!(
@@ -185,10 +212,10 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
         Request::Operator(OperatorRequest::Submit { .. })
     )));
 
-    dashboard.event_action(command_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Press));
     dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
         KeyCode::Char('1'),
-        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     )));
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
@@ -198,7 +225,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
         &view.request,
         Request::SetView { view } if view.focused == Some(SessionId(4))
     ));
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(control_event(KeyEventKind::Release));
     dashboard.ctrl('g');
     dashboard.key(KeyCode::Char('o'));
     dashboard.key(KeyCode::Char('X'));
@@ -222,7 +249,7 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
 }
 
 #[test]
-fn operator_cmd_jump_does_not_reveal_its_on_demand_sidebar() {
+fn operator_control_jump_does_not_reveal_its_on_demand_sidebar() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.truncate(1);
     hierarchy.projects[0].workspaces.truncate(1);
@@ -272,23 +299,23 @@ fn operator_cmd_jump_does_not_reveal_its_on_demand_sidebar() {
     });
     dashboard.drain_outbox();
 
-    dashboard.event_action(command_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Press));
     dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
         KeyCode::Char('1'),
-        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     )));
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(control_event(KeyEventKind::Release));
     let hidden = rendered_rows(&dashboard, 80, 24).join("\n");
     assert!(
         !hidden.contains("operator-agent"),
-        "Cmd cannot reveal the sidebar: {hidden}"
+        "Control cannot reveal the sidebar: {hidden}"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
 
     // At narrow widths Ctrl-L explicitly opens the on-demand shared sidebar.
     dashboard.ctrl('l');
-    dashboard.event_action(command_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Press));
     let open = rendered_rows(&dashboard, 80, 24);
     let agent_row = open
         .iter()
@@ -298,7 +325,7 @@ fn operator_cmd_jump_does_not_reveal_its_on_demand_sidebar() {
         agent_row.contains("[1]"),
         "visible Agent receives a label: {agent_row}"
     );
-    dashboard.event_action(command_event(KeyEventKind::Release));
+    dashboard.event_action(control_event(KeyEventKind::Release));
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
 }
 
@@ -379,7 +406,7 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
             .find(|row| row.contains("jump-target"))
             .unwrap_or_else(|| panic!("{cols}×{rows}: visible Agent row missing: {before:?}"));
         let status_and_title = before_agent.chars().skip(5).collect::<String>();
-        dashboard.event_action(command_event(KeyEventKind::Press));
+        dashboard.event_action(control_event(KeyEventKind::Press));
         let held = rendered_rows(&dashboard, cols, rows);
         if below_operator_floor {
             let text = held
@@ -389,7 +416,7 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
                 .join(" ");
             assert!(
                 text.contains("60×16") && text.contains("Resize to continue"),
-                "{cols}×{rows}: Cmd preserves Operator resize guidance: {text}"
+                "{cols}×{rows}: Control preserves Operator resize guidance: {text}"
             );
         }
         let after_agent = held
@@ -402,18 +429,18 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
                 "{cols}×{rows}: below the Operator floor suppress labels: {after_agent}"
             );
             assert!(
-                !rendered_footer(&dashboard, cols).contains("Cmd+digit"),
+                !rendered_footer(&dashboard, cols).contains("Ctrl+1–9"),
                 "{cols}×{rows}: the gesture hint stays hidden below the floor"
             );
             dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
                 KeyCode::Char('1'),
-                KeyModifiers::SUPER,
+                KeyModifiers::CONTROL,
                 KeyEventKind::Press,
             )));
             assert_eq!(
                 dashboard.focused_session(),
                 Some(SessionId(3)),
-                "{cols}×{rows}: Command digits cannot select below the Operator floor"
+                "{cols}×{rows}: Control digits cannot select below the Operator floor"
             );
         } else {
             assert!(
@@ -427,7 +454,7 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
             "{cols}×{rows}: title/status columns stay fixed"
         );
         assert_eq!(held.len(), before.len(), "{cols}×{rows}: rows do not move");
-        dashboard.event_action(command_event(KeyEventKind::Release));
+        dashboard.event_action(control_event(KeyEventKind::Release));
         let target_row = rendered_rows(&dashboard, cols, rows)
             .iter()
             .position(|row| row.contains("jump-target"))

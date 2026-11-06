@@ -926,7 +926,7 @@ mod outbox_dispatch_tests {
             .sessions
             .push(target);
         dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             KeyModifiers::NONE,
             KeyEventKind::Press,
         )));
@@ -1061,7 +1061,7 @@ mod outbox_dispatch_tests {
     }
 
     #[test]
-    fn command_jump_release_before_ack_discards_queued_input_at_the_real_boundary() {
+    fn control_jump_release_before_ack_discards_queued_input_at_the_real_boundary() {
         use std::collections::VecDeque;
 
         let (mut dashboard, current) = super::unread_review_tests::fixture();
@@ -1083,14 +1083,14 @@ mod outbox_dispatch_tests {
             .push(target);
 
         dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             KeyModifiers::NONE,
             KeyEventKind::Press,
         )));
         assert_eq!(
             dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
                 KeyCode::Char('1'),
-                KeyModifiers::SUPER,
+                KeyModifiers::CONTROL,
                 KeyEventKind::Press,
             ))),
             DashboardAction::Redraw
@@ -1101,10 +1101,10 @@ mod outbox_dispatch_tests {
         };
         assert_eq!(view.focused, Some(SessionId(2)));
 
-        // Cmd-up precedes the view response. The acknowledged snapshot must
+        // Ctrl-up precedes the view response. The acknowledged snapshot must
         // still wait for the event loop's bounded input-drain boundary.
         dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             KeyModifiers::NONE,
             KeyEventKind::Release,
         )));

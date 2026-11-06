@@ -84,12 +84,12 @@ fn agent_results(dashboard: &Dashboard) -> String {
         .join("\n")
 }
 
-fn command_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Event {
+fn key_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Event {
     Event::Key(KeyEvent::new_with_kind(code, modifiers, kind))
 }
 
 #[test]
-fn command_hold_labels_visible_running_agents_without_moving_the_title_column() {
+fn control_hold_labels_visible_running_agents_without_moving_the_title_column() {
     let mut dashboard = agents_dashboard();
     let before = rendered_rows(&dashboard, 120, 40);
     let original = before
@@ -104,8 +104,8 @@ fn command_hold_labels_visible_running_agents_without_moving_the_title_column() 
         .skip(5)
         .collect::<String>();
 
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -142,8 +142,8 @@ fn command_hold_labels_visible_running_agents_without_moving_the_title_column() 
     }
     assert_eq!(held.len(), before.len(), "labels do not add sidebar rows");
 
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
@@ -162,10 +162,10 @@ fn command_hold_labels_visible_running_agents_without_moving_the_title_column() 
 }
 
 #[test]
-fn command_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() {
+fn control_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() {
     let mut dashboard = agents_dashboard();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -184,9 +184,9 @@ fn command_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() 
     );
 
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
@@ -215,20 +215,20 @@ fn command_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() 
     acknowledge_all_view_targets(&mut dashboard, request);
     assert!(
         rendered_footer(&dashboard, 120).contains("Session selected"),
-        "an acknowledged view still waits for Command release"
+        "an acknowledged view still waits for Control release"
     );
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('3'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Repeat,
         )),
         DashboardAction::None,
         "repeat and later digits cannot select a second destination"
     );
 
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
@@ -241,7 +241,7 @@ fn command_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() 
 }
 
 #[test]
-fn command_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles() {
+fn control_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles() {
     for (cols, rows) in [(120, 40), (80, 24), (60, 24)] {
         let mut hierarchy = agents_hierarchy();
         let unicode_title = "界e\u{301}🙂";
@@ -277,8 +277,8 @@ fn command_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
         let original_suffix = before_row.chars().skip(5).collect::<String>();
         let panes = dashboard.pane_rects(Rect::new(0, 0, cols, rows));
 
-        dashboard.event_action(command_event(
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        dashboard.event_action(key_event(
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             KeyModifiers::NONE,
             KeyEventKind::Press,
         ));
@@ -311,20 +311,20 @@ fn command_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
 }
 
 #[test]
-fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
+fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
     let mut dashboard = agents_dashboard();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::RightSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::RightControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
@@ -332,10 +332,10 @@ fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
         rendered_rows(&dashboard, 120, 40)
             .iter()
             .any(|row| row.contains("agent-title-1") && row.contains("[1]")),
-        "releasing one Command key leaves the other held"
+        "releasing one Control key leaves the other held"
     );
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::RightSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::RightControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
@@ -347,8 +347,8 @@ fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
 
     dashboard.key(KeyCode::Char('b'));
     let focused = dashboard.focused_session();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -358,9 +358,9 @@ fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
             .any(|row| row.contains("[1]"))
     );
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::None,
@@ -373,31 +373,37 @@ fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
     assert_eq!(terminal.key(KeyCode::Enter), DashboardAction::Redraw);
     terminal.ctrl('g');
     terminal.key(KeyCode::Char('b'));
+    terminal.install_screen(SessionId(1), &[]);
     assert_eq!(terminal.key(KeyCode::Enter), DashboardAction::Redraw);
+    let terminal_footer = rendered_footer(&terminal, 120);
+    assert!(
+        terminal_footer.contains("Terminal mode"),
+        "expected hidden-sidebar Terminal mode after a fresh view ack: {terminal_footer}"
+    );
     terminal.drain_outbox();
-    terminal.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    terminal.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     assert_eq!(
-        terminal.event_action(command_event(
+        terminal.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
-        DashboardAction::None,
-        "a Command digit cannot become a child byte when the sidebar is hidden"
+        DashboardAction::PtyBytes(vec![0]),
+        "hidden-sidebar Ctrl+2 keeps its ordinary NUL input path"
     );
     assert!(terminal.drain_outbox().is_empty());
 }
 
 #[test]
-fn a_nonlabel_command_key_cancels_without_navigating() {
+fn command_shortcut_cancels_control_hold_without_navigating() {
     let mut dashboard = agents_dashboard();
     let focused = dashboard.focused_session();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -408,7 +414,7 @@ fn a_nonlabel_command_key_cancels_without_navigating() {
     );
 
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Backspace,
             KeyModifiers::SUPER,
             KeyEventKind::Press,
@@ -426,7 +432,7 @@ fn a_nonlabel_command_key_cancels_without_navigating() {
 }
 
 #[test]
-fn unverified_frontend_keeps_command_keys_out_of_browse_actions_and_child_input() {
+fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
     assert_eq!(
         DashboardInputProfile::from_environment_value(Some(
             ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
@@ -439,17 +445,17 @@ fn unverified_frontend_keeps_command_keys_out_of_browse_actions_and_child_input(
     );
     let mut dashboard = unverified_agents_dashboard();
     let focused = dashboard.focused_session();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     let rows = rendered_rows(&dashboard, 120, 40);
     assert!(!rows.iter().any(|row| row.contains("[1]")));
-    assert!(!rendered_footer(&dashboard, 120).contains("Cmd+digit"));
+    assert!(!rendered_footer(&dashboard, 120).contains("Ctrl+1–9"));
 
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('k'),
             KeyModifiers::SUPER,
             KeyEventKind::Press,
@@ -462,23 +468,71 @@ fn unverified_frontend_keeps_command_keys_out_of_browse_actions_and_child_input(
     dashboard.key(KeyCode::Enter);
     dashboard.drain_outbox();
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::None,
-        "unsupported Command input must not become an unmodified child byte"
+        "unsupported Control input must not become an unmodified child byte"
     );
     assert!(dashboard.drain_outbox().is_empty());
     assert_eq!(dashboard.focused_session(), focused);
 }
 
 #[test]
-fn gui_palette_shortcut_cancels_a_live_hold_and_keeps_dashboard_handling() {
+fn command_modifier_does_not_start_the_verified_control_hold() {
     let mut dashboard = agents_dashboard();
-    dashboard.event_action(command_event(
+    let focused = dashboard.focused_session();
+    dashboard.event_action(key_event(
         KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "Command is separate from the Control hold"
+    );
+    assert_eq!(
+        dashboard.event_action(key_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert!(dashboard.drain_outbox().is_empty());
+}
+
+#[test]
+fn ctrl_o_keeps_its_operator_quick_message_path_during_control_hold() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    dashboard.event_action(key_event(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    ));
+    let screen = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(screen.contains("Quick message"), "{screen}");
+    assert!(
+        !screen.contains("[1]"),
+        "the hold cancels before Operator opens"
+    );
+}
+
+#[test]
+fn ctrl_g_cancels_a_live_hold_and_keeps_dashboard_handling() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -489,7 +543,7 @@ fn gui_palette_shortcut_cancels_a_live_hold_and_keeps_dashboard_handling() {
     );
 
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('g'),
             KeyModifiers::CONTROL,
             KeyEventKind::Press,
@@ -498,7 +552,7 @@ fn gui_palette_shortcut_cancels_a_live_hold_and_keeps_dashboard_handling() {
         "the ordinary Browse Ctrl-g handling remains available"
     );
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char(':'),
             KeyModifiers::NONE,
             KeyEventKind::Press,
@@ -509,9 +563,9 @@ fn gui_palette_shortcut_cancels_a_live_hold_and_keeps_dashboard_handling() {
 }
 
 #[test]
-fn shared_jump_binding_appears_in_footer_key_popup_and_palette() {
+fn shared_control_jump_binding_appears_in_footer_key_popup_and_palette() {
     let mut dashboard = agents_dashboard();
-    assert!(rendered_footer(&dashboard, 120).contains("Cmd hold Jump to visible Agent"));
+    assert!(rendered_footer(&dashboard, 120).contains("Ctrl hold Jump to visible Agent"));
 
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('v'));
@@ -528,10 +582,10 @@ fn shared_jump_binding_appears_in_footer_key_popup_and_palette() {
 }
 
 #[test]
-fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_label() {
+fn control_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_label() {
     let mut dashboard = agents_dashboard();
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -574,9 +628,9 @@ fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
     assert!(!inserted_row.contains("[1]") && !inserted_row.contains("[2]"));
     let focused = dashboard.focused_session();
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
@@ -584,9 +638,9 @@ fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
     assert_eq!(dashboard.focused_session(), focused);
     assert!(rendered_footer(&dashboard, 120).contains("Agent unavailable"));
     assert_eq!(
-        dashboard.event_action(command_event(
+        dashboard.event_action(key_event(
             KeyCode::Char('3'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw,
@@ -596,7 +650,7 @@ fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
 }
 
 #[test]
-fn ten_visible_agents_use_two_digit_labels_and_search_stays_available() {
+fn long_visible_agent_list_uses_first_nine_single_digit_labels_and_search_stays_available() {
     let mut hierarchy = agents_hierarchy();
     let template = hierarchy
         .projects
@@ -624,17 +678,19 @@ fn ten_visible_agents_use_two_digit_labels_and_search_stays_available() {
     );
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 120, 40));
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     let rows = rendered_rows(&dashboard, 120, 40);
-    assert!(rows.iter().any(|row| row.contains("[01]")));
-    assert!(rows.iter().any(|row| row.contains("[10]")));
-    assert!(rendered_footer(&dashboard, 120).contains("two digits"));
-    dashboard.event_action(command_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+    assert!(rows.iter().any(|row| row.contains("[1]")));
+    assert!(rows.iter().any(|row| row.contains("[9]")));
+    assert!(!rows.iter().any(|row| row.contains("[01]")));
+    assert!(!rows.iter().any(|row| row.contains("[10]")));
+    assert!(rendered_footer(&dashboard, 120).contains("Ctrl+1–9 jump"));
+    dashboard.event_action(key_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
