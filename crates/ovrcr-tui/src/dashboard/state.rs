@@ -606,14 +606,16 @@ impl SidebarJumpTarget {
             && !session.archived
             && session.run == self.run
             && matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
-            && match (&self.phase, &session.phase) {
-                (SidebarJumpPhase::Running, SessionPhase::Running) => true,
-                (
-                    SidebarJumpPhase::Retained,
-                    SessionPhase::Exited { .. } | SessionPhase::Stopped | SessionPhase::Interrupted,
-                ) => true,
-                _ => false,
-            }
+            && matches!(
+                (&self.phase, &session.phase),
+                (SidebarJumpPhase::Running, SessionPhase::Running)
+                    | (
+                        SidebarJumpPhase::Retained,
+                        SessionPhase::Exited { .. }
+                            | SessionPhase::Stopped
+                            | SessionPhase::Interrupted
+                    )
+            )
     }
 }
 
@@ -1012,12 +1014,13 @@ impl Dashboard {
             || self.copy.is_some()
             || self.history.is_some()
             || self.operator_quick_visible()
-            || self.operator.visible
-            || self.operator_is_editing()
+            || (self.operator.visible && self.operator_has_form())
     }
 
     fn sidebar_jump_can_start(&self) -> bool {
         matches!(self.mode, InputMode::Browse | InputMode::Terminal)
+            && (!self.operator.visible
+                || (self.outer_area.width >= 60 && self.outer_area.height >= 16))
             && self.sidebar_preference() != Some(0)
             && !self.sidebar_jump_modal_priority_open()
             && self.agent_typing.is_none()
@@ -1031,7 +1034,7 @@ impl Dashboard {
 
     /// Uses the rendered tree's exact heights, viewport and top-to-bottom row order.
     fn visible_sidebar_jump_targets(&self) -> Vec<SidebarJumpTarget> {
-        if self.sidebar_preference() == Some(0) || self.operator.visible {
+        if self.sidebar_preference() == Some(0) {
             return Vec::new();
         }
         let tree = self.sidebar_rects(self.outer_area).tree;
@@ -2093,11 +2096,11 @@ impl Dashboard {
         {
             return action;
         }
-        if self.operator_is_editing() {
-            return self.operator_key(key);
-        }
         if let Some(action) = self.dispatch_sidebar_jump_key(key) {
             return action;
+        }
+        if self.operator_is_editing() {
+            return self.operator_key(key);
         }
         // Esc dismisses the Lifecycle status strip only while a job runs.
         // After a failure that could not return to its form, one Esc dismisses
