@@ -23,3 +23,5 @@
 ## Cleanup
 
 - Removed task TMPDIRs `/private/tmp/ovrcr-401-gui-temp` and `/private/tmp/ovrcr-401-gui-focus-temp` after checking them. The sandbox-denied run's `ovrcr-gui-zXDKxC` log recorded socket-bind `Operation not permitted`; startup-timeout roots `ovrcr-gui-0Vi9p1` and `ovrcr-gui-7bRPAH` were absent when checked after their runs. No task-owned Demo fixture remains.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

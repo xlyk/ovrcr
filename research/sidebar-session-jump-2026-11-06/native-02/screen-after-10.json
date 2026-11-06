@@ -1,1 +1,0 @@
-{"id":10,"rows":57,"cols":126,"text":"╭─ grok / grok-4.6 ────────────────────────────────────────╮\n│ fixture: authentication handoff review\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ printf 'NATIVE_%s\\n' JUMP_OK\nNATIVE_JUMP_OK\nsh-3.2$ exit\nexit"}

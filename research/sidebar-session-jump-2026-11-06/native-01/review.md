@@ -12,3 +12,5 @@ The GUI starts a private Server, local shells and six Agent-kind shell stand-ins
 Meaningful acceptance remains red; automated protocol tests cannot substitute for this native result. GUI adapter correction and recapture required.
 
 Cleanup: CUA closed native window; retained launcher exited 0. Private root removed; all 12 recorded owned process groups absent (ProcessLookupError), recorded in owned-groups.json. No resources remain from this attempt.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

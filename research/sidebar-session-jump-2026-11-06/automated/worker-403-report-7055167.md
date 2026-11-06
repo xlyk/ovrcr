@@ -40,3 +40,24 @@ The successful live test is an injected Kitty enhanced-key event acceptance thro
 Read-only comparison against `codex/sidebar-session-jump-integration` found overlap with the retained-Agent implementation. Preserve the incoming `SidebarJumpTarget` phase capture, exact run/phase revalidation, retained browse-only selection branch and recovery suppression. Reintroduce #403's captured code width/prefix, two-digit dispatch/backspace/footer helpers and adaptive badge rendering alongside that path. Keep both adaptive and retained test modules in the top-level module declarations, and combine the docs so they describe both adaptive numbering and retained browse-only navigation. No conflict resolution or history mutation has been performed in this worktree.
 
 Native Command-key input, native-visible selection, screenshot/accessibility capture and native cancel/incomplete-release cases remain for root's CUA pass.
+
+## Resume after integration approval
+
+- User-approved merge of integration tip `7d328834583064bafd032e221b02b70cfebcb206` completed on `codex/sidebar-session-jump-403` as merge commit `7189f38c11d4b138bc5428304966986823c9717b`. Parents are the original #403 commit `7055167accc989a1fa5de6e84c0cf78998d1385d` and integration tip `7d328834...`. No main merge or push occurred. The final worktree is clean.
+- Conflict resolution kept the captured Running/Retained phase and exact-run selection behavior, restored the adaptive width/prefix dispatch and rendering alongside it, and listed both adaptive and retained modules. The adaptive empty-state assertion now expects #404's updated `No visible Agents` text.
+- Checks used private `HOME=/private/tmp/ovrcr-401-implementation/home-403-resume`, `CARGO_HOME=/Users/xlyk/.cargo` for the existing cached registry, `--offline`, and only `CARGO_TARGET_DIR=/private/tmp/ovrcr-401-build-403`. The compiled acceptance fixtures used `TMPDIR=/private/tmp/ovrcr-401-implementation/tmp-403-resume` and required socket/PTY escalation.
+
+| Check on merged tree `7189f38c` | Result |
+| --- | --- |
+| `cargo test --offline -p ovrcr --test tui session_jump_adaptive::` | 8 passed. |
+| `cargo test --offline -p ovrcr --test tui session_jump_retained::` | 4 passed. |
+| `cargo test --offline -p ovrcr --test tui agent_search::` | 26 passed. |
+| `cargo test --offline -p ovrcr --test terminal_acceptance session_jump_adaptive::two_digit_jump_selects_the_tenth_agent_through_the_compiled_dashboard -- --exact` | 1 passed in 8.80s. |
+| `cargo test --offline -p ovrcr --test terminal_acceptance session_jump_retained::retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post_release_input -- --exact` | 1 passed in 11.52s. |
+| `cargo fmt --all -- --check` | Passed. |
+
+Full command output is saved in these unique logs under `/private/tmp/ovrcr-401-implementation`: `403-resume-tui-adaptive-green-7d328834.log`, `403-resume-tui-retained-green-7d328834.log`, `403-resume-tui-search-green-7d328834.log`, `403-resume-terminal-adaptive-escalated-green-7d328834.log`, and `403-resume-terminal-retained-green-7d328834.log`. The earlier private-HOME Cargo-cache network attempt and unprivileged socket attempt are preserved separately as `403-resume-tui-adaptive-7d328834.log` and `403-resume-terminal-adaptive-socket-failure-7d328834.log`. The first run was interrupted before tests because its private HOME had no Cargo cache; using the existing cache offline fixed that. The unprivileged acceptance server PID 85502 exited, and its task-owned fixture root was removed before the passing rerun. The private TMPDIR is empty after fixture cleanup.
+
+`git diff --check` passes for source and test changes. The full staged diff check reports whitespace in the incoming native accessibility/screen/log captures under `research/sidebar-session-jump-2026-11-06`; those recorded outputs were preserved byte-for-byte. No conflict markers remain.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

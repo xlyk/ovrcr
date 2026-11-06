@@ -1,6 +1,6 @@
 # GUI focus freshness sidecar
 
-Branch `codex/sidebar-jump-focus-freshness`, commit `ad23734b7f06cae8d16872eee4979e6afa07817e` (parent `f0ce72553bdfdfd9aeb263a20f543ef95c9f864c`). The branch is committed and clean; no merge, rebase, or cherry-pick was performed.
+Branch `codex/sidebar-jump-focus-freshness`, current tip `db6e64a5a4443f1557fa0ee02b064c790047fcd8`. This is a local merge commit with parents GUI fix `ad23734b7f06cae8d16872eee4979e6afa07817e` and approved integration `ecae488b29af985fa33ea4ce1a4aeb09fc035f87`. The worktree is clean; nothing was pushed or merged to main.
 
 ## Finding and change
 
@@ -18,6 +18,8 @@ Source: `src/gui/input.rs:88–107`, `420–445`, `715–825`; production caller
 - GUI Clippy: `CARGO_TARGET_DIR=/private/tmp/ovrcr-401-build-freshness rtk proxy cargo clippy --features gui --bin ovrcr-gui --test gui --no-deps -- -D warnings` passed; log `/private/tmp/ovrcr-401-implementation/focus-freshness-clippy-final.log`. The same command without `--no-deps` stops at the inherited #404 `match_like_matches_macro` lint in `crates/ovrcr-tui/src/dashboard/state.rs:609`; log `/private/tmp/ovrcr-401-implementation/focus-freshness-clippy.log`.
 - `rtk proxy cargo fmt --all -- --check` and `rtk proxy git diff --check` passed after the final change.
 
+After the approved integration merge, `cargo fmt --all -- --check` and `git diff --check HEAD^1 HEAD -- src tests docs` passed. A full `git diff --check HEAD^1 HEAD` reports only trailing blank lines at EOF in three newly archived raw log files; those evidence files were preserved unchanged. The merge was clean, all `encode_terminal_frame` callers still use `TerminalFrameInput`, and no builds/tests were rerun on the merged tree per the integration handoff; root owns the final integrated acceptance run.
+
 Earlier failed attempts and their logs remain in the same notes directory (`focus-freshness-dashboard-01.log` through `-07.log`): the first hit sandbox socket denial; later attempts exposed an overly strict byte assertion and a test helper that searched the pane header instead of the sidebar side of `│`. The retained socket-startup fixture `ovrcr-gui-TC5GWZ` was removed after the harness reported the server process had exited; the final PTY test cleaned its fixture and verified child process groups exited.
 
 ## Remaining acceptance
@@ -25,3 +27,5 @@ Earlier failed attempts and their logs remain in the same notes directory (`focu
 Native GUI input was not exercised in this sidecar; root owns CUA and must rerun it on the integrated branch. If the host reports only aggregate Cmd, with no physical Super edge and no focused clear modifier/native-input observation after regain, the adapter cannot distinguish a new press from a stale held modifier and keeps it quarantined.
 
 Coordinator clarification: the inherited lint belongs to #404 and its equivalent `matches!` fix is committed on the unmerged #405 branch at `91994038`. Full integrated Clippy remains unrun.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

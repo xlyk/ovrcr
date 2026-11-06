@@ -22,3 +22,5 @@ Reviewed source `8575c5f6296df8be619f3e46e8b4845655855ff6`, integration checkout
 ## Cleanup
 
 Closed window through CUA; inventory showed no GUI application, retained launcher23469 exited0. `cleanup.json`: private directory/socket absent and all twelve recorded process groups returned ProcessLookupError. Captured retained run stayed1, phaseExited, PID null. No fixture resources remain.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

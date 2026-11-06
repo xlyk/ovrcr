@@ -24,3 +24,5 @@ The new public Dashboard tests also verify the retained row's rendered status/ti
 The compiled acceptance needed the authorized fixture-access retry for Unix sockets/process groups. Two failed startup fixture roots were checked for their reported Server PIDs, found inactive, and removed. The successful fixture shut down and cleaned itself. Native GUI/CUA evidence is still root-owned and remains required; this report makes no host-keyboard claim.
 
 The terminal acceptance was run under the assigned `CARGO_TARGET_DIR`, with a private test `HOME` and the existing Cargo cache. The TUI and acceptance fixtures used private server sockets/workspaces/profiles. No other target directory was built or cleaned.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).

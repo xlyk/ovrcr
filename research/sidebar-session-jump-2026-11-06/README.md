@@ -18,3 +18,5 @@ Feature: [#401](https://github.com/xlyk/ovrcr/issues/401), slices [#402](https:/
 The [focused reports](automated/) distinguish tested branch revisions from final integrated acceptance. Integration product code at this checkpoint is `f0ce7255` (core402, retained404, GUI correction and native evidence). Adaptive403 is committed separately at `7055167a`; Operator405 at `91994038`; the final focus-ordering/freshness correction at `ad23734b`. Those branches are clean and remain unmerged while direct feature-branch merge approval is pending. Main is not authorized to merge.
 
 The freshness correction has 27/27 input unit cases and 1/1 real GUI-encoder/Dashboard PTY case green; GUI-only Clippy passes with `--no-deps`. Full Clippy still stops at the inherited #404 predicate lint, whose fix is on #405. Final combined workspace tests, lint, independent reviews, adaptive/Operator native checks and current hosted CI remain open; no final acceptance claim. The bounded recorded-frame lookup found no matching GUI frame and did not fill the held-visual gap.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](raw-artifacts.md).

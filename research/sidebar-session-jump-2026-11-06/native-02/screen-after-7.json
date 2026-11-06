@@ -1,1 +1,0 @@
-{"id":7,"rows":57,"cols":126,"text":"╭─ claude / sonnet-4 ────────────────────────────────────────╮\n│ fixture: lifecycle cleanup\n╰──────────────────────────────────────────────────╯\n\n✓ deterministic local transcript ready\nsh-3.2$ printf 'NATIVE_%s\\n' FROM_RETAINED\nNATIVE_FROM_RETAINED\nsh-3.2$ "}

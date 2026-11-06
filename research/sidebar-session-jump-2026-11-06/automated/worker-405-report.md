@@ -42,3 +42,15 @@ Intermediate attempts are preserved rather than overwritten. The first sandboxed
 - Failed sandbox root `.tmpKffSKC` was inventoried, its server PID 35166 confirmed stopped, then the task-owned root removed. Intermediate root `.tmpyMbQgS` and server PID 45016 were also cleaned up.
 - Final worktree status: clean. No build was run in a second target directory.
 - Root still owns native GUI/CUA, integrated regression/lint checks, review, diary, and any authorized integration/PR delivery steps.
+
+## Approved integration follow-up
+
+- Merged current integration `cd983972862139f8f9a49ff067ce5e4289b09ed4` into the feature branch and committed the merge as `c4fbcb054742892faf454d9ef110c2701647c57e` (parents: `91994038ead6ab1678d1e7a3105f9e5ac725f1df` and `cd983972862139f8f9a49ff067ce5e4289b09ed4`). The branch worktree is clean.
+- Resolved the Dashboard key-table conflict by combining shared running/retained Agent code semantics with the Operator open-sidebar and 60×16 constraints. Kept both `session_jump_adaptive` and `session_jump_operator` compiled acceptance modules registered. The state logic auto-merged with retained-target eligibility, adaptive cancellation, Operator modal/floor rules, and the narrow `matches!` lint correction intact.
+- Post-merge `CI=1 CARGO_HOME=/Users/xlyk/.cargo RUSTUP_HOME=/Users/xlyk/.rustup CARGO_TARGET_DIR=/private/tmp/ovrcr-401-build-405 rtk proxy cargo test --offline -p ovrcr --test tui operator -- --nocapture`: 20 passed, 382 filtered; log `/private/tmp/ovrcr-401-implementation/worker-405-merged-operator-01.log`.
+- Post-merge `CI=1 CARGO_HOME=/Users/xlyk/.cargo RUSTUP_HOME=/Users/xlyk/.rustup CARGO_TARGET_DIR=/private/tmp/ovrcr-401-build-405 rtk proxy cargo test --offline -p ovrcr --test terminal_acceptance operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft -- --nocapture` (approved scoped private-socket/PTY access): 1 passed, 27 filtered, 6.60s; log `/private/tmp/ovrcr-401-implementation/worker-405-merged-outerpty-01.log`.
+- Post-merge `rtk cargo fmt --all -- --check` and staged source `rtk git diff --cached --check -- crates docs/dashboard.md docs/development/tui.md tests src` passed.
+- The final fixture root was absent, server PID 77084 was gone, and groups 77343, 77470, 77528, 77615, 77711 were all stopped. No additional target directory or paid model turn was used.
+- Integration includes native GUI evidence from the integration branch. Root owns final review and broader integrated checks; no main merge or push was made.
+
+Original raw capture files named in this report are preserved byte for byte in the [artifact index](../raw-artifacts.md).
