@@ -897,11 +897,19 @@ mod tests {
             .agent_model_catalog
             .enqueue(request)
             .expect("catalog queue is attached before the worker starts");
-        while !pid_file.exists() {
-            assert!(Instant::now() < deadline, "fake catalog did not start");
+        let script_pid: i32 = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.parse().ok())
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fake catalog did not publish its PID"
+            );
             thread::sleep(Duration::from_millis(5));
-        }
-        let script_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        };
         assert_eq!(unsafe { libc::getpgid(script_pid) }, script_pid);
         state.shutdown.store(true, Ordering::Release);
         state.agent_model_catalog.stop();
