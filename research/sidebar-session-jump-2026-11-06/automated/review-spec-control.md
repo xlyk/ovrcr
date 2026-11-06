@@ -17,3 +17,7 @@ No actionable Control/single-digit behavior or scope defect found.
 ## Documentation follow-up
 
 **Resolved** by `a5ecf177de2b3208bd19c2b614920f21d02d4c3e` (`docs(tui): clarify Control byte aliases`) in `/private/tmp/ovrcr-401-single-digit`. The updated [tui.md](/private/tmp/ovrcr-401-single-digit/docs/development/tui.md:111) now says the shared terminal encoder preserves Control-byte aliases, including legacy Ctrl+2-to-NUL behavior. This closes the stale-documentation note; no further review was performed.
+
+## Ctrl+2 gate-test follow-up
+
+**Confirmed; no weakening.** Commit `c0829a4b5a4daa99f105b8c087830eb183399c77` changes only `tests/tui/agent_search.rs`. The unverified-profile case now expects the intentional ordinary `PtyBytes([0])` Ctrl+2 alias, while retaining the no-label/no-hint assertions, Command/Super no-jump assertion, empty outbox, and unchanged focused session. It adds Browse/Terminal footer checks and verifies the footer remains unchanged after the key. This agrees with the approved ordinary-input behavior and the supplied Ctrl+2 preservation contract. Review was read-only; no checks were run.

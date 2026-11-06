@@ -1,0 +1,25 @@
+{
+  "revision": "eb46ac2712c9bde9784122a6407e161076fa6e6f",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "-p",
+    "ovrcr-runtime",
+    "--lib",
+    "--all-features",
+    "server::tests::partial_resize_connection_delivers_error_before_owner_close",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "local_build_profile": {
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false
+  },
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-401-check-xy7yvpjd",
+  "started": "2026-11-06T21:40:53.662487+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-06T21:41:13.047581+00:00"
+}

@@ -30,3 +30,11 @@
 - Full workspace tests and final lint are owned by the parent and have not been run on this new commit. Older baseline full-suite evidence is not attributed to this revision.
 - Private build target `/private/tmp/ovrcr-401-build-single-digit` is 2.6 GiB and is handed to the parent for serialized GUI packaging/preview. Tests used private HOME/TMPDIR at `/private/tmp/ovrcr-401-single-digit-home` and `/private/tmp/ovrcr-401-single-digit-tmp`; fixture-owned processes/sockets are expected to be cleaned by their acceptance harnesses.
 - Follow-up cleanup: the private HOME and TMPDIR directories listed above were removed after testing. The isolated build target remains available to the parent.
+
+## Integrated gate correction — 2026-11-06
+
+The Agent-search 31/31 run above preceded the final Ctrl+2 alias; it did not qualify that whole module at the final feature commit. The integrated Nextest attempt exposed one stale assertion in `unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions`: it expected ordinary Terminal Ctrl+2 to be dropped instead of encoded as NUL. The application correctly returned `PtyBytes([0])`. The test-only correction `c0829a4b` requires that exact NUL, preserves the no-jump/outbox assertions, and adds explicit unchanged Browse/Terminal mode and focus checks. Fresh Agent-search 31/31 and single-digit 9/9 runs pass on that correction.
+
+The [original full attempt](control-workspace-nextest-01.json) remains failed: 1,152 passed (including one recovered setup retry), one stale assertion failed, 33 skipped and 1,513 not run because of fail-fast. The [resume plan](control-resume-plan.json) covers every remaining selected case: 1,514 require success, including the corrected failure. Rerunning their complete binaries selects 1,551 cases, overlapping 37 earlier passes. No new test is excluded.
+
+The separate [partial-resize runtime case](control-partial-resize-01.json) passed 1/1 under Cargo. The [workspace documentation command](control-doc-tests-01.json) completed successfully with zero defined doctests; it is not behavioral-test evidence. Final resumed and current hosted outcomes are recorded in PR #406.
