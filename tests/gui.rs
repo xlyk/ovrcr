@@ -650,10 +650,12 @@ fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
                 modifiers: command,
             },
         )?;
-        wait_screen(&terminal, "Loading agent")?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        wait_screen(&terminal, "Session selected  release Cmd")?;
         send_gui_key_event(&mut terminal, &mut keyboard, Event::WindowFocused(false))?;
-        wait_screen_absent(&terminal, "Loading agent")?;
+        wait_screen_absent(&terminal, "Session selected")?;
         wait_screen(&terminal, "BROWSE")?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
 
         // Focus regain is also sent only while the Dashboard's observed 1004
         // mode remains active.
