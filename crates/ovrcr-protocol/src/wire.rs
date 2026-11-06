@@ -350,12 +350,14 @@ impl InitialPromptLaunchRequest {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
         if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if name == "claude")
-                || self.launch.session.label.as_deref() != Some("claude"))
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi"))
+                || !matches!(self.launch.session.label.as_deref(), Some("claude" | "pi"))
+                || !matches!(
+                    (&self.launch.session.kind, self.launch.session.label.as_deref()),
+                    (SessionKind::Agent { name }, Some(label)) if name == label
+                ))
         {
-            return Err(
-                "initial prompts are supported only for the detected Claude launcher".into(),
-            );
+            return Err("initial prompts require a supported detected agent harness".into());
         }
         if self.launch.session.argv.len() > 128
             || self

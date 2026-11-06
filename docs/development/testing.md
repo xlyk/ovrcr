@@ -141,6 +141,11 @@ fixture to cover one-use launch intents, lost-response reconciliation, restart,
 known refusal, privacy and blank interactive starts. Its accepted-process marker
 does not prove that a provider consumed the prompt.
 
+The Pi adapter case uses a task-owned fake `pi` CLI to exercise current-Dashboard
+model discovery, exact model revalidation, native option placement and the
+multiline prompt through the compiled Server and managed launch path. It does
+not establish provider acceptance or resolve Pi's post-check fuzzy fallback.
+
 Node 22; the Pi extension and its host run outside cargo.
 
 On macOS, the Cursor dependency packaging check exercises the real installer and

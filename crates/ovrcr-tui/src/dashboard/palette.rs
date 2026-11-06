@@ -868,7 +868,11 @@ fn set_model_options(
         && capabilities.reason.is_none()
     {
         items.extend(capabilities.models.iter().map(|model| PickItem {
-            label: format!("{} · {}", model.alias, model.resolved),
+            label: if model.alias == model.resolved {
+                model.alias.clone()
+            } else {
+                format!("{} · {}", model.alias, model.resolved)
+            },
             value: model.alias.clone(),
         }));
     }
@@ -932,7 +936,7 @@ fn model_query_target(
         }
         AgentOrigin::Detected => {}
     }
-    if preset != "claude" {
+    if !matches!(preset.as_str(), "claude" | "pi") {
         return Err(
             "Verified explicit model selection is not available for this harness yet.".into(),
         );
@@ -3733,7 +3737,7 @@ impl Dashboard {
             && !self.supports_initial_prompt_launch(launch)
         {
             palette.error = Some(
-                "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+                "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.".into(),
             );
             return DashboardAction::Redraw;
         }
@@ -3815,15 +3819,22 @@ impl Dashboard {
         &self,
         launch: &ovrcr_protocol::CreateAgentSessionRequest,
     ) -> bool {
+        let Some(preset) = launch
+            .session
+            .label
+            .as_deref()
+            .filter(|preset| matches!(*preset, "claude" | "pi"))
+        else {
+            return false;
+        };
         if !matches!(
             &launch.session.kind,
-            SessionKind::Agent { name } if name == "claude"
-        ) || launch.session.label.as_deref() != Some("claude")
-        {
+            SessionKind::Agent { name } if name == preset
+        ) {
             return false;
         }
         self.detected_agents().into_iter().any(|entry| {
-            entry.name == "claude"
+            entry.name == preset
                 && entry.source == AgentSource::Detected
                 && entry.origin == AgentOrigin::Detected
                 && entry.argv == launch.session.argv
@@ -3850,12 +3861,12 @@ impl Dashboard {
             if let Some(mut form) = form {
                 form.pending = None;
                 form.error = Some(
-                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+                    "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.".into(),
                 );
                 self.palette = Some(*form);
             } else {
                 self.set_error(
-                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.",
+                    "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.",
                 );
             }
             return;
@@ -6961,6 +6972,121 @@ mod launch_tests {
         assert_eq!(
             list.accepted().map(|item| item.value.as_str()),
             Some("opus")
+        );
+    }
+
+    #[test]
+    fn detected_pi_model_query_exposes_exact_ids_and_keeps_its_binding() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "pi".into(),
+            "--".into(),
+            "/fixture/pi".into(),
+            "--approve".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "pi".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "pi".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
+        d.open_create_terminal();
+        let query = d
+            .drain_one_request()
+            .expect("detected Pi loads its catalog");
+        assert!(matches!(
+            query.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                argv: ref selected,
+                project,
+                workspace,
+            } if preset == "pi"
+                && selected == &argv
+                && project == "demo"
+                && workspace == "root"
+        ));
+
+        let capabilities = crate::protocol::AgentModelCapabilities {
+            preset: "pi".into(),
+            binding: Some("pi-launch-binding".into()),
+            models: vec![crate::protocol::AgentModelOption {
+                alias: "openai/gpt-5.4".into(),
+                resolved: "openai/gpt-5.4".into(),
+            }],
+            reason: None,
+        };
+        d.agent_models_event(query.request_id, capabilities.clone());
+        {
+            let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                panic!("Agent creation should remain a form");
+            };
+            let model = fields
+                .iter_mut()
+                .find(|field| field.label == "Model")
+                .unwrap();
+            let FieldKind::Pick(list) = &mut model.kind else {
+                panic!("Model must remain a picker");
+            };
+            assert!(
+                list.items.iter().any(|item| {
+                    item.label == "openai/gpt-5.4" && item.value == "openai/gpt-5.4"
+                })
+            );
+            model.value = "openai/gpt-5.4".into();
+        }
+        let mut fields = d.launch_fields("demo", false);
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Start")
+            .unwrap()
+            .value = "Agent".into();
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Agent")
+            .unwrap()
+            .value = "pi".into();
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Model")
+            .unwrap()
+            .value = "openai/gpt-5.4".into();
+        let launch = d
+            .selected_launch(&fields, "", Some(&capabilities))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            launch.model_policy,
+            AgentModelPolicy::Explicit("openai/gpt-5.4".into())
+        );
+        assert_eq!(launch.model_binding.as_deref(), Some("pi-launch-binding"));
+        assert_eq!(launch.expected_model.as_deref(), Some("openai/gpt-5.4"));
+        assert_eq!(launch.argv, argv);
+        assert!(
+            d.supports_initial_prompt_launch(&ovrcr_protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "demo".into(),
+                    workspace: "root".into(),
+                    name: "pi-prompt".into(),
+                    label: launch.label.clone(),
+                    argv: launch.argv.clone(),
+                    kind: launch.kind.clone(),
+                },
+                model_policy: launch.model_policy.clone(),
+                model_binding: launch.model_binding.clone(),
+                expected_model: launch.expected_model.clone(),
+            })
         );
     }
 
