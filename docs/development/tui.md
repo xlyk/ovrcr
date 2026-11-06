@@ -27,23 +27,26 @@ that blocks shutdown.
 Sidebar session-jump labels are derived from the drawn tree order, viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
-Use one-digit codes for one through nine visible targets and zero-padded
-two-digit codes for ten through fifty. Capture the code width and mapping on an
-observed standalone Super press; a two-digit prefix may emphasize matching
-badges and appear in the footer without changing row geometry. Hide labels on
-selection, and keep the normal Agents search available when the host does not
-deliver modifier events. A selected running destination remains in Browse until
-both the held modifier is released and the existing view/input boundary is
-drained. Shortcut events, release events, and queued loading input must never
-become child bytes. Opening an overlay, losing focus, scrolling, or resizing
-cancels the hold.
+Use only single-digit labels 1–9 on the first nine eligible drawn Agent title
+rows, regardless of how many rows are visible. Later rows remain visible and
+unlabelled; scrolling and a fresh hold assigns labels to the new first nine.
+Capture the mapping on an observed standalone Control press. Pressing Ctrl+1
+through Ctrl+9 selects immediately; 0 and other unmapped digits show a retry
+hint, with no prefix state or Backspace editor. Non-digit Control shortcuts
+cancel and continue through their ordinary Dashboard, Operator, or program
+handling. Command/Super remains separate. Hide labels on selection, and keep the
+normal Agents search available when the host does not deliver modifier events.
+A selected running destination remains in Browse until both Control is released
+and the existing view/input boundary is drained. Shortcut events, release
+events, and queued loading input must never become child bytes. Opening an
+overlay, losing focus, scrolling, or resizing cancels the hold.
 
 Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.
 Request its modes at Dashboard entry, restore the owned mode on normal exit,
 interrupt, error, and panic, and preserve the user's prior mode by popping only
 the push this Dashboard owns. A reply to a capability query is not proof that a
-host delivers the required Command/Super press, modified digit, and release.
-Command-hold session jump is enabled only for an explicitly qualified frontend:
+host delivers the required standalone Control press, Ctrl+digit, and release.
+Control-hold session jump is enabled only for an explicitly qualified frontend:
 the bundled OVRCR GUI supplies `DashboardInputProfile::VerifiedOvrcrGui` after
 its native shortcut path has been verified. The CLI and other frontends default
 to `Standard`; terminal keyboard-mode negotiation alone does not qualify them.

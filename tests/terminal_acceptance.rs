@@ -6,12 +6,12 @@ mod dashboard_proxy;
 mod live;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
-#[path = "terminal_acceptance/session_jump_adaptive.rs"]
-mod session_jump_adaptive;
 #[path = "terminal_acceptance/session_jump_operator.rs"]
 mod session_jump_operator;
 #[path = "terminal_acceptance/session_jump_retained.rs"]
 mod session_jump_retained;
+#[path = "terminal_acceptance/session_jump_single_digit.rs"]
+mod session_jump_single_digit;
 
 use anyhow::{Context, Result, bail};
 use live::{Live, Stop, group_exists, wait_deadline};
@@ -952,7 +952,7 @@ fn agent_search_selects_and_types_through_real_dashboard() -> Result<()> {
 }
 
 #[test]
-fn command_digit_jumps_to_the_frozen_visible_agent_through_real_dashboard() -> Result<()> {
+fn command_digit_does_not_start_control_jump_through_real_dashboard() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     let first = create_search_agent(&mut fixture, "agent-a")?;
@@ -967,47 +967,29 @@ fn command_digit_jumps_to_the_frozen_visible_agent_through_real_dashboard() -> R
         },
     )?;
 
-    // Land in a real Agent first, then drive Kitty's negotiated Super and
-    // modified digit events through crossterm's production input reader.
+    // Land in a real Agent, then verify Kitty's Command events do not invoke
+    // the Control-only jump gesture through crossterm's production reader.
     dashboard.send(b"sagent-a\r")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("READY_agent-a") && screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
     dashboard.send(b"\x1b[57444;1:1u")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("[1]") && screen.contains("[2]"),
-        wait_deadline(),
-    )?;
     dashboard.send(b"\x1b[50;9:1u")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("READY_agent-b") && screen.contains("Session selected"),
-        wait_deadline(),
-    )?;
-
-    // A plain key while Cmd is still held is rejected and cannot reach either
-    // child. Only the physical modifier release opens the existing input gate.
-    dashboard.send(b"CUTOVER_REJECT\r")?;
     dashboard.send(b"\x1b[57444;1:3u")?;
-    dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
-    dashboard.send(b"JUMP_DESTINATION_OK\r")?;
-    dashboard.wait_for(b"RECEIVED_agent-b_JUMP_DESTINATION_OK", wait_deadline())?;
-
-    for session in [first.id, second.id] {
-        let text = fixture.read_terminal(session)?;
-        assert!(
-            !text.contains("CUTOVER_REJECT"),
-            "input before Cmd release reached a child: {text}"
-        );
-        assert!(
-            !text.contains("RECEIVED_agent-a_JUMP_DESTINATION_OK"),
-            "jump payload reached the previous Agent: {text}"
-        );
-    }
+    dashboard.send(b"COMMAND_DID_NOT_JUMP\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-a_COMMAND_DID_NOT_JUMP", wait_deadline())?;
     assert!(
         fixture
+            .read_terminal(first.id)?
+            .contains("RECEIVED_agent-a_COMMAND_DID_NOT_JUMP")
+    );
+    assert!(!dashboard.rendered().contains("Session selected"));
+    assert!(
+        !fixture
             .read_terminal(second.id)?
-            .contains("RECEIVED_agent-b_JUMP_DESTINATION_OK")
+            .contains("COMMAND_DID_NOT_JUMP"),
+        "Command+1 must not route input to the second Agent"
     );
     dashboard.detach()?;
     fixture.shutdown()?;

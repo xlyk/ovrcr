@@ -105,7 +105,7 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
         .collect::<String>();
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
@@ -144,7 +144,7 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
     assert_eq!(
         dashboard.event_action(jump_event(
             KeyCode::Char('1'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
@@ -169,13 +169,13 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
     );
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
     assert!(
         rendered_footer(&dashboard, 120).starts_with("BROWSE"),
-        "releasing Command cannot resume a retained destination"
+        "releasing Control cannot resume a retained destination"
     );
     assert!(dashboard.drain_outbox().is_empty());
 }
@@ -194,32 +194,32 @@ fn running_selection_from_retained_browse_waits_for_release_and_the_view_ack() {
     dashboard.install_focus(SessionId(2));
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('1'),
-        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     let retained_view = only_request(dashboard.drain_outbox());
     acknowledge_all_view_targets(&mut dashboard, retained_view);
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
     assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('4'),
-        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
@@ -231,12 +231,12 @@ fn running_selection_from_retained_browse_waits_for_release_and_the_view_ack() {
     acknowledge_all_view_targets(&mut dashboard, running_view);
     assert!(
         rendered_footer(&dashboard, 120).contains("Session selected"),
-        "view readiness alone cannot type while Command remains held"
+        "view readiness alone cannot type while Control remains held"
     );
     assert!(rendered_footer(&dashboard, 120).starts_with("Session selected"));
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Release,
     ));
@@ -274,13 +274,13 @@ fn inspecting_an_interrupted_retained_agent_does_not_auto_recover_it() {
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('3'),
-        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
 
@@ -312,7 +312,7 @@ fn a_captured_target_that_changes_phase_run_or_archive_cannot_be_reassigned() {
         dashboard.install_area(Rect::new(0, 0, 120, 40));
         dashboard.install_focus(SessionId(2));
         dashboard.event_action(jump_event(
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             KeyModifiers::NONE,
             KeyEventKind::Press,
         ));
@@ -353,7 +353,7 @@ fn a_captured_target_that_changes_phase_run_or_archive_cannot_be_reassigned() {
         };
         dashboard.event_action(jump_event(
             KeyCode::Char(digit),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         ));
         assert_eq!(

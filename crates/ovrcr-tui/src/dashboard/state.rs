@@ -559,7 +559,7 @@ pub(super) struct AgentTyping {
     session: SessionId,
     run: SessionRunId,
     revision: u64,
-    /// A sidebar jump cannot type until the held Command key has been released.
+    /// A sidebar jump cannot type until the held Control key has been released.
     defer_until_modifier_release: bool,
     /// The production loop must discard already-pending input before acknowledgement cutover.
     defer_until_input_boundary: bool,
@@ -621,10 +621,8 @@ impl SidebarJumpTarget {
 
 pub(super) struct SidebarJump {
     targets: Vec<SidebarJumpTarget>,
-    code_width: usize,
-    prefix: Option<char>,
-    left_command: bool,
-    right_command: bool,
+    left_control: bool,
+    right_control: bool,
     selected: bool,
     cancelled: bool,
     hint: Option<String>,
@@ -637,7 +635,7 @@ impl Dashboard {
 
     /// Construct the same production Dashboard boundary with an explicit
     /// frontend profile. The standard terminal path must use [`Self::new`];
-    /// the OVRCR GUI selects `VerifiedOvrcrGui` because it owns native Command
+    /// the OVRCR GUI selects `VerifiedOvrcrGui` because it owns native Control
     /// event translation and delivers both modifier edges.
     pub fn with_input_profile(
         size: TerminalSize,
@@ -1064,6 +1062,7 @@ impl Dashboard {
                 let session = find_session(self, *id)?;
                 SidebarJumpTarget::capture(session)
             })
+            .take(9)
             .collect()
     }
 
@@ -1085,22 +1084,10 @@ impl Dashboard {
         Some(index + 1)
     }
 
-    pub(super) fn sidebar_jump_code_width(&self) -> Option<usize> {
-        let jump = self.sidebar_jump.as_ref()?;
-        (!jump.cancelled && !jump.selected).then_some(jump.code_width)
-    }
-
-    pub(super) fn sidebar_jump_prefix(&self) -> Option<char> {
-        let jump = self.sidebar_jump.as_ref()?;
-        (!jump.cancelled && !jump.selected)
-            .then_some(jump.prefix)
-            .flatten()
-    }
-
     pub(super) fn sidebar_jump_footer_hint(&self) -> Option<String> {
         let jump = self.sidebar_jump.as_ref()?;
         let binding = super::keymap::sidebar_jump_binding(self)?;
-        let command = binding.key.split_whitespace().next().unwrap_or("Cmd");
+        let command = binding.key.split_whitespace().next().unwrap_or("Ctrl");
         if jump.selected {
             return Some(format!("Session selected  release {command}"));
         }
@@ -1113,16 +1100,7 @@ impl Dashboard {
         if jump.targets.is_empty() {
             return Some("No visible Agents  s Agents search".into());
         }
-        if let Some(prefix) = jump.prefix {
-            return Some(format!(
-                "{command}+{prefix}… next digit · Backspace clear · Esc cancel"
-            ));
-        }
-        Some(if jump.code_width == 2 {
-            format!("{command}+two digits jump  release to cancel")
-        } else {
-            format!("{command}+digit jump  release to cancel")
-        })
+        Some(format!("{command}+1–9 jump  release to cancel"))
     }
 
     fn cancel_sidebar_jump(&mut self) {
@@ -1141,10 +1119,10 @@ impl Dashboard {
         self.sidebar_jump = None;
     }
 
-    fn command_side(code: KeyCode) -> Option<bool> {
+    fn control_side(code: KeyCode) -> Option<bool> {
         match code {
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper) => Some(true),
-            KeyCode::Modifier(ModifierKeyCode::RightSuper) => Some(false),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl) => Some(true),
+            KeyCode::Modifier(ModifierKeyCode::RightControl) => Some(false),
             _ => None,
         }
     }
@@ -1154,7 +1132,7 @@ impl Dashboard {
             return Some(self.sidebar_jump_key(key));
         }
         if self.sidebar_jump.is_some() {
-            if Self::command_side(key.code).is_some() {
+            if Self::control_side(key.code).is_some() {
                 return Some(self.sidebar_jump_key(key));
             }
             if self
@@ -1172,24 +1150,21 @@ impl Dashboard {
                 self.cancel_sidebar_jump();
                 return Some(DashboardAction::Redraw);
             }
-            if key
-                .modifiers
-                .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
-            {
-                let is_label_digit = key.modifiers == KeyModifiers::SUPER
+            if key.modifiers.intersects(
+                KeyModifiers::CONTROL
+                    | KeyModifiers::SUPER
+                    | KeyModifiers::HYPER
+                    | KeyModifiers::META,
+            ) {
+                let is_label_digit = key.modifiers == KeyModifiers::CONTROL
                     && matches!(key.code, KeyCode::Char('0'..='9'));
-                let clears_two_digit_prefix = key.modifiers == KeyModifiers::SUPER
-                    && key.code == KeyCode::Backspace
-                    && self
-                        .sidebar_jump
-                        .as_ref()
-                        .is_some_and(|jump| jump.code_width == 2 && jump.prefix.is_some());
-                if is_label_digit || clears_two_digit_prefix {
+                if is_label_digit {
                     return Some(self.sidebar_jump_key(key));
                 }
                 self.cancel_sidebar_jump();
-                // Preserve normal platform shortcuts. Input encoding and keymap
-                // matching retain and reject these modifier bits respectively.
+                // Preserve normal Control shortcuts and platform Command
+                // shortcuts. Input encoding and keymap matching retain and
+                // reject these modifier bits respectively.
                 return None;
             }
             if matches!(key.code, KeyCode::Char('0'..='9')) {
@@ -1198,33 +1173,30 @@ impl Dashboard {
                 return Some(self.sidebar_jump_key(key));
             }
             self.cancel_sidebar_jump();
-            // Ordinary Dashboard handling remains available for non-Command
-            // shortcuts, including Ctrl-g followed by the palette binding.
+            // Ordinary Dashboard handling remains available for non-digit
+            // Control shortcuts, including Ctrl-g then the palette binding.
             return None;
         }
-        if Self::command_side(key.code).is_some() {
+        if Self::control_side(key.code).is_some() {
             let binding = self.key_binding_for(key)?;
             if binding.action == super::keymap::Action::SidebarJump && binding.enabled() {
-                let command_is_left = Self::command_side(key.code)
-                    .expect("the shared gesture binding matches a Command edge");
-                return Some(self.begin_sidebar_jump(command_is_left));
+                let control_is_left = Self::control_side(key.code)
+                    .expect("the shared gesture binding matches a Control edge");
+                return Some(self.begin_sidebar_jump(control_is_left));
             }
         }
         None
     }
 
-    fn begin_sidebar_jump(&mut self, command_is_left: bool) -> DashboardAction {
+    fn begin_sidebar_jump(&mut self, control_is_left: bool) -> DashboardAction {
         if !self.sidebar_jump_can_start() {
             return DashboardAction::None;
         }
         let targets = self.visible_sidebar_jump_targets();
-        let code_width = if targets.len() >= 10 { 2 } else { 1 };
         self.sidebar_jump = Some(SidebarJump {
             targets,
-            code_width,
-            prefix: None,
-            left_command: command_is_left,
-            right_command: !command_is_left,
+            left_control: control_is_left,
+            right_control: !control_is_left,
             selected: false,
             cancelled: false,
             hint: None,
@@ -1233,22 +1205,22 @@ impl Dashboard {
     }
 
     fn sidebar_jump_key(&mut self, key: KeyEvent) -> DashboardAction {
-        if let Some(command_is_left) = Self::command_side(key.code) {
+        if let Some(control_is_left) = Self::control_side(key.code) {
             let Some(jump) = &mut self.sidebar_jump else {
                 return if key.kind == KeyEventKind::Press {
-                    self.begin_sidebar_jump(command_is_left)
+                    self.begin_sidebar_jump(control_is_left)
                 } else {
                     DashboardAction::None
                 };
             };
-            match (command_is_left, key.kind) {
-                (true, KeyEventKind::Press) => jump.left_command = true,
-                (true, KeyEventKind::Release) => jump.left_command = false,
-                (false, KeyEventKind::Press) => jump.right_command = true,
-                (false, KeyEventKind::Release) => jump.right_command = false,
+            match (control_is_left, key.kind) {
+                (true, KeyEventKind::Press) => jump.left_control = true,
+                (true, KeyEventKind::Release) => jump.left_control = false,
+                (false, KeyEventKind::Press) => jump.right_control = true,
+                (false, KeyEventKind::Release) => jump.right_control = false,
                 (_, KeyEventKind::Repeat) => return DashboardAction::None,
             }
-            if !jump.left_command && !jump.right_command {
+            if !jump.left_control && !jump.right_control {
                 let selected = jump.selected;
                 self.clear_sidebar_jump();
                 if selected {
@@ -1288,52 +1260,17 @@ impl Dashboard {
             self.cancel_sidebar_jump();
             return DashboardAction::Redraw;
         }
-        if key.code == KeyCode::Backspace
-            && key.modifiers == KeyModifiers::SUPER
-            && let Some(jump) = self.sidebar_jump.as_mut()
-            && jump.code_width == 2
-            && jump.prefix.take().is_some()
-        {
-            jump.hint = None;
-            return DashboardAction::Redraw;
-        }
         if let KeyCode::Char(digit @ '0'..='9') = key.code
-            && key.modifiers == KeyModifiers::SUPER
+            && key.modifiers == KeyModifiers::CONTROL
         {
-            let Some(jump) = self.sidebar_jump.as_ref() else {
-                return DashboardAction::None;
-            };
-            if jump.code_width == 2 && jump.prefix.is_none() {
-                let jump = self.sidebar_jump.as_mut().expect("jump remains active");
-                jump.prefix = Some(digit);
-                jump.hint = None;
-                return DashboardAction::Redraw;
-            }
-            let code_width = jump.code_width;
-            let value = if code_width == 2 {
-                let prefix = jump.prefix.expect("two-digit jump has a prefix");
-                prefix.to_digit(10).expect("numeric prefix") * 10
-                    + digit.to_digit(10).expect("numeric digit")
-            } else {
-                digit.to_digit(10).expect("numeric digit")
-            };
-            let target = value
-                .checked_sub(1)
+            let target = digit
+                .to_digit(10)
+                .and_then(|value| value.checked_sub(1))
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| self.sidebar_jump.as_ref()?.targets.get(index).copied());
-            if let Some(jump) = &mut self.sidebar_jump {
-                jump.prefix = None;
-            }
             let Some(target) = target else {
                 if let Some(jump) = &mut self.sidebar_jump {
-                    jump.hint = Some(
-                        if code_width == 2 {
-                            "No visible Agent for that code"
-                        } else {
-                            "No visible Agent for that number"
-                        }
-                        .into(),
-                    );
+                    jump.hint = Some("No visible Agent for that number".into());
                 }
                 return DashboardAction::Redraw;
             };
@@ -1373,14 +1310,7 @@ impl Dashboard {
         {
             self.cancel_sidebar_jump();
         } else if let Some(jump) = &mut self.sidebar_jump {
-            jump.hint = Some(
-                if jump.code_width == 2 {
-                    "Use Command with both digits"
-                } else {
-                    "Use Command with one digit"
-                }
-                .into(),
-            );
+            jump.hint = Some("Use Control with 1–9".into());
         }
         DashboardAction::Redraw
     }
@@ -2092,7 +2022,7 @@ impl Dashboard {
 
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
-            if self.sidebar_jump.is_some() && Self::command_side(key.code).is_some() {
+            if self.sidebar_jump.is_some() && Self::control_side(key.code).is_some() {
                 return self.sidebar_jump_key(key);
             }
             // Enhanced keyboard mode reports releases for ordinary keys too; they are not

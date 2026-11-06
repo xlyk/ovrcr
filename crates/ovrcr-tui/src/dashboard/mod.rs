@@ -53,7 +53,7 @@ use std::collections::{HashSet, VecDeque};
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
 /// An explicitly qualified input frontend. The default terminal path does not
-/// advertise the Command-hold gesture; only the native OVRCR GUI currently
+/// advertise the Control-hold gesture; only the native OVRCR GUI currently
 /// owns the modifier translation that makes it usable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DashboardInputProfile {
@@ -77,7 +77,7 @@ impl DashboardInputProfile {
         }
     }
 
-    pub const fn supports_command_hold(self) -> bool {
+    pub const fn supports_control_hold(self) -> bool {
         matches!(self, Self::VerifiedOvrcrGui)
     }
 }
@@ -316,7 +316,7 @@ pub struct Dashboard {
     handshake: view_handshake::ViewHandshake,
     navigation: navigation::Navigation,
     agent_typing: Option<state::AgentTyping>,
-    /// Session targets frozen for one observed Command hold.
+    /// Session targets frozen for one observed Control hold.
     sidebar_jump: Option<state::SidebarJump>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:

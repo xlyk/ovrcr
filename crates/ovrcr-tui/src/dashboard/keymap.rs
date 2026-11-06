@@ -62,7 +62,7 @@ pub(super) enum Action {
     Help,
     /// Open a key-popup group rather than run an action.
     Group(char),
-    /// A stateful Command-hold gesture that labels visible Agent rows.
+    /// A stateful Control-hold gesture that labels visible Agent rows.
     SidebarJump,
     /// A Copy or History motion key. Those modes keep their own dispatcher, which
     /// reads a key event rather than an action, so this is the one action that
@@ -224,12 +224,12 @@ impl KeyBinding {
             return key.code == code && key.modifiers == modifiers;
         }
         if self.action == Action::SidebarJump {
-            let command_edge = matches!(
+            let control_edge = matches!(
                 key.code,
-                KeyCode::Modifier(ModifierKeyCode::LeftSuper | ModifierKeyCode::RightSuper)
+                KeyCode::Modifier(ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl)
             );
-            return command_edge
-                && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SUPER);
+            return control_edge
+                && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::CONTROL);
         }
         if key.modifiers.intersects(
             KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
@@ -434,7 +434,7 @@ pub(super) fn agents_binding() -> KeyBinding {
 }
 
 pub(super) fn sidebar_jump_binding(dashboard: &Dashboard) -> Option<KeyBinding> {
-    if !dashboard.input_profile.supports_command_hold() || dashboard.sidebar_preference() == Some(0)
+    if !dashboard.input_profile.supports_control_hold() || dashboard.sidebar_preference() == Some(0)
     {
         return None;
     }
@@ -451,14 +451,14 @@ pub(super) fn sidebar_jump_binding(dashboard: &Dashboard) -> Option<KeyBinding> 
         || !dashboard.mouse_focused;
     Some(
         key_binding(
-            "Cmd hold",
+            "Ctrl hold",
             "Jump to visible Agent",
-            "Hold Cmd to label visible Agent rows, then type the shown digit code".into(),
-            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            "Hold Ctrl to label the first nine visible Agent rows; press 1–9 to jump".into(),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
             Action::SidebarJump,
         )
         .once()
-        .group('v', "Cmd hold")
+        .group('v', "Ctrl hold")
         .unless(blocked.then_some(SIDEBAR_JUMP_BLOCKED)),
     )
 }
