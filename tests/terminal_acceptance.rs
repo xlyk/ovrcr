@@ -6,6 +6,8 @@ mod dashboard_proxy;
 mod live;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
+#[path = "terminal_acceptance/session_jump_adaptive.rs"]
+mod session_jump_adaptive;
 #[path = "terminal_acceptance/session_jump_retained.rs"]
 mod session_jump_retained;
 
