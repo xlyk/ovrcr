@@ -845,7 +845,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, None, None)
+        self.create_session_locked(request, None, None, None)
     }
 
     pub fn create_agent_session(
@@ -857,6 +857,66 @@ impl ServerState {
         self.create_session(request)
     }
 
+    pub fn create_agent_session_with_prompt(
+        &self,
+        request: ovrcr_protocol::InitialPromptLaunchRequest,
+    ) -> Result<SessionSummary> {
+        request
+            .validate()
+            .map_err(|message| crate::session::NoProcessStarted::context(anyhow::anyhow!(message)))?;
+        let prompt = request.prompt;
+        let has_prompt = !prompt.trim().is_empty();
+        let session = if has_prompt {
+            agent_models::prepare_initial_prompt_session(self, request.launch)
+        } else {
+            agent_models::prepare_session(self, request.launch)
+                .map_err(|error| anyhow::anyhow!(error))
+        }
+        .map_err(crate::session::NoProcessStarted::context)?;
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()
+            .map_err(crate::session::NoProcessStarted::context)?;
+        self.create_session_locked(
+            session,
+            None,
+            None,
+            has_prompt.then_some(prompt),
+        )
+    }
+
+    /// Remember a Dashboard agent choice only after the launch succeeds. The
+    /// existing settings writer remains the sole persistence owner.
+    pub(super) fn remember_initial_prompt_launch(
+        &self,
+        launch: &ovrcr_protocol::CreateAgentSessionRequest,
+    ) {
+        let Some(preset) = launch.session.label.as_deref() else {
+            return;
+        };
+        let mut entry = toml_edit::InlineTable::new();
+        entry.insert("kind", "Agent".into());
+        entry.insert("preset", preset.into());
+        match &launch.model_policy {
+            ovrcr_protocol::AgentModelPolicy::HarnessDefault => {
+                entry.insert("model_policy", "HarnessDefault".into());
+            }
+            ovrcr_protocol::AgentModelPolicy::Explicit(model) => {
+                let mut explicit = toml_edit::InlineTable::new();
+                explicit.insert("Explicit", model.as_str().into());
+                entry.insert("model_policy", toml_edit::Value::InlineTable(explicit));
+            }
+        }
+        let path = format!(
+            "launch_choices.{}",
+            toml_edit::Key::new(&launch.session.project)
+        );
+        let value = entry.to_string();
+        if self.set_setting(&path, Some(&value)).is_err() {
+            // Settings failure does not change the already accepted launch.
+            eprintln!("could not remember launch choice after accepted Agent start");
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn create_session_with_ready(
         &self,
@@ -865,16 +925,18 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, Some(ready), None)
+        self.create_session_locked(request, Some(ready), None, None)
     }
 
     /// Admission stays locked from the live-slot check through durable intent and publication.
     fn create_session_locked(
         &self,
-        mut request: ovrcr_protocol::CreateSessionRequest,
+        request: ovrcr_protocol::CreateSessionRequest,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         assignment: Option<&str>,
+        initial_prompt: Option<String>,
     ) -> Result<SessionSummary> {
+        let mut request = request;
         // Every error in this preflight precedes the sole native spawn call.
         let record = (|| -> Result<_> {
             if request.argv.is_empty() {
@@ -956,8 +1018,14 @@ impl ServerState {
             Ok(record)
         })()
         .map_err(crate::session::NoProcessStarted::context)?;
-        let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
-        {
+        let error = match self.spawn_record_locked(
+            record.id,
+            record.run,
+            request.argv,
+            ready,
+            None,
+            initial_prompt,
+        ) {
             Ok(summary) => return Ok(summary),
             Err(error) => error,
         };
@@ -1008,8 +1076,17 @@ impl ServerState {
         argv: Vec<std::ffi::OsString>,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
+        initial_prompt: Option<String>,
     ) -> Result<SessionSummary> {
-        self.spawn_prepared_record_locked(id, expected_run, argv, ready, restore_command, false)
+        self.spawn_prepared_record_locked(
+            id,
+            expected_run,
+            argv,
+            ready,
+            restore_command,
+            false,
+            initial_prompt,
+        )
     }
 
     fn spawn_prepared_record_locked(
@@ -1020,6 +1097,7 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         restore_command: Option<String>,
         prepared: bool,
+        initial_prompt: Option<String>,
     ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
@@ -1072,6 +1150,7 @@ impl ServerState {
             label: metadata.label.clone(),
             cwd: metadata.cwd.clone(),
             argv,
+            initial_prompt,
             hook_env: Some(HookEnvironment {
                 socket,
                 session: id,
@@ -1514,7 +1593,7 @@ impl ServerState {
                 &self.server_lifetime,
             )?;
         }
-        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged)?;
+        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged, None)?;
         if let Some(command) = input {
             let session = self
                 .sessions
@@ -2360,6 +2439,7 @@ impl ServerState {
             },
             None,
             assignment,
+            None,
         )
         .map(Some)
         .map_err(|error| {
@@ -2825,6 +2905,7 @@ impl ServerState {
                 argv: vec![shell],
                 kind: SessionKind::Terminal,
             },
+            None,
             None,
             None,
         )

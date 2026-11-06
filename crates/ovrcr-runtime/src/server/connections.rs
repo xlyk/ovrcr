@@ -1129,6 +1129,36 @@ pub(super) fn handle_request_with_id(
         } => super::agent_models::request(
             state, dashboard, owner, request_id, preset, origin, argv, project, workspace,
         ),
+        Request::AllocateInitialPromptIntent
+            if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner)) =>
+        {
+            state
+                .lifecycle
+                .allocate_prompt_intent(&state.server_lifetime)
+                .map_or_else(|response| response, Response::InitialPromptIntent)
+        }
+        Request::AllocateInitialPromptIntent => error_response(
+            ErrorCode::InvalidRequest,
+            "initial-prompt intent requires the current Dashboard",
+        ),
+        Request::ReconcileInitialPromptIntents
+            if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner)) =>
+        {
+            Response::InitialPromptIntents(state.lifecycle.prompt_intents())
+        }
+        Request::ReconcileInitialPromptIntents => error_response(
+            ErrorCode::InvalidRequest,
+            "initial-prompt reconciliation requires the current Dashboard",
+        ),
+        Request::CreateAgentSessionWithPrompt(request)
+            if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner)) =>
+        {
+            lifecycle::try_accept_prompt(state, request_id, request)
+        }
+        Request::CreateAgentSessionWithPrompt(_) => error_response(
+            ErrorCode::InvalidRequest,
+            "initial-prompt launch requires the current Dashboard",
+        ),
         Request::CreateAgentSession(request)
             if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner))
                 && state.lifecycle.async_ready() =>

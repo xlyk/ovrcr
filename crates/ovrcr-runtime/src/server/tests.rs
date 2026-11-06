@@ -2755,6 +2755,7 @@ fn spawn_live_test_session_with_hook(
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -2791,6 +2792,7 @@ fn spawn_exiting_test_session(
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4182,6 +4184,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
             SessionSpec {
                 scope: ovrcr_protocol::SessionScope::Workspace,
                 restore_command: None,
+                initial_prompt: None,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "p".into(),
@@ -4528,6 +4531,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4606,6 +4610,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4703,7 +4708,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, initial_prompt: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "exited-leader".into(),
             label: "sh".into(),
@@ -4797,6 +4802,7 @@ fn shutdown_without_kill_rejects_paused_session() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4846,6 +4852,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -5225,6 +5232,7 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -5557,6 +5565,7 @@ fn session_output_flows_while_another_session_spawns() {
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),

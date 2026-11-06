@@ -313,7 +313,7 @@ fn find_executable(path: &std::ffi::OsStr, name: &str) -> anyhow::Result<PathBuf
 /// Detected managed argv has a fixed wrapper layout. Compare every argument
 /// byte-for-byte except the wrapper and native executable slots, whose paths
 /// may use different symlink spellings for the same files.
-fn launch_matches(
+pub(super) fn launch_matches(
     selected: &[std::ffi::OsString],
     expected: &[std::ffi::OsString],
     allow_task: bool,
@@ -358,6 +358,43 @@ fn launch_matches(
             .zip(expected)
             .enumerate()
             .all(|(index, (selected, expected))| index == 0 || index == 5 || selected == expected)
+}
+
+pub(super) fn prepare_initial_prompt_session(
+    state: &ServerState,
+    request: CreateAgentSessionRequest,
+) -> anyhow::Result<CreateSessionRequest> {
+    anyhow::ensure!(
+        !state
+            .settings
+            .lock()
+            .unwrap()
+            .report
+            .settings
+            .agents
+            .iter()
+            .any(|agent| agent.name == "claude"),
+        "configured Claude launchers do not support Initial prompts"
+    );
+    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), "claude")?;
+    let launcher = std::env::current_exe()?;
+    let mut expected = vec![
+        launcher.as_os_str().to_owned(),
+        "agent".into(),
+        "run".into(),
+        "claude".into(),
+        "--".into(),
+    ];
+    let mut native = vec![executable.as_os_str().to_owned()];
+    ovrcr_protocol::apply_default_auto_trust("claude", &mut native);
+    expected.extend(native);
+    anyhow::ensure!(
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == "claude")
+            && request.session.label.as_deref() == Some("claude")
+            && launch_matches(&request.session.argv, &expected, false),
+        "Initial prompts require the current detected Claude launcher and arguments"
+    );
+    prepare_session(state, request)
 }
 
 fn binding(

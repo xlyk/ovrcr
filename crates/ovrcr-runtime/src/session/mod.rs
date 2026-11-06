@@ -151,11 +151,13 @@ mod shell_prompt;
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SessionSpec {
     pub scope: ovrcr_protocol::SessionScope,
     /// Transient shell input for a long resume command; never retained on disk.
     pub restore_command: Option<String>,
+    /// One launch-only prompt; handed off to the native executable, never retained.
+    pub initial_prompt: Option<String>,
     pub project: String,
     pub workspace: String,
     pub name: String,
@@ -165,6 +167,26 @@ pub struct SessionSpec {
     pub hook_env: Option<HookEnvironment>,
     pub run: SessionRunId,
     pub kind: SessionKind,
+}
+
+impl std::fmt::Debug for SessionSpec {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionSpec")
+            .field("scope", &self.scope)
+            .field("restore_command", &self.restore_command)
+            .field("initial_prompt", &self.initial_prompt.as_ref().map(|_| "[redacted]"))
+            .field("project", &self.project)
+            .field("workspace", &self.workspace)
+            .field("name", &self.name)
+            .field("label", &self.label)
+            .field("cwd", &self.cwd)
+            .field("argv", &self.argv)
+            .field("hook_env", &self.hook_env)
+            .field("run", &self.run)
+            .field("kind", &self.kind)
+            .finish()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -532,6 +554,10 @@ impl Session {
             .map_err(NoProcessStarted::context)?;
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
+        if let Some(prompt) = &spec.initial_prompt {
+            command.arg("--");
+            command.arg(prompt);
+        }
         #[cfg(test)]
         let initial_cwd = spec.cwd.clone();
         command.cwd(&spec.cwd);
