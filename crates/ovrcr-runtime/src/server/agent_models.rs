@@ -7,8 +7,8 @@ use ovrcr_protocol::{
 };
 use sha2::{Digest, Sha256};
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
-use std::sync::Condvar;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Condvar, MutexGuard, TryLockError};
 
 #[derive(Clone)]
 struct QueryInput {
@@ -50,9 +50,59 @@ struct CatalogQueueState {
 pub(crate) struct CatalogQueue {
     state: Mutex<CatalogQueueState>,
     ready: Condvar,
+    process_owner: Mutex<crate::catalog_process::CatalogProcessOwner>,
+}
+
+pub(super) struct CatalogShutdownPermit<'a> {
+    owner: MutexGuard<'a, crate::catalog_process::CatalogProcessOwner>,
+}
+
+impl CatalogShutdownPermit<'_> {
+    pub(super) fn close(&mut self) {
+        self.owner.close();
+    }
 }
 
 impl CatalogQueue {
+    fn process_owner(
+        &self,
+    ) -> anyhow::Result<MutexGuard<'_, crate::catalog_process::CatalogProcessOwner>> {
+        match self.process_owner.try_lock() {
+            Ok(owner) => Ok(owner),
+            Err(TryLockError::WouldBlock) => Err(crate::catalog_process::owner_error(
+                "native model catalog process is active",
+            )),
+            Err(TryLockError::Poisoned(_)) => Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is unavailable",
+            )),
+        }
+    }
+
+    pub(super) fn with_process_owner<T>(
+        &self,
+        operation: impl FnOnce(&mut crate::catalog_process::CatalogProcessOwner) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let mut owner = self.process_owner()?;
+        if owner.is_closed() {
+            return Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is closed",
+            ));
+        }
+        owner.resolve_existing()?;
+        operation(&mut owner)
+    }
+
+    pub(super) fn try_shutdown(&self) -> anyhow::Result<CatalogShutdownPermit<'_>> {
+        let mut owner = self.process_owner()?;
+        if owner.is_closed() {
+            return Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is already closed",
+            ));
+        }
+        owner.resolve_existing()?;
+        Ok(CatalogShutdownPermit { owner })
+    }
+
     pub(super) fn attach(&self) {
         let mut state = self.state.lock().unwrap();
         state.attached = true;
@@ -102,7 +152,10 @@ fn send_catalog_result(request: CatalogRequest, capabilities: AgentModelCapabili
 }
 
 pub(super) fn run(state: Arc<ServerState>) {
-    run_with(state, discover_capabilities);
+    let catalog_state = Arc::clone(&state);
+    run_with(state, move |input, cancelled| {
+        discover_capabilities(input, cancelled, &catalog_state.agent_model_catalog)
+    });
 }
 
 fn run_with<F>(state: Arc<ServerState>, discover: F)
@@ -220,7 +273,11 @@ pub(super) fn request(
     Response::Ok
 }
 
-fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentModelCapabilities {
+fn discover_capabilities(
+    input: &QueryInput,
+    cancelled: &AtomicBool,
+    catalog_queue: &CatalogQueue,
+) -> AgentModelCapabilities {
     if input.origin != AgentLaunchOrigin::Detected {
         return unsupported(
             input.preset.clone(),
@@ -264,6 +321,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             &input.git_identity,
         )?;
         let catalog = dashboard_catalog(
+            catalog_queue,
             &input.preset,
             &executable,
             &native_argv,
@@ -361,6 +419,7 @@ fn detected_launch_argv(
 }
 
 fn dashboard_catalog(
+    catalog_queue: &CatalogQueue,
     preset: &str,
     executable: &Path,
     native_argv: &[std::ffi::OsString],
@@ -368,16 +427,30 @@ fn dashboard_catalog(
     cancelled: &AtomicBool,
 ) -> anyhow::Result<Vec<(String, String)>> {
     match preset {
-        "claude" => {
+        "claude" => catalog_queue.with_process_owner(|_owner| {
             crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
-        "codex" => {
+        }),
+        "codex" => catalog_queue.with_process_owner(|_owner| {
             crate::codex_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
-        "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
-        "omp" => {
-            crate::omp_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
+        }),
+        "pi" => catalog_queue.with_process_owner(|owner| {
+            crate::pi_model_catalog::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
+        }),
+        "omp" => catalog_queue.with_process_owner(|owner| {
+            crate::omp_model_catalog::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
+        }),
         _ => anyhow::bail!("verified model discovery is not available for this harness"),
     }
 }
@@ -593,6 +666,7 @@ pub(super) fn prepare_session(
         );
     }
     let catalog = dashboard_catalog(
+        &state.agent_model_catalog,
         preset,
         &executable,
         &native_argv,
@@ -618,6 +692,11 @@ pub(super) fn prepare_session(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn discover_for_test(input: &QueryInput) -> AgentModelCapabilities {
+        let catalog_queue = CatalogQueue::default();
+        discover_capabilities(input, &AtomicBool::new(false), &catalog_queue)
+    }
 
     fn executable(path: &Path) {
         std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
@@ -728,7 +807,7 @@ mod tests {
                 configured_override: false,
             };
 
-            let capabilities = discover_capabilities(&input, &AtomicBool::new(false));
+            let capabilities = discover_for_test(&input);
             assert!(capabilities.models.is_empty());
             assert!(
                 capabilities
@@ -770,7 +849,7 @@ mod tests {
             configured_override: false,
         };
 
-        let capabilities = discover_capabilities(&input, &AtomicBool::new(false));
+        let capabilities = discover_for_test(&input);
         assert!(capabilities.binding.is_none());
         assert!(capabilities.models.is_empty());
         assert!(
@@ -784,21 +863,18 @@ mod tests {
     #[test]
     fn configured_origin_never_reaches_native_model_discovery() {
         for preset in ["claude", "omp"] {
-            let capabilities = discover_capabilities(
-                &QueryInput {
-                    preset: preset.into(),
-                    origin: AgentLaunchOrigin::Configured,
-                    argv: Vec::new(),
-                    project: "p".into(),
-                    workspace: "w".into(),
-                    cwd: PathBuf::new(),
-                    git_identity: String::new(),
-                    path: std::ffi::OsString::new(),
-                    launcher: PathBuf::new(),
-                    configured_override: false,
-                },
-                &AtomicBool::new(false),
-            );
+            let capabilities = discover_for_test(&QueryInput {
+                preset: preset.into(),
+                origin: AgentLaunchOrigin::Configured,
+                argv: Vec::new(),
+                project: "p".into(),
+                workspace: "w".into(),
+                cwd: PathBuf::new(),
+                git_identity: String::new(),
+                path: std::ffi::OsString::new(),
+                launcher: PathBuf::new(),
+                configured_override: false,
+            });
             assert!(capabilities.binding.is_none());
             assert!(capabilities.models.is_empty());
             assert!(
