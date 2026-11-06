@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 const CAPTURE_CHUNK: usize = 16 * 1024;
+const CAPTURE_DRAIN_BUDGET: usize = 64 * 1024;
 const CLEANUP_GRACE: Duration = Duration::from_secs(2);
 const PROCESS_POLL: Duration = Duration::from_millis(10);
 
@@ -129,9 +130,14 @@ impl CatalogCapture {
         self.stdout_nonblocking && self.stderr_nonblocking
     }
 
-    fn drain(&mut self) -> Result<()> {
+    fn pipes_open(&self) -> bool {
+        self.stdout.is_some() || self.stderr.is_some()
+    }
+
+    fn drain(&mut self) -> Result<usize> {
+        let mut drained = 0;
         if self.stdout_nonblocking {
-            drain_pipe(
+            drained += drain_pipe(
                 &mut self.stdout,
                 &mut self.stdout_buffer,
                 &mut self.stdout_total,
@@ -140,7 +146,7 @@ impl CatalogCapture {
             )?;
         }
         if self.stderr_nonblocking {
-            drain_pipe(
+            drained += drain_pipe(
                 &mut self.stderr,
                 &mut self.stderr_buffer,
                 &mut self.stderr_total,
@@ -148,7 +154,7 @@ impl CatalogCapture {
                 self.stderr_limit,
             )?;
         }
-        Ok(())
+        Ok(drained)
     }
 
     fn has_overflow(&self) -> bool {
@@ -211,13 +217,16 @@ impl CatalogProcessOwner {
             self.wait_for_catalog_exit(label, &mut process, deadline, cancelled)
         };
         let status = match primary {
-            Ok(()) => match self.finish_observed_exit(label, &mut process) {
-                Ok(status) => status,
-                Err(error) => {
-                    self.retain_after_error(process);
-                    return Err(error);
+            Ok(()) => {
+                match self.finish_observed_exit(label, &mut process, Instant::now() + CLEANUP_GRACE)
+                {
+                    Ok(status) => status,
+                    Err(error) => {
+                        self.retain_after_error(process);
+                        return Err(error);
+                    }
                 }
-            },
+            }
             Err(error) => {
                 let cleanup = self.resolve_process(label, &mut process, CLEANUP_GRACE);
                 if let Err(cleanup_error) = cleanup {
@@ -354,7 +363,7 @@ impl CatalogProcessOwner {
             let _ = process.capture.drain();
             match observe_process(process.pid) {
                 Observation::Exited => {
-                    self.finish_observed_exit(label, process)?;
+                    self.finish_observed_exit(label, process, deadline)?;
                     return Ok(());
                 }
                 Observation::Running => {
@@ -434,7 +443,7 @@ impl CatalogProcessOwner {
             let _ = process.capture.drain();
             match observe_process(process.pid) {
                 Observation::Exited => {
-                    self.finish_observed_exit(label, process)?;
+                    self.finish_observed_exit(label, process, deadline)?;
                     return Ok(());
                 }
                 Observation::Running => {}
@@ -470,6 +479,7 @@ impl CatalogProcessOwner {
         &mut self,
         label: &'static str,
         process: &mut OwnedCatalogProcess,
+        absence_deadline: Instant,
     ) -> Result<ExitStatus> {
         // WNOWAIT proves the exact child is an unreaped exit. Signal only while
         // that leader still reserves the group id; a failed signal is resolved
@@ -483,7 +493,7 @@ impl CatalogProcessOwner {
             .wait()
             .with_context(|| format!("native {label} discovery cleanup wait failed"))?;
         process.child = None;
-        self.finish_reaped_group_after_absence(label, process, Instant::now() + CLEANUP_GRACE)
+        self.finish_reaped_group_after_absence(label, process, absence_deadline)
             .map_err(|error| {
                 owner_error(format!(
                     "native {label} discovery cleanup remains uncertain after wait (pid {}, signal errno {:?}): {error:#}",
@@ -503,7 +513,10 @@ impl CatalogProcessOwner {
         loop {
             let _ = process.capture.drain();
             match group_absence(process.pid) {
-                GroupAbsence::Absent => return Ok(()),
+                GroupAbsence::Absent => {
+                    self.drain_capture_to_eof(label, process, deadline)?;
+                    return Ok(());
+                }
                 GroupAbsence::Present(errno) if Instant::now() >= deadline => {
                     return Err(owner_error(format!(
                         "native {label} waited process group {} remains present or inaccessible (errno {errno:?})",
@@ -515,6 +528,28 @@ impl CatalogProcessOwner {
                 }
             }
         }
+    }
+
+    fn drain_capture_to_eof(
+        &mut self,
+        label: &'static str,
+        process: &mut OwnedCatalogProcess,
+        deadline: Instant,
+    ) -> Result<()> {
+        while process.capture.pipes_open() {
+            process.capture.drain()?;
+            if !process.capture.pipes_open() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(owner_error(format!(
+                    "native {label} catalog capture pipes remain open after group {} absence",
+                    process.pid
+                )));
+            }
+            std::thread::park_timeout(PROCESS_POLL);
+        }
+        Ok(())
     }
 
     fn resolve_reaped_group(
@@ -671,25 +706,30 @@ fn drain_pipe(
     total: &mut usize,
     overflow: &mut bool,
     limit: usize,
-) -> Result<()> {
+) -> Result<usize> {
     let Some(reader) = pipe.as_mut() else {
-        return Ok(());
+        return Ok(0);
     };
     let mut chunk = [0u8; CAPTURE_CHUNK];
+    let mut drained = 0;
     loop {
+        if drained >= CAPTURE_DRAIN_BUDGET {
+            return Ok(drained);
+        }
         match reader.read(&mut chunk) {
             Ok(0) => {
                 *pipe = None;
-                return Ok(());
+                return Ok(drained);
             }
             Ok(count) => {
+                drained += count;
                 *total = total.saturating_add(count);
                 let room = limit.saturating_sub(buffer.len());
                 let retained = room.min(count);
                 buffer.extend_from_slice(&chunk[..retained]);
                 *overflow |= retained < count;
             }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(drained),
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error) => return Err(error.into()),
         }
@@ -737,6 +777,26 @@ mod tests {
         assert!(is_owner_error(&error));
         assert!(error.to_string().contains("process group"));
         assert!(!error.to_string().contains("argv"));
+    }
+
+    #[test]
+    fn bounded_pipe_capture_keeps_complete_output_across_drain_iterations() {
+        let mut owner = CatalogProcessOwner::default();
+        let mut command = Command::new("/usr/bin/head");
+        command.args(["-c", "196608", "/dev/zero"]);
+        let output = owner
+            .run_command(
+                "synthetic",
+                &mut command,
+                256 * 1024,
+                64 * 1024,
+                Duration::from_secs(2),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(output.stdout.len(), 196_608);
+        assert_eq!(output.stderr_total, 0);
+        assert!(matches!(owner.state, OwnerState::Empty));
     }
 
     #[test]

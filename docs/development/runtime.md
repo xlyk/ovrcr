@@ -144,6 +144,17 @@ preflight does not prove the model that a later native process will apply. Pi
 has a related native fuzzy and custom-model fallback after OVRCR's catalog
 check; see the Dashboard guide for the exact limitation.
 
+All native Dashboard model queries and launch-time revalidation share one
+Server-owned process slot. Pi and OMP catalog children use nonblocking pipes
+with adapter-specific byte limits; their single owner keeps the exact child and
+bounded capture state if process-group ownership becomes uncertain. Further
+catalog launches are refused until a later bounded cleanup attempt resolves
+that state. Shutdown also makes a bounded cleanup attempt and returns Conflict
+while ownership remains unresolved, leaving the owner available for recovery.
+After waiting a child, cleanup uses only read-only group-absence checks and
+never signals that group again. There is no detached reaper or second process
+registry.
+
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt
 intents atomically before effects. A tombstone gates new and resumed Accepted
