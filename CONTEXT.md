@@ -105,6 +105,10 @@ _Avoid_: the reporting binding, a hint list per consumer
 A key delivered to the program inside a named session, as that program would receive it from a keyboard.
 _Avoid_: Paste, Input request, Key binding
 
+**Session jump label**:
+A temporary navigation label on a visible Agent session row. Choosing it focuses that session; it does not rename, restart, or review the session.
+_Avoid_: session title, agent label, session identity
+
 **Paste**:
 Text delivered into a session as a paste, which may be followed by Enter.
 _Avoid_: Keystroke
