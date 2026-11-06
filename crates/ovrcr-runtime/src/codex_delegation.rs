@@ -1,4 +1,5 @@
 //! Native Codex discovery and effect policy; no session or publication owner.
+use crate::catalog_process::{CatalogCapture, CatalogProcessOwner, owner_error};
 use anyhow::{Context, Result, bail, ensure};
 use ovrcr_protocol::{DelegationChoice, DelegationHarness};
 use std::{
@@ -8,7 +9,7 @@ use std::{
         unix::{fs::PermissionsExt, process::CommandExt},
     },
     path::{Component, Path, PathBuf},
-    process::{Child, ChildStdout, Command, Stdio},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -17,6 +18,17 @@ pub const MCP_SERVER: &str = "ovrcr_child";
 pub const ARTIFACT_ENV: &str = "OVRCR_DELEGATION_ARTIFACT_ROOT";
 const MAX_CATALOG: u64 = 1024 * 1024;
 const MAX_DASHBOARD_MODELS: usize = 128;
+const MAX_DASHBOARD_CATALOG_BYTES: usize = 512 * 1024;
+
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_NEXT_CODEX_CATALOG_CLEANUP_WAITID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn fail_next_codex_catalog_cleanup_waitid() {
+    FAIL_NEXT_CODEX_CATALOG_CLEANUP_WAITID.with(|failure| failure.set(true));
+}
 
 pub fn executable() -> Result<PathBuf> {
     for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
@@ -270,8 +282,8 @@ fn dashboard_startup_requirements(
     executable: &Path,
     cwd: &Path,
     cancelled: &std::sync::atomic::AtomicBool,
+    owner: &mut CatalogProcessOwner,
 ) -> Result<Vec<u8>> {
-    let mut output = tempfile::tempfile()?;
     let mut command = Command::new(executable);
     command
         .args([
@@ -280,47 +292,19 @@ fn dashboard_startup_requirements(
             "app-server",
             "--print-startup-config",
         ])
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
-        .stderr(Stdio::null())
-        .process_group(0);
+        .current_dir(cwd);
     remove_delegation_authority(&mut command);
-    let mut child = command
-        .spawn()
+    let output = owner
+        .run_command(
+            "Codex",
+            &mut command,
+            MAX_CATALOG as usize,
+            64 * 1024,
+            Duration::from_secs(20),
+            cancelled,
+        )
         .context("Codex startup requirements unavailable")?;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let result = (|| -> Result<()> {
-        loop {
-            ensure!(
-                !cancelled.load(std::sync::atomic::Ordering::Acquire),
-                "Codex model discovery cancelled"
-            );
-            if app_server_exited(&child)? {
-                return Ok(());
-            }
-            ensure!(
-                Instant::now() < deadline && output.metadata()?.len() <= MAX_CATALOG,
-                "Codex startup requirements exceeded bounds"
-            );
-            std::thread::park_timeout(Duration::from_millis(10));
-        }
-    })();
-    let cleanup = terminate_app_server_group(&mut child);
-    match (result, cleanup) {
-        (Ok(()), Ok(status)) if status.success() => {}
-        (Err(error), Ok(_)) => return Err(error),
-        (Ok(()), Ok(_)) => bail!("Codex startup requirements are unavailable"),
-        (_, Err(error)) => return Err(error),
-    }
-    ensure!(
-        output.metadata()?.len() <= MAX_CATALOG,
-        "Codex startup requirements exceed byte bound"
-    );
-    output.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    output.take(MAX_CATALOG + 1).read_to_end(&mut bytes)?;
-    Ok(bytes)
+    Ok(output.stdout)
 }
 
 fn remove_delegation_authority(command: &mut Command) {
@@ -349,11 +333,12 @@ pub(crate) fn dashboard_catalog(
     native_argv: &[std::ffi::OsString],
     cwd: &Path,
     cancelled: &std::sync::atomic::AtomicBool,
+    owner: &mut CatalogProcessOwner,
 ) -> Result<Vec<(String, String)>> {
     validate_dashboard_native_argv(executable, native_argv)?;
     ensure!(cwd.is_absolute(), "Codex workspace path is not absolute");
 
-    let requirements = dashboard_startup_requirements(executable, cwd, cancelled)?;
+    let requirements = dashboard_startup_requirements(executable, cwd, cancelled, owner)?;
     dashboard_plugins_override_is_compatible(&requirements)?;
 
     let mut command = Command::new(executable);
@@ -362,7 +347,7 @@ pub(crate) fn dashboard_catalog(
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .process_group(0);
     // Keep Codex's native HOME/CODEX_HOME, provider environment, cloud policy
     // and authentication. Remove only OVRCR capabilities that could turn this
@@ -372,27 +357,33 @@ pub(crate) fn dashboard_catalog(
     let mut child = command
         .spawn()
         .context("Codex native model discovery unavailable")?;
+    let mut capture =
+        CatalogCapture::take_from_child(&mut child, MAX_DASHBOARD_CATALOG_BYTES, 64 * 1024);
+    let mut capture_totals = (0usize, 0usize);
     let result = (|| -> Result<Vec<(String, String)>> {
         let mut stdin = child
             .stdin
             .take()
             .context("Codex app-server stdin unavailable")?;
-        let mut stdout = child
-            .stdout
-            .take()
-            .context("Codex app-server stdout unavailable")?;
-        let flags = unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_GETFL) };
-        ensure!(
-            flags >= 0
-                && unsafe {
-                    libc::fcntl(stdout.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK)
-                } == 0,
-            "Codex app-server output pipe unavailable"
-        );
+        let stdout_fd = capture
+            .stdout_mut()
+            .context("Codex app-server stdout unavailable")?
+            .as_raw_fd();
+        let stderr_fd = capture
+            .stderr_mut()
+            .context("Codex app-server stderr unavailable")?
+            .as_raw_fd();
+        for fd in [stdout_fd, stderr_fd] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            ensure!(
+                flags >= 0
+                    && unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == 0,
+                "Codex app-server output pipe unavailable"
+            );
+        }
 
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut pending = Vec::new();
-        let mut output_bytes = 0usize;
         write_jsonrpc_message(
             &mut stdin,
             &serde_json::json!({
@@ -406,9 +397,9 @@ pub(crate) fn dashboard_catalog(
         )?;
         let _initialized = read_jsonrpc_response(
             &mut child,
-            &mut stdout,
+            &mut capture,
             &mut pending,
-            &mut output_bytes,
+            &mut capture_totals,
             1,
             deadline,
             cancelled,
@@ -420,9 +411,9 @@ pub(crate) fn dashboard_catalog(
         )?;
         let gateway = read_jsonrpc_response(
             &mut child,
-            &mut stdout,
+            &mut capture,
             &mut pending,
-            &mut output_bytes,
+            &mut capture_totals,
             2,
             deadline,
             cancelled,
@@ -438,9 +429,9 @@ pub(crate) fn dashboard_catalog(
         )?;
         let response = read_jsonrpc_response(
             &mut child,
-            &mut stdout,
+            &mut capture,
             &mut pending,
-            &mut output_bytes,
+            &mut capture_totals,
             3,
             deadline,
             cancelled,
@@ -448,7 +439,14 @@ pub(crate) fn dashboard_catalog(
         parse_dashboard_models(&serde_json::to_vec(&response)?)
     })();
 
-    let cleanup = terminate_app_server_group(&mut child);
+    let cleanup = terminate_app_server_group(
+        owner,
+        child,
+        capture,
+        capture_totals.0,
+        capture_totals.1,
+        true,
+    );
     match (result, cleanup) {
         (Ok(models), Ok(status)) if status.success() => Ok(models),
         (Err(error), Ok(_)) => Err(error),
@@ -491,26 +489,32 @@ fn write_jsonrpc_message(
 
 fn read_jsonrpc_response(
     child: &mut Child,
-    stdout: &mut ChildStdout,
+    capture: &mut CatalogCapture,
     pending: &mut Vec<u8>,
-    output_bytes: &mut usize,
+    totals: &mut (usize, usize),
     request_id: u64,
     deadline: Instant,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<serde_json::Value> {
     let mut buffer = [0; 8192];
+    let mut error_buffer = [0; 8192];
     loop {
         ensure!(
             !cancelled.load(std::sync::atomic::Ordering::Acquire),
             "Codex model discovery cancelled"
         );
         ensure!(Instant::now() < deadline, "Codex model discovery deadline");
-        match stdout.read(&mut buffer) {
+        let read = capture
+            .stdout_mut()
+            .context("Codex app-server output pipe unavailable")?
+            .read(&mut buffer);
+        match read {
             Ok(0) => {}
             Ok(count) => {
-                *output_bytes = output_bytes.saturating_add(count);
+                totals.0 = totals.0.saturating_add(count);
+                capture.record_totals(totals.0, totals.1);
                 ensure!(
-                    *output_bytes <= 512 * 1024,
+                    totals.0 <= MAX_DASHBOARD_CATALOG_BYTES,
                     "Codex model discovery output bound"
                 );
                 pending.extend_from_slice(&buffer[..count]);
@@ -522,6 +526,23 @@ fn read_jsonrpc_response(
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => anyhow::bail!("Codex model discovery output unavailable"),
+        }
+
+        loop {
+            let read = capture
+                .stderr_mut()
+                .context("Codex app-server stderr unavailable")?
+                .read(&mut error_buffer);
+            match read {
+                Ok(0) => break,
+                Ok(count) => {
+                    totals.1 = totals.1.saturating_add(count);
+                    capture.record_totals(totals.0, totals.1);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => anyhow::bail!("Codex app-server diagnostics unavailable"),
+            }
         }
 
         while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
@@ -572,87 +593,302 @@ fn app_server_exited(child: &Child) -> Result<bool> {
     Ok(exited_pid != 0)
 }
 
-fn terminate_app_server_group(child: &mut Child) -> Result<std::process::ExitStatus> {
+fn observe_app_server_exit(child: &Child, cleanup_probe: bool) -> Result<bool> {
+    #[cfg(test)]
+    if cleanup_probe
+        && FAIL_NEXT_CODEX_CATALOG_CLEANUP_WAITID.with(|failure| failure.replace(false))
+    {
+        anyhow::bail!("Codex app-server cleanup ownership is uncertain (injected waitid error)");
+    }
+    let _ = cleanup_probe;
+    app_server_exited(child)
+}
+
+fn terminate_app_server_group(
+    owner: &mut CatalogProcessOwner,
+    mut child: Child,
+    mut capture: CatalogCapture,
+    mut output_bytes: usize,
+    mut stderr_bytes: usize,
+    cleanup_probe: bool,
+) -> Result<std::process::ExitStatus> {
     let pgid = child.id() as i32;
     let deadline = Instant::now() + Duration::from_millis(500);
     let mut leader_exited = false;
     while Instant::now() < deadline {
-        if app_server_exited(child)? {
-            leader_exited = true;
-            break;
+        if let Err(error) =
+            drain_catalog_capture(&mut capture, &mut output_bytes, &mut stderr_bytes)
+        {
+            return retain_unresolved_codex_child(
+                owner,
+                child,
+                capture,
+                format!("Codex app-server cleanup capture failed: {error:#}"),
+            );
+        }
+        match observe_app_server_exit(&child, cleanup_probe) {
+            Ok(true) => {
+                leader_exited = true;
+                break;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                return retain_unresolved_codex_child(
+                    owner,
+                    child,
+                    capture,
+                    format!("Codex app-server cleanup ownership is uncertain: {error:#}"),
+                );
+            }
         }
         std::thread::park_timeout(Duration::from_millis(10));
     }
     if !leader_exited {
-        let _term = signal_app_server_group(pgid, libc::SIGTERM);
+        if let Ok(false) = signal_app_server_group(pgid, libc::SIGTERM) {
+            match observe_app_server_exit(&child, cleanup_probe) {
+                Ok(true) => leader_exited = true,
+                Ok(false) => {
+                    return retain_unresolved_codex_child(
+                        owner,
+                        child,
+                        capture,
+                        "Codex app-server group disappeared while its leader remained live".into(),
+                    );
+                }
+                Err(error) => {
+                    return retain_unresolved_codex_child(
+                        owner,
+                        child,
+                        capture,
+                        format!("Codex app-server cleanup ownership is uncertain: {error:#}"),
+                    );
+                }
+            }
+        }
         let deadline = Instant::now() + Duration::from_millis(150);
-        while Instant::now() < deadline {
-            if app_server_exited(child)? {
-                leader_exited = true;
-                break;
+        while !leader_exited && Instant::now() < deadline {
+            if let Err(error) =
+                drain_catalog_capture(&mut capture, &mut output_bytes, &mut stderr_bytes)
+            {
+                return retain_unresolved_codex_child(
+                    owner,
+                    child,
+                    capture,
+                    format!("Codex app-server cleanup capture failed: {error:#}"),
+                );
+            }
+            match observe_app_server_exit(&child, cleanup_probe) {
+                Ok(true) => {
+                    leader_exited = true;
+                    break;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    return retain_unresolved_codex_child(
+                        owner,
+                        child,
+                        capture,
+                        format!("Codex app-server cleanup ownership is uncertain: {error:#}"),
+                    );
+                }
             }
             std::thread::park_timeout(Duration::from_millis(10));
         }
         if !leader_exited {
-            let _kill = signal_app_server_group(pgid, libc::SIGKILL);
+            if let Ok(false) = signal_app_server_group(pgid, libc::SIGKILL) {
+                match observe_app_server_exit(&child, cleanup_probe) {
+                    Ok(true) => leader_exited = true,
+                    Ok(false) => {
+                        return retain_unresolved_codex_child(
+                            owner,
+                            child,
+                            capture,
+                            "Codex app-server group disappeared while its leader remained live"
+                                .into(),
+                        );
+                    }
+                    Err(error) => {
+                        return retain_unresolved_codex_child(
+                            owner,
+                            child,
+                            capture,
+                            format!("Codex app-server cleanup ownership is uncertain: {error:#}"),
+                        );
+                    }
+                }
+            }
             let deadline = Instant::now() + Duration::from_millis(500);
-            while Instant::now() < deadline {
-                if app_server_exited(child)? {
-                    leader_exited = true;
-                    break;
+            while !leader_exited && Instant::now() < deadline {
+                if let Err(error) =
+                    drain_catalog_capture(&mut capture, &mut output_bytes, &mut stderr_bytes)
+                {
+                    return retain_unresolved_codex_child(
+                        owner,
+                        child,
+                        capture,
+                        format!("Codex app-server cleanup capture failed: {error:#}"),
+                    );
+                }
+                match observe_app_server_exit(&child, cleanup_probe) {
+                    Ok(true) => {
+                        leader_exited = true;
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        return retain_unresolved_codex_child(
+                            owner,
+                            child,
+                            capture,
+                            format!("Codex app-server cleanup ownership is uncertain: {error:#}"),
+                        );
+                    }
                 }
                 std::thread::park_timeout(Duration::from_millis(10));
             }
         }
     }
-    ensure!(
-        leader_exited,
-        "Codex app-server leader did not exit after bounded group cleanup"
-    );
+    if !leader_exited {
+        return retain_unresolved_codex_child(
+            owner,
+            child,
+            capture,
+            "Codex app-server leader did not exit after bounded group cleanup".into(),
+        );
+    }
     // A failed group signal while the leader is an unreaped zombie is
     // inconclusive: on macOS, killpg can report EPERM for a group containing
     // only that zombie. Reap the exact owned leader, then verify group absence.
-    let _group_kill = signal_app_server_group(pgid, libc::SIGKILL);
+    let signal_error = signal_app_server_group(pgid, libc::SIGKILL).err();
     // The leader stays unreaped until every signal is done. If it exits on EOF
     // or TERM, the final group signal is still before reap and is followed by
     // an absence probe after reap.
-    let status = child.wait().context("Codex app-server child wait failed")?;
-    wait_app_server_group_absent(pgid)?;
-    Ok(status)
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            return retain_unresolved_codex_child(
+                owner,
+                child,
+                capture,
+                format!("Codex app-server child wait failed: {error:#}"),
+            );
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if let Err(error) =
+            drain_catalog_capture(&mut capture, &mut output_bytes, &mut stderr_bytes)
+        {
+            owner.retain_reaped_group("Codex", pgid, capture)?;
+            return Err(owner_error(format!(
+                "Codex app-server cleanup remains uncertain after wait (pid {pgid}, signal errno {:?}, capture error {error:#})",
+                signal_error.as_ref().and_then(std::io::Error::raw_os_error)
+            )));
+        }
+        match app_server_group_absent(pgid) {
+            Ok(true) => return Ok(status),
+            Ok(false) | Err(_) if Instant::now() < deadline => {
+                std::thread::park_timeout(Duration::from_millis(10));
+            }
+            Ok(false) => {
+                owner.retain_reaped_group("Codex", pgid, capture)?;
+                return Err(owner_error(format!(
+                    "Codex app-server process group remains present after wait (pid {pgid}, signal errno {:?})",
+                    signal_error.as_ref().and_then(std::io::Error::raw_os_error)
+                )));
+            }
+            Err(error) => {
+                owner.retain_reaped_group("Codex", pgid, capture)?;
+                return Err(owner_error(format!(
+                    "Codex app-server process group remains inaccessible after wait (pid {pgid}, signal errno {:?}, probe errno {:?})",
+                    signal_error.as_ref().and_then(std::io::Error::raw_os_error),
+                    error.raw_os_error()
+                )));
+            }
+        }
+    }
 }
 
-fn signal_app_server_group(pgid: i32, signal: i32) -> Result<()> {
+fn retain_unresolved_codex_child(
+    owner: &mut CatalogProcessOwner,
+    child: Child,
+    capture: CatalogCapture,
+    message: String,
+) -> Result<std::process::ExitStatus> {
+    owner.retain_unresolved_child("Codex", child, capture)?;
+    Err(owner_error(message))
+}
+
+fn drain_catalog_capture(
+    capture: &mut CatalogCapture,
+    output_bytes: &mut usize,
+    stderr_bytes: &mut usize,
+) -> Result<()> {
+    let mut buffer = [0; 8192];
+    loop {
+        let read = capture
+            .stdout_mut()
+            .context("Codex app-server stdout unavailable")?
+            .read(&mut buffer);
+        match read {
+            Ok(0) => break,
+            Ok(count) => {
+                *output_bytes = output_bytes.saturating_add(count);
+                capture.record_totals(*output_bytes, *stderr_bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    loop {
+        let read = capture
+            .stderr_mut()
+            .context("Codex app-server stderr unavailable")?
+            .read(&mut buffer);
+        match read {
+            Ok(0) => break,
+            Ok(count) => {
+                *stderr_bytes = stderr_bytes.saturating_add(count);
+                capture.record_totals(*output_bytes, *stderr_bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn signal_app_server_group(pgid: i32, signal: i32) -> std::io::Result<bool> {
     let sent = unsafe { libc::kill(-pgid, signal) };
     let errno = if sent == -1 {
         std::io::Error::last_os_error().raw_os_error()
     } else {
         None
     };
-    ensure!(
-        sent == 0 || (sent == -1 && errno == Some(libc::ESRCH)),
-        "Codex app-server cleanup is uncertain (process group {pgid}, observed {}, signal {signal}, errno {errno:?})",
-        unsafe { libc::getpgid(pgid) }
-    );
-    Ok(())
+    if sent == 0 {
+        Ok(true)
+    } else if errno == Some(libc::ESRCH) {
+        Ok(false)
+    } else {
+        Err(std::io::Error::from_raw_os_error(
+            errno.unwrap_or(libc::EIO),
+        ))
+    }
 }
 
-fn wait_app_server_group_absent(pgid: i32) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        let present = unsafe { libc::kill(-pgid, 0) };
-        let errno = if present == -1 {
-            std::io::Error::last_os_error().raw_os_error()
+fn app_server_group_absent(pgid: i32) -> std::io::Result<bool> {
+    let present = unsafe { libc::kill(-pgid, 0) };
+    if present == 0 {
+        Ok(false)
+    } else {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(true)
         } else {
-            None
-        };
-        if present == -1 && errno == Some(libc::ESRCH) {
-            return Ok(());
+            Err(error)
         }
-        ensure!(
-            Instant::now() < deadline,
-            "Codex app-server process group is still present (probe errno {errno:?})"
-        );
-        std::thread::park_timeout(Duration::from_millis(10));
     }
 }
 
@@ -718,6 +954,18 @@ pub fn profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dashboard_catalog_with_test_owner(
+        executable: &Path,
+        native_argv: &[std::ffi::OsString],
+        cwd: &Path,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Vec<(String, String)>> {
+        let mut owner = CatalogProcessOwner::default();
+        let result = dashboard_catalog(executable, native_argv, cwd, cancelled, &mut owner);
+        owner.resolve_existing()?;
+        result
+    }
 
     #[test]
     fn dashboard_catalog_parser_uses_exact_native_model_and_rejects_bad_catalogs() {
@@ -802,7 +1050,7 @@ mod tests {
         let mut native_argv = vec![executable.as_os_str().to_owned()];
         ovrcr_protocol::apply_default_auto_trust("codex", &mut native_argv);
 
-        let choices = dashboard_catalog(
+        let choices = dashboard_catalog_with_test_owner(
             &executable,
             &native_argv,
             &workspace,
@@ -857,6 +1105,152 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_catalog_does_not_drop_child_when_cleanup_probe_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::AtomicBool;
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let executable = root.path().join("codex");
+        std::fs::write(
+            &executable,
+            r##"#!/bin/sh
+if [ "$4" = "--print-startup-config" ]; then
+  printf '%s\n' '{"appServerVersion":"0.164.0","configRequirements":{"requirements":null}}'
+  exit 0
+fi
+printf '%s' "$$" > regular-app-server.pid
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{"serverInfo":{"name":"Codex","version":"0.164.0"}}}' ;;
+    *'"method":"account/gatewayOAuth/read"'*) printf '%s\n' '{"id":2,"result":{"required":false,"status":null}}' ;;
+    *'"method":"model/list"'*)
+      printf '%s\n' '{"id":3,"result":{"data":[{"id":"preset-gpt-5.4","model":"gpt-5.4","hidden":false,"isDefault":true}],"nextCursor":null}}'
+      exit 0
+      ;;
+  esac
+done
+"##,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let mut native_argv = vec![executable.as_os_str().to_owned()];
+        ovrcr_protocol::apply_default_auto_trust("codex", &mut native_argv);
+
+        fail_next_codex_catalog_cleanup_waitid();
+        let mut owner = CatalogProcessOwner::default();
+        let result = dashboard_catalog(
+            &executable,
+            &native_argv,
+            &workspace,
+            &AtomicBool::new(false),
+            &mut owner,
+        );
+        assert!(result.is_err(), "injected cleanup uncertainty was ignored");
+        owner.resolve_existing().unwrap();
+        let pid: libc::pid_t = std::fs::read_to_string(workspace.join("regular-app-server.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let was_waited = loop {
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let observed = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if observed == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD)
+            {
+                break true;
+            }
+            if observed == 0 && unsafe { info.si_pid() } == pid {
+                break false;
+            }
+            assert!(Instant::now() < deadline, "fake app-server did not exit");
+            std::thread::park_timeout(Duration::from_millis(5));
+        };
+        if !was_waited {
+            // Clean up this exact test-owned zombie after recording the failed
+            // ownership assertion, so a red run cannot leak it.
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        }
+        assert!(
+            was_waited,
+            "cleanup uncertainty returned after dropping an un-waited Codex child"
+        );
+    }
+
+    #[test]
+    fn startup_config_output_overflow_reaps_its_native_child() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::AtomicBool;
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let executable = root.path().join("codex");
+        std::fs::write(
+            &executable,
+            r##"#!/bin/sh
+if [ "$4" = "--print-startup-config" ]; then
+  printf '%s' "$$" > startup-config.pid
+  exec /usr/bin/head -c 1048577 /dev/zero
+fi
+printf started > regular-app-server
+exit 0
+"##,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let mut native_argv = vec![executable.as_os_str().to_owned()];
+        ovrcr_protocol::apply_default_auto_trust("codex", &mut native_argv);
+
+        let mut owner = CatalogProcessOwner::default();
+        let result = dashboard_catalog(
+            &executable,
+            &native_argv,
+            &workspace,
+            &AtomicBool::new(false),
+            &mut owner,
+        );
+        owner.resolve_existing().unwrap();
+        assert!(result.is_err(), "oversized startup config was accepted");
+        assert!(!workspace.join("regular-app-server").exists());
+
+        let pid: libc::pid_t = std::fs::read_to_string(workspace.join("startup-config.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD);
+        assert!(waited, "startup-config child was not waited");
+        assert_eq!(unsafe { libc::kill(-pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[test]
     fn dashboard_catalog_refuses_managed_plugins_enabled_before_app_server_warmup() {
         use std::os::unix::fs::PermissionsExt;
         use std::sync::atomic::AtomicBool;
@@ -876,7 +1270,7 @@ mod tests {
         let mut native_argv = vec![executable.as_os_str().to_owned()];
         ovrcr_protocol::apply_default_auto_trust("codex", &mut native_argv);
 
-        let result = dashboard_catalog(
+        let result = dashboard_catalog_with_test_owner(
             &executable,
             &native_argv,
             &workspace,
@@ -916,7 +1310,7 @@ mod tests {
         let worker_workspace = workspace.clone();
         let worker_argv = native_argv.clone();
         let worker = std::thread::spawn(move || {
-            dashboard_catalog(
+            dashboard_catalog_with_test_owner(
                 &worker_executable,
                 &worker_argv,
                 &worker_workspace,
@@ -966,7 +1360,7 @@ mod tests {
         let mut native_argv = vec![executable.as_os_str().to_owned()];
         ovrcr_protocol::apply_default_auto_trust("codex", &mut native_argv);
 
-        let models = dashboard_catalog(
+        let models = dashboard_catalog_with_test_owner(
             &executable,
             &native_argv,
             &workspace,
@@ -1025,7 +1419,7 @@ mod tests {
             let mut native_argv = vec![executable.as_os_str().to_owned()];
             native_argv.extend(args.iter().map(std::ffi::OsString::from));
             assert!(
-                dashboard_catalog(
+                dashboard_catalog_with_test_owner(
                     &executable,
                     &native_argv,
                     &workspace,

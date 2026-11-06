@@ -34,6 +34,7 @@ pub(crate) fn owner_error(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(CatalogOwnerError(message.into()))
 }
 
+#[cfg(test)]
 pub(crate) fn is_owner_error(error: &anyhow::Error) -> bool {
     error
         .chain()
