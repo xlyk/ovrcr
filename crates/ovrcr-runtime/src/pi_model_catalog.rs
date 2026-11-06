@@ -167,7 +167,7 @@ fn reap_process_group(
 }
 
 fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
-    for _ in 0..10 {
+    for check in 1..=10 {
         if observed_child_exit(child)? {
             return Ok(true);
         }
@@ -183,16 +183,41 @@ fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
         if observed_group == -1 && group_errno == Some(libc::ESRCH) {
             // The leader can exit between waitid and getpgid. Recheck the
             // unreaped status briefly before treating group ownership as lost.
+            if check == 10 {
+                return Err(ownership_uncertain(
+                    child,
+                    false,
+                    observed_group,
+                    group_errno,
+                    check,
+                ));
+            }
             std::thread::park_timeout(Duration::from_millis(1));
             continue;
         }
-        bail!(
-            "native Pi discovery process-group ownership is uncertain (child {child}, WNOWAIT exit not observed, getpgid {observed_group}, errno {group_errno:?})"
-        );
+        return Err(ownership_uncertain(
+            child,
+            false,
+            observed_group,
+            group_errno,
+            check,
+        ));
     }
-    bail!(
-        "native Pi discovery process-group ownership is uncertain (child {child}, WNOWAIT exit not observed after 10 checks, getpgid -1, errno Some({}))",
-        libc::ESRCH
+    unreachable!("ownership retry loop returns after its tenth check")
+}
+
+fn ownership_uncertain(
+    child: libc::pid_t,
+    waitid_exit_observed: bool,
+    observed_group: libc::pid_t,
+    group_errno: Option<i32>,
+    checks: u8,
+) -> anyhow::Error {
+    eprintln!(
+        "ovrcr: native Pi discovery ownership uncertain: pid={child} waitid_exit_observed={waitid_exit_observed} observed_group={observed_group} getpgid_errno={group_errno:?} checks={checks}"
+    );
+    anyhow::anyhow!(
+        "native Pi discovery process-group ownership is uncertain (child {child}, WNOWAIT exit observed {waitid_exit_observed}, getpgid {observed_group}, errno {group_errno:?}, checks {checks})"
     )
 }
 
