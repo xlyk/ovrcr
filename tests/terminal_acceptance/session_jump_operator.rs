@@ -27,7 +27,7 @@ fn operator_command_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
         .find(|session| session.name == "local")
         .context("original local shell")?;
 
-    let mut dashboard = OuterDashboard::start(
+    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
         &fixture,
         PtySize {
             rows: 40,

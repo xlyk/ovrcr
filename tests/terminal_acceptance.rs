@@ -385,10 +385,35 @@ impl OuterDashboard {
         Self::start_with_server_executable(fixture, size, &fixture.executable)
     }
 
+    fn start_with_verified_gui_profile(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
+        Self::start_with_server_executable_and_verified_gui_profile(
+            fixture,
+            size,
+            &fixture.executable,
+        )
+    }
+
     fn start_with_server_executable(
         fixture: &AcceptanceFixture,
         size: PtySize,
         server_executable: &Path,
+    ) -> Result<Self> {
+        Self::start_with_server_executable_profile(fixture, size, server_executable, false)
+    }
+
+    fn start_with_server_executable_and_verified_gui_profile(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        server_executable: &Path,
+    ) -> Result<Self> {
+        Self::start_with_server_executable_profile(fixture, size, server_executable, true)
+    }
+
+    fn start_with_server_executable_profile(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        server_executable: &Path,
+        verified_gui_profile: bool,
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
@@ -425,6 +450,15 @@ impl OuterDashboard {
                 Some(value) => command.env(key, value),
                 None => command.env_remove(key),
             }
+        }
+        command.env_remove(ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV);
+        if verified_gui_profile {
+            // These tests inject the verified GUI's enhanced modifier events
+            // through the real CLI profile parser and Dashboard constructor.
+            command.env(
+                ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV,
+                ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
+            );
         }
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
@@ -923,7 +957,7 @@ fn command_digit_jumps_to_the_frozen_visible_agent_through_real_dashboard() -> R
     fixture.setup()?;
     let first = create_search_agent(&mut fixture, "agent-a")?;
     let second = create_search_agent(&mut fixture, "agent-b")?;
-    let mut dashboard = OuterDashboard::start(
+    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
         &fixture,
         PtySize {
             rows: 40,
