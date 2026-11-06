@@ -17,7 +17,7 @@ fn two_digit_jump_selects_the_tenth_agent_through_the_compiled_dashboard() -> Re
     let (held, release, proxy) = gate_agent_view(&proxy_socket, &actual_socket, agents[9].id)?;
     let proxy_executable = dashboard_proxy::publish_build(&proxy_socket)?;
     fixture.live.socket = proxy_socket;
-    let outer = OuterDashboard::start_with_server_executable(
+    let outer = OuterDashboard::start_with_server_executable_and_verified_gui_profile(
         &fixture,
         PtySize {
             rows: 50,

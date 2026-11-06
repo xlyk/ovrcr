@@ -61,9 +61,7 @@ fn badge_modifier(dashboard: &Dashboard, width: u16, height: u16, badge: &str) -
             if chars.iter().enumerate().all(|(offset, expected)| {
                 buffer[(x + u16::try_from(offset).unwrap(), y)]
                     .symbol()
-                    .chars()
-                    .next()
-                    == Some(*expected)
+                    .starts_with(*expected)
             }) {
                 return Some(buffer[(x + 1, y)].modifier);
             }

@@ -12,8 +12,8 @@ Browse it shows only the three keys that open everything else, `Space Menu`,
 palette. Copy and History show their own prioritized shortcuts, and hints that
 do not fit remain available through `?` or `Space`. History shows `Esc Cancel
 copy` while a copy is pending and `Esc Back` otherwise.
-While a session needs you, the Browse footer also shows the jump key: `i Next
-input needed` or `i Next ready`, naming where it goes.
+While a session needs you, the Browse footer also shows the attention key: `i
+Next input needed` or `i Next ready`, naming where it goes.
 
 | Mode | Entered by | Leaves with |
 | --- | --- | --- |
@@ -23,8 +23,9 @@ input needed` or `i Next ready`, naming where it goes.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 | Transcript | `PageUp` or wheel-up on full-screen Claude Code or Codex | `Esc`, `q`, or `Ctrl-g` |
 
-Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. `Ctrl-o` reaches the program there (Oh My Pi expands tool
+Terminal mode is the only mode that sends input to the PTY. `Ctrl-g` leaves it;
+the bundled GUI's qualified Command-hold gesture also owns its modifier and
+digit events while active. `Ctrl-o` reaches the program there (Oh My Pi expands tool
 output with it, Claude Code opens its transcript), so Operator **Quick message** is
 `Ctrl-g` then `Ctrl-o`; the Terminal footer shows this when space permits. Click the
 title bar's Commands control to open the palette or Menu to open the action menu.
@@ -97,7 +98,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| `Cmd+0`–`Cmd+9` | Hold Command to label visible running or retained Agent rows; choose the full one-digit code (`1`–`9`) or zero-padded two-digit code (`01`–`50`) shown beside the row. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Command never reveals it |
+| Bundled GUI: `Cmd+0`–`Cmd+9` | In the bundled OVRCR GUI, hold Command to label visible running or retained Agent rows; choose the full one-digit code (`1`–`9`) or zero-padded two-digit code (`01`–`50`) shown beside the row. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Command never reveals it. The Standard CLI and other frontends use `s` Agents search. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -108,21 +109,21 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `q` | Detach; the server and every session keep running |
 
 `N`, `O`, `S`, `R`, `b`, `i` and `[` act on a key press; a key repeat or release does nothing.
-`Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
-that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
-with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
-history request that has not opened yet.
+`Alt` and `Shift` do not change which action a key runs: `Alt-x` closes the pane
+that `x` closes. Command/Super remains distinct; outside the bundled GUI's
+qualified Command-hold gesture, it cannot become a bare action or PTY character,
+so use `s` Agents search. `Ctrl-t` reaches Browse with optional Alt or Shift.
+Every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a history
+request that has not opened yet.
 
-On macOS, the session jump needs a terminal that delivers Command as a standalone
-Super press and release through Kitty's keyboard protocol. The Dashboard enables
-enhanced keyboard reporting for its session and restores the previous keyboard
-mode when it leaves. A protocol capability response alone does not prove that
-Command and modified digits reach the application. Verify the exact terminal
-version and keyboard configuration with Command-down, a labeled digit, and
-Command-up before listing that setup as supported. If no modifier event arrives,
-the Dashboard leaves input alone and `s` Agents search remains available.
-The same gesture works from an unobscured Operator view when the shared sidebar is
-already visible; Operator conversation rows do not receive Agent labels.
+Command-hold session jump is currently qualified only for the bundled OVRCR GUI,
+which owns the native Command input path. The Standard CLI and other frontends
+keep `s` Agents search and do not show or intercept the Command-hold gesture.
+Kitty keyboard-mode negotiation or a capability response alone does not qualify
+another frontend. Adding one requires native evidence that standalone Command
+press and release plus modified digits reach the application. In the bundled GUI,
+the gesture also works from an unobscured Operator view when the shared sidebar
+is already visible; Operator conversation rows do not receive Agent labels.
 
 ## Search other running agents
 
@@ -556,18 +557,20 @@ insert a newline instead of submitting. Terminals without the kitty keyboard
 protocol report `Shift+Enter` as plain `Enter`, so the dashboard cannot tell them
 apart there.
 
-The Command session jump uses Kitty's enhanced key events only while the user
-holds Command. It labels visible running or retained Agent rows, including the
-current session, in sidebar order and freezes the code width and each target's
-session and run for that hold. Lists of one to nine use `1`–`9`; lists of ten to
-fifty use zero-padded `01`–`50`. For a two-digit code, the footer shows the first
-digit while you finish the code; Command+Backspace clears that prefix. Releasing
-Command with an incomplete code cancels. After choosing a running Agent, it stays
-in Browse until Command is released and the exact view is acknowledged; queued
-loading input is discarded. A retained Agent stays in Browse for inspection and
-is never resumed or reopened by navigation; use its explicit Resume/Reopen action
-when needed. The feature does not infer support from a terminal name or a
-capability reply.
+In the bundled GUI's qualified input profile, the Command session jump uses
+Kitty's enhanced key events only while the user holds Command. It labels visible
+running or retained Agent rows, including the current session, in sidebar order
+and freezes the code width and each target's session and run for that hold. Lists
+of one to nine use `1`–`9`; lists of ten to fifty use zero-padded `01`–`50`. For a
+two-digit code, the footer shows the first digit while you finish the code;
+Command+Backspace clears that prefix. Releasing Command with an incomplete code
+cancels. After choosing a running Agent, it stays in Browse until Command is
+released and the exact view is acknowledged; queued loading input is discarded.
+A retained Agent stays in Browse for inspection and is never resumed or reopened
+by navigation; use its explicit Resume/Reopen action when needed. The feature
+does not infer support from a terminal name or a capability reply. Other
+frontends remain on Agents search until native input has been verified and that
+frontend is explicitly qualified.
 
 ## Pause and resume
 

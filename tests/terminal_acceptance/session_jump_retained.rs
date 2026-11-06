@@ -106,7 +106,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         groups
     };
 
-    let mut dashboard = OuterDashboard::start(
+    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
         &fixture,
         PtySize {
             rows: 40,
