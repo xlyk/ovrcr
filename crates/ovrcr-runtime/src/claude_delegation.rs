@@ -302,7 +302,7 @@ fn initialized_catalog_inner_with_owner<F>(
     cancelled: &std::sync::atomic::AtomicBool,
     inject_postwait_fault: bool,
     spawned: F,
-    mut owner: Option<&mut CatalogProcessOwner>,
+    owner: Option<&mut CatalogProcessOwner>,
 ) -> Result<(Vec<(String, String)>, String)>
 where
     F: FnOnce(u32),
@@ -479,7 +479,7 @@ where
     })();
     drop(child.stdin.take());
     let using_owner = owner.is_some();
-    let cleanup = if let Some(owner) = owner.as_deref_mut() {
+    let cleanup = if let Some(owner) = owner {
         cleanup_catalog_child_owned(
             owner,
             "Claude",
@@ -487,8 +487,7 @@ where
             capture,
             cancelled,
             deadline,
-            stdout_bytes,
-            error_bytes,
+            (stdout_bytes, error_bytes),
         )
     } else {
         drop(capture);
@@ -510,12 +509,12 @@ fn cleanup_catalog_child_owned(
     owner: &mut CatalogProcessOwner,
     label: &'static str,
     child: Child,
-    capture: CatalogCapture,
+    mut capture: CatalogCapture,
     cancelled: &std::sync::atomic::AtomicBool,
     catalog_deadline: Instant,
-    mut stdout_bytes: usize,
-    mut error_bytes: usize,
+    totals: (usize, usize),
 ) -> Result<()> {
+    let (mut stdout_bytes, mut error_bytes) = totals;
     let pid = child.id() as libc::pid_t;
     let grace = if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         Instant::now()
@@ -910,21 +909,28 @@ mod tests {
         });
 
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pid_file.exists() {
+        let script_pid_contents = loop {
+            if let Ok(contents) = std::fs::read_to_string(&pid_file)
+                && !contents.is_empty()
+            {
+                break contents;
+            }
             assert!(Instant::now() < deadline, "fake catalog did not start");
             std::thread::sleep(Duration::from_millis(5));
-        }
+        };
         let pid: i32 = started_rx.recv_timeout(Duration::from_secs(1)).unwrap() as i32;
-        let script_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        let script_pid: i32 = script_pid_contents.parse().unwrap();
         assert_eq!(script_pid, pid, "fake CLI pid differs from owned child");
-        while !descendant_file.exists() {
+        let descendant_contents = loop {
+            if let Ok(contents) = std::fs::read_to_string(&descendant_file)
+                && !contents.is_empty()
+            {
+                break contents;
+            }
             assert!(Instant::now() < deadline, "fake descendant did not start");
             std::thread::sleep(Duration::from_millis(5));
-        }
-        let descendant: i32 = std::fs::read_to_string(&descendant_file)
-            .unwrap()
-            .parse()
-            .unwrap();
+        };
+        let descendant: i32 = descendant_contents.parse().unwrap();
         assert_eq!(
             unsafe { libc::getpgid(pid) },
             pid,

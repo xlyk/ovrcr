@@ -359,8 +359,7 @@ pub(crate) fn dashboard_catalog(
         .context("Codex native model discovery unavailable")?;
     let mut capture =
         CatalogCapture::take_from_child(&mut child, MAX_DASHBOARD_CATALOG_BYTES, 64 * 1024);
-    let mut output_bytes = 0usize;
-    let mut stderr_bytes = 0usize;
+    let mut capture_totals = (0usize, 0usize);
     let result = (|| -> Result<Vec<(String, String)>> {
         let mut stdin = child
             .stdin
@@ -400,8 +399,7 @@ pub(crate) fn dashboard_catalog(
             &mut child,
             &mut capture,
             &mut pending,
-            &mut output_bytes,
-            &mut stderr_bytes,
+            &mut capture_totals,
             1,
             deadline,
             cancelled,
@@ -415,8 +413,7 @@ pub(crate) fn dashboard_catalog(
             &mut child,
             &mut capture,
             &mut pending,
-            &mut output_bytes,
-            &mut stderr_bytes,
+            &mut capture_totals,
             2,
             deadline,
             cancelled,
@@ -434,8 +431,7 @@ pub(crate) fn dashboard_catalog(
             &mut child,
             &mut capture,
             &mut pending,
-            &mut output_bytes,
-            &mut stderr_bytes,
+            &mut capture_totals,
             3,
             deadline,
             cancelled,
@@ -443,8 +439,14 @@ pub(crate) fn dashboard_catalog(
         parse_dashboard_models(&serde_json::to_vec(&response)?)
     })();
 
-    let cleanup =
-        terminate_app_server_group(owner, child, capture, output_bytes, stderr_bytes, true);
+    let cleanup = terminate_app_server_group(
+        owner,
+        child,
+        capture,
+        capture_totals.0,
+        capture_totals.1,
+        true,
+    );
     match (result, cleanup) {
         (Ok(models), Ok(status)) if status.success() => Ok(models),
         (Err(error), Ok(_)) => Err(error),
@@ -489,8 +491,7 @@ fn read_jsonrpc_response(
     child: &mut Child,
     capture: &mut CatalogCapture,
     pending: &mut Vec<u8>,
-    output_bytes: &mut usize,
-    stderr_bytes: &mut usize,
+    totals: &mut (usize, usize),
     request_id: u64,
     deadline: Instant,
     cancelled: &std::sync::atomic::AtomicBool,
@@ -510,10 +511,10 @@ fn read_jsonrpc_response(
         match read {
             Ok(0) => {}
             Ok(count) => {
-                *output_bytes = output_bytes.saturating_add(count);
-                capture.record_totals(*output_bytes, *stderr_bytes);
+                totals.0 = totals.0.saturating_add(count);
+                capture.record_totals(totals.0, totals.1);
                 ensure!(
-                    *output_bytes <= MAX_DASHBOARD_CATALOG_BYTES,
+                    totals.0 <= MAX_DASHBOARD_CATALOG_BYTES,
                     "Codex model discovery output bound"
                 );
                 pending.extend_from_slice(&buffer[..count]);
@@ -535,8 +536,8 @@ fn read_jsonrpc_response(
             match read {
                 Ok(0) => break,
                 Ok(count) => {
-                    *stderr_bytes = stderr_bytes.saturating_add(count);
-                    capture.record_totals(*output_bytes, *stderr_bytes);
+                    totals.1 = totals.1.saturating_add(count);
+                    capture.record_totals(totals.0, totals.1);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
