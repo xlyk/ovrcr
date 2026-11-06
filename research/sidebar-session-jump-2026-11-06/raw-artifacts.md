@@ -74,3 +74,11 @@ Raw terminal captures contain intentional space padding. These lossless gzip arc
 | `native-03/owned-processes.json` | [native-03/owned-processes.json.gz](native-03/owned-processes.json.gz) |
 | `native-03/sessions-before.json` | [native-03/sessions-before.json.gz](native-03/sessions-before.json.gz) |
 | `native-03/sessions-expanded.json` | [native-03/sessions-expanded.json.gz](native-03/sessions-expanded.json.gz) |
+| `automated/baseline-aborted-suite-retries-01.json` | [automated/baseline-aborted-suite-retries-01.json.gz](automated/baseline-aborted-suite-retries-01.json.gz) |
+| `automated/baseline-aborted-suite-retries-01.log` | [automated/baseline-aborted-suite-retries-01.log.gz](automated/baseline-aborted-suite-retries-01.log.gz) |
+| `automated/baseline-hosted-42278110709-summary.txt` | [automated/baseline-hosted-42278110709-summary.txt.gz](automated/baseline-hosted-42278110709-summary.txt.gz) |
+| `automated/baseline-hosted-42278110709.json` | [automated/baseline-hosted-42278110709.json.gz](automated/baseline-hosted-42278110709.json.gz) |
+| `automated/baseline-quota-retry-01.json` | [automated/baseline-quota-retry-01.json.gz](automated/baseline-quota-retry-01.json.gz) |
+| `automated/baseline-quota-retry-01.log` | [automated/baseline-quota-retry-01.log.gz](automated/baseline-quota-retry-01.log.gz) |
+| `automated/final-workspace-tests-02-serial.json` | [automated/final-workspace-tests-02-serial.json.gz](automated/final-workspace-tests-02-serial.json.gz) |
+| `automated/final-workspace-tests-02-serial.log` | [automated/final-workspace-tests-02-serial.log.gz](automated/final-workspace-tests-02-serial.log.gz) |
