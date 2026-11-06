@@ -1007,7 +1007,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let groups = vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "New agent session", "Choose a registered branch, agent harness and model, then optionally enter an initial prompt".into(), Char('n'), Action::NewAgentSession).group('w', "n"),
-            key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
+            key_binding("w", "Create branch", format!("Create a worktree for a new branch under {project_target}; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
         KeyGroup { title: "Session".into(), keys: vec![

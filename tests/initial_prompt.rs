@@ -1547,7 +1547,7 @@ fn omp_model_catalog_and_initial_prompt_keep_one_detected_native_launch() {
     );
     assert_eq!(
         output
-            .matches(&format!("CATALOG_ARG:models\nCATALOG_ARG:--json\n"))
+            .matches("CATALOG_ARG:models\nCATALOG_ARG:--json\n")
             .count(),
         2,
         "model discovery uses OMP's structured JSON command"

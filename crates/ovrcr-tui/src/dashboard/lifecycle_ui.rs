@@ -349,12 +349,28 @@ impl Dashboard {
         self.lifecycle_preference = None;
     }
 
+    #[cfg(test)]
     pub(super) fn on_lifecycle_completed(
         &mut self,
         client_token: u64,
         op: LifecycleOp,
         outcome: LifecycleOutcome,
     ) -> DashboardAction {
+        self.on_lifecycle_completed_with_target(client_token, op, outcome, None)
+    }
+
+    pub(super) fn on_lifecycle_completed_with_target(
+        &mut self,
+        client_token: u64,
+        op: LifecycleOp,
+        outcome: LifecycleOutcome,
+        target_workspace: Option<crate::protocol::WorkspaceLifecycleIdentity>,
+    ) -> DashboardAction {
+        if let Some(action) =
+            self.on_branch_lifecycle_completed(client_token, op, outcome.clone(), target_workspace)
+        {
+            return action;
+        }
         if self
             .provisional
             .as_ref()
@@ -590,7 +606,13 @@ impl Dashboard {
                 client_token,
                 op,
                 outcome,
-            } => Some(self.on_lifecycle_completed(*client_token, op.clone(), outcome.clone())),
+                target_workspace,
+            } => Some(self.on_lifecycle_completed_with_target(
+                *client_token,
+                op.clone(),
+                outcome.clone(),
+                target_workspace.clone(),
+            )),
             _ => None,
         }
     }
