@@ -43,6 +43,7 @@ struct Suggestions {
 enum Command {
     WorkflowRecovery(SessionId, SessionRunId),
     TransferWorkflow(Box<crate::protocol::WorkflowTransfer>),
+    NewAgentSession,
     CreateTerminal,
     CreateWorkspace,
     RenameTerminal(SessionId),
@@ -82,6 +83,7 @@ enum FieldKind {
     Text,
     Multiline,
     Toggle,
+    Notice,
     Pick(PickList),
     Path(PathPicker),
 }
@@ -128,6 +130,7 @@ fn running_agent(session: &SessionSummary) -> bool {
 /// The key action a palette entry duplicates.
 fn command_action(command: &Command) -> Option<Action> {
     match command {
+        Command::NewAgentSession => Some(Action::NewAgentSession),
         Command::CreateTerminal => Some(Action::CreateTerminal),
         Command::CreateWorkspace => Some(Action::CreateWorkspace),
         Command::RegisterProject => Some(Action::RegisterProject),
@@ -185,6 +188,9 @@ pub(super) struct Palette {
     workspace_acknowledged: bool,
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
+    agent_catalog: Option<Vec<super::agents::AgentEntry>>,
+    workspace_inventory: Option<crate::protocol::Registry>,
+    launch_harness: Option<String>,
     failed_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
     recovered_prompt_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
     initial_prompt_summary: Option<String>,
@@ -343,6 +349,10 @@ fn button_text(page: &Page, width: u16) -> &'static str {
     match page {
         Page::Search { .. } => "[Open] [Cancel]",
         Page::Confirm { .. } => "[Confirm] [Cancel]",
+        Page::Form {
+            command: Command::NewAgentSession,
+            ..
+        } => "[Start agent] [Cancel]",
         Page::Form { .. } => "[Submit] [Cancel]",
     }
 }
@@ -656,6 +666,9 @@ impl Palette {
             workspace_acknowledged: false,
             workspace_id: None,
             launch_preference: None,
+            agent_catalog: None,
+            workspace_inventory: None,
+            launch_harness: None,
             failed_launch: None,
             recovered_prompt_launch: None,
             initial_prompt_summary: None,
@@ -727,6 +740,7 @@ impl Palette {
                         self.cursor.insert(&mut fields[*active].value, &text);
                     }
                     FieldKind::Toggle => {}
+                    FieldKind::Notice => {}
                 }
             }
             Page::Confirm { .. } => return,
@@ -746,12 +760,32 @@ fn text_field(label: &'static str, value: String, required: bool) -> Field {
     }
 }
 
+fn notice_field(label: &'static str, value: String, hidden: bool) -> Field {
+    Field {
+        label,
+        value,
+        required: false,
+        hidden,
+        edited: false,
+        kind: FieldKind::Notice,
+    }
+}
+
 fn field_value(fields: &[Field], label: &str) -> String {
     fields
         .iter()
         .find(|field| field.label == label)
         .map(|field| field.value.clone())
         .unwrap_or_default()
+}
+
+fn agent_field_value(fields: &[Field]) -> String {
+    let harness = field_value(fields, "Agent harness");
+    if harness.is_empty() {
+        field_value(fields, "Agent")
+    } else {
+        harness
+    }
 }
 
 /// The visible Task, trimmed; empty when the form has none.
@@ -868,7 +902,11 @@ fn set_model_options(
         && capabilities.reason.is_none()
     {
         items.extend(capabilities.models.iter().map(|model| PickItem {
-            label: format!("{} · {}", model.alias, model.resolved),
+            label: if model.alias == model.resolved {
+                model.alias.clone()
+            } else {
+                format!("{} · {}", model.alias, model.resolved)
+            },
             value: model.alias.clone(),
         }));
     }
@@ -901,17 +939,22 @@ fn model_query_target(
     fields: &[Field],
     agents: &[super::agents::AgentEntry],
 ) -> Result<Option<ModelQueryTarget>, String> {
-    if field_value(fields, "Start") != "Agent" {
+    if !matches!(command, Command::NewAgentSession) && field_value(fields, "Start") != "Agent" {
         return Ok(None);
     }
-    let preset = field_value(fields, "Agent");
+    let preset = agent_field_value(fields);
     if preset.is_empty() {
         return Err("Choose an agent harness to check its model support.".into());
     }
-    if !matches!(command, Command::CreateTerminal) {
+    if !matches!(command, Command::CreateTerminal | Command::NewAgentSession) {
         return Err("Explicit models require an already registered workspace.".into());
     }
-    let (project, workspace) = split_workspace_pick(&field_value(fields, "Workspace"));
+    let target = if matches!(command, Command::NewAgentSession) {
+        field_value(fields, "Branch")
+    } else {
+        field_value(fields, "Workspace")
+    };
+    let (project, workspace) = split_workspace_pick(&target);
     if project.is_empty() || workspace.is_empty() {
         return Err("Select a registered workspace to check explicit models.".into());
     }
@@ -965,7 +1008,7 @@ fn visible_indices(fields: &[Field]) -> Vec<usize> {
     fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| !field.hidden)
+        .filter(|(_, field)| !field.hidden && !matches!(&field.kind, FieldKind::Notice))
         .map(|(index, _)| index)
         .collect()
 }
@@ -1024,6 +1067,7 @@ fn accept_pick(field: &mut Field) -> bool {
     let Some(item) = list.accepted() else {
         return false;
     };
+    field.edited |= field.value != item.value;
     field.value = item.value.clone();
     true
 }
@@ -1219,6 +1263,50 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_new_agent_session(&mut self) -> DashboardAction {
+        self.agent_typing = None;
+        self.cancel_mouse_gesture();
+        self.whichkey = None;
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        self.mode = InputMode::Browse;
+
+        let mut palette = Palette::new();
+        let request_id = self.next_request_id();
+        palette.suggestions.inspect = Some(request_id);
+        palette.agent_catalog = Some(self.detected_agents());
+        self.begin_new_agent_session_form(&mut palette);
+        self.palette = Some(palette);
+        self.enqueue_request(ClientMessage {
+            request_id,
+            request: Request::Inspect,
+        });
+        let list_request_id = self.next_request_id();
+        self.enqueue_request(ClientMessage {
+            request_id: list_request_id,
+            request: Request::List,
+        });
+        DashboardAction::Redraw
+    }
+
+    fn begin_new_agent_session_form(&mut self, palette: &mut Palette) {
+        if palette.agent_catalog.is_none() {
+            palette.agent_catalog = Some(self.detected_agents());
+        }
+        let project = self.creation_context().0;
+        palette.launch_project = Some(project.clone());
+        palette.page = self.new_agent_session_form(
+            &project,
+            palette.agent_catalog.as_deref().unwrap_or_default(),
+        );
+        if let Page::Form { fields, .. } = &palette.page {
+            palette.launch_harness = Some(agent_field_value(fields));
+        }
+        self.refresh_workspace_form(palette);
+        self.refresh_model_query(palette);
+    }
+
     pub(super) fn open_create_workspace(&mut self) -> DashboardAction {
         let action = self.open_palette();
         let page = self.palette_form(Command::CreateWorkspace);
@@ -1229,7 +1317,15 @@ impl Dashboard {
     }
 
     fn refresh_workspace_form(&self, palette: &mut Palette) {
-        if let Page::Form {
+        if matches!(
+            &palette.page,
+            Page::Form {
+                command: Command::NewAgentSession,
+                ..
+            }
+        ) {
+            self.refresh_new_agent_session_form(palette);
+        } else if let Page::Form {
             fields, command, ..
         } = &mut palette.page
         {
@@ -1373,6 +1469,275 @@ impl Dashboard {
                     fields[base_i].value = "main".into();
                 }
             }
+        }
+    }
+
+    fn refresh_new_agent_session_form(&self, palette: &mut Palette) {
+        let Some(registry) = palette.workspace_inventory.as_ref() else {
+            if let Page::Form { fields, .. } = &mut palette.page
+                && let Some(destination) =
+                    fields.iter_mut().find(|field| field.label == "Destination")
+            {
+                destination.value = "Loading registered workspaces…".into();
+            }
+            return;
+        };
+        let catalog = palette.agent_catalog.clone().unwrap_or_default();
+        let Page::Form { fields, active, .. } = &mut palette.page else {
+            return;
+        };
+        let Some(branch_index) = fields.iter().position(|field| field.label == "Branch") else {
+            return;
+        };
+        let current_value = fields[branch_index].value.clone();
+        let current_query = match &fields[branch_index].kind {
+            FieldKind::Pick(list) => list.query.clone(),
+            _ => String::new(),
+        };
+        let branch_was_edited = fields[branch_index].edited;
+        let current_context = self.creation_context();
+        let preferred = if current_value.is_empty() && !branch_was_edited {
+            registry
+                .projects
+                .iter()
+                .find(|project| project.name == current_context.0)
+                .and_then(|project| {
+                    project
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.id == current_context.1)
+                })
+                .map(|record| super::picker::workspace_pick_value(&current_context.0, &record.id))
+                .unwrap_or_default()
+        } else {
+            current_value.clone()
+        };
+        let mut items = Vec::new();
+        let mut sections = Vec::new();
+        for project in &registry.projects {
+            for record in &project.workspaces {
+                let summary = find_workspace(self, &project.name, &record.id)
+                    .filter(|summary| summary.path == record.path);
+                let checkout_available =
+                    summary.is_some_and(|workspace| workspace.name != "checkout unavailable");
+                let branch = summary
+                    .filter(|_| checkout_available)
+                    .map(|workspace| workspace.name.as_str())
+                    .unwrap_or("checkout unavailable");
+                let mut states = Vec::new();
+                if record.setup_pending {
+                    states.push("setup pending");
+                }
+                if !checkout_available {
+                    states.push("unavailable");
+                }
+                if summary.is_some_and(|workspace| workspace.root && workspace.warning.is_some()) {
+                    states.push("root · launch blocked");
+                } else if summary.is_some_and(|workspace| workspace.root) {
+                    states.push("root");
+                }
+                if branch.starts_with("detached @ ") {
+                    states.push("detached");
+                }
+                let value = super::picker::workspace_pick_value(&project.name, &record.id);
+                let label = if states.is_empty() {
+                    branch.to_owned()
+                } else {
+                    format!("{branch} [{}]", states.join(" · "))
+                };
+                items.push(PickItem {
+                    label,
+                    value: value.clone(),
+                });
+                sections.push((value, project.name.clone()));
+            }
+        }
+        let mut branch_list = PickList::new(items).with_sections(sections);
+        if !current_query.is_empty() {
+            branch_list.query = current_query;
+        }
+        let selected_exists = branch_list.items.iter().any(|item| item.value == preferred);
+        if selected_exists {
+            branch_list.select_value(&preferred);
+        }
+        if let FieldKind::Pick(list) = &mut fields[branch_index].kind {
+            *list = branch_list;
+        } else {
+            fields[branch_index].kind = FieldKind::Pick(branch_list);
+        }
+        if !preferred.is_empty() {
+            fields[branch_index].value = preferred;
+        } else if !branch_was_edited {
+            fields[branch_index].value.clear();
+        }
+        let filtered_value = match &fields[branch_index].kind {
+            FieldKind::Pick(list) if branch_was_edited && !list.query.is_empty() => {
+                list.accepted().map(|item| item.value.clone())
+            }
+            _ => None,
+        };
+        if let Some(value) = filtered_value {
+            fields[branch_index].value = value;
+        }
+
+        let (selected_project, selected_workspace) =
+            split_workspace_pick(&fields[branch_index].value);
+        let selected_record = registry
+            .projects
+            .iter()
+            .find(|project| project.name == selected_project)
+            .and_then(|project| {
+                project
+                    .workspaces
+                    .iter()
+                    .find(|record| record.id == selected_workspace)
+            });
+        let destination_workspace = if selected_project.is_empty() || selected_workspace.is_empty()
+        {
+            None
+        } else {
+            find_workspace(self, &selected_project, &selected_workspace).filter(|workspace| {
+                registry.projects.iter().any(|project| {
+                    project.name == selected_project
+                        && project.workspaces.iter().any(|record| {
+                            record.id == selected_workspace && record.path == workspace.path
+                        })
+                })
+            })
+        };
+        let destination_text = match (selected_record, destination_workspace) {
+            (Some(record), _) if record.setup_pending => {
+                format!("{selected_project} / checkout setup pending")
+            }
+            (Some(_), None) => format!("{selected_project} / checkout unavailable"),
+            (Some(_), Some(workspace)) if workspace.name == "checkout unavailable" => {
+                let state = if workspace.root && workspace.warning.is_some() {
+                    " · root launch blocked"
+                } else if workspace.root {
+                    " · root"
+                } else {
+                    ""
+                };
+                format!("{} / checkout unavailable{state}", workspace.project)
+            }
+            (Some(_), Some(workspace)) => {
+                let state = if workspace.root && workspace.warning.is_some() {
+                    " · root launch blocked"
+                } else if workspace.root {
+                    " · root"
+                } else if workspace.name.starts_with("detached @ ") {
+                    " · detached"
+                } else {
+                    ""
+                };
+                format!("{} / {}{state}", workspace.project, workspace.name)
+            }
+            (None, _)
+                if fields[branch_index].value.is_empty()
+                    && registry
+                        .projects
+                        .iter()
+                        .all(|project| project.workspaces.is_empty()) =>
+            {
+                "No registered workspaces. Cancel, then Register project (a).".into()
+            }
+            (None, _) if fields[branch_index].value.is_empty() => {
+                "Choose a registered checkout; the current target is not eligible.".into()
+            }
+            (None, _) => "This checkout is no longer registered; choose another.".into(),
+        };
+        if let Some(destination) = fields.iter_mut().find(|field| field.label == "Destination") {
+            destination.value = destination_text;
+        }
+        let shared = destination_workspace
+            .map(|workspace| {
+                let names = workspace
+                    .sessions
+                    .iter()
+                    .filter(|session| running_agent(session))
+                    .map(|session| session.display_name().to_owned())
+                    .collect::<Vec<_>>();
+                names
+            })
+            .unwrap_or_default();
+        if let Some(notice) = fields
+            .iter_mut()
+            .find(|field| field.label == "Shared files")
+        {
+            notice.hidden = shared.is_empty();
+            notice.value = if shared.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{} running agent(s) share this checkout: {}",
+                    shared.len(),
+                    shared.join(", ")
+                )
+            };
+        }
+
+        let new_project = if selected_project.is_empty() {
+            current_context.0
+        } else {
+            selected_project
+        };
+        let project_changed = palette.launch_project.as_deref() != Some(new_project.as_str());
+        let catalog_items = catalog
+            .iter()
+            .filter(|agent| {
+                agent.source != AgentSource::Shell
+                    && agent.source != AgentSource::Custom
+                    && agent.name != "shell"
+                    && agent.name != "Custom"
+            })
+            .map(|agent| PickItem {
+                label: agent.name.clone(),
+                value: agent.name.clone(),
+            })
+            .collect::<Vec<_>>();
+        if project_changed
+            && let Some(harness) = fields
+                .iter_mut()
+                .find(|field| field.label == "Agent harness")
+            && !harness.edited
+        {
+            let default = match self.settings.launch_choices.get(&new_project) {
+                Some(super::settings::LaunchChoice::Agent { preset, .. }) => preset.clone(),
+                _ => catalog_items
+                    .first()
+                    .map(|item| item.value.clone())
+                    .unwrap_or_default(),
+            };
+            harness.value = default.clone();
+            harness.kind = FieldKind::Pick(PickList::new(catalog_items).with_sections([]));
+            if let FieldKind::Pick(list) = &mut harness.kind {
+                list.select_value(&default);
+            }
+        }
+        let current_harness = agent_field_value(fields);
+        let harness_changed = palette.launch_harness.as_deref() != Some(current_harness.as_str());
+        if (project_changed || harness_changed)
+            && let Some(model) = fields.iter_mut().find(|field| field.label == "Model")
+            && !model.edited
+        {
+            model.value = match self.settings.launch_choices.get(&new_project) {
+                Some(super::settings::LaunchChoice::Agent {
+                    preset,
+                    model_policy: ovrcr_protocol::AgentModelPolicy::Explicit(model),
+                }) if preset == &current_harness => model.clone(),
+                _ => HARNESS_DEFAULT_MODEL.into(),
+            };
+            let mut list = PickList::new(vec![PickItem {
+                label: "Harness default".into(),
+                value: HARNESS_DEFAULT_MODEL.into(),
+            }]);
+            list.select_value(&model.value);
+            model.kind = FieldKind::Pick(list);
+        }
+        palette.launch_project = Some(new_project);
+        palette.launch_harness = Some(current_harness);
+        if *active >= fields.len() || fields[*active].hidden {
+            *active = visible_indices(fields).first().copied().unwrap_or(0);
         }
     }
 
@@ -1963,7 +2328,8 @@ impl Dashboard {
                 .collect();
         }
         let mut entries: Vec<Entry> = [
-            ("Create terminal (n)", Command::CreateTerminal),
+            ("New agent session (n)", Command::NewAgentSession),
+            ("Create terminal", Command::CreateTerminal),
             ("Create workspace (w)", Command::CreateWorkspace),
             ("Register project (a)", Command::RegisterProject),
         ]
@@ -2298,9 +2664,22 @@ impl Dashboard {
                     );
                 }
             }
-            (Page::Form { fields, active, .. }, PaletteTarget::Option(index, selected)) => {
+            (
+                Page::Form {
+                    command,
+                    fields,
+                    active,
+                    ..
+                },
+                PaletteTarget::Option(index, selected),
+            ) => {
                 *active = index;
                 palette.cursor = Default::default();
+                let explicit_new_agent_choice = matches!(command, Command::NewAgentSession)
+                    && matches!(fields[index].label, "Branch" | "Agent harness" | "Model");
+                if explicit_new_agent_choice {
+                    fields[index].edited = true;
+                }
                 match &mut fields[index].kind {
                     FieldKind::Pick(list) => {
                         list.selected = selected;
@@ -2337,6 +2716,27 @@ impl Dashboard {
         history_before_request: bool,
     ) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
+        if key.code == KeyCode::Esc
+            && let Page::Form {
+                command: Command::NewAgentSession,
+                fields,
+                active,
+                ..
+            } = &mut palette.page
+        {
+            let active = *active;
+            let selected = fields[active].value.clone();
+            if let FieldKind::Pick(list) = &mut fields[active].kind
+                && !list.query.is_empty()
+            {
+                list.query.clear();
+                list.select_value(&selected);
+                palette.invalid = None;
+                palette.error = None;
+                self.palette = Some(palette);
+                return DashboardAction::Redraw;
+            }
+        }
         if key.code == KeyCode::Esc || is_browse_key(key) {
             if let Page::Confirm {
                 request:
@@ -2426,7 +2826,7 @@ impl Dashboard {
                         root_edited,
                         ..
                     } => {
-                        if matches!(fields[*active].kind, FieldKind::Toggle) {
+                        if matches!(&fields[*active].kind, FieldKind::Toggle) {
                             self.palette = Some(palette);
                             return action;
                         }
@@ -2443,40 +2843,52 @@ impl Dashboard {
                                 picker.selected = 0;
                                 field.value.clear();
                             }
-                            FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {
-                                field.value.clear()
-                            }
+                            FieldKind::Text
+                            | FieldKind::Multiline
+                            | FieldKind::Toggle
+                            | FieldKind::Notice => field.value.clear(),
                         }
                     }
                     _ => {}
                 }
                 palette.error = None;
             }
-            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(fields[*active].kind, FieldKind::Toggle)) =>
+            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(&fields[*active].kind, FieldKind::Toggle)) =>
             {
-                // Switching modes replaces Branch, so a complaint about it no longer applies.
                 palette.invalid = None;
-                if let Page::Form { fields, .. } = &mut palette.page {
-                    let to_existing = fields
-                        .iter()
-                        .find(|field| field.label == "Branch mode")
-                        .is_some_and(|field| field.value == "new");
-                    if let Some(mode) = fields.iter_mut().find(|field| field.label == "Branch mode")
-                    {
-                        mode.value = if to_existing { "existing" } else { "new" }.into();
-                    }
-                    if let Some(branch) = fields.iter_mut().find(|field| field.label == "Branch") {
-                        branch.kind = FieldKind::Text;
-                        if to_existing {
-                            // A leftover new-branch name is not an existing-branch filter.
-                            branch.value.clear();
-                            branch.edited = false;
+                if let Page::Form { fields, active, .. } = &mut palette.page {
+                    if fields[*active].label == "Advanced options" {
+                        let expanded = fields[*active].value != "expanded";
+                        fields[*active].value =
+                            if expanded { "expanded" } else { "collapsed" }.into();
+                        if let Some(name) = fields.iter_mut().find(|field| field.label == "Name") {
+                            name.hidden = !expanded;
                         }
-                    }
-                    if let Some(base) = fields.iter_mut().find(|field| field.label == "Base") {
-                        base.kind = FieldKind::Text;
-                        base.value.clear();
-                        base.edited = false;
+                    } else {
+                        // Switching branch mode replaces Branch, so a complaint no longer applies.
+                        let to_existing = fields
+                            .iter()
+                            .find(|field| field.label == "Branch mode")
+                            .is_some_and(|field| field.value == "new");
+                        if let Some(mode) =
+                            fields.iter_mut().find(|field| field.label == "Branch mode")
+                        {
+                            mode.value = if to_existing { "existing" } else { "new" }.into();
+                        }
+                        if let Some(branch) =
+                            fields.iter_mut().find(|field| field.label == "Branch")
+                        {
+                            branch.kind = FieldKind::Text;
+                            if to_existing {
+                                branch.value.clear();
+                                branch.edited = false;
+                            }
+                        }
+                        if let Some(base) = fields.iter_mut().find(|field| field.label == "Base") {
+                            base.kind = FieldKind::Text;
+                            base.value.clear();
+                            base.edited = false;
+                        }
                     }
                 }
             }
@@ -2505,6 +2917,7 @@ impl Dashboard {
                         }
                     }
                     Page::Form {
+                        command,
                         fields,
                         active,
                         name_edited,
@@ -2514,9 +2927,18 @@ impl Dashboard {
                         if editing {
                             mark_form_edit(fields, *active, name_edited, root_edited);
                         }
+                        if matches!(command, Command::NewAgentSession)
+                            && matches!(fields[*active].label, "Branch" | "Agent harness" | "Model")
+                            && matches!(key.code, KeyCode::Left | KeyCode::Right)
+                            && matches!(fields[*active].kind, FieldKind::Pick(_))
+                        {
+                            // Choice cycling is a user selection even when it
+                            // wraps back to the already displayed value.
+                            fields[*active].edited = true;
+                        }
                         let field = &mut fields[*active];
                         match &mut field.kind {
-                            FieldKind::Toggle => {}
+                            FieldKind::Toggle | FieldKind::Notice => {}
                             // Left/Right step through the choices, wrapping at the ends.
                             FieldKind::Pick(list)
                                 if matches!(key.code, KeyCode::Left | KeyCode::Right) =>
@@ -2575,7 +2997,10 @@ impl Dashboard {
                                 picker.listing(&value, &self.settings.picker_roots).clone();
                             picker.move_selection(&listing, delta);
                         }
-                        FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {}
+                        FieldKind::Text
+                        | FieldKind::Multiline
+                        | FieldKind::Toggle
+                        | FieldKind::Notice => {}
                     }
                 }
             }
@@ -2601,12 +3026,21 @@ impl Dashboard {
                         }
                     }
                     Page::Form {
+                        command,
                         fields,
                         active,
                         name_edited,
                         root_edited,
                         ..
                     } => {
+                        if matches!(command, Command::NewAgentSession)
+                            && matches!(fields[*active].label, "Branch" | "Agent harness" | "Model")
+                            && matches!(fields[*active].kind, FieldKind::Pick(_))
+                        {
+                            // Up/Down immediately changes the selected value;
+                            // treat it like accepting the highlighted option.
+                            fields[*active].edited = true;
+                        }
                         let value = fields[*active].value.trim();
                         // A path that already names a Git checkout is complete:
                         // Tab moves on rather than descending into its folders.
@@ -2639,7 +3073,20 @@ impl Dashboard {
                                 return action;
                             }
                         }
-                        if matches!(key.code, KeyCode::Tab) && !accept_pick(&mut fields[*active]) {
+                        let branch_still_needs_a_choice =
+                            matches!(command, Command::NewAgentSession)
+                                && fields[*active].label == "Branch"
+                                && match &fields[*active].kind {
+                                    FieldKind::Pick(list) => !list
+                                        .items
+                                        .iter()
+                                        .any(|item| item.value == fields[*active].value),
+                                    _ => false,
+                                };
+                        if matches!(key.code, KeyCode::Tab)
+                            && !branch_still_needs_a_choice
+                            && !accept_pick(&mut fields[*active])
+                        {
                             self.palette = Some(palette);
                             return action;
                         }
@@ -2715,6 +3162,14 @@ impl Dashboard {
                                 }
                                 self.select_session(id);
                                 return self.request_selected();
+                            }
+                            Command::NewAgentSession => {
+                                self.begin_new_agent_session_form(&mut palette);
+                                let request_id = self.next_request_id();
+                                self.enqueue_request(ClientMessage {
+                                    request_id,
+                                    request: Request::List,
+                                });
                             }
                             #[cfg(target_os = "macos")]
                             Command::ITermSetup => {
@@ -2848,14 +3303,43 @@ impl Dashboard {
                     root_edited,
                 } => {
                     if matches!(fields[*active].kind, FieldKind::Pick(_)) && !submit_chord {
+                        if matches!(command, Command::NewAgentSession)
+                            && matches!(fields[*active].label, "Branch" | "Agent harness" | "Model")
+                        {
+                            // Accepting the highlighted default is still an explicit choice.
+                            // Destination changes may refresh only inherited defaults.
+                            fields[*active].edited = true;
+                        }
                         accept_pick(&mut fields[*active]);
+                        let selected_branch = fields[*active].value.clone();
+                        if matches!(command, Command::NewAgentSession)
+                            && fields[*active].label == "Branch"
+                            && let FieldKind::Pick(list) = &mut fields[*active].kind
+                        {
+                            list.query.clear();
+                            list.select_value(&selected_branch);
+                            palette.invalid = None;
+                            palette.error = None;
+                        }
                         self.refresh_terminal_form(fields, *name_edited);
                         self.refresh_project_form(fields, *name_edited, *root_edited);
                         self.palette = Some(palette);
                         return action;
                     }
                     // A field that Start just hid is no longer part of the form.
-                    if !fields[*active].hidden && !accept_pick(&mut fields[*active]) {
+                    let branch_is_unselected = matches!(command, Command::NewAgentSession)
+                        && fields[*active].label == "Branch"
+                        && match &fields[*active].kind {
+                            FieldKind::Pick(list) => !list
+                                .items
+                                .iter()
+                                .any(|item| item.value == fields[*active].value),
+                            _ => false,
+                        };
+                    if !fields[*active].hidden
+                        && !branch_is_unselected
+                        && !accept_pick(&mut fields[*active])
+                    {
                         // A deferred submit must not wait on a pick that can
                         // never resolve; say which field went unmatched.
                         palette.invalid = Some((
@@ -2945,7 +3429,9 @@ impl Dashboard {
                     self.refresh_project_form(fields, *name_edited, *root_edited);
                     // Enter submits from any field; the first field that would be
                     // refused keeps the focus and says why.
-                    if let Some((index, problem)) = self.form_problem(command, fields) {
+                    if let Some((index, problem)) =
+                        self.form_problem(command, fields, palette.workspace_inventory.as_ref())
+                    {
                         *active = index;
                         palette.invalid = Some((index, problem));
                     } else {
@@ -2982,6 +3468,7 @@ impl Dashboard {
                         let selected_launch = if matches!(
                             command,
                             Command::CreateTerminal
+                                | Command::NewAgentSession
                                 | Command::CreateWorkspace
                                 | Command::RecoverLaunch
                         ) {
@@ -3016,6 +3503,26 @@ impl Dashboard {
                             return action;
                         }
                         let request = match command {
+                            Command::NewAgentSession => {
+                                let (project, workspace) = split_workspace_pick(&field("Branch"));
+                                let selected = selected_launch.as_ref().unwrap();
+                                let session = CreateSessionRequest {
+                                    project,
+                                    workspace,
+                                    name: field("Name"),
+                                    argv: selected.argv.clone(),
+                                    label: selected.label.clone(),
+                                    kind: selected.kind.clone(),
+                                };
+                                Request::CreateAgentSession(
+                                    ovrcr_protocol::CreateAgentSessionRequest {
+                                        session,
+                                        model_policy: selected.model_policy.clone(),
+                                        model_binding: selected.model_binding.clone(),
+                                        expected_model: selected.expected_model.clone(),
+                                    },
+                                )
+                            }
                             Command::CreateTerminal => {
                                 let (project, id) = split_workspace_pick(&field("Workspace"));
                                 let Some(workspace) = find_workspace(self, &project, &id) else {
@@ -3330,15 +3837,16 @@ impl Dashboard {
         else {
             return None;
         };
-        if field_value(fields, "Start") != "Agent" {
+        if !matches!(command, Command::NewAgentSession) && field_value(fields, "Start") != "Agent" {
             return None;
         }
         let command = match command {
             Command::CreateTerminal => "terminal",
             Command::CreateWorkspace => "workspace",
+            Command::NewAgentSession => "new_agent_session",
             _ => return None,
         };
-        let preset = field_value(fields, "Agent");
+        let preset = agent_field_value(fields);
         let configured_argv = self
             .settings
             .agents
@@ -3348,7 +3856,11 @@ impl Dashboard {
         Some((
             command,
             preset,
-            field_value(fields, "Workspace"),
+            if command == "new_agent_session" {
+                field_value(fields, "Branch")
+            } else {
+                field_value(fields, "Workspace")
+            },
             configured_argv,
         ))
     }
@@ -3375,7 +3887,14 @@ impl Dashboard {
             palette.model_status = None;
             return;
         };
-        let target = match model_query_target(command, fields, &self.detected_agents()) {
+        let discovered;
+        let agents = if let Some(catalog) = palette.agent_catalog.as_deref() {
+            catalog
+        } else {
+            discovered = self.detected_agents();
+            &discovered
+        };
+        let target = match model_query_target(command, fields, agents) {
             Ok(None) => {
                 palette.model_capabilities = None;
                 palette.model_status = None;
@@ -3385,7 +3904,7 @@ impl Dashboard {
                 return;
             }
             Err(reason) => {
-                let preset = field_value(fields, "Agent");
+                let preset = agent_field_value(fields);
                 let capabilities = crate::protocol::AgentModelCapabilities {
                     preset,
                     binding: None,
@@ -3453,14 +3972,23 @@ impl Dashboard {
         let current_identity = match &palette.page {
             Page::Form {
                 command, fields, ..
-            } => model_query_target(command, fields, &self.detected_agents())
-                .ok()
-                .flatten()
-                .map(|target| target.identity),
+            } => {
+                let discovered;
+                let agents = if let Some(catalog) = palette.agent_catalog.as_deref() {
+                    catalog
+                } else {
+                    discovered = self.detected_agents();
+                    &discovered
+                };
+                model_query_target(command, fields, agents)
+                    .ok()
+                    .flatten()
+                    .map(|target| target.identity)
+            }
             _ => None,
         };
         if current_identity.as_deref() == Some(requested_identity.as_str())
-            && matches!(&palette.page, Page::Form { fields, .. } if field_value(fields, "Agent") == capabilities.preset)
+            && matches!(&palette.page, Page::Form { fields, .. } if agent_field_value(fields) == capabilities.preset)
         {
             if let Page::Form { fields, .. } = &mut palette.page {
                 set_model_options(fields, Some(&capabilities));
@@ -3541,6 +4069,90 @@ impl Dashboard {
         fields
     }
 
+    fn new_agent_session_form(&self, project: &str, catalog: &[super::agents::AgentEntry]) -> Page {
+        let agents = catalog
+            .iter()
+            .filter(|agent| {
+                agent.source != AgentSource::Shell
+                    && agent.source != AgentSource::Custom
+                    && agent.name != "shell"
+                    && agent.name != "Custom"
+            })
+            .collect::<Vec<_>>();
+        let remembered = self.settings.launch_choices.get(project);
+        let remembered_agent = match remembered {
+            Some(super::settings::LaunchChoice::Agent { preset, .. }) => Some(preset.as_str()),
+            _ => None,
+        };
+        let agent = remembered_agent
+            .map(str::to_owned)
+            .or_else(|| agents.first().map(|agent| agent.name.clone()))
+            .unwrap_or_default();
+        let model = match remembered {
+            Some(super::settings::LaunchChoice::Agent {
+                preset,
+                model_policy: ovrcr_protocol::AgentModelPolicy::Explicit(model),
+            }) if preset == &agent => model.clone(),
+            _ => HARNESS_DEFAULT_MODEL.into(),
+        };
+        let branch = pick_field("Branch", String::new(), Vec::new());
+        let destination = notice_field(
+            "Destination",
+            "Loading registered workspaces…".into(),
+            false,
+        );
+        let shared = notice_field("Shared files", String::new(), true);
+        let harness = pick_field(
+            "Agent harness",
+            agent,
+            agents
+                .into_iter()
+                .map(|agent| PickItem {
+                    label: agent.name.clone(),
+                    value: agent.name.clone(),
+                })
+                .collect(),
+        );
+        let model = pick_field(
+            "Model",
+            model,
+            vec![PickItem {
+                label: "Harness default".into(),
+                value: HARNESS_DEFAULT_MODEL.into(),
+            }],
+        );
+        let prompt = Field {
+            label: "Initial prompt",
+            value: String::new(),
+            required: false,
+            hidden: false,
+            edited: false,
+            kind: FieldKind::Multiline,
+        };
+        let mut advanced = text_field("Advanced options", "collapsed".into(), false);
+        advanced.kind = FieldKind::Toggle;
+        let mut name = text_field("Name", String::new(), false);
+        name.hidden = true;
+        let fields = vec![
+            branch,
+            destination,
+            shared,
+            harness,
+            model,
+            prompt,
+            advanced,
+            name,
+        ];
+        let active = 0;
+        Page::Form {
+            command: Command::NewAgentSession,
+            fields,
+            active,
+            name_edited: false,
+            root_edited: false,
+        }
+    }
+
     fn shell_argv(&self) -> Vec<OsString> {
         self.detected_agents()
             .into_iter()
@@ -3564,18 +4176,18 @@ impl Dashboard {
         };
         match value("Start") {
             "Nothing yet" => Ok(None),
-            "Agent" => {
+            "Agent" | "" if !agent_field_value(fields).is_empty() => {
                 let agent = self
                     .detected_agents()
                     .into_iter()
                     .find(|a| {
-                        a.name == value("Agent")
+                        a.name == agent_field_value(fields)
                             && a.source != AgentSource::Shell
                             && a.source != AgentSource::Custom
                             && a.name != "shell"
                             && a.name != "Custom"
                     })
-                    .ok_or_else(|| unavailable_agent(value("Agent")))?;
+                    .ok_or_else(|| unavailable_agent(&agent_field_value(fields)))?;
                 let (model_policy, model_binding, expected_model) =
                     if value("Model") == HARNESS_DEFAULT_MODEL {
                         (ovrcr_protocol::AgentModelPolicy::HarnessDefault, None, None)
@@ -3633,7 +4245,12 @@ impl Dashboard {
 
     /// The first field, top to bottom, the Server would refuse or misread,
     /// and what to tell the person beside it.
-    fn form_problem(&self, command: &Command, fields: &[Field]) -> Option<(usize, String)> {
+    fn form_problem(
+        &self,
+        command: &Command,
+        fields: &[Field],
+        registry: Option<&crate::protocol::Registry>,
+    ) -> Option<(usize, String)> {
         let new_branch = fields
             .iter()
             .any(|field| field.label == "Branch mode" && field.value == "new");
@@ -3657,6 +4274,39 @@ impl Dashboard {
                     Some(format!("Add a name after {prefix}"))
                 } else {
                     branch_name_problem(value).map(Into::into)
+                }
+            } else if matches!(command, Command::NewAgentSession) && field.label == "Branch" {
+                let Some(registry) = registry else {
+                    return Some((index, "Registered workspaces are still loading".into()));
+                };
+                let (project, workspace_id) = split_workspace_pick(&field.value);
+                let Some(record) = registry
+                    .projects
+                    .iter()
+                    .find(|record| record.name == project)
+                    .and_then(|project| {
+                        project
+                            .workspaces
+                            .iter()
+                            .find(|workspace| workspace.id == workspace_id)
+                    })
+                else {
+                    return Some((index, "Choose a registered checkout".into()));
+                };
+                if record.setup_pending {
+                    Some("Workspace setup is still pending".into())
+                } else {
+                    match find_workspace(self, &project, &workspace_id) {
+                        Some(workspace) if workspace.path != record.path => Some(
+                            "Registered checkout identity changed; refresh and choose again".into(),
+                        ),
+                        Some(workspace) if workspace.name == "checkout unavailable" => {
+                            Some("Registered checkout is unavailable".into())
+                        }
+                        Some(workspace) if workspace.warning.is_some() => workspace.warning.clone(),
+                        None => Some("Registered checkout is unavailable".into()),
+                        _ => None,
+                    }
                 }
             } else {
                 None
@@ -4439,8 +5089,34 @@ impl Dashboard {
                     .iter()
                     .map(|project| (project.name.clone(), project.repo.clone()))
                     .collect();
+                palette.workspace_inventory = Some(registry.clone());
+            } else if let Response::Error { message, .. } = response
+                && matches!(
+                    &palette.page,
+                    Page::Form {
+                        command: Command::NewAgentSession,
+                        ..
+                    }
+                )
+            {
+                palette.error = Some(self.plain_error(message));
+                if let Page::Form { fields, .. } = &mut palette.page
+                    && let Some(destination) =
+                        fields.iter_mut().find(|field| field.label == "Destination")
+                {
+                    destination.value = "Could not load registered workspaces.".into();
+                }
             }
             self.refresh_workspace_form(&mut palette);
+            if matches!(
+                &palette.page,
+                Page::Form {
+                    command: Command::NewAgentSession,
+                    ..
+                }
+            ) {
+                self.refresh_model_query(&mut palette);
+            }
             self.palette = Some(palette);
             return Some(Vec::new());
         }
@@ -4930,6 +5606,17 @@ impl Dashboard {
                     if field.hidden {
                         continue;
                     }
+                    if matches!(&field.kind, FieldKind::Notice) {
+                        let notice = match field.label {
+                            "Destination" | "Shared files" => field.value.clone(),
+                            label => format!("{label}: {}", field.value),
+                        };
+                        lines.push(Line::styled(
+                            clip_text(&notice, body.width.saturating_sub(2) as usize),
+                            Style::default().fg(MUTED()),
+                        ));
+                        continue;
+                    }
                     let top = lines.len();
                     targets.push((lines.len(), PaletteTarget::Field(index, false)));
                     lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
@@ -5221,6 +5908,7 @@ impl Dashboard {
             Page::Search { .. } if palette.split => "New pane · choose its session",
             Page::Search { .. } => "Command palette",
             Page::Form { command, .. } => match command {
+                Command::NewAgentSession => "New agent session",
                 Command::CreateTerminal => "Create terminal",
                 Command::CreateWorkspace => "Create workspace",
                 Command::RenameTerminal(_) => "Rename terminal · blank = original name",
@@ -5483,6 +6171,7 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
         FieldKind::Text => {}
         FieldKind::Multiline => keys.push("Enter newline"),
         FieldKind::Toggle => keys.push("Space/←/→ switch"),
+        FieldKind::Notice => {}
         FieldKind::Pick(list) => {
             keys.push("↑/↓/←/→ choose · type to filter");
             if !list.query.is_empty() && !recovering {
@@ -5521,6 +6210,7 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
         "Alt-Enter submit"
     } else {
         match command {
+            Command::NewAgentSession => "Enter continue · Alt-Enter start",
             Command::CreateTerminal | Command::CreateWorkspace => "Enter create",
             Command::RegisterProject => "Enter register",
             Command::RenameTerminal(_) => "Enter save",
@@ -6429,9 +7119,9 @@ mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
     use crate::protocol::{
-        AgentActivity, AgentModelPolicy, ErrorCode, ProjectSummary, ServerEvent, ServerMessage,
-        SessionId, SessionKind, SessionPhase, SessionRecovery, SessionSummary, TerminalSize,
-        WorkspaceSummary,
+        AgentActivity, AgentModelPolicy, ErrorCode, ProjectRecord, ProjectSummary, Registry,
+        ServerEvent, ServerMessage, SessionId, SessionKind, SessionPhase, SessionRecovery,
+        SessionSummary, TerminalSize, WorkspaceRecord, WorkspaceSummary,
     };
 
     fn agent_choice(preset: &str) -> LaunchChoice {
@@ -6463,6 +7153,554 @@ mod launch_tests {
             argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
         });
         d
+    }
+
+    fn workspace_record(id: &str, path: &str, branch: &str) -> WorkspaceRecord {
+        WorkspaceRecord {
+            id: id.into(),
+            path: path.into(),
+            branch: branch.into(),
+            git_identity: Some(format!("identity-{id}")),
+            setup_pending: false,
+        }
+    }
+
+    fn registry(workspaces: Vec<WorkspaceRecord>) -> Registry {
+        Registry {
+            projects: vec![ProjectRecord {
+                name: "demo".into(),
+                repo: "/tmp/repo".into(),
+                workspace_root: "/tmp/workspaces".into(),
+                workspaces,
+            }],
+        }
+    }
+
+    fn open_registered_agent_form(d: &mut Dashboard, inventory: Registry) {
+        d.key(KeyCode::Char('n'));
+        let requests = d.drain_outbox();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].request, Request::Inspect);
+        assert_eq!(requests[1].request, Request::List);
+        let inspect = requests[0].request_id;
+        assert!(
+            d.palette_response(
+                inspect,
+                &Response::Inventory {
+                    registry: inventory,
+                    sessions: Vec::new(),
+                },
+            )
+            .is_some()
+        );
+    }
+
+    fn new_agent_fields(d: &Dashboard) -> (&[Field], usize) {
+        let Page::Form {
+            command: Command::NewAgentSession,
+            fields,
+            active,
+            ..
+        } = &d.palette.as_ref().unwrap().page
+        else {
+            panic!("new agent session form")
+        };
+        (fields, *active)
+    }
+
+    #[test]
+    fn n_opens_agent_setup_even_when_the_current_workspace_cannot_launch() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces[0].warning =
+            Some("repository root is not on the default branch".into());
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+
+        d.key(KeyCode::Char('n'));
+
+        let Some(Palette {
+            page:
+                Page::Form {
+                    command: Command::NewAgentSession,
+                    fields,
+                    ..
+                },
+            ..
+        }) = d.palette.as_ref()
+        else {
+            panic!("opening agent setup must not reuse the current target's launch guard")
+        };
+        for control in ["Branch", "Agent harness", "Model", "Initial prompt"] {
+            assert!(
+                fields.iter().any(|field| field.label == control),
+                "missing {control}"
+            );
+        }
+        assert_eq!(d.mode, InputMode::Browse);
+    }
+
+    #[test]
+    fn new_agent_branch_picker_uses_registered_membership_and_live_labels() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+            project: "demo".into(),
+            name: "feature/registered".into(),
+            id: "registered".into(),
+            root: false,
+            warning: None,
+            path: "/tmp/registered".into(),
+            sessions: Vec::new(),
+        });
+        d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+            project: "demo".into(),
+            name: "retained-only".into(),
+            id: "synthetic".into(),
+            root: false,
+            warning: None,
+            path: "/tmp/synthetic".into(),
+            sessions: Vec::new(),
+        });
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record(
+                "registered",
+                "/tmp/registered",
+                "old-name",
+            )]),
+        );
+
+        let (fields, _) = new_agent_fields(&d);
+        let branch = fields.iter().find(|field| field.label == "Branch").unwrap();
+        let FieldKind::Pick(list) = &branch.kind else {
+            panic!("Branch must use a registered-workspace picker")
+        };
+        assert_eq!(
+            list.items
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            ["demo/registered"]
+        );
+        assert_eq!(list.items[0].label, "feature/registered");
+
+        let hierarchy = &mut d.hierarchy.projects[0].workspaces;
+        hierarchy
+            .iter_mut()
+            .find(|workspace| workspace.id == "registered")
+            .unwrap()
+            .name = "feature/renamed".into();
+        let mut palette = d.palette.take().unwrap();
+        d.refresh_workspace_form(&mut palette);
+        d.palette = Some(palette);
+        let (fields, _) = new_agent_fields(&d);
+        let branch = fields.iter().find(|field| field.label == "Branch").unwrap();
+        assert_eq!(branch.value, "");
+        let FieldKind::Pick(list) = &branch.kind else {
+            panic!("Branch picker")
+        };
+        assert_eq!(list.items[0].label, "feature/renamed");
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Destination")
+                .unwrap()
+                .value
+                .contains("Choose a registered checkout")
+        );
+    }
+
+    #[test]
+    fn new_agent_requires_a_deliberate_branch_when_no_current_target_exists() {
+        let mut d = dashboard();
+        d.selected_container = None;
+        d.focus_pane(0);
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record(
+                "registered",
+                "/tmp/registered",
+                "feature/registered",
+            )]),
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        let requests = d.drain_outbox();
+        assert!(
+            requests.iter().all(|message| !matches!(
+                message.request,
+                Request::CreateAgentSession(_)
+                    | Request::CreateAgentSessionWithPrompt(_)
+                    | Request::AllocateInitialPromptIntent
+            )),
+            "an empty Branch must not emit a launch request: {requests:?}"
+        );
+        let (fields, _) = new_agent_fields(&d);
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value
+                .is_empty()
+        );
+        assert_eq!(
+            d.palette.as_ref().unwrap().invalid.as_ref().unwrap().1,
+            "Branch is required"
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value,
+            "demo/registered"
+        );
+        assert_eq!(
+            active, 0,
+            "picker Enter accepts without submitting or advancing"
+        );
+    }
+
+    #[test]
+    fn tab_does_not_implicitly_choose_a_branch_when_no_current_target_exists() {
+        let mut d = dashboard();
+        d.selected_container = None;
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record(
+                "registered",
+                "/tmp/registered",
+                "feature/registered",
+            )]),
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(fields[active].label, "Agent harness");
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value
+                .is_empty()
+        );
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert!(d.drain_outbox().is_empty());
+        assert_eq!(
+            d.palette.as_ref().unwrap().invalid.as_ref().unwrap().1,
+            "Branch is required"
+        );
+    }
+
+    #[test]
+    fn new_agent_keeps_unavailable_current_identity_selected_and_blocks_start() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces[0].name = "checkout unavailable".into();
+        d.hierarchy.projects[0].workspaces[0].root = true;
+        d.hierarchy.projects[0].workspaces[0].warning =
+            Some("repository root is not on the default branch".into());
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record("root", "/tmp/unused", "main")]),
+        );
+
+        let (fields, _) = new_agent_fields(&d);
+        let branch = fields.iter().find(|field| field.label == "Branch").unwrap();
+        assert_eq!(branch.value, "demo/root");
+        let FieldKind::Pick(list) = &branch.kind else {
+            panic!("Branch picker")
+        };
+        assert_eq!(
+            list.items[0].label,
+            "checkout unavailable [unavailable · root · launch blocked]"
+        );
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Destination")
+                .unwrap()
+                .value
+                .contains("checkout unavailable")
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        let requests = d.drain_outbox();
+        assert!(
+            requests.iter().all(|message| !matches!(
+                message.request,
+                Request::CreateAgentSession(_)
+                    | Request::CreateAgentSessionWithPrompt(_)
+                    | Request::AllocateInitialPromptIntent
+            )),
+            "an unavailable root must not emit a launch request: {requests:?}"
+        );
+        assert_eq!(new_agent_fields(&d).1, 0);
+        assert!(
+            d.palette
+                .as_ref()
+                .unwrap()
+                .invalid
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("unavailable")
+        );
+    }
+
+    #[test]
+    fn new_agent_follows_branch_rename_by_registered_workspace_identity() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces[0].id = "registered".into();
+        d.hierarchy.projects[0].workspaces[0].path = "/tmp/registered".into();
+        d.hierarchy.projects[0].workspaces[0].name = "feature/original".into();
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "registered".into(),
+        });
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record(
+                "registered",
+                "/tmp/registered",
+                "feature/original",
+            )]),
+        );
+
+        let (fields, _) = new_agent_fields(&d);
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value,
+            "demo/registered"
+        );
+        d.hierarchy.projects[0].workspaces[0].name = "feature/renamed".into();
+        let mut palette = d.palette.take().unwrap();
+        d.refresh_workspace_form(&mut palette);
+        d.palette = Some(palette);
+
+        let (fields, _) = new_agent_fields(&d);
+        let branch = fields.iter().find(|field| field.label == "Branch").unwrap();
+        assert_eq!(branch.value, "demo/registered");
+        let FieldKind::Pick(list) = &branch.kind else {
+            panic!("Branch picker")
+        };
+        assert_eq!(list.items[0].label, "feature/renamed");
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Destination")
+                .unwrap()
+                .value,
+            "demo / feature/renamed"
+        );
+    }
+
+    #[test]
+    fn new_agent_start_keeps_prompt_separate_from_name_and_argv() {
+        let mut d = dashboard();
+        let argv = vec!["/fixture/claude".into()];
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.hierarchy.projects[0].workspaces[0].id = "registered".into();
+        d.hierarchy.projects[0].workspaces[0].path = "/tmp/registered".into();
+        d.hierarchy.projects[0].workspaces[0].name = "feature/raw-prompt".into();
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "registered".into(),
+        });
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record(
+                "registered",
+                "/tmp/registered",
+                "feature/raw-prompt",
+            )]),
+        );
+        let prompt = "line one\n  exact second line 🙂\n";
+        let Page::Form { fields, active, .. } = &mut d.palette.as_mut().unwrap().page else {
+            panic!("new agent form")
+        };
+        let prompt_index = fields
+            .iter()
+            .position(|field| field.label == "Initial prompt")
+            .unwrap();
+        fields[prompt_index].value = prompt.into();
+        fields[prompt_index].edited = true;
+        *active = prompt_index;
+
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+
+        let requests = d.drain_outbox();
+        let request = requests
+            .iter()
+            .find(|message| message.request == Request::AllocateInitialPromptIntent)
+            .expect("intent allocation request");
+        assert_eq!(request.request, Request::AllocateInitialPromptIntent);
+        let pending = d.pending_initial_prompt_allocation.as_ref().unwrap();
+        assert_eq!(pending.prompt, prompt);
+        assert_eq!(pending.launch.session.project, "demo");
+        assert_eq!(pending.launch.session.workspace, "registered");
+        assert_eq!(pending.launch.session.name, "");
+        assert_eq!(pending.launch.session.argv, argv);
+        assert!(
+            pending
+                .launch
+                .session
+                .argv
+                .iter()
+                .all(|argument| argument != prompt)
+        );
+    }
+
+    #[test]
+    fn accepting_the_prefilled_harness_keeps_it_explicit_across_project_change() {
+        let mut d = dashboard();
+        d.settings.agents.push(AgentOverride {
+            name: "other-agent".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+        });
+        d.settings
+            .launch_choices
+            .insert("demo".into(), agent_choice("fixture-agent"));
+        d.settings
+            .launch_choices
+            .insert("other".into(), agent_choice("fixture-agent"));
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        d.hierarchy.projects.push(ProjectSummary {
+            name: "other".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "other".into(),
+                name: "feature/second".into(),
+                id: "second".into(),
+                root: false,
+                warning: None,
+                path: "/tmp/second".into(),
+                sessions: vec![],
+            }],
+        });
+        let mut inventory = registry(vec![workspace_record("root", "/tmp/unused", "main")]);
+        inventory.projects.push(ProjectRecord {
+            name: "other".into(),
+            repo: "/tmp/second-repo".into(),
+            workspace_root: "/tmp/second-workspaces".into(),
+            workspaces: vec![workspace_record("second", "/tmp/second", "feature/second")],
+        });
+        open_registered_agent_form(&mut d, inventory);
+
+        d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(fields[active].label, "Agent harness");
+        assert_eq!(fields[active].value, "fixture-agent");
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(
+            new_agent_fields(&d)
+                .0
+                .iter()
+                .find(|field| field.label == "Agent harness")
+                .unwrap()
+                .value,
+            "other-agent"
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let (fields, _) = new_agent_fields(&d);
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value,
+            "other/second"
+        );
+        let harness = fields
+            .iter()
+            .find(|field| field.label == "Agent harness")
+            .unwrap();
+        assert_eq!(harness.value, "other-agent");
+        assert!(
+            harness.edited,
+            "accepting the highlighted default is explicit"
+        );
+    }
+
+    #[test]
+    fn accepting_the_prefilled_model_keeps_it_explicit_across_project_change() {
+        let mut d = dashboard();
+        d.settings
+            .launch_choices
+            .insert("demo".into(), agent_choice("fixture-agent"));
+        d.settings.launch_choices.insert(
+            "other".into(),
+            LaunchChoice::Agent {
+                preset: "fixture-agent".into(),
+                model_policy: AgentModelPolicy::Explicit("claude-sonnet-4".into()),
+            },
+        );
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        d.hierarchy.projects.push(ProjectSummary {
+            name: "other".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "other".into(),
+                name: "feature/second".into(),
+                id: "second".into(),
+                root: false,
+                warning: None,
+                path: "/tmp/second".into(),
+                sessions: vec![],
+            }],
+        });
+        let mut inventory = registry(vec![workspace_record("root", "/tmp/unused", "main")]);
+        inventory.projects.push(ProjectRecord {
+            name: "other".into(),
+            repo: "/tmp/second-repo".into(),
+            workspace_root: "/tmp/second-workspaces".into(),
+            workspaces: vec![workspace_record("second", "/tmp/second", "feature/second")],
+        });
+        open_registered_agent_form(&mut d, inventory);
+
+        d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(fields[active].label, "Model");
+        assert_eq!(fields[active].value, HARNESS_DEFAULT_MODEL);
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        d.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let (fields, _) = new_agent_fields(&d);
+        let model = fields.iter().find(|field| field.label == "Model").unwrap();
+        assert_eq!(model.value, HARNESS_DEFAULT_MODEL);
+        assert!(model.edited, "accepting the highlighted model is explicit");
     }
 
     #[test]

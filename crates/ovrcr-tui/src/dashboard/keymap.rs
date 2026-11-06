@@ -19,6 +19,7 @@ pub(super) enum Action {
     Operator,
     OperatorQuick,
     OperatorKey(KeyCode, KeyModifiers),
+    NewAgentSession,
     CreateTerminal,
     CreateWorkspace,
     RegisterProject,
@@ -290,6 +291,7 @@ impl Dashboard {
             Action::OperatorKey(code, modifiers) => {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
+            Action::NewAgentSession => self.open_new_agent_session(),
             Action::CreateTerminal => self.open_create_terminal(),
             Action::CreateWorkspace => self.open_create_workspace(),
             Action::RegisterProject => self.open_register_project(),
@@ -784,7 +786,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let selected = dashboard
         .action_session()
         .and_then(|id| find_session(dashboard, id));
-    let (project, workspace) = dashboard.creation_context();
+    let (project, _) = dashboard.creation_context();
     let current = dashboard.current_workspace();
     let target = selected
         .map(|s| {
@@ -795,24 +797,6 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         })
         .unwrap_or_default();
     let missing = selected.is_none().then_some("no session selected");
-    let no_workspace = (!dashboard
-        .hierarchy
-        .projects
-        .iter()
-        .any(|p| !p.workspaces.is_empty()))
-    .then_some("no workspace available; register a project first");
-    let launch_blocked = current
-        .and_then(|workspace| workspace.warning.as_ref())
-        .map(|_| LAUNCH_BLOCKED);
-    let workspace_target = current
-        .map(|workspace| workspace_heading(dashboard, workspace))
-        .unwrap_or_else(|| {
-            if workspace.is_empty() {
-                "the workspace you choose".into()
-            } else {
-                format!("{project} / {workspace}")
-            }
-        });
     let project_target = if project.is_empty() {
         "the project you choose"
     } else {
@@ -1022,7 +1006,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     };
     let groups = vec![
         KeyGroup { title: "Create".into(), keys: vec![
-            key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(launch_blocked.or(no_workspace)).group('w', "n"),
+            key_binding("n", "New agent session", "Choose a registered branch, agent harness and model, then optionally enter an initial prompt".into(), Char('n'), Action::NewAgentSession).group('w', "n"),
             key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },

@@ -8969,6 +8969,113 @@ fn init_repo_with_default(repo: &Path, default_branch: &str) {
     }
 }
 
+#[test]
+fn agent_create_rechecks_git_generation_even_for_harness_default() {
+    use crate::config::{ProjectRecord, Registry, WorkspaceRecord};
+    use ovrcr_protocol::{AgentModelPolicy, CreateAgentSessionRequest, CreateSessionRequest};
+    use std::os::unix::net::UnixListener;
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    init_repo_with_default(&repo, "main");
+    let repo = repo.canonicalize().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["branch", "feature/agent-guard"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let workspace = root.path().join("feature-worktree");
+    let status = std::process::Command::new("git")
+        .args(["worktree", "add", "--quiet"])
+        .arg(&workspace)
+        .arg("feature/agent-guard")
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let workspace = workspace.canonicalize().unwrap();
+    let identity = crate::git::capture_worktree_identity(&workspace).unwrap();
+    let git_dir = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(git_dir.status.success());
+    let mut git_dir = PathBuf::from(String::from_utf8(git_dir.stdout).unwrap().trim());
+    if !git_dir.is_absolute() {
+        git_dir = workspace.join(git_dir);
+    }
+    std::fs::write(git_dir.join("ovrcr-identity"), "replacement-generation\n").unwrap();
+    assert_ne!(crate::git::worktree_identity(&workspace).unwrap(), identity);
+
+    let socket_root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let socket = socket_root.path().join("s");
+    let _listener = UnixListener::bind(&socket)
+        .unwrap_or_else(|error| panic!("bind fixture socket {}: {error}", socket.display()));
+    let registry = Registry {
+        projects: vec![ProjectRecord {
+            name: "fixture".into(),
+            repo: repo.clone(),
+            workspace_root: root.path().join("workspaces"),
+            workspaces: vec![WorkspaceRecord {
+                id: "feature".into(),
+                path: workspace.clone(),
+                branch: "feature/agent-guard".into(),
+                git_identity: Some(identity),
+                setup_pending: false,
+            }],
+        }],
+    };
+    let (state, _dispatch, events) = test_state_with_socket(socket, registry);
+
+    let marker = root.path().join("agent-was-started");
+    let error = state
+        .create_agent_session(CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "fixture".into(),
+                workspace: "feature".into(),
+                name: String::new(),
+                label: Some("fixture-agent".into()),
+                argv: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!("printf started > {}", marker.display()).into(),
+                ],
+                kind: SessionKind::Agent {
+                    name: "fixture-agent".into(),
+                },
+            },
+            model_policy: AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        })
+        .expect_err("replacement worktree must be refused before spawn");
+    assert!(
+        format!("{error:#}").contains("registered Git worktree changed"),
+        "{error:#}"
+    );
+    assert!(!marker.exists(), "no agent process started");
+    assert!(state.session_summaries().is_empty());
+
+    let terminal = state
+        .create_session(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "feature".into(),
+            name: "legacy-terminal".into(),
+            label: None,
+            argv: vec!["/bin/sh".into(), "-c".into(), "exec sleep 30".into()],
+            kind: SessionKind::Terminal,
+        })
+        .expect("Terminal retains its existing admission path");
+    let session = state.sessions.lock().unwrap().remove(&terminal.id).unwrap();
+    cleanup_test_session(
+        &session,
+        apply_test_session_events(Arc::clone(&session), events),
+    )
+    .unwrap();
+}
+
 fn write_local_policy(home: &Path, policy: &str) {
     let dashboard = home.join("dashboard.toml");
     std::fs::write(

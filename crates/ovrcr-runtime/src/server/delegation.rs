@@ -1617,6 +1617,7 @@ impl ServerState {
                                 None,
                                 Some(&handle),
                                 None,
+                                false,
                             )
                             .map(|_| ())
                         };

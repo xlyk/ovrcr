@@ -845,7 +845,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, None, None, None)
+        self.create_session_locked(request, None, None, None, false)
     }
 
     pub fn create_agent_session(
@@ -854,7 +854,9 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let request = agent_models::prepare_session(self, request)
             .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
-        self.create_session(request)
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.create_session_locked(request, None, None, None, true)
     }
 
     pub fn create_agent_session_with_prompt(
@@ -876,7 +878,7 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()
             .map_err(crate::session::NoProcessStarted::context)?;
-        self.create_session_locked(session, None, None, has_prompt.then_some(prompt))
+        self.create_session_locked(session, None, None, has_prompt.then_some(prompt), true)
     }
 
     /// Remember a Dashboard agent choice only after the launch succeeds. The
@@ -920,7 +922,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, Some(ready), None, None)
+        self.create_session_locked(request, Some(ready), None, None, false)
     }
 
     /// Admission stays locked from the live-slot check through durable intent and publication.
@@ -930,6 +932,7 @@ impl ServerState {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         assignment: Option<&str>,
         initial_prompt: Option<String>,
+        verify_agent_workspace: bool,
     ) -> Result<SessionSummary> {
         let mut request = request;
         // Every error in this preflight precedes the sole native spawn call.
@@ -953,6 +956,32 @@ impl ServerState {
                     ErrorCode::NotFound,
                     "working directory is unavailable",
                 ));
+            }
+            if verify_agent_workspace && matches!(request.kind, SessionKind::Agent { .. }) {
+                if workspace_record.setup_pending {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "workspace setup is still pending",
+                    ));
+                }
+                let Some(expected) = workspace_record.git_identity.as_deref() else {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree identity is missing; refresh the workspace",
+                    ));
+                };
+                let actual = git::worktree_identity(&cwd).map_err(|error| {
+                    lifecycle_error(
+                        ErrorCode::Conflict,
+                        format!("could not verify the registered Git worktree: {error:#}"),
+                    )
+                })?;
+                if actual != expected {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree changed; refresh the workspace",
+                    ));
+                }
             }
             let display =
                 git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
@@ -2436,6 +2465,7 @@ impl ServerState {
             None,
             assignment,
             None,
+            false,
         )
         .map(Some)
         .map_err(|error| {
@@ -2904,6 +2934,7 @@ impl ServerState {
             None,
             None,
             None,
+            false,
         )
     }
 
