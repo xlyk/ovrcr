@@ -152,8 +152,10 @@ impl KeyboardState {
                     self.right_control = false;
                     self.physical_right_control = false;
                 }
-                let mut modifiers = egui::Modifiers::default();
-                modifiers.ctrl = self.control_held();
+                let modifiers = egui::Modifiers {
+                    ctrl: self.control_held(),
+                    ..Default::default()
+                };
                 bytes.extend_from_slice(&kitty_key_event(
                     codepoint,
                     kitty_modifier_mask(modifiers, self.super_held()),
