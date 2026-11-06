@@ -5,7 +5,7 @@ mod dashboard_proxy;
 
 use anyhow::{Result, bail};
 use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
-use ovrcr::gui::input::{Mouse, encode_event};
+use ovrcr::gui::input::{KeyboardState, Mouse, encode_event, encode_event_with_keyboard};
 use ovrcr::gui::{Demo, Terminal};
 use std::path::Path;
 use std::thread;
@@ -111,6 +111,64 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
         }
         if Instant::now() >= deadline {
             bail!("dashboard never rendered its header after optional setup:\n{text}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_keyboard_enhancement(terminal: &Terminal) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !terminal.keyboard_enhancement_enabled() {
+        if Instant::now() >= deadline {
+            bail!("Dashboard never enabled Kitty keyboard reporting");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+fn send_gui_key_event(
+    terminal: &mut Terminal,
+    keyboard: &mut KeyboardState,
+    event: Event,
+) -> Result<()> {
+    let screen = terminal.screen();
+    let bytes = encode_event_with_keyboard(
+        &event,
+        &screen,
+        egui::Rect::NOTHING,
+        egui::vec2(8.0, 16.0),
+        egui::pos2(0.0, 0.0),
+        &mut Mouse::default(),
+        keyboard,
+        terminal.keyboard_enhancement_enabled(),
+    );
+    if !bytes.is_empty() {
+        terminal.send(&bytes)?;
+    }
+    Ok(())
+}
+
+fn wait_sidebar_label(terminal: &Terminal, title: &str, label: Option<&str>) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let screen = terminal.screen();
+        let (_, cols) = screen.size();
+        let line = screen
+            .rows(0, cols)
+            .find(|line| line.contains(title))
+            .unwrap_or_default();
+        let found = line.contains(title);
+        let visible = label.is_some_and(|label| {
+            line.find(title)
+                .is_some_and(|title_at| line[..title_at].contains(label))
+        });
+        let absent = label.is_none_or(|label| !line.contains(label));
+        if found && ((label.is_some() && visible) || (label.is_none() && absent)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("sidebar row did not match label {label:?} for {title:?}:\n{line}");
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -313,6 +371,89 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
 }
 
 #[test]
+fn gui_kitty_modifier_and_digit_events_drive_a_real_agent_session() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let initial = terminal.screen().contents();
+        let selected_pane = initial
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split_once('│').map(|(_, pane)| pane))
+            .unwrap_or_default();
+        if selected_pane.contains("review auth handoff") {
+            bail!("the Demo must start on another session to prove the jump");
+        }
+
+        let mut keyboard = KeyboardState::default();
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::SuperLeft,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers {
+                    mac_cmd: true,
+                    command: true,
+                    ..Default::default()
+                },
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers {
+                    mac_cmd: true,
+                    command: true,
+                    ..Default::default()
+                },
+            },
+        )?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::SuperLeft,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        enter_selected_session(&mut terminal, "fixture: authentication handoff review")?;
+        terminal.send(b"printf 'GUI_CMD_JUMP\\n'\r")?;
+        wait_screen(&terminal, "GUI_CMD_JUMP")?;
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
 fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
@@ -456,6 +597,16 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
     else {
         bail!("demo did not return its sessions");
     };
+    assert!(
+        hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+            .filter(|session| session.name != "local")
+            .all(|session| matches!(&session.kind, ovrcr::protocol::SessionKind::Agent { .. })),
+        "GUI fixtures named as Agents must use the Agent session kind"
+    );
     let sessions: Vec<_> = hierarchy
         .projects
         .iter()
