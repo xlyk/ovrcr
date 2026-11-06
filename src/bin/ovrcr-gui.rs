@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
 use ovrcr::gui::{
     Demo, Terminal,
-    input::{KeyboardState, Mouse, encode_event_with_keyboard, terminal_events},
+    input::{KeyboardState, Mouse, TerminalFrameInput, encode_terminal_frame},
 };
 use std::fs;
 use std::sync::Arc;
@@ -585,36 +585,28 @@ impl App {
                             .or(input.pointer.latest_pos())
                             .unwrap_or(rect.min)
                     });
-                    let events = ui.input(|input| input.events.clone());
-                    for event in terminal_events(&events) {
-                        if !response.has_focus()
-                            && !matches!(
-                                event,
-                                egui::Event::PointerButton { .. }
-                                    | egui::Event::MouseWheel { .. }
-                                    | egui::Event::WindowFocused(true)
-                                    | egui::Event::WindowFocused(false)
-                            )
-                            && !self.keyboard.tracks_release(event)
-                        {
-                            continue;
-                        }
-                        self.keyboard
-                            .set_kitty_enabled(terminal.keyboard_enhancement_enabled());
-                        self.keyboard
-                            .set_focus_reporting_enabled(terminal.focus_reporting_enabled());
-                        let bytes = encode_event_with_keyboard(
-                            event,
-                            &screen,
-                            rect,
-                            cell,
-                            pointer,
-                            &mut self.mouse,
-                            &mut self.keyboard,
-                        );
-                        if !bytes.is_empty()
-                            && let Err(error) = terminal.send(&bytes)
-                        {
+                    let (focused, modifiers, events) =
+                        ui.input(|input| (input.focused, input.modifiers, input.events.clone()));
+                    self.keyboard
+                        .set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+                    self.keyboard
+                        .set_focus_reporting_enabled(terminal.focus_reporting_enabled());
+                    let encoded = encode_terminal_frame(
+                        TerminalFrameInput {
+                            events: &events,
+                            terminal_focused: response.has_focus(),
+                            focused,
+                            modifiers,
+                        },
+                        &screen,
+                        rect,
+                        cell,
+                        pointer,
+                        &mut self.mouse,
+                        &mut self.keyboard,
+                    );
+                    for bytes in encoded {
+                        if let Err(error) = terminal.send(&bytes) {
                             self.error = Some(format!("{error:#}"));
                         }
                     }

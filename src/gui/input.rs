@@ -19,6 +19,8 @@ pub struct Mouse {
 pub struct KeyboardState {
     kitty_enabled: bool,
     focus_reporting_enabled: bool,
+    unfocused: bool,
+    focus_quarantined: bool,
     left_super: bool,
     right_super: bool,
     physical_left_super: bool,
@@ -58,9 +60,13 @@ impl KeyboardState {
     fn reset(&mut self) {
         let kitty_enabled = self.kitty_enabled;
         let focus_reporting_enabled = self.focus_reporting_enabled;
+        let unfocused = self.unfocused;
+        let focus_quarantined = self.focus_quarantined;
         *self = Self {
             kitty_enabled,
             focus_reporting_enabled,
+            unfocused,
+            focus_quarantined,
             ..Self::default()
         };
     }
@@ -77,6 +83,27 @@ impl KeyboardState {
 
     pub fn set_focus_reporting_enabled(&mut self, enabled: bool) {
         self.focus_reporting_enabled = enabled;
+    }
+
+    /// A clear modifier snapshot can rearm aggregate Super only after native
+    /// input has refreshed winit's modifier state. Focus regain alone reports
+    /// egui's reset snapshot, which does not prove that Command was released.
+    pub fn observe_focus_frame(
+        &mut self,
+        focused: bool,
+        modifiers: egui::Modifiers,
+        events: &[Event],
+    ) {
+        self.unfocused = !focused;
+        let last_gain = events
+            .iter()
+            .rposition(|event| matches!(event, Event::WindowFocused(true)));
+        let observed_clear_modifiers = events.iter().enumerate().any(|(index, event)| {
+            last_gain.is_none_or(|gain| index > gain) && native_modifier_observation(event)
+        });
+        if focused && !modifiers.mac_cmd && observed_clear_modifiers {
+            self.focus_quarantined = false;
+        }
     }
 
     fn release_all(&mut self) -> Vec<u8> {
@@ -393,6 +420,8 @@ pub fn encode_event_with_keyboard(
 ) -> Vec<u8> {
     match event {
         Event::WindowFocused(false) => {
+            keyboard.unfocused = true;
+            keyboard.focus_quarantined = true;
             let mut bytes = if keyboard.focus_reporting_enabled {
                 b"\x1b[O".to_vec()
             } else {
@@ -404,9 +433,16 @@ pub fn encode_event_with_keyboard(
             return bytes;
         }
         Event::WindowFocused(true) if keyboard.focus_reporting_enabled => {
+            keyboard.unfocused = false;
             return b"\x1b[I".to_vec();
         }
-        Event::WindowFocused(true) => return Vec::new(),
+        Event::WindowFocused(true) => {
+            keyboard.unfocused = false;
+            return Vec::new();
+        }
+        Event::ModifiersChanged(modifiers) if !modifiers.mac_cmd && !keyboard.unfocused => {
+            keyboard.focus_quarantined = false;
+        }
         _ => {}
     }
     if !keyboard.kitty_enabled {
@@ -415,6 +451,9 @@ pub fn encode_event_with_keyboard(
 
     match event {
         Event::ModifiersChanged(modifiers) => {
+            if keyboard.focus_quarantined && modifiers.mac_cmd {
+                return Vec::new();
+            }
             if keyboard.aggregate_super == modifiers.mac_cmd {
                 return Vec::new();
             }
@@ -502,6 +541,9 @@ pub fn encode_event_with_keyboard(
                     }
                     return Vec::new();
                 }
+                if keyboard.focus_quarantined && !keyboard.unfocused {
+                    keyboard.focus_quarantined = false;
+                }
                 if left {
                     keyboard.physical_left_super = true;
                 } else {
@@ -558,6 +600,9 @@ pub fn encode_event_with_keyboard(
             || command_control_index(event)
                 .is_some_and(|index| keyboard.command_controls[index].is_some()) =>
         {
+            if keyboard.focus_quarantined && modifiers.mac_cmd && *pressed {
+                return Vec::new();
+            }
             let index = command_control_index(event).expect("matched Command control");
             let codepoint = if index == 0 { 127 } else { 27 };
             if *pressed {
@@ -592,6 +637,9 @@ pub fn encode_event_with_keyboard(
             let held = keyboard.digits[index].is_some();
             if *pressed {
                 if modifiers.mac_cmd {
+                    if keyboard.focus_quarantined {
+                        return Vec::new();
+                    }
                     let modifier_mask = kitty_modifier_mask(*modifiers, true);
                     if *repeat {
                         if held {
@@ -663,6 +711,14 @@ fn kitty_key_event(codepoint: u32, modifier_mask: u8, event_type: u8) -> Vec<u8>
     format!("\x1b[{codepoint};{}:{event_type}u", modifier_mask + 1).into_bytes()
 }
 
+/// The native focus and modifier snapshot accompanying one GUI event batch.
+pub struct TerminalFrameInput<'a> {
+    pub events: &'a [Event],
+    pub terminal_focused: bool,
+    pub focused: bool,
+    pub modifiers: egui::Modifiers,
+}
+
 /// The events of one frame that the terminal should receive.
 ///
 /// macOS composes Option with a letter into a glyph egui delivers as `Text`
@@ -683,17 +739,90 @@ pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
                 .position(|event| matches!(event, Event::PointerButton { pressed: true, .. }))
                 .map(|offset| focus + offset)
         });
-    events.iter().enumerate().filter_map(move |(index, event)| {
-        let composed = matches!(event, Event::Text(_))
-            && index.checked_sub(1).is_some_and(|previous| {
-                matches!(
-                    &events[previous],
-                    Event::Key { key, pressed: true, modifiers, .. }
-                        if meta_key(*key, *modifiers).is_some()
-                )
-            });
-        (!composed && Some(index) != activation).then_some(event)
-    })
+    let mut forwarded: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            let composed = matches!(event, Event::Text(_))
+                && index.checked_sub(1).is_some_and(|previous| {
+                    matches!(
+                        &events[previous],
+                        Event::Key { key, pressed: true, modifiers, .. }
+                            if meta_key(*key, *modifiers).is_some()
+                    )
+                });
+            (!composed && Some(index) != activation).then_some(index)
+        })
+        .collect();
+
+    // winit queues this synthetic clear before Focused(false). Move the focus
+    // event ahead of that exact reset so Dashboard cancellation precedes the
+    // Super release that the reset can synthesize.
+    for (focus, event) in events.iter().enumerate() {
+        if focus == 0
+            || !matches!(event, Event::WindowFocused(false))
+            || !matches!(
+                &events[focus - 1],
+                Event::ModifiersChanged(modifiers) if *modifiers == egui::Modifiers::NONE
+            )
+        {
+            continue;
+        }
+        let Some(reset_position) = forwarded.iter().position(|&index| index == focus - 1) else {
+            continue;
+        };
+        let Some(focus_position) = forwarded.iter().position(|&index| index == focus) else {
+            continue;
+        };
+        forwarded.swap(reset_position, focus_position);
+    }
+
+    forwarded.into_iter().map(|index| &events[index])
+}
+
+/// Encode and dispatch the terminal-facing events from one native GUI frame.
+/// The focus/modifier snapshot is observed only after every event was handled,
+/// so a later clear state cannot make earlier stale events in this frame fresh.
+pub fn encode_terminal_frame(
+    frame: TerminalFrameInput<'_>,
+    screen: &vt100::Screen,
+    rect: egui::Rect,
+    cell: egui::Vec2,
+    pointer: egui::Pos2,
+    mouse: &mut Mouse,
+    keyboard: &mut KeyboardState,
+) -> Vec<Vec<u8>> {
+    let mut encoded = Vec::new();
+    for event in terminal_events(frame.events) {
+        if !frame.terminal_focused
+            && !matches!(
+                event,
+                Event::PointerButton { .. }
+                    | Event::MouseWheel { .. }
+                    | Event::WindowFocused(true)
+                    | Event::WindowFocused(false)
+            )
+            && !keyboard.tracks_release(event)
+        {
+            continue;
+        }
+        let bytes = encode_event_with_keyboard(event, screen, rect, cell, pointer, mouse, keyboard);
+        if !bytes.is_empty() {
+            encoded.push(bytes);
+        }
+    }
+    keyboard.observe_focus_frame(frame.focused, frame.modifiers, frame.events);
+    encoded
+}
+
+fn native_modifier_observation(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key { .. }
+            | Event::PointerMoved(_)
+            | Event::PointerButton { .. }
+            | Event::MouseWheel { .. }
+    )
 }
 
 /// One mouse report in the screen's own protocol mode and encoding. Empty when
@@ -1178,6 +1307,241 @@ mod tests {
     }
 
     #[test]
+    fn stale_aggregate_command_after_focus_regain_does_not_restart_a_hold() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_focus_reporting_enabled(true);
+
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true),
+            b"\x1b[O"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(true), screen, &mut keyboard, true),
+            b"\x1b[I"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "winit can restore Cmd from a mouse event without a fresh Super key press"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num1, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "a stale aggregate must not make a digit into a Command shortcut"
+        );
+    }
+
+    #[test]
+    fn focused_native_clear_frame_rearms_after_dispatch() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        keyboard.set_focus_reporting_enabled(true);
+        let command = command();
+
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true),
+            b"\x1b[O"
+        );
+        let gain = [Event::WindowFocused(true)];
+        assert_eq!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &gain,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            ),
+            vec![b"\x1b[I".to_vec()]
+        );
+
+        let stale = [
+            Event::ModifiersChanged(command),
+            Event::PointerMoved(egui::pos2(0.0, 0.0)),
+        ];
+        assert!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &stale,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: command,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            )
+            .is_empty()
+        );
+
+        let clear = [Event::PointerMoved(egui::pos2(0.0, 0.0))];
+        assert!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &clear,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            )
+            .is_empty()
+        );
+
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+    }
+
+    #[test]
+    fn native_input_before_focus_regain_cannot_rearm_command() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        let command = command();
+
+        let batched_focus_change = [
+            Event::PointerMoved(egui::pos2(0.0, 0.0)),
+            Event::WindowFocused(false),
+            Event::WindowFocused(true),
+        ];
+        encode_terminal_frame(
+            TerminalFrameInput {
+                events: &batched_focus_change,
+                terminal_focused: true,
+                focused: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+            &mut keyboard,
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "only input after the latest focus gain can rearm aggregate Cmd"
+        );
+
+        let after_gain = [Event::PointerMoved(egui::pos2(0.0, 0.0))];
+        encode_terminal_frame(
+            TerminalFrameInput {
+                events: &after_gain,
+                terminal_focused: true,
+                focused: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+            &mut keyboard,
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+    }
+
+    #[test]
+    fn physical_super_press_rearms_after_focus_loss() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        assert!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true).is_empty()
+        );
+        assert!(
+            encode_keyboard(&Event::WindowFocused(true), screen, &mut keyboard, true).is_empty()
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+    }
+
+    #[test]
     fn both_super_keys_remain_held_until_the_last_release() {
         let parser = vt100::Parser::new(24, 80, 0);
         let screen = parser.screen();
@@ -1539,6 +1903,23 @@ mod tests {
             forward(&[pointer_button(at, true, egui::Modifiers::NONE)]),
             b"\x1b[<0;1;1M"
         );
+    }
+
+    #[test]
+    fn focus_loss_precedes_winit_modifier_reset_in_the_forwarded_frame() {
+        let events = [
+            press(Key::A, egui::Modifiers::NONE),
+            Event::ModifiersChanged(egui::Modifiers::NONE),
+            Event::WindowFocused(false),
+        ];
+        let forwarded: Vec<&Event> = terminal_events(&events).collect();
+        assert_eq!(forwarded.len(), 3);
+        assert!(matches!(forwarded[0], Event::Key { key: Key::A, .. }));
+        assert!(matches!(forwarded[1], Event::WindowFocused(false)));
+        assert!(matches!(
+            forwarded[2],
+            Event::ModifiersChanged(modifiers) if *modifiers == egui::Modifiers::NONE
+        ));
     }
 
     #[test]
