@@ -1237,7 +1237,10 @@ fn tree_line_text(
                     style,
                 );
             }
-            if session.name == "local" && session.display_name() == "local" {
+            if session.name == "local"
+                && session.display_name() == "local"
+                && matches!(session.kind, crate::protocol::SessionKind::Terminal)
+            {
                 let (glyph, glyph_color) = shell_glyph(&status);
                 let subtext = Style::default().fg(SUBTEXT());
                 (
@@ -1303,19 +1306,26 @@ fn tree_line_text(
                 } else {
                     Vec::new()
                 };
-                (
-                    vec![
-                        Span::raw(SESSION_INDENT),
-                        Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
-                        Span::raw(" "),
-                        Span::styled(
-                            clipped_session_title(dashboard, session, name_width),
-                            name_style,
-                        ),
-                    ],
+                let indent = dashboard.sidebar_jump_label(*id).map_or_else(
+                    || vec![Span::raw(SESSION_INDENT)],
+                    |label| {
+                        vec![
+                            Span::raw(" "),
+                            Span::styled(format!("[{label}]"), Style::default().fg(MAUVE())),
+                            Span::raw(" "),
+                        ]
+                    },
+                );
+                let mut left = indent;
+                left.extend([
+                    Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
                     Span::raw(" "),
-                    right,
-                )
+                    Span::styled(
+                        clipped_session_title(dashboard, session, name_width),
+                        name_style,
+                    ),
+                ]);
+                (left, Span::raw(" "), right)
             }
         }
     };

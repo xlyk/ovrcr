@@ -1,0 +1,23 @@
+{
+  "revision": "6095a236f6b1e92e699abec8208f0af58bfb45c2",
+  "command": [
+    "cargo",
+    "clippy",
+    "--offline",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "local_build_profile": {
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false
+  },
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-401-check-4dcwrfgk",
+  "started": "2026-11-06T21:04:35.171853+00:00",
+  "exit_code": 101,
+  "finished": "2026-11-06T21:04:51.403036+00:00"
+}

@@ -1,8 +1,11 @@
-use super::keymap::keymap;
+use super::keymap::{Action, keymap};
 use super::{Dashboard, InputMode};
 
 pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     use unicode_width::UnicodeWidthStr;
+    if let Some(hint) = dashboard.sidebar_jump_footer_hint() {
+        return hint.chars().take(usize::from(width)).collect();
+    }
     if let Some(intent) = &dashboard.agent_typing {
         let rejected = intent
             .rejected
@@ -33,11 +36,16 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
         InputMode::Terminal => {
             // Ctrl-o goes to the program here, so Quick message is reached from Browse.
             let mut text = "Terminal mode  Ctrl-g browse".to_owned();
+            let jump = keymap(dashboard)
+                .into_iter()
+                .flat_map(|group| group.keys)
+                .find(|binding| binding.action == Action::SidebarJump && binding.enabled())
+                .map(|binding| format!("  {} {}", binding.key, binding.name));
             let agents = super::keymap::agents_binding();
-            for hint in [
+            for hint in jump.into_iter().chain([
                 format!("  then {} {}", agents.key, agents.name),
                 ", Ctrl-o Quick message".into(),
-            ] {
+            ]) {
                 if text.width() + hint.width() > usize::from(width) {
                     break;
                 }
@@ -52,9 +60,9 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     // Browse shows only the keys that open everything else, and the jump while a
     // session needs the user; the menu and the palette carry the per-action hints.
     let priority: &[&str] = if dashboard.operator_is_editing() {
-        &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x"]
+        &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x", "Ctrl hold"]
     } else if dashboard.mode == InputMode::Browse {
-        &["Space", ":", "?", "i"]
+        &["Space", ":", "?", "i", "Ctrl hold"]
     } else {
         &[
             "?", "Esc", "v", "y", "h/Left", "j/Down", "k/Up", "l/Right", "PageUp", "PageDown",

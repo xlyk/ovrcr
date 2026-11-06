@@ -37,7 +37,7 @@ mod whichkey;
 pub use agents::detect_agents;
 pub(crate) use copy::CopySelection;
 pub use copy::write_clipboard;
-pub use event_loop::{dashboard_message_channel, run_dashboard};
+pub use event_loop::{dashboard_message_channel, run_dashboard, run_dashboard_with_input_profile};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
 pub use settings::{LaunchChoice, Settings};
@@ -51,6 +51,36 @@ use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
+
+/// An explicitly qualified input frontend. The default terminal path does not
+/// advertise the Control-hold gesture; only the native OVRCR GUI currently
+/// owns the modifier translation that makes it usable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DashboardInputProfile {
+    #[default]
+    Standard,
+    VerifiedOvrcrGui,
+}
+
+pub const DASHBOARD_INPUT_PROFILE_ENV: &str = "OVRCR_DASHBOARD_INPUT_PROFILE";
+pub const VERIFIED_OVRCR_GUI_INPUT_PROFILE: &str = "ovrcr-gui";
+
+impl DashboardInputProfile {
+    pub fn from_environment() -> Self {
+        Self::from_environment_value(std::env::var(DASHBOARD_INPUT_PROFILE_ENV).ok().as_deref())
+    }
+
+    pub fn from_environment_value(value: Option<&str>) -> Self {
+        match value {
+            Some(VERIFIED_OVRCR_GUI_INPUT_PROFILE) => Self::VerifiedOvrcrGui,
+            _ => Self::Standard,
+        }
+    }
+
+    pub const fn supports_control_hold(self) -> bool {
+        matches!(self, Self::VerifiedOvrcrGui)
+    }
+}
 
 pub(crate) fn history_view_size(pane: TerminalSize) -> TerminalSize {
     TerminalSize {
@@ -263,6 +293,7 @@ pub(super) enum HoveredRow {
 }
 
 pub struct Dashboard {
+    pub(super) input_profile: DashboardInputProfile,
     operator: operator::Hub,
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
@@ -285,6 +316,8 @@ pub struct Dashboard {
     handshake: view_handshake::ViewHandshake,
     navigation: navigation::Navigation,
     agent_typing: Option<state::AgentTyping>,
+    /// Session targets frozen for one observed Control hold.
+    sidebar_jump: Option<state::SidebarJump>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:
         std::collections::HashMap<(SessionId, crate::protocol::SessionRunId), Option<u64>>,

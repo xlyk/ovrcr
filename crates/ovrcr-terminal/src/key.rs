@@ -131,12 +131,12 @@ pub fn parse_keystroke(name: &str) -> Result<(Key, Modifiers), String> {
 
 /// Control bytes for letters and the punctuation xterm maps below 0x20.
 /// Legacy terminals report Ctrl with `\`, `]`, `^`, and `_` as the digits
-/// `4` through `7`; the kitty keyboard protocol sends the punctuation itself.
+/// `4` through `7`, and Ctrl+2 as NUL; Kitty sends the punctuation itself.
 fn control_byte(ch: char) -> Option<u8> {
     let ch = ch.to_ascii_lowercase();
     Some(match ch {
         'a'..='z' => ch as u8 - b'a' + 1,
-        ' ' | '@' => 0x00,
+        ' ' | '@' | '2' => 0x00,
         '\\' | '4' => 0x1c,
         ']' | '5' => 0x1d,
         '^' | '6' => 0x1e,
@@ -221,6 +221,11 @@ mod tests {
         }
         assert_eq!(bytes(":down:", false), b"\x1b[B");
         assert_eq!(bytes(":down:", true), b"\x1bOB");
+    }
+
+    #[test]
+    fn ctrl_two_keeps_its_legacy_nul_terminal_encoding() {
+        assert_eq!(bytes(":ctrl-2:", false), b"\0");
     }
 
     #[test]

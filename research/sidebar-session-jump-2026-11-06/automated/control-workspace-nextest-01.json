@@ -1,0 +1,27 @@
+{
+  "revision": "bde84aab514b10d592b6f4466c2d12db0c2e5623",
+  "command": [
+    "/private/tmp/ovrcr-401-nextest/bin/cargo-nextest",
+    "nextest",
+    "run",
+    "--offline",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--profile",
+    "ci",
+    "--test-threads",
+    "2",
+    "-E",
+    "not test(partial_resize_connection_delivers_error_before_owner_close)"
+  ],
+  "local_build_profile": {
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false
+  },
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-401-check-dvbkl459",
+  "started": "2026-11-06T21:09:29.089706+00:00",
+  "exit_code": 100,
+  "finished": "2026-11-06T21:39:47.742196+00:00"
+}

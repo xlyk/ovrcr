@@ -1,8 +1,480 @@
 use super::*;
+use crossterm::event::ModifierKeyCode;
 use ovrcr_protocol::{
     OperatorConversationId, OperatorConversationSummary, OperatorProvider, OperatorRequest,
-    OperatorResponse, SessionRunId,
+    OperatorResponse, OperatorTurn, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState,
+    SessionKind, SessionRunId,
 };
+
+fn control_event(kind: KeyEventKind) -> Event {
+    Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Modifier(ModifierKeyCode::LeftControl),
+        KeyModifiers::NONE,
+        kind,
+    ))
+}
+
+#[test]
+fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cursor() {
+    let mut hierarchy = fixture_hierarchy();
+    let agent = hierarchy.projects[1].workspaces[0]
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(4))
+        .unwrap();
+    agent.kind = SessionKind::Agent {
+        name: "fixture-agent".into(),
+    };
+    agent.name = "operator-agent".into();
+    agent.label = "fixture-agent".into();
+    agent.title = Some("operator-agent".into());
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_area(area);
+    dashboard.install_focus(SessionId(1));
+    dashboard.key(KeyCode::Char('o'));
+    dashboard.drain_outbox();
+
+    // The initial New Conversation form keeps its ordinary key priority.
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    let initial = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(initial.contains("New Conversation"), "{initial}");
+    assert!(
+        !initial.contains("[1]"),
+        "forms do not start a jump: {initial}"
+    );
+
+    // A form saved behind Browse is not a modal until Operator is visible again.
+    dashboard.ctrl('g');
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    let browse = rendered_rows(&dashboard, 120, 40);
+    assert!(
+        browse
+            .iter()
+            .find(|row| row.contains("operator-agent"))
+            .is_some_and(|row| row.contains("[1]")),
+        "a hidden Operator form cannot block the shared Browse gesture: {browse:?}"
+    );
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    dashboard.key(KeyCode::Char('o'));
+    dashboard.drain_outbox();
+
+    dashboard.key(KeyCode::Enter);
+    let create = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Create { .. })
+            )
+        })
+        .expect("Operator form creates a local conversation without a model turn");
+    let conversation = OperatorConversationSummary {
+        id: OperatorConversationId(7),
+        session: SessionId(99),
+        run: SessionRunId(0),
+        archived: false,
+        worker_stopped: true,
+        provider: OperatorProvider::ChatGpt,
+        model: "fixture".into(),
+        title: "operator-chat".into(),
+        current_turn: None,
+    };
+    let created_requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: create.request_id,
+        response: Response::Operator(OperatorResponse::Created(conversation.clone())),
+    });
+    let read = created_requests
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Read { .. })
+            )
+        })
+        .expect("created conversation requests its retained transcript");
+    let turn = OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: conversation.id,
+            turn: OperatorTurnId(1),
+            session: conversation.session,
+            run: SessionRunId(1),
+        },
+        state: OperatorTurnState::Complete,
+        sequence: 1,
+    };
+    let mut historic = conversation.clone();
+    historic.run = SessionRunId(1);
+    historic.current_turn = Some(turn.clone());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: read.request_id,
+        response: Response::Operator(OperatorResponse::History(ovrcr_protocol::OperatorHistory {
+            conversation: historic,
+            messages: vec![ovrcr_protocol::OperatorMessage {
+                ordinal: 1,
+                turn: turn.identity.turn,
+                content: ovrcr_protocol::OperatorMessageContent::Worker(
+                    ovrcr_protocol::OperatorWorkerEvent::AssistantDelta(
+                        (0..60)
+                            .map(|row| format!("TRANSCRIPT_ROW_{row:02}\n"))
+                            .collect(),
+                    ),
+                ),
+            }],
+            next_after: None,
+        })),
+    });
+    dashboard.drain_outbox();
+    dashboard.event_action(Event::Paste("draft 界".into()));
+    dashboard.key(KeyCode::Left);
+    dashboard.key(KeyCode::PageUp);
+    let transcript_before = rendered_rows(&dashboard, 120, 40)
+        .into_iter()
+        .filter(|row| row.contains("TRANSCRIPT_ROW_"))
+        .collect::<Vec<_>>();
+    assert!(
+        !transcript_before.is_empty(),
+        "fixture transcript is visible"
+    );
+    let before = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        before.contains("draft") && before.contains("界"),
+        "{before}"
+    );
+
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    let held = rendered_rows(&dashboard, 120, 40);
+    let agent_row = held
+        .iter()
+        .find(|row| row.contains("operator-agent"))
+        .expect("the visible Agent title remains in the shared sidebar");
+    assert!(
+        agent_row.contains("[1]"),
+        "Operator exposes the Agent label: {agent_row}"
+    );
+    assert!(
+        rendered_footer(&dashboard, 120).contains("Ctrl+1–9 jump"),
+        "Operator footer explains the active gesture"
+    );
+    if let Some(chat_row) = held.iter().find(|row| row.contains("operator-chat")) {
+        assert!(
+            !chat_row.contains("[1]"),
+            "Operator chat rows are not targets: {chat_row}"
+        );
+    }
+    dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    let after_ctrl_c = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        !after_ctrl_c.contains("draft"),
+        "Ctrl+C keeps its ordinary Operator draft-clear behavior: {after_ctrl_c}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(dashboard.drain_outbox().is_empty());
+    dashboard.event_action(control_event(KeyEventKind::Release));
+
+    dashboard.event_action(Event::Paste("draft 界".into()));
+    dashboard.key(KeyCode::Left);
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Backspace,
+        KeyModifiers::SUPER,
+    )));
+    let after_cmd_backspace = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        after_cmd_backspace.contains("draft ▏界"),
+        "Command+Backspace remains separate and preserves the draft: {after_cmd_backspace}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(dashboard.drain_outbox().is_empty());
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    dashboard.key(KeyCode::Char('!'));
+    let after = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        after.contains("draft !▏界"),
+        "cancellation keeps the draft and cursor: {after}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(!dashboard.drain_outbox().iter().any(|message| matches!(
+        message.request,
+        Request::Operator(OperatorRequest::Submit { .. })
+    )));
+
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('1'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    )));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    assert!(rendered_footer(&dashboard, 120).contains("Session selected"));
+    let view = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        &view.request,
+        Request::SetView { view } if view.focused == Some(SessionId(4))
+    ));
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('o'));
+    dashboard.key(KeyCode::Char('X'));
+    let returned = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        returned.contains("draft !X▏界"),
+        "navigation and return preserve the conversation and composer cursor: {returned}"
+    );
+    assert!(
+        returned.contains("operator-chat"),
+        "same conversation remains selected"
+    );
+    assert_eq!(
+        rendered_rows(&dashboard, 120, 40)
+            .into_iter()
+            .filter(|row| row.contains("TRANSCRIPT_ROW_"))
+            .collect::<Vec<_>>(),
+        transcript_before,
+        "navigation preserves the transcript scroll position"
+    );
+}
+
+#[test]
+fn operator_control_jump_does_not_reveal_its_on_demand_sidebar() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects.truncate(1);
+    hierarchy.projects[0].workspaces.truncate(1);
+    let workspace = &mut hierarchy.projects[0].workspaces[0];
+    let mut agent = workspace.sessions[0].clone();
+    agent.kind = SessionKind::Agent {
+        name: "fixture-agent".into(),
+    };
+    agent.name = "operator-agent".into();
+    agent.label = "fixture-agent".into();
+    agent.title = Some("operator-agent".into());
+    workspace.sessions = vec![agent];
+
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize { rows: 24, cols: 80 },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_area(Rect::new(0, 0, 80, 24));
+    dashboard.install_focus(SessionId(3));
+    dashboard.key(KeyCode::Char('o'));
+    dashboard.drain_outbox();
+    dashboard.key(KeyCode::Enter);
+    let create = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Create { .. })
+            )
+        })
+        .expect("create an Operator conversation without a model turn");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: create.request_id,
+        response: Response::Operator(OperatorResponse::Created(OperatorConversationSummary {
+            id: OperatorConversationId(8),
+            session: SessionId(99),
+            run: SessionRunId(0),
+            archived: false,
+            worker_stopped: true,
+            provider: OperatorProvider::ChatGpt,
+            model: "fixture".into(),
+            title: "operator-chat".into(),
+            current_turn: None,
+        })),
+    });
+    dashboard.drain_outbox();
+
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('1'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    )));
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    let hidden = rendered_rows(&dashboard, 80, 24).join("\n");
+    assert!(
+        !hidden.contains("operator-agent"),
+        "Control cannot reveal the sidebar: {hidden}"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+
+    // At narrow widths Ctrl-L explicitly opens the on-demand shared sidebar.
+    dashboard.ctrl('l');
+    dashboard.event_action(control_event(KeyEventKind::Press));
+    let open = rendered_rows(&dashboard, 80, 24);
+    let agent_row = open
+        .iter()
+        .find(|row| row.contains("operator-agent"))
+        .expect("Agent becomes visible after the user opens the sidebar");
+    assert!(
+        agent_row.contains("[1]"),
+        "visible Agent receives a label: {agent_row}"
+    );
+    dashboard.event_action(control_event(KeyEventKind::Release));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+}
+
+#[test]
+fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
+    for (cols, rows) in [(120, 40), (100, 24), (80, 24), (60, 24), (60, 16), (59, 16)] {
+        let below_operator_floor = cols < 60 || rows < 16;
+        let mut hierarchy = fixture_hierarchy();
+        hierarchy.projects.truncate(1);
+        hierarchy.projects[0].workspaces.truncate(1);
+        let workspace = &mut hierarchy.projects[0].workspaces[0];
+        let local = workspace.sessions[0].clone();
+        let mut agent = local.clone();
+        agent.id = SessionId(4);
+        agent.kind = SessionKind::Agent {
+            name: "fixture-agent".into(),
+        };
+        agent.name = "jump-target界".into();
+        agent.label = "fixture-agent".into();
+        agent.title = Some("jump-target界".into());
+        workspace.sessions = vec![local, agent];
+
+        let area = Rect::new(0, 0, cols, rows);
+        let mut dashboard = Dashboard::with_input_profile(
+            TerminalSize { rows, cols },
+            super::DashboardInputProfile::VerifiedOvrcrGui,
+        );
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_area(area);
+        dashboard.install_focus(SessionId(3));
+        dashboard.key(KeyCode::Char('o'));
+        dashboard.drain_outbox();
+        dashboard.key(KeyCode::Enter);
+        let create = dashboard
+            .drain_outbox()
+            .into_iter()
+            .find(|message| {
+                matches!(
+                    message.request,
+                    Request::Operator(OperatorRequest::Create { .. })
+                )
+            })
+            .expect("create a local Operator conversation");
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: create.request_id,
+            response: Response::Operator(OperatorResponse::Created(OperatorConversationSummary {
+                id: OperatorConversationId(9),
+                session: SessionId(99),
+                run: SessionRunId(0),
+                archived: false,
+                worker_stopped: true,
+                provider: OperatorProvider::ChatGpt,
+                model: "fixture".into(),
+                title: "operator-chat".into(),
+                current_turn: None,
+            })),
+        });
+        dashboard.drain_outbox();
+        if cols < 100 {
+            // Operator's on-demand sidebar must be opened explicitly at narrow widths.
+            dashboard.ctrl('l');
+        }
+
+        let before = rendered_rows(&dashboard, cols, rows);
+        if below_operator_floor {
+            let text = before
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                text.contains("60×16") && text.contains("Resize to continue"),
+                "{cols}×{rows}: existing Operator resize guidance remains: {text}"
+            );
+        }
+        let before_agent = before
+            .iter()
+            .find(|row| row.contains("jump-target"))
+            .unwrap_or_else(|| panic!("{cols}×{rows}: visible Agent row missing: {before:?}"));
+        let status_and_title = before_agent.chars().skip(5).collect::<String>();
+        dashboard.event_action(control_event(KeyEventKind::Press));
+        let held = rendered_rows(&dashboard, cols, rows);
+        if below_operator_floor {
+            let text = held
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                text.contains("60×16") && text.contains("Resize to continue"),
+                "{cols}×{rows}: Control preserves Operator resize guidance: {text}"
+            );
+        }
+        let after_agent = held
+            .iter()
+            .find(|row| row.contains("jump-target"))
+            .unwrap_or_else(|| panic!("{cols}×{rows}: Agent row disappeared: {held:?}"));
+        if below_operator_floor {
+            assert!(
+                !after_agent.contains("[1]"),
+                "{cols}×{rows}: below the Operator floor suppress labels: {after_agent}"
+            );
+            assert!(
+                !rendered_footer(&dashboard, cols).contains("Ctrl+1–9"),
+                "{cols}×{rows}: the gesture hint stays hidden below the floor"
+            );
+            dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('1'),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Press,
+            )));
+            assert_eq!(
+                dashboard.focused_session(),
+                Some(SessionId(3)),
+                "{cols}×{rows}: Control digits cannot select below the Operator floor"
+            );
+        } else {
+            assert!(
+                after_agent.contains("[1]"),
+                "{cols}×{rows}: visible Agent gets a label: {after_agent}"
+            );
+        }
+        assert_eq!(
+            after_agent.chars().skip(5).collect::<String>(),
+            status_and_title,
+            "{cols}×{rows}: title/status columns stay fixed"
+        );
+        assert_eq!(held.len(), before.len(), "{cols}×{rows}: rows do not move");
+        dashboard.event_action(control_event(KeyEventKind::Release));
+        let target_row = rendered_rows(&dashboard, cols, rows)
+            .iter()
+            .position(|row| row.contains("jump-target"))
+            .unwrap_or_else(|| panic!("{cols}×{rows}: target row remains visible"));
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: u16::try_from(target_row).unwrap(),
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(4)),
+            "{cols}×{rows}: mouse hit-testing still selects the drawn Agent row"
+        );
+    }
+}
 
 #[test]
 fn operator_activity_draw_tracks_real_responses_and_clock() {

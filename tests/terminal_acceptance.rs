@@ -6,6 +6,12 @@ mod dashboard_proxy;
 mod live;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
+#[path = "terminal_acceptance/session_jump_operator.rs"]
+mod session_jump_operator;
+#[path = "terminal_acceptance/session_jump_retained.rs"]
+mod session_jump_retained;
+#[path = "terminal_acceptance/session_jump_single_digit.rs"]
+mod session_jump_single_digit;
 
 use anyhow::{Context, Result, bail};
 use live::{Live, Stop, group_exists, wait_deadline};
@@ -379,10 +385,35 @@ impl OuterDashboard {
         Self::start_with_server_executable(fixture, size, &fixture.executable)
     }
 
+    fn start_with_verified_gui_profile(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
+        Self::start_with_server_executable_and_verified_gui_profile(
+            fixture,
+            size,
+            &fixture.executable,
+        )
+    }
+
     fn start_with_server_executable(
         fixture: &AcceptanceFixture,
         size: PtySize,
         server_executable: &Path,
+    ) -> Result<Self> {
+        Self::start_with_server_executable_profile(fixture, size, server_executable, false)
+    }
+
+    fn start_with_server_executable_and_verified_gui_profile(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        server_executable: &Path,
+    ) -> Result<Self> {
+        Self::start_with_server_executable_profile(fixture, size, server_executable, true)
+    }
+
+    fn start_with_server_executable_profile(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        server_executable: &Path,
+        verified_gui_profile: bool,
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
@@ -419,6 +450,15 @@ impl OuterDashboard {
                 Some(value) => command.env(key, value),
                 None => command.env_remove(key),
             }
+        }
+        command.env_remove(ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV);
+        if verified_gui_profile {
+            // These tests inject the verified GUI's enhanced modifier events
+            // through the real CLI profile parser and Dashboard constructor.
+            command.env(
+                ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV,
+                ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
+            );
         }
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
@@ -905,6 +945,51 @@ fn agent_search_selects_and_types_through_real_dashboard() -> Result<()> {
         fixture.root.path().display(),
         fixture.socket.display(),
         fixture.managed_pgids
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn command_digit_does_not_start_control_jump_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let first = create_search_agent(&mut fixture, "agent-a")?;
+    let second = create_search_agent(&mut fixture, "agent-b")?;
+    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+
+    // Land in a real Agent, then verify Kitty's Command events do not invoke
+    // the Control-only jump gesture through crossterm's production reader.
+    dashboard.send(b"sagent-a\r")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("READY_agent-a") && screen.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b[57444;1:1u")?;
+    dashboard.send(b"\x1b[50;9:1u")?;
+    dashboard.send(b"\x1b[57444;1:3u")?;
+    dashboard.send(b"COMMAND_DID_NOT_JUMP\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-a_COMMAND_DID_NOT_JUMP", wait_deadline())?;
+    assert!(
+        fixture
+            .read_terminal(first.id)?
+            .contains("RECEIVED_agent-a_COMMAND_DID_NOT_JUMP")
+    );
+    assert!(!dashboard.rendered().contains("Session selected"));
+    assert!(
+        !fixture
+            .read_terminal(second.id)?
+            .contains("COMMAND_DID_NOT_JUMP"),
+        "Command+1 must not route input to the second Agent"
     );
     dashboard.detach()?;
     fixture.shutdown()?;

@@ -12,6 +12,186 @@ pub struct Mouse {
     last_motion: Option<MouseEvent>,
 }
 
+/// Enhanced keys held by the outer GUI until their matching release reaches the
+/// Dashboard. Aggregate macOS Command transitions can stand in for missing physical
+/// Super edges; Control hold uses physical edges. Focus loss releases both safely.
+#[derive(Default)]
+pub struct KeyboardState {
+    kitty_enabled: bool,
+    focus_reporting_enabled: bool,
+    unfocused: bool,
+    focus_quarantined: bool,
+    control_quarantined: bool,
+    left_super: bool,
+    right_super: bool,
+    physical_left_super: bool,
+    physical_right_super: bool,
+    aggregate_super: bool,
+    synthetic_super: bool,
+    left_control: bool,
+    right_control: bool,
+    physical_left_control: bool,
+    physical_right_control: bool,
+    digits: [Option<u8>; 10],
+    command_controls: [Option<u8>; 2],
+}
+
+impl KeyboardState {
+    fn super_held(&self) -> bool {
+        self.left_super || self.right_super
+    }
+
+    fn control_held(&self) -> bool {
+        self.left_control || self.right_control
+    }
+
+    /// A key-up for a shortcut begun in the terminal must be delivered even
+    /// if egui moved focus to another GUI control before the physical release.
+    pub fn tracks_release(&self, event: &Event) -> bool {
+        match event {
+            Event::ModifiersChanged(modifiers) => !modifiers.mac_cmd && self.aggregate_super,
+            Event::Key {
+                key,
+                pressed: false,
+                ..
+            } => match key {
+                Key::SuperLeft => self.physical_left_super,
+                Key::SuperRight => self.physical_right_super,
+                Key::ControlLeft => self.physical_left_control || self.control_quarantined,
+                Key::ControlRight => self.physical_right_control || self.control_quarantined,
+                Key::Backspace => self.command_controls[0].is_some(),
+                Key::Escape => self.command_controls[1].is_some(),
+                _ => digit(*key)
+                    .is_some_and(|value| self.digits[(value - u32::from(b'0')) as usize].is_some()),
+            },
+            _ => false,
+        }
+    }
+
+    fn reset(&mut self) {
+        let kitty_enabled = self.kitty_enabled;
+        let focus_reporting_enabled = self.focus_reporting_enabled;
+        let unfocused = self.unfocused;
+        let focus_quarantined = self.focus_quarantined;
+        let control_quarantined = self.control_quarantined;
+        *self = Self {
+            kitty_enabled,
+            focus_reporting_enabled,
+            unfocused,
+            focus_quarantined,
+            control_quarantined,
+            ..Self::default()
+        };
+    }
+
+    /// Track the mode observed from the Dashboard's output, not a user preference.
+    /// Changing modes clears key state because the old terminal no longer expects
+    /// the matching enhanced-protocol releases.
+    pub fn set_kitty_enabled(&mut self, enabled: bool) {
+        if self.kitty_enabled != enabled {
+            self.reset();
+            self.kitty_enabled = enabled;
+        }
+    }
+
+    pub fn set_focus_reporting_enabled(&mut self, enabled: bool) {
+        self.focus_reporting_enabled = enabled;
+    }
+
+    /// A clear modifier snapshot can rearm aggregate Super only after native
+    /// input has refreshed winit's modifier state. Focus regain alone reports
+    /// egui's reset snapshot, which does not prove that Command was released.
+    pub fn observe_focus_frame(
+        &mut self,
+        focused: bool,
+        modifiers: egui::Modifiers,
+        events: &[Event],
+    ) {
+        self.unfocused = !focused;
+        let last_gain = events
+            .iter()
+            .rposition(|event| matches!(event, Event::WindowFocused(true)));
+        let observed_clear_modifiers = events.iter().enumerate().any(|(index, event)| {
+            last_gain.is_none_or(|gain| index > gain) && native_modifier_observation(event)
+        });
+        if focused && !modifiers.mac_cmd && observed_clear_modifiers {
+            self.focus_quarantined = false;
+        }
+        if focused && !modifiers.ctrl && observed_clear_modifiers {
+            self.control_quarantined = false;
+        }
+    }
+
+    fn release_all(&mut self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for (digit, modifiers) in self.digits.iter_mut().enumerate() {
+            if let Some(modifiers) = modifiers.take() {
+                bytes.extend_from_slice(&kitty_key_event(
+                    u32::from(b'0' + digit as u8),
+                    modifiers,
+                    3,
+                ));
+            }
+        }
+        for (index, codepoint) in [(0, 127), (1, 27)] {
+            if let Some(modifiers) = self.command_controls[index].take() {
+                bytes.extend_from_slice(&kitty_key_event(codepoint, modifiers, 3));
+            }
+        }
+        for (left, codepoint) in [(true, 57442), (false, 57448)] {
+            let held = if left {
+                self.left_control
+            } else {
+                self.right_control
+            };
+            if held {
+                if left {
+                    self.left_control = false;
+                    self.physical_left_control = false;
+                } else {
+                    self.right_control = false;
+                    self.physical_right_control = false;
+                }
+                let modifiers = egui::Modifiers {
+                    ctrl: self.control_held(),
+                    ..Default::default()
+                };
+                bytes.extend_from_slice(&kitty_key_event(
+                    codepoint,
+                    kitty_modifier_mask(modifiers, self.super_held()),
+                    3,
+                ));
+            }
+        }
+        for (left, codepoint) in [(true, 57444), (false, 57450)] {
+            let held = if left {
+                self.left_super
+            } else {
+                self.right_super
+            };
+            if held {
+                if left {
+                    self.left_super = false;
+                } else {
+                    self.right_super = false;
+                }
+                bytes.extend_from_slice(&kitty_key_event(
+                    codepoint,
+                    u8::from(self.super_held()) * 8,
+                    3,
+                ));
+            }
+        }
+        self.physical_left_super = false;
+        self.physical_right_super = false;
+        self.aggregate_super = false;
+        self.synthetic_super = false;
+        self.physical_left_control = false;
+        self.physical_right_control = false;
+        bytes
+    }
+}
+
 impl Mouse {
     /// The whole wheel steps `delta` travelled as (columns, rows), keeping the
     /// fraction short of one step so slow trackpad scrolling still covers the
@@ -269,6 +449,427 @@ pub fn encode_event(
     }
 }
 
+/// Encode an outer-GUI input event for the Dashboard. Enhanced key events require
+/// the observed Kitty mode; focus reports require the observed DEC 1004 mode. Other
+/// text, paste and ordinary keys retain the existing input encoder.
+pub fn encode_event_with_keyboard(
+    event: &Event,
+    screen: &vt100::Screen,
+    rect: egui::Rect,
+    cell: egui::Vec2,
+    pointer: egui::Pos2,
+    mouse: &mut Mouse,
+    keyboard: &mut KeyboardState,
+) -> Vec<u8> {
+    match event {
+        Event::WindowFocused(false) => {
+            keyboard.unfocused = true;
+            keyboard.focus_quarantined = true;
+            keyboard.control_quarantined = true;
+            let mut bytes = if keyboard.focus_reporting_enabled {
+                b"\x1b[O".to_vec()
+            } else {
+                Vec::new()
+            };
+            if keyboard.kitty_enabled {
+                bytes.extend_from_slice(&keyboard.release_all());
+            }
+            return bytes;
+        }
+        Event::WindowFocused(true) if keyboard.focus_reporting_enabled => {
+            keyboard.unfocused = false;
+            return b"\x1b[I".to_vec();
+        }
+        Event::WindowFocused(true) => {
+            keyboard.unfocused = false;
+            return Vec::new();
+        }
+        Event::ModifiersChanged(modifiers) if !keyboard.unfocused => {
+            if !modifiers.mac_cmd {
+                keyboard.focus_quarantined = false;
+            }
+            if !modifiers.ctrl {
+                keyboard.control_quarantined = false;
+            }
+        }
+        _ => {}
+    }
+    if !keyboard.kitty_enabled {
+        return encode_event(event, screen, rect, cell, pointer, mouse);
+    }
+
+    match event {
+        Event::ModifiersChanged(modifiers) => {
+            if keyboard.focus_quarantined && modifiers.mac_cmd {
+                return Vec::new();
+            }
+            if keyboard.aggregate_super == modifiers.mac_cmd {
+                return Vec::new();
+            }
+            keyboard.aggregate_super = modifiers.mac_cmd;
+            if modifiers.mac_cmd {
+                if keyboard.super_held() {
+                    Vec::new()
+                } else {
+                    keyboard.synthetic_super = true;
+                    keyboard.left_super = true;
+                    kitty_key_event(57444, kitty_modifier_mask(*modifiers, false), 1)
+                }
+            } else if keyboard.synthetic_super {
+                keyboard.synthetic_super = false;
+                keyboard.left_super = false;
+                kitty_key_event(57444, kitty_modifier_mask(*modifiers, false), 3)
+            } else {
+                let mut bytes = Vec::new();
+                for (left, codepoint) in [(true, 57444), (false, 57450)] {
+                    let physical = if left {
+                        keyboard.physical_left_super
+                    } else {
+                        keyboard.physical_right_super
+                    };
+                    let held = if left {
+                        keyboard.left_super
+                    } else {
+                        keyboard.right_super
+                    };
+                    if held && !physical {
+                        if left {
+                            keyboard.left_super = false;
+                        } else {
+                            keyboard.right_super = false;
+                        }
+                        bytes.extend_from_slice(&kitty_key_event(
+                            codepoint,
+                            kitty_modifier_mask(*modifiers, keyboard.super_held()),
+                            3,
+                        ));
+                    }
+                }
+                bytes
+            }
+        }
+        Event::Key {
+            key: Key::ControlLeft | Key::ControlRight,
+            pressed,
+            repeat,
+            modifiers,
+            ..
+        } => {
+            let left = matches!(
+                event,
+                Event::Key {
+                    key: Key::ControlLeft,
+                    ..
+                }
+            );
+            let held = if left {
+                keyboard.left_control
+            } else {
+                keyboard.right_control
+            };
+            let physical = if left {
+                keyboard.physical_left_control
+            } else {
+                keyboard.physical_right_control
+            };
+            let codepoint = if left { 57442 } else { 57448 };
+            if keyboard.control_quarantined && *pressed && modifiers.ctrl {
+                return Vec::new();
+            }
+            if keyboard.control_quarantined && *pressed {
+                keyboard.control_quarantined = false;
+            }
+            if !*pressed && keyboard.control_quarantined && !modifiers.ctrl && !keyboard.unfocused {
+                keyboard.control_quarantined = false;
+            }
+            if *pressed {
+                if *repeat {
+                    if physical && held {
+                        let mut current_modifiers = *modifiers;
+                        current_modifiers.ctrl = true;
+                        return kitty_key_event(
+                            codepoint,
+                            kitty_modifier_mask(current_modifiers, keyboard.super_held()),
+                            2,
+                        );
+                    }
+                    return Vec::new();
+                }
+                if left {
+                    keyboard.physical_left_control = true;
+                } else {
+                    keyboard.physical_right_control = true;
+                }
+                if held {
+                    return Vec::new();
+                }
+                let other_held = if left {
+                    keyboard.right_control
+                } else {
+                    keyboard.left_control
+                };
+                if left {
+                    keyboard.left_control = true;
+                } else {
+                    keyboard.right_control = true;
+                }
+                let mut current_modifiers = *modifiers;
+                current_modifiers.ctrl = other_held;
+                kitty_key_event(
+                    codepoint,
+                    kitty_modifier_mask(current_modifiers, keyboard.super_held()),
+                    1,
+                )
+            } else if physical {
+                if left {
+                    keyboard.physical_left_control = false;
+                    keyboard.left_control = false;
+                } else {
+                    keyboard.physical_right_control = false;
+                    keyboard.right_control = false;
+                }
+                let mut current_modifiers = *modifiers;
+                current_modifiers.ctrl = keyboard.control_held();
+                kitty_key_event(
+                    codepoint,
+                    kitty_modifier_mask(current_modifiers, keyboard.super_held()),
+                    3,
+                )
+            } else {
+                Vec::new()
+            }
+        }
+        Event::Key {
+            key: Key::SuperLeft | Key::SuperRight,
+            pressed,
+            repeat,
+            modifiers,
+            ..
+        } => {
+            let left = matches!(
+                event,
+                Event::Key {
+                    key: Key::SuperLeft,
+                    ..
+                }
+            );
+            let held = if left {
+                keyboard.left_super
+            } else {
+                keyboard.right_super
+            };
+            let physical = if left {
+                keyboard.physical_left_super
+            } else {
+                keyboard.physical_right_super
+            };
+            let codepoint = if left { 57444 } else { 57450 };
+            // If egui only reported the aggregate modifier edge first, its
+            // synthetic left-Super event already represents the whole native
+            // Command hold. Physical side events are duplicates until Cmd lifts.
+            if keyboard.synthetic_super {
+                return Vec::new();
+            }
+            if *pressed {
+                if *repeat {
+                    if physical && held {
+                        return kitty_key_event(
+                            codepoint,
+                            kitty_modifier_mask(*modifiers, keyboard.super_held()),
+                            2,
+                        );
+                    }
+                    return Vec::new();
+                }
+                if keyboard.focus_quarantined && !keyboard.unfocused {
+                    keyboard.focus_quarantined = false;
+                }
+                if left {
+                    keyboard.physical_left_super = true;
+                } else {
+                    keyboard.physical_right_super = true;
+                }
+                if held {
+                    return Vec::new();
+                }
+                let modifier_mask = kitty_modifier_mask(*modifiers, keyboard.super_held());
+                if left {
+                    keyboard.left_super = true;
+                } else {
+                    keyboard.right_super = true;
+                }
+                kitty_key_event(codepoint, modifier_mask, 1)
+            } else if physical {
+                if left {
+                    keyboard.physical_left_super = false;
+                } else {
+                    keyboard.physical_right_super = false;
+                }
+                if !held {
+                    return Vec::new();
+                }
+                let other_held = if left {
+                    keyboard.right_super
+                } else {
+                    keyboard.left_super
+                };
+                if keyboard.aggregate_super && !other_held {
+                    return Vec::new();
+                }
+                if left {
+                    keyboard.left_super = false;
+                } else {
+                    keyboard.right_super = false;
+                }
+                kitty_key_event(
+                    codepoint,
+                    kitty_modifier_mask(*modifiers, keyboard.super_held()),
+                    3,
+                )
+            } else {
+                Vec::new()
+            }
+        }
+        Event::Key {
+            key: Key::Backspace | Key::Escape,
+            pressed,
+            repeat,
+            modifiers,
+            ..
+        } if modifiers.mac_cmd
+            || command_control_index(event)
+                .is_some_and(|index| keyboard.command_controls[index].is_some()) =>
+        {
+            if keyboard.focus_quarantined && modifiers.mac_cmd && *pressed {
+                return Vec::new();
+            }
+            let index = command_control_index(event).expect("matched Command control");
+            let codepoint = if index == 0 { 127 } else { 27 };
+            if *pressed {
+                if let Some(held_modifiers) = keyboard.command_controls[index] {
+                    if *repeat {
+                        kitty_key_event(codepoint, held_modifiers, 2)
+                    } else {
+                        Vec::new()
+                    }
+                } else if modifiers.mac_cmd && !*repeat {
+                    let modifier_mask = kitty_modifier_mask(*modifiers, true);
+                    keyboard.command_controls[index] = Some(modifier_mask);
+                    kitty_key_event(codepoint, modifier_mask, 1)
+                } else {
+                    Vec::new()
+                }
+            } else if let Some(modifier_mask) = keyboard.command_controls[index].take() {
+                kitty_key_event(codepoint, modifier_mask, 3)
+            } else {
+                Vec::new()
+            }
+        }
+        Event::Key {
+            key,
+            pressed,
+            repeat,
+            modifiers,
+            ..
+        } if digit(*key).is_some() => {
+            let value = digit(*key).unwrap();
+            let index = (value - u32::from(b'0')) as usize;
+            let held = keyboard.digits[index].is_some();
+            if *pressed {
+                if modifiers.mac_cmd {
+                    if keyboard.focus_quarantined {
+                        return Vec::new();
+                    }
+                    let modifier_mask = kitty_modifier_mask(*modifiers, true);
+                    if *repeat {
+                        if held {
+                            kitty_key_event(value, modifier_mask, 2)
+                        } else {
+                            Vec::new()
+                        }
+                    } else if !held {
+                        keyboard.digits[index] = Some(modifier_mask);
+                        kitty_key_event(value, modifier_mask, 1)
+                    } else {
+                        Vec::new()
+                    }
+                } else if modifiers.ctrl && keyboard.control_held() {
+                    if keyboard.control_quarantined {
+                        return Vec::new();
+                    }
+                    if *repeat {
+                        keyboard.digits[index].map_or_else(Vec::new, |modifier_mask| {
+                            kitty_key_event(value, modifier_mask, 2)
+                        })
+                    } else if held {
+                        Vec::new()
+                    } else {
+                        let modifier_mask = kitty_modifier_mask(*modifiers, keyboard.super_held());
+                        keyboard.digits[index] = Some(modifier_mask);
+                        kitty_key_event(value, modifier_mask, 1)
+                    }
+                } else if held {
+                    Vec::new()
+                } else {
+                    encode_event(event, screen, rect, cell, pointer, mouse)
+                }
+            } else if !*pressed && held {
+                let modifier_mask = keyboard.digits[index].take().unwrap();
+                kitty_key_event(value, modifier_mask, 3)
+            } else {
+                encode_event(event, screen, rect, cell, pointer, mouse)
+            }
+        }
+        _ => encode_event(event, screen, rect, cell, pointer, mouse),
+    }
+}
+
+fn digit(key: Key) -> Option<u32> {
+    match key {
+        Key::Num0 => Some(u32::from(b'0')),
+        Key::Num1 => Some(u32::from(b'1')),
+        Key::Num2 => Some(u32::from(b'2')),
+        Key::Num3 => Some(u32::from(b'3')),
+        Key::Num4 => Some(u32::from(b'4')),
+        Key::Num5 => Some(u32::from(b'5')),
+        Key::Num6 => Some(u32::from(b'6')),
+        Key::Num7 => Some(u32::from(b'7')),
+        Key::Num8 => Some(u32::from(b'8')),
+        Key::Num9 => Some(u32::from(b'9')),
+        _ => None,
+    }
+}
+
+fn command_control_index(event: &Event) -> Option<usize> {
+    let Event::Key { key, .. } = event else {
+        return None;
+    };
+    match key {
+        Key::Backspace => Some(0),
+        Key::Escape => Some(1),
+        _ => None,
+    }
+}
+
+fn kitty_modifier_mask(modifiers: egui::Modifiers, super_held: bool) -> u8 {
+    u8::from(modifiers.shift)
+        | (u8::from(modifiers.alt) << 1)
+        | (u8::from(modifiers.ctrl) << 2)
+        | (u8::from(super_held) << 3)
+}
+
+fn kitty_key_event(codepoint: u32, modifier_mask: u8, event_type: u8) -> Vec<u8> {
+    format!("\x1b[{codepoint};{}:{event_type}u", modifier_mask + 1).into_bytes()
+}
+
+/// The native focus and modifier snapshot accompanying one GUI event batch.
+pub struct TerminalFrameInput<'a> {
+    pub events: &'a [Event],
+    pub terminal_focused: bool,
+    pub focused: bool,
+    pub modifiers: egui::Modifiers,
+}
+
 /// The events of one frame that the terminal should receive.
 ///
 /// macOS composes Option with a letter into a glyph egui delivers as `Text`
@@ -289,17 +890,90 @@ pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
                 .position(|event| matches!(event, Event::PointerButton { pressed: true, .. }))
                 .map(|offset| focus + offset)
         });
-    events.iter().enumerate().filter_map(move |(index, event)| {
-        let composed = matches!(event, Event::Text(_))
-            && index.checked_sub(1).is_some_and(|previous| {
-                matches!(
-                    &events[previous],
-                    Event::Key { key, pressed: true, modifiers, .. }
-                        if meta_key(*key, *modifiers).is_some()
-                )
-            });
-        (!composed && Some(index) != activation).then_some(event)
-    })
+    let mut forwarded: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            let composed = matches!(event, Event::Text(_))
+                && index.checked_sub(1).is_some_and(|previous| {
+                    matches!(
+                        &events[previous],
+                        Event::Key { key, pressed: true, modifiers, .. }
+                            if meta_key(*key, *modifiers).is_some()
+                    )
+                });
+            (!composed && Some(index) != activation).then_some(index)
+        })
+        .collect();
+
+    // winit queues this synthetic clear before Focused(false). Move the focus
+    // event ahead of that exact reset so Dashboard cancellation precedes the
+    // Super release that the reset can synthesize.
+    for (focus, event) in events.iter().enumerate() {
+        if focus == 0
+            || !matches!(event, Event::WindowFocused(false))
+            || !matches!(
+                &events[focus - 1],
+                Event::ModifiersChanged(modifiers) if *modifiers == egui::Modifiers::NONE
+            )
+        {
+            continue;
+        }
+        let Some(reset_position) = forwarded.iter().position(|&index| index == focus - 1) else {
+            continue;
+        };
+        let Some(focus_position) = forwarded.iter().position(|&index| index == focus) else {
+            continue;
+        };
+        forwarded.swap(reset_position, focus_position);
+    }
+
+    forwarded.into_iter().map(|index| &events[index])
+}
+
+/// Encode and dispatch the terminal-facing events from one native GUI frame.
+/// The focus/modifier snapshot is observed only after every event was handled,
+/// so a later clear state cannot make earlier stale events in this frame fresh.
+pub fn encode_terminal_frame(
+    frame: TerminalFrameInput<'_>,
+    screen: &vt100::Screen,
+    rect: egui::Rect,
+    cell: egui::Vec2,
+    pointer: egui::Pos2,
+    mouse: &mut Mouse,
+    keyboard: &mut KeyboardState,
+) -> Vec<Vec<u8>> {
+    let mut encoded = Vec::new();
+    for event in terminal_events(frame.events) {
+        if !frame.terminal_focused
+            && !matches!(
+                event,
+                Event::PointerButton { .. }
+                    | Event::MouseWheel { .. }
+                    | Event::WindowFocused(true)
+                    | Event::WindowFocused(false)
+            )
+            && !keyboard.tracks_release(event)
+        {
+            continue;
+        }
+        let bytes = encode_event_with_keyboard(event, screen, rect, cell, pointer, mouse, keyboard);
+        if !bytes.is_empty() {
+            encoded.push(bytes);
+        }
+    }
+    keyboard.observe_focus_frame(frame.focused, frame.modifiers, frame.events);
+    encoded
+}
+
+fn native_modifier_observation(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key { .. }
+            | Event::PointerMoved(_)
+            | Event::PointerButton { .. }
+            | Event::MouseWheel { .. }
+    )
 }
 
 /// One mouse report in the screen's own protocol mode and encoding. Empty when
@@ -372,6 +1046,908 @@ fn key_modifiers(modifiers: egui::Modifiers) -> KeyModifiers {
 mod tests {
     use super::*;
     use crossterm::event::MouseButton;
+
+    fn key_edge(key: Key, pressed: bool, repeat: bool, modifiers: egui::Modifiers) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat,
+            modifiers,
+        }
+    }
+
+    fn encode_keyboard(
+        event: &Event,
+        screen: &vt100::Screen,
+        keyboard: &mut KeyboardState,
+        kitty_enabled: bool,
+    ) -> Vec<u8> {
+        keyboard.set_kitty_enabled(kitty_enabled);
+        encode_event_with_keyboard(
+            event,
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+            keyboard,
+        )
+    }
+
+    fn command() -> egui::Modifiers {
+        egui::Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    fn control() -> egui::Modifiers {
+        egui::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn kitty_super_and_command_digit_edges_are_encoded_only_in_enhanced_mode() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                false,
+            ),
+            Vec::<u8>::new(),
+            "the GUI must not claim bare-modifier support before the Dashboard enables Kitty mode"
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::Num1, true, false, command()),
+                screen,
+                &mut keyboard,
+                false,
+            )
+            .is_empty()
+        );
+
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num1, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[49;9:1u"
+        );
+        assert!(keyboard.tracks_release(&key_edge(Key::Num1, false, false, command(),)));
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num1, true, true, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[49;9:2u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num1, false, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[49;9:3u"
+        );
+        assert!(!keyboard.tracks_release(&key_edge(Key::Num1, false, false, command(),)));
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+    }
+
+    #[test]
+    fn physical_control_hold_and_control_digit_edges_are_encoded_only_in_enhanced_mode() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        let left_control_down = key_edge(Key::ControlLeft, true, false, control());
+
+        assert!(encode_keyboard(&left_control_down, screen, &mut keyboard, false).is_empty());
+        assert_eq!(
+            encode_keyboard(&left_control_down, screen, &mut keyboard, true),
+            b"\x1b[57442;1:1u"
+        );
+        let digit_down = key_edge(Key::Num9, true, false, control());
+        assert_eq!(
+            encode_keyboard(&digit_down, screen, &mut keyboard, true),
+            b"\x1b[57;5:1u"
+        );
+        assert!(keyboard.tracks_release(&key_edge(Key::Num9, false, false, control())));
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num9, false, false, control()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57;5:3u"
+        );
+        assert!(keyboard.tracks_release(&key_edge(
+            Key::ControlLeft,
+            false,
+            false,
+            egui::Modifiers::default()
+        )));
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlLeft, false, false, egui::Modifiers::default()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57442;1:3u"
+        );
+    }
+
+    #[test]
+    fn physical_control_sides_share_one_hold_and_focus_loss_releases_them() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        let control = control();
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlLeft, true, false, control),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57442;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlRight, true, false, control),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57448;5:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlLeft, false, false, control),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57442;5:3u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlRight, false, false, egui::Modifiers::default()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57448;1:3u"
+        );
+
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::ControlLeft, true, false, control),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57442;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true,),
+            b"\x1b[57442;1:3u"
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::ControlLeft, true, false, control),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty(),
+            "a held Control key cannot restart the gesture after focus loss"
+        );
+    }
+
+    #[test]
+    fn native_modifier_change_alone_emits_a_super_hold_and_release() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+    }
+
+    #[test]
+    fn aggregate_and_physical_super_edges_are_deduplicated_in_either_order() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+
+        // Winit can report the physical edge first. Preserve it, then keep its
+        // release live until the matching aggregate modifier update arrives.
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+
+        // And in the opposite release order, aggregate false cannot release a
+        // physical key whose native key-up has not arrived yet.
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57450;1:1u"
+        );
+        assert!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57450;1:3u"
+        );
+    }
+
+    #[test]
+    fn command_backspace_and_escape_use_enhanced_edges_only_for_command() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        let backspace_press = key_edge(Key::Backspace, true, false, command());
+        assert_eq!(
+            encode_keyboard(&backspace_press, screen, &mut keyboard, true),
+            b"\x1b[127;9:1u"
+        );
+        let backspace_repeat = key_edge(Key::Backspace, true, true, command());
+        assert_eq!(
+            encode_keyboard(&backspace_repeat, screen, &mut keyboard, true),
+            b"\x1b[127;9:2u"
+        );
+        let backspace_release = key_edge(Key::Backspace, false, false, egui::Modifiers::NONE);
+        assert!(keyboard.tracks_release(&backspace_release));
+        assert_eq!(
+            encode_keyboard(&backspace_release, screen, &mut keyboard, true),
+            b"\x1b[127;9:3u"
+        );
+        assert!(!keyboard.tracks_release(&backspace_release));
+
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Escape, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[27;9:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Escape, false, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[27;9:3u"
+        );
+        assert!(
+            encode_keyboard(
+                &key_edge(Key::K, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn aggregate_super_preserves_extra_modifiers_and_focus_loss_releases_state() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        let with_shift = egui::Modifiers {
+            mac_cmd: true,
+            command: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(with_shift),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;2:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Backspace, true, false, with_shift),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[127;10:1u"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true),
+            b"\x1b[127;10:3u\x1b[57444;1:3u"
+        );
+        assert!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn requested_focus_reports_precede_keyboard_releases() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        keyboard.set_focus_reporting_enabled(true);
+        assert_eq!(
+            encode_event_with_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert!(keyboard.tracks_release(&Event::ModifiersChanged(egui::Modifiers::NONE)));
+        assert_eq!(
+            encode_event_with_keyboard(
+                &Event::WindowFocused(false),
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            ),
+            b"\x1b[O\x1b[57444;1:3u"
+        );
+        assert_eq!(
+            encode_event_with_keyboard(
+                &Event::WindowFocused(true),
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            ),
+            b"\x1b[I"
+        );
+        assert!(!keyboard.tracks_release(&Event::ModifiersChanged(egui::Modifiers::NONE)));
+    }
+
+    #[test]
+    fn stale_aggregate_command_after_focus_regain_does_not_restart_a_hold() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_focus_reporting_enabled(true);
+
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true),
+            b"\x1b[O"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(true), screen, &mut keyboard, true),
+            b"\x1b[I"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "winit can restore Cmd from a mouse event without a fresh Super key press"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::Num1, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "a stale aggregate must not make a digit into a Command shortcut"
+        );
+    }
+
+    #[test]
+    fn focused_native_clear_frame_rearms_after_dispatch() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        keyboard.set_focus_reporting_enabled(true);
+        let command = command();
+
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true),
+            b"\x1b[O"
+        );
+        let gain = [Event::WindowFocused(true)];
+        assert_eq!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &gain,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            ),
+            vec![b"\x1b[I".to_vec()]
+        );
+
+        let stale = [
+            Event::ModifiersChanged(command),
+            Event::PointerMoved(egui::pos2(0.0, 0.0)),
+        ];
+        assert!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &stale,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: command,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            )
+            .is_empty()
+        );
+
+        let clear = [Event::PointerMoved(egui::pos2(0.0, 0.0))];
+        assert!(
+            encode_terminal_frame(
+                TerminalFrameInput {
+                    events: &clear,
+                    terminal_focused: true,
+                    focused: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
+                &mut keyboard,
+            )
+            .is_empty()
+        );
+
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+    }
+
+    #[test]
+    fn native_input_before_focus_regain_cannot_rearm_command() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        let command = command();
+
+        let batched_focus_change = [
+            Event::PointerMoved(egui::pos2(0.0, 0.0)),
+            Event::WindowFocused(false),
+            Event::WindowFocused(true),
+        ];
+        encode_terminal_frame(
+            TerminalFrameInput {
+                events: &batched_focus_change,
+                terminal_focused: true,
+                focused: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+            &mut keyboard,
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            Vec::<u8>::new(),
+            "only input after the latest focus gain can rearm aggregate Cmd"
+        );
+
+        let after_gain = [Event::PointerMoved(egui::pos2(0.0, 0.0))];
+        encode_terminal_frame(
+            TerminalFrameInput {
+                events: &after_gain,
+                terminal_focused: true,
+                focused: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
+            &mut keyboard,
+        );
+        assert_eq!(
+            encode_keyboard(
+                &Event::ModifiersChanged(command),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+    }
+
+    #[test]
+    fn physical_super_press_rearms_after_focus_loss() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        keyboard.set_kitty_enabled(true);
+        assert!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true).is_empty()
+        );
+        assert!(
+            encode_keyboard(&Event::WindowFocused(true), screen, &mut keyboard, true).is_empty()
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:3u"
+        );
+    }
+
+    #[test]
+    fn both_super_keys_remain_held_until_the_last_release() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;1:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, true, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57450;9:1u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperLeft, false, false, command()),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57444;9:3u"
+        );
+        assert_eq!(
+            encode_keyboard(
+                &key_edge(Key::SuperRight, false, false, egui::Modifiers::NONE),
+                screen,
+                &mut keyboard,
+                true,
+            ),
+            b"\x1b[57450;1:3u"
+        );
+    }
+
+    #[test]
+    fn focus_loss_releases_a_held_digit_before_the_super_key() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        encode_keyboard(
+            &key_edge(Key::SuperLeft, true, false, command()),
+            screen,
+            &mut keyboard,
+            true,
+        );
+        encode_keyboard(
+            &key_edge(Key::Num1, true, false, command()),
+            screen,
+            &mut keyboard,
+            true,
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true,),
+            b"\x1b[49;9:3u\x1b[57444;1:3u"
+        );
+        assert_eq!(
+            encode_keyboard(&Event::WindowFocused(false), screen, &mut keyboard, true,),
+            Vec::<u8>::new(),
+            "the same focus loss cannot send duplicate releases"
+        );
+    }
+
+    #[test]
+    fn focus_moved_to_another_control_keeps_the_matching_key_release() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        encode_keyboard(
+            &key_edge(Key::SuperLeft, true, false, command()),
+            screen,
+            &mut keyboard,
+            true,
+        );
+        let release = key_edge(Key::SuperLeft, false, false, egui::Modifiers::NONE);
+        assert!(keyboard.tracks_release(&release));
+        assert_eq!(
+            encode_keyboard(&release, screen, &mut keyboard, true),
+            b"\x1b[57444;1:3u"
+        );
+        assert!(!keyboard.tracks_release(&release));
+    }
+
+    #[test]
+    fn enhanced_adapter_preserves_ordinary_input_and_drops_other_command_shortcuts() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?2004h");
+        let screen = parser.screen();
+        let mut keyboard = KeyboardState::default();
+        let mut mouse = Mouse::default();
+        let encode = |event: &Event, keyboard: &mut KeyboardState, mouse: &mut Mouse| {
+            keyboard.set_kitty_enabled(true);
+            encode_event_with_keyboard(
+                event,
+                screen,
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
+                mouse,
+                keyboard,
+            )
+        };
+
+        assert_eq!(
+            encode(
+                &key_edge(Key::Num2, true, false, egui::Modifiers::CTRL),
+                &mut keyboard,
+                &mut mouse,
+            ),
+            b"\0",
+            "enhanced keyboard support must keep ordinary control digits intact"
+        );
+        assert_eq!(
+            encode(&Event::Text("typed".into()), &mut keyboard, &mut mouse,),
+            b"typed"
+        );
+        assert_eq!(
+            encode(&Event::Paste("pasted".into()), &mut keyboard, &mut mouse,),
+            b"\x1b[200~pasted\x1b[201~"
+        );
+        assert!(
+            encode(
+                &key_edge(Key::K, true, false, command()),
+                &mut keyboard,
+                &mut mouse,
+            )
+            .is_empty()
+        );
+    }
 
     fn press(key: Key, modifiers: egui::Modifiers) -> Event {
         Event::Key {
@@ -597,6 +2173,23 @@ mod tests {
             forward(&[pointer_button(at, true, egui::Modifiers::NONE)]),
             b"\x1b[<0;1;1M"
         );
+    }
+
+    #[test]
+    fn focus_loss_precedes_winit_modifier_reset_in_the_forwarded_frame() {
+        let events = [
+            press(Key::A, egui::Modifiers::NONE),
+            Event::ModifiersChanged(egui::Modifiers::NONE),
+            Event::WindowFocused(false),
+        ];
+        let forwarded: Vec<&Event> = terminal_events(&events).collect();
+        assert_eq!(forwarded.len(), 3);
+        assert!(matches!(forwarded[0], Event::Key { key: Key::A, .. }));
+        assert!(matches!(forwarded[1], Event::WindowFocused(false)));
+        assert!(matches!(
+            forwarded[2],
+            Event::ModifiersChanged(modifiers) if *modifiers == egui::Modifiers::NONE
+        ));
     }
 
     #[test]

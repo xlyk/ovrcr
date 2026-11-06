@@ -1606,7 +1606,11 @@ fn panic_hook_ignores_non_main_threads() {
         panic!("installing thread panic must restore the terminal");
     }));
     let restored = bytes.lock().unwrap().clone();
-    for sequence in [b"\x1b[?1049l".as_slice(), b"\x1b[?25h".as_slice()] {
+    for sequence in [
+        b"\x1b[?1049l".as_slice(),
+        b"\x1b[?25h".as_slice(),
+        b"\x1b[<1u".as_slice(),
+    ] {
         assert!(
             restored
                 .windows(sequence.len())
@@ -3659,13 +3663,16 @@ fn browse_dispatch_keeps_its_own_modifier_rule() {
         .sessions
         .push(keymap_session(13, SessionPhase::Running));
 
-    // Alt and Super do not select a different action: Alt-j selects the next
-    // session and Alt-x runs the pane close x runs.
+    // Alt still folds to the bare Browse action, but Super must remain present
+    // so it cannot select the bare k binding.
     assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
     dashboard.key_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
     assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
-    dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
-    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER)),
+        DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
     assert_eq!(
         dashboard.key_action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
         DashboardAction::Redraw,
