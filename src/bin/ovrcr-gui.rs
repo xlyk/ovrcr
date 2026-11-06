@@ -715,6 +715,56 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
     for detached in [false, true] {
         if detached {
             app.terminal.as_mut().unwrap().stop()?;
+        } else {
+            // Exercise the host shortcut while the Dashboard already owns a
+            // live Command hold; a fresh Cmd-K alone cannot catch a stranded
+            // gesture swallowing the GUI's ordinary Ctrl-g/':' palette path.
+            let screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 600.0),
+            ));
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::SuperLeft,
+                        physical_key: Some(egui::Key::SuperLeft),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers {
+                            mac_cmd: true,
+                            command: true,
+                            ..Default::default()
+                        },
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let contents = app.terminal.as_ref().unwrap().screen().contents();
+                if contents.contains("No visible Agents")
+                    || contents.contains("Cmd+digit jump")
+                    || contents.contains("Cmd+two digits jump")
+                {
+                    break;
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "the GUI Command press did not start a Dashboard hold:\n{contents}"
+                );
+                std::thread::yield_now();
+            }
         }
         let mut other_text = String::new();
         let mut output = context.run_ui(
@@ -789,6 +839,35 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
             );
             output.textures_delta.clear();
             std::thread::yield_now();
+        }
+        if !detached {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 600.0),
+                    )),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::SuperLeft,
+                        physical_key: Some(egui::Key::SuperLeft),
+                        pressed: false,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            anyhow::ensure!(
+                app.terminal
+                    .as_ref()
+                    .unwrap()
+                    .screen()
+                    .contents()
+                    .contains("Command palette"),
+                "releasing Command after the host shortcut must leave the palette open"
+            );
         }
     }
     app.close()?;

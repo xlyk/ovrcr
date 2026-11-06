@@ -632,7 +632,19 @@ pub(super) struct SidebarJump {
 
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
+        Self::with_input_profile(size, super::DashboardInputProfile::Standard)
+    }
+
+    /// Construct the same production Dashboard boundary with an explicit
+    /// frontend profile. The standard terminal path must use [`Self::new`];
+    /// the OVRCR GUI selects `VerifiedOvrcrGui` because it owns native Command
+    /// event translation and delivers both modifier edges.
+    pub fn with_input_profile(
+        size: TerminalSize,
+        input_profile: super::DashboardInputProfile,
+    ) -> Self {
         Self {
+            input_profile,
             operator: Default::default(),
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
@@ -1006,7 +1018,7 @@ impl Dashboard {
             .is_some_and(|session| self.handshake.is_ready(session))
     }
 
-    fn sidebar_jump_modal_priority_open(&self) -> bool {
+    pub(super) fn sidebar_jump_modal_priority_open(&self) -> bool {
         self.tasks.is_some()
             || self.details.is_some()
             || self.palette.is_some()
@@ -1018,18 +1030,7 @@ impl Dashboard {
     }
 
     fn sidebar_jump_can_start(&self) -> bool {
-        matches!(self.mode, InputMode::Browse | InputMode::Terminal)
-            && (!self.operator.visible
-                || (self.outer_area.width >= 60 && self.outer_area.height >= 16))
-            && self.sidebar_preference() != Some(0)
-            && !self.sidebar_jump_modal_priority_open()
-            && self.agent_typing.is_none()
-            && self
-                .history_begin_request
-                .as_ref()
-                .is_none_or(|begin| begin.cancelled)
-            && self.deferred_history_at_tail.is_none()
-            && self.mouse_focused
+        super::keymap::sidebar_jump_binding(self).is_some_and(|binding| binding.enabled())
     }
 
     /// Uses the rendered tree's exact heights, viewport and top-to-bottom row order.
@@ -1098,27 +1099,29 @@ impl Dashboard {
 
     pub(super) fn sidebar_jump_footer_hint(&self) -> Option<String> {
         let jump = self.sidebar_jump.as_ref()?;
+        let binding = super::keymap::sidebar_jump_binding(self)?;
+        let command = binding.key.split_whitespace().next().unwrap_or("Cmd");
         if jump.selected {
-            return Some("Session selected  release Cmd".into());
+            return Some(format!("Session selected  release {command}"));
         }
         if jump.cancelled {
-            return Some("Session jump cancelled  release Cmd".into());
+            return Some(format!("Session jump cancelled  release {command}"));
         }
         if let Some(hint) = &jump.hint {
-            return Some(format!("{hint}  Cmd+digit choose · Esc cancel"));
+            return Some(format!("{hint}  {command}+digit choose · Esc cancel"));
         }
         if jump.targets.is_empty() {
             return Some("No visible Agents  s Agents search".into());
         }
         if let Some(prefix) = jump.prefix {
             return Some(format!(
-                "Cmd+{prefix}… next digit · Backspace clear · Esc cancel"
+                "{command}+{prefix}… next digit · Backspace clear · Esc cancel"
             ));
         }
         Some(if jump.code_width == 2 {
-            "Cmd+two digits jump  release to cancel".into()
+            format!("{command}+two digits jump  release to cancel")
         } else {
-            "Cmd+digit jump  release to cancel".into()
+            format!("{command}+digit jump  release to cancel")
         })
     }
 
@@ -1147,25 +1150,65 @@ impl Dashboard {
     }
 
     fn dispatch_sidebar_jump_key(&mut self, key: KeyEvent) -> Option<DashboardAction> {
-        if self.sidebar_jump.is_some() {
+        if self.sidebar_jump.as_ref().is_some_and(|jump| jump.selected) {
             return Some(self.sidebar_jump_key(key));
+        }
+        if self.sidebar_jump.is_some() {
+            if Self::command_side(key.code).is_some() {
+                return Some(self.sidebar_jump_key(key));
+            }
+            if self
+                .sidebar_jump
+                .as_ref()
+                .is_some_and(|jump| jump.cancelled)
+            {
+                // A host shortcut such as the GUI's Cmd-K arrives here through
+                // its ordinary Dashboard equivalent (Ctrl-g, then `:`). Let
+                // that sequence and subsequent modified shortcuts keep their
+                // normal dispatch after cancelling.
+                return None;
+            }
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
+                self.cancel_sidebar_jump();
+                return Some(DashboardAction::Redraw);
+            }
+            if key
+                .modifiers
+                .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
+            {
+                let is_label_digit = key.modifiers == KeyModifiers::SUPER
+                    && matches!(key.code, KeyCode::Char('0'..='9'));
+                let clears_two_digit_prefix = key.modifiers == KeyModifiers::SUPER
+                    && key.code == KeyCode::Backspace
+                    && self
+                        .sidebar_jump
+                        .as_ref()
+                        .is_some_and(|jump| jump.code_width == 2 && jump.prefix.is_some());
+                if is_label_digit || clears_two_digit_prefix {
+                    return Some(self.sidebar_jump_key(key));
+                }
+                self.cancel_sidebar_jump();
+                // Preserve normal platform shortcuts. Input encoding and keymap
+                // matching retain and reject these modifier bits respectively.
+                return None;
+            }
+            if matches!(key.code, KeyCode::Char('0'..='9')) {
+                // A digit that arrived without its modifier is not a label and
+                // must not leak into a child while the gesture remains held.
+                return Some(self.sidebar_jump_key(key));
+            }
+            self.cancel_sidebar_jump();
+            // Ordinary Dashboard handling remains available for non-Command
+            // shortcuts, including Ctrl-g followed by the palette binding.
+            return None;
         }
         if Self::command_side(key.code).is_some() {
-            return Some(self.sidebar_jump_key(key));
-        }
-        if matches!(key.code, KeyCode::Modifier(_)) {
-            // Modifier transitions are protocol state, not child input.
-            return Some(DashboardAction::None);
-        }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
-            && (self.mode == InputMode::Terminal || matches!(key.code, KeyCode::Char('0'..='9')))
-        {
-            // In Terminal mode do not strip Command from an unrelated chord and
-            // accidentally type its character into the child. Cmd+digits are
-            // reserved even when no jump can start (for example, a hidden sidebar).
-            return Some(DashboardAction::None);
+            let binding = self.key_binding_for(key)?;
+            if binding.action == super::keymap::Action::SidebarJump && binding.enabled() {
+                let command_is_left = Self::command_side(key.code)
+                    .expect("the shared gesture binding matches a Command edge");
+                return Some(self.begin_sidebar_jump(command_is_left));
+            }
         }
         None
     }
@@ -1269,7 +1312,7 @@ impl Dashboard {
             let code_width = jump.code_width;
             let value = if code_width == 2 {
                 let prefix = jump.prefix.expect("two-digit jump has a prefix");
-                u32::from(prefix.to_digit(10).expect("numeric prefix")) * 10
+                prefix.to_digit(10).expect("numeric prefix") * 10
                     + digit.to_digit(10).expect("numeric digit")
             } else {
                 digit.to_digit(10).expect("numeric digit")
@@ -1324,7 +1367,10 @@ impl Dashboard {
                 }
             };
         }
-        if key.modifiers.contains(KeyModifiers::SUPER) {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
+        {
             self.cancel_sidebar_jump();
         } else if let Some(jump) = &mut self.sidebar_jump {
             jump.hint = Some(

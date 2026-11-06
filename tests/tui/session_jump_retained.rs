@@ -85,10 +85,13 @@ fn jump_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Eve
 
 #[test]
 fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays_in_browse() {
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
-        cols: 120,
-    });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(retained_jump_hierarchy());
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
@@ -179,10 +182,13 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
 
 #[test]
 fn running_selection_from_retained_browse_waits_for_release_and_the_view_ack() {
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
-        cols: 120,
-    });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(retained_jump_hierarchy());
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
@@ -257,10 +263,13 @@ fn inspecting_an_interrupted_retained_agent_does_not_auto_recover_it() {
         failure: None,
     });
 
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
-        cols: 120,
-    });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
@@ -292,10 +301,13 @@ fn inspecting_an_interrupted_retained_agent_does_not_auto_recover_it() {
 #[test]
 fn a_captured_target_that_changes_phase_run_or_archive_cannot_be_reassigned() {
     for changed_target in ["retained-run", "running-phase", "archived"] {
-        let mut dashboard = Dashboard::new(TerminalSize {
-            rows: 40,
-            cols: 120,
-        });
+        let mut dashboard = Dashboard::with_input_profile(
+            TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+            super::DashboardInputProfile::VerifiedOvrcrGui,
+        );
         dashboard.install_hierarchy(retained_jump_hierarchy());
         dashboard.install_area(Rect::new(0, 0, 120, 40));
         dashboard.install_focus(SessionId(2));

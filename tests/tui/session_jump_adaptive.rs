@@ -8,7 +8,10 @@ fn jump_dashboard(agent_count: u64, rows: u16) -> Dashboard {
 }
 
 fn jump_dashboard_at(agent_count: u64, cols: u16, rows: u16) -> Dashboard {
-    let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize { rows, cols },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_area(Rect::new(0, 0, cols, rows));
     dashboard.install_hierarchy(jump_hierarchy(agent_count));
     dashboard.install_focus(SessionId(1));
@@ -373,7 +376,10 @@ fn two_digit_badges_preserve_stacked_unicode_rows_and_clipped_metadata() {
         name: "agent-label-that-does-not-fit-in-sidebar".into(),
     };
     first.label = "agent-label-that-does-not-fit-in-sidebar / model-that-clips".into();
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 40, cols: 60 });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize { rows: 40, cols: 60 },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_area(Rect::new(0, 0, 60, 40));
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));

@@ -3663,13 +3663,16 @@ fn browse_dispatch_keeps_its_own_modifier_rule() {
         .sessions
         .push(keymap_session(13, SessionPhase::Running));
 
-    // Alt and Super do not select a different action: Alt-j selects the next
-    // session and Alt-x runs the pane close x runs.
+    // Alt still folds to the bare Browse action, but Super must remain present
+    // so it cannot select the bare k binding.
     assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
     dashboard.key_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
     assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
-    dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
-    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER)),
+        DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
     assert_eq!(
         dashboard.key_action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
         DashboardAction::Redraw,

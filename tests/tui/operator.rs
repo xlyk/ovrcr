@@ -30,10 +30,13 @@ fn operator_sidebar_jump_labels_visible_agents_and_cancel_keeps_the_composer_cur
     agent.title = Some("operator-agent".into());
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
-        cols: 120,
-    });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(area);
     dashboard.install_focus(SessionId(1));
@@ -233,7 +236,10 @@ fn operator_cmd_jump_does_not_reveal_its_on_demand_sidebar() {
     agent.title = Some("operator-agent".into());
     workspace.sessions = vec![agent];
 
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize { rows: 24, cols: 80 },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 80, 24));
     dashboard.install_focus(SessionId(3));
@@ -316,7 +322,10 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
         workspace.sessions = vec![local, agent];
 
         let area = Rect::new(0, 0, cols, rows);
-        let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
+        let mut dashboard = Dashboard::with_input_profile(
+            TerminalSize { rows, cols },
+            super::DashboardInputProfile::VerifiedOvrcrGui,
+        );
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_area(area);
         dashboard.install_focus(SessionId(3));
