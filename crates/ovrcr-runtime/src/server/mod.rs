@@ -1954,6 +1954,15 @@ impl ServerState {
     }
 
     pub fn request_shutdown(&self, kill: bool) -> Response {
+        let mut catalog_shutdown = match self.agent_model_catalog.try_shutdown() {
+            Ok(permit) => permit,
+            Err(error) => {
+                return error_response(
+                    ErrorCode::Conflict,
+                    format!("native model catalog cleanup is unresolved: {error}"),
+                );
+            }
+        };
         let admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
         if let Some(tasks) = &self.tasks
             && !kill
@@ -2052,6 +2061,7 @@ impl ServerState {
             }
         }
         self.stopping.store(true, Ordering::Release);
+        catalog_shutdown.close();
         if let Some(tasks) = &self.tasks {
             tasks.quiesce();
         }
