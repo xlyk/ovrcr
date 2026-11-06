@@ -445,6 +445,8 @@ fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
     );
     let mut dashboard = unverified_agents_dashboard();
     let focused = dashboard.focused_session();
+    let browse_footer = rendered_footer(&dashboard, 120);
+    assert!(browse_footer.starts_with("BROWSE"));
     dashboard.event_action(key_event(
         KeyCode::Modifier(ModifierKeyCode::LeftControl),
         KeyModifiers::NONE,
@@ -464,20 +466,24 @@ fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
         "Command must not be stripped into the Browse k binding"
     );
     assert_eq!(dashboard.focused_session(), focused);
+    assert_eq!(rendered_footer(&dashboard, 120), browse_footer);
 
     dashboard.key(KeyCode::Enter);
     dashboard.drain_outbox();
+    let terminal_footer = rendered_footer(&dashboard, 120);
+    assert!(terminal_footer.starts_with("Terminal mode"));
     assert_eq!(
         dashboard.event_action(key_event(
             KeyCode::Char('2'),
             KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
-        DashboardAction::None,
-        "unsupported Control input must not become an unmodified child byte"
+        DashboardAction::PtyBytes(vec![0]),
+        "the legacy Ctrl+2 NUL byte remains ordinary Terminal input"
     );
     assert!(dashboard.drain_outbox().is_empty());
     assert_eq!(dashboard.focused_session(), focused);
+    assert_eq!(rendered_footer(&dashboard, 120), terminal_footer);
 }
 
 #[test]
