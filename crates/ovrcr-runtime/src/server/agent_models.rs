@@ -427,11 +427,23 @@ fn dashboard_catalog(
     cancelled: &AtomicBool,
 ) -> anyhow::Result<Vec<(String, String)>> {
     match preset {
-        "claude" => catalog_queue.with_process_owner(|_owner| {
-            crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
+        "claude" => catalog_queue.with_process_owner(|owner| {
+            crate::claude_delegation::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
         }),
-        "codex" => catalog_queue.with_process_owner(|_owner| {
-            crate::codex_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
+        "codex" => catalog_queue.with_process_owner(|owner| {
+            crate::codex_delegation::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
         }),
         "pi" => catalog_queue.with_process_owner(|owner| {
             crate::pi_model_catalog::dashboard_catalog(
