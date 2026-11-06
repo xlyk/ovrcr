@@ -1,4 +1,5 @@
 use super::*;
+use crossterm::event::ModifierKeyCode;
 use ovrcr::protocol::{SessionKind, SessionRunId};
 
 fn agents_hierarchy() -> HierarchySnapshot {
@@ -69,6 +70,461 @@ fn agent_results(dashboard: &Dashboard) -> String {
         .filter(|line| line.contains("│") && line.contains("(#"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn command_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Event {
+    Event::Key(KeyEvent::new_with_kind(code, modifiers, kind))
+}
+
+#[test]
+fn command_hold_labels_visible_running_agents_without_moving_the_title_column() {
+    let mut dashboard = agents_dashboard();
+    let before = rendered_rows(&dashboard, 120, 40);
+    let original = before
+        .iter()
+        .find(|row| {
+            row.split('│')
+                .next()
+                .is_some_and(|left| left.contains("agent-title-1"))
+        })
+        .expect("the current Agent title is drawn")
+        .chars()
+        .skip(5)
+        .collect::<String>();
+
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+
+    let held = rendered_rows(&dashboard, 120, 40);
+    let labeled = held
+        .iter()
+        .find(|row| {
+            row.split('│')
+                .next()
+                .is_some_and(|left| left.contains("agent-title-1"))
+        })
+        .expect("the current Agent title remains drawn");
+    assert!(
+        labeled.contains("[1]"),
+        "current Agent receives label 1: {labeled}; footer: {}",
+        rendered_footer(&dashboard, 120)
+    );
+    assert_eq!(
+        labeled.chars().skip(5).collect::<String>(),
+        original,
+        "the status glyph and title retain their columns"
+    );
+    for (title, label) in [("agent-title-2", "[2]"), ("agent-title-3", "[3]")] {
+        let row = held
+            .iter()
+            .find(|row| {
+                row.split('│')
+                    .next()
+                    .is_some_and(|left| left.contains(title))
+            })
+            .unwrap_or_else(|| panic!("visible Agent title {title} remains drawn"));
+        assert!(row.contains(label), "{title} receives {label}: {row}");
+    }
+    assert_eq!(held.len(), before.len(), "labels do not add sidebar rows");
+
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    ));
+    let after = rendered_rows(&dashboard, 120, 40);
+    assert!(!after.iter().any(|row| row.contains("[1]")));
+    assert!(
+        after
+            .iter()
+            .find(|row| row
+                .split('│')
+                .next()
+                .is_some_and(|left| left.contains("agent-title-1")))
+            .is_some_and(|row| row.chars().skip(5).collect::<String>() == original),
+        "cancelling an unselected hold restores the original row"
+    );
+}
+
+#[test]
+fn command_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    let before = rendered_rows(&dashboard, 120, 40);
+    let target_row = before
+        .iter()
+        .find(|row| {
+            row.split('│')
+                .next()
+                .is_some_and(|left| left.contains("agent-title-2"))
+        })
+        .expect("the second running Agent title is drawn");
+    assert!(
+        target_row.contains("[2]"),
+        "the second visible Agent has label 2: {target_row}"
+    );
+
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+    assert!(
+        !rendered_rows(&dashboard, 120, 40).iter().any(|row| row
+            .split('│')
+            .next()
+            .is_some_and(|left| left.contains("[1]"))),
+        "selection hides every temporary label"
+    );
+    assert!(rendered_footer(&dashboard, 120).contains("Session selected"));
+    let request = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        &request.request,
+        Request::SetView { view } if view.focused == Some(SessionId(2))
+    ));
+
+    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::None);
+    assert_eq!(
+        dashboard.drain_outbox().len(),
+        0,
+        "held input cannot reach either Agent"
+    );
+    acknowledge_all_view_targets(&mut dashboard, request);
+    assert!(
+        rendered_footer(&dashboard, 120).contains("Session selected"),
+        "an acknowledged view still waits for Command release"
+    );
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('3'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Repeat,
+        )),
+        DashboardAction::None,
+        "repeat and later digits cannot select a second destination"
+    );
+
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    ));
+    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "input queued before the event-loop boundary is refused rather than replayed"
+    );
+    assert!(rendered_footer(&dashboard, 120).contains("input was not sent"));
+}
+
+#[test]
+fn command_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles() {
+    for (cols, rows) in [(120, 40), (80, 24), (60, 24)] {
+        let mut hierarchy = agents_hierarchy();
+        let unicode_title = "界e\u{301}🙂";
+        hierarchy
+            .projects
+            .iter_mut()
+            .flat_map(|project| &mut project.workspaces)
+            .flat_map(|workspace| &mut workspace.sessions)
+            .find(|session| session.id == SessionId(1))
+            .unwrap()
+            .title = Some(unicode_title.into());
+        let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_area(Rect::new(0, 0, cols, rows));
+        dashboard.install_focus(SessionId(1));
+        let before = rendered_rows(&dashboard, cols, rows);
+        let before_row = before
+            .iter()
+            .find(|line| {
+                line.split('│')
+                    .next()
+                    .is_some_and(|left| left.contains("界"))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "wide title prefix is visible at {cols}x{rows}: {}",
+                    before.join("\n")
+                )
+            });
+        let original_suffix = before_row.chars().skip(5).collect::<String>();
+        let panes = dashboard.pane_rects(Rect::new(0, 0, cols, rows));
+
+        dashboard.event_action(command_event(
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        ));
+
+        let held = rendered_rows(&dashboard, cols, rows);
+        let labeled_row = held
+            .iter()
+            .find(|line| {
+                line.split('│')
+                    .next()
+                    .is_some_and(|left| left.contains("界"))
+            })
+            .expect("labeled title remains visible");
+        assert!(
+            labeled_row.contains("[1]"),
+            "visible Agent is labeled at {cols}x{rows}: {labeled_row}"
+        );
+        assert_eq!(
+            labeled_row.chars().skip(5).collect::<String>(),
+            original_suffix,
+            "the status and Unicode title keep their columns at {cols}x{rows}"
+        );
+        assert_eq!(held.len(), before.len(), "no row is added at {cols}x{rows}");
+        assert_eq!(
+            dashboard.pane_rects(Rect::new(0, 0, cols, rows)),
+            panes,
+            "pane geometry and advertised PTY dimensions stay fixed at {cols}x{rows}"
+        );
+    }
+}
+
+#[test]
+fn command_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::RightSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    ));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("agent-title-1") && row.contains("[1]")),
+        "releasing one Command key leaves the other held"
+    );
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::RightSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    ));
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+
+    dashboard.key(KeyCode::Char('b'));
+    let focused = dashboard.focused_session();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "a hidden sidebar does not intercept the modified digit"
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert!(dashboard.drain_outbox().is_empty());
+
+    let mut terminal = agents_dashboard();
+    assert_eq!(terminal.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal.ctrl('g');
+    terminal.key(KeyCode::Char('b'));
+    assert_eq!(terminal.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal.drain_outbox();
+    terminal.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert_eq!(
+        terminal.event_action(command_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "a Command digit cannot become a child byte when the sidebar is hidden"
+    );
+    assert!(terminal.drain_outbox().is_empty());
+}
+
+#[test]
+fn a_nonlabel_command_key_cancels_without_navigating() {
+    let mut dashboard = agents_dashboard();
+    let focused = dashboard.focused_session();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Backspace,
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+    assert!(rendered_footer(&dashboard, 120).contains("Session jump cancelled"));
+}
+
+#[test]
+fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_label() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+
+    let mut changed = agents_hierarchy();
+    let mut inserted = changed.projects[0].workspaces[0].sessions[0].clone();
+    inserted.id = SessionId(6);
+    inserted.run = SessionRunId(6);
+    inserted.name = "aaa-new-agent".into();
+    inserted.title = Some("aaa-new-agent".into());
+    let replacement = changed.projects[1].workspaces[0]
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(2))
+        .unwrap();
+    replacement.run = SessionRunId(9);
+    changed.projects[0].workspaces[0]
+        .sessions
+        .insert(0, inserted);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(changed)));
+
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let replacement_row = rows
+        .iter()
+        .find(|row| row.contains("agent-title-2"))
+        .expect("replacement row remains visible");
+    assert!(!replacement_row.contains("[2]"), "new run is unavailable");
+    let third_row = rows
+        .iter()
+        .find(|row| row.contains("agent-title-3"))
+        .expect("third row remains visible");
+    assert!(
+        third_row.contains("[3]"),
+        "new arrival and replacement do not renumber the frozen third target"
+    );
+    let inserted_row = rows
+        .iter()
+        .find(|row| row.contains("aaa-new-agent"))
+        .expect("new Agent row is visible");
+    assert!(!inserted_row.contains("[1]") && !inserted_row.contains("[2]"));
+    let focused = dashboard.focused_session();
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+    assert!(rendered_footer(&dashboard, 120).contains("Agent unavailable"));
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('3'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw,
+        "an unavailable frozen target does not prevent retrying a valid label"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+}
+
+#[test]
+fn more_than_nine_visible_agents_are_not_silently_truncated() {
+    let mut hierarchy = agents_hierarchy();
+    let template = hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| &project.workspaces)
+        .flat_map(|workspace| &workspace.sessions)
+        .find(|session| session.id == SessionId(2))
+        .unwrap()
+        .clone();
+    let sessions = &mut hierarchy.projects[0].workspaces[0].sessions;
+    for id in 10..=16 {
+        let mut agent = template.clone();
+        agent.id = SessionId(id);
+        agent.run = SessionRunId(id);
+        agent.name = format!("agent-{id}");
+        agent.title = Some(format!("agent-title-{id}"));
+        sessions.push(agent);
+    }
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+    assert!(rendered_footer(&dashboard, 120).contains("supports up to nine"));
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('1'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "a large list does not expose only the first nine rows"
+    );
+    open_agents(&mut dashboard);
+    assert!(palette_text(&dashboard).contains("Agents"));
 }
 
 #[test]
