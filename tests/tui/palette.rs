@@ -1149,6 +1149,28 @@ fn open_branch_form_with_repo(dashboard: &mut Dashboard, repo: &std::path::Path)
     answer_workspace_inspect(dashboard, inspect.request_id, repo);
 }
 
+fn open_workspace_form_with_repo(dashboard: &mut Dashboard, repo: &std::path::Path) {
+    open_branch_form_with_repo(dashboard, repo);
+    wait_for_branch_hints(dashboard);
+    to_branch(dashboard);
+}
+
+fn trunk_hint_repository() -> tempfile::TempDir {
+    let repo = hint_repository(&[]);
+    let renamed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["branch", "-m", "trunk"])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    repo
+}
+
 fn open_palette_branch_command_with_repo(dashboard: &mut Dashboard, repo: &std::path::Path) {
     assert_eq!(
         dashboard.key(KeyCode::Char(':')),
@@ -1729,9 +1751,10 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
 
 #[test]
 fn branch_creation_selects_workspace_without_launching_a_session() {
+    let repo = trunk_hint_repository();
     for hierarchy_first in [true, false] {
         let mut dashboard = dashboard_fixture();
-        open_workspace_form(&mut dashboard);
+        open_workspace_form_with_repo(&mut dashboard, repo.path());
         dashboard.event_action(Event::Paste("pick-demo".into()));
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -1739,7 +1762,16 @@ fn branch_creation_selects_workspace_without_launching_a_session() {
         );
         let message = only_request(dashboard.drain_outbox());
         let created_id = match &message.request {
-            Request::CreateWorkspace { id, .. } => id.clone(),
+            Request::CreateWorkspace { id, branch, .. } => {
+                assert_eq!(
+                    branch,
+                    &ovrcr::protocol::BranchRequest::New {
+                        branch: "pick-demo".into(),
+                        base: "trunk".into(),
+                    }
+                );
+                id.clone()
+            }
             other => panic!("expected create workspace: {other:?}"),
         };
         let hierarchy = extra_workspace_hierarchy(created_id);
@@ -3739,8 +3771,32 @@ fn create_status_check_workspace(dashboard: &mut Dashboard) -> (ClientMessage, S
 #[test]
 fn failed_workspace_creation_returns_to_the_form_with_its_values() {
     use ovrcr::protocol::LifecycleOutcome;
+    let repo = trunk_hint_repository();
     let mut dashboard = dashboard_fixture();
-    let (create, id) = create_status_check_workspace(&mut dashboard);
+    open_workspace_form_with_repo(&mut dashboard, repo.path());
+    dashboard.event_action(Event::Paste("feature/status-check".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateWorkspace { id, branch, .. } = &create.request else {
+        panic!("{:?}", create.request);
+    };
+    assert_eq!(
+        branch,
+        &ovrcr::protocol::BranchRequest::New {
+            branch: "feature/status-check".into(),
+            base: "trunk".into(),
+        }
+    );
+    let id = id.clone();
+    accept(&mut dashboard, &create);
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("┌ Create branch") && text.contains("Working…"),
+        "the accepted branch remains visible while Git works: {text}"
+    );
     lifecycle_completed(
         &mut dashboard,
         &create,
@@ -3787,7 +3843,7 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         branch,
         ovrcr::protocol::BranchRequest::New {
             branch: "feature/status-check-2".into(),
-            base: "main".into(),
+            base: "trunk".into(),
         }
     );
 }
