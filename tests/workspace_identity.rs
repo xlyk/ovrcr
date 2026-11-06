@@ -198,10 +198,67 @@ fn worktree_folders_follow_the_branch_and_id_folders_keep_working() {
                 ovrcr::protocol::ServerEvent::LifecycleCompleted {
                     client_token: 2,
                     outcome,
+                    target_workspace,
                     ..
                 },
             ) => {
                 assert_eq!(outcome, ovrcr::protocol::LifecycleOutcome::Succeeded);
+                assert_eq!(
+                    target_workspace,
+                    Some(ovrcr::protocol::WorkspaceLifecycleIdentity {
+                        project: "fixture".into(),
+                        id: first.clone(),
+                    })
+                );
+                completed = true;
+            }
+            _ => {}
+        }
+    }
+    // A failed workspace job carries the same frozen identity as a successful one.
+    ovrcr::protocol::write_frame(
+        &mut dashboard,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 3,
+            request: Request::CreateWorkspace {
+                project: "fixture".into(),
+                id: first.clone(),
+                branch: new_branch("feature/identity-conflict"),
+            },
+        },
+    )
+    .unwrap();
+    let (mut accepted, mut completed) = (false, false);
+    while !(accepted && completed) {
+        match ovrcr::protocol::read_frame::<ovrcr::protocol::ServerMessage>(&mut dashboard)
+            .expect("the Dashboard's failed create must complete")
+        {
+            ovrcr::protocol::ServerMessage::Response {
+                request_id: 3,
+                response,
+            } => {
+                assert_eq!(response, Response::Ok);
+                accepted = true;
+            }
+            ovrcr::protocol::ServerMessage::Event(
+                ovrcr::protocol::ServerEvent::LifecycleCompleted {
+                    client_token: 3,
+                    outcome,
+                    target_workspace,
+                    ..
+                },
+            ) => {
+                assert!(matches!(
+                    outcome,
+                    ovrcr::protocol::LifecycleOutcome::Failed { .. }
+                ));
+                assert_eq!(
+                    target_workspace,
+                    Some(ovrcr::protocol::WorkspaceLifecycleIdentity {
+                        project: "fixture".into(),
+                        id: first.clone(),
+                    })
+                );
                 completed = true;
             }
             _ => {}

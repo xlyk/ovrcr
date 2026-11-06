@@ -1664,7 +1664,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         "expected Creating… provisional/strip, got palette={mid:?} footer={:?}",
         footer_text(&dashboard)
     );
-    let mut hierarchy = extra_workspace_hierarchy(created_id);
+    let mut hierarchy = extra_workspace_hierarchy(created_id.clone());
     let workspace = hierarchy
         .projects
         .iter_mut()
@@ -1688,6 +1688,10 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
             client_token: message.request_id,
             op: ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
             outcome: ovrcr::protocol::LifecycleOutcome::Succeeded,
+            target_workspace: Some(ovrcr::protocol::WorkspaceLifecycleIdentity {
+                project: "consigint".into(),
+                id: created_id.clone(),
+            }),
         }));
     let text = palette_text(&dashboard);
     assert!(
@@ -3375,10 +3379,21 @@ fn lifecycle_completed(
         }
         _ => ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
     };
+    let target_workspace = match &request.request {
+        Request::CreateWorkspace { project, id, .. }
+        | Request::CreateWorkspaceWithLaunch { project, id, .. } => {
+            Some(ovrcr::protocol::WorkspaceLifecycleIdentity {
+                project: project.clone(),
+                id: id.clone(),
+            })
+        }
+        _ => None,
+    };
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
         client_token: request.request_id,
         op,
         outcome,
+        target_workspace,
     }))
 }
 

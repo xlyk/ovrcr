@@ -3939,8 +3939,14 @@ impl Dashboard {
                     client_token,
                     op,
                     outcome,
+                    target_workspace,
                 } => {
-                    self.on_lifecycle_completed(client_token, op, outcome);
+                    self.on_lifecycle_completed_with_target(
+                        client_token,
+                        op,
+                        outcome,
+                        target_workspace,
+                    );
                 }
                 ServerEvent::InitialPromptIntentChanged(snapshot) => {
                     self.install_initial_prompt_snapshot(*snapshot);
@@ -4170,7 +4176,10 @@ impl Dashboard {
         }
     }
 
-    fn update_hierarchy(&mut self, mut hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
+    pub(super) fn update_hierarchy(
+        &mut self,
+        mut hierarchy: HierarchySnapshot,
+    ) -> Vec<ClientMessage> {
         let focused_before = self.focused_session();
         let previous_live: Vec<_> = self
             .panes

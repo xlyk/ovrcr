@@ -88,7 +88,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Open New agent session |
-| `w` | Create a workspace (form) |
+| `w` | Create a branch (form) |
 | `a` | Register a project (form) |
 | `X` | Archive the selected terminal; confirms before stopping live work |
 | `p` / `r` | Pause or resume the selected session; no confirmation |
@@ -643,7 +643,7 @@ dashboard has detached it reconnects first. Type to filter actions or to search 
 terminal by project, branch, and title. Arrows select a result, `Enter`
 continues, and `Esc` cancels.
 
-Entries are, in order: `New agent session (n)`, `Create terminal`, `Create workspace (w)`,
+Entries are, in order: `New agent session (n)`, `Create terminal`, `Create branch (w)`,
 `Register project (a)`, the selected session's actions (`Rename terminal`,
 resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
 Settings, Events, quota actions, `Archived sessions`, one row per session, and
@@ -723,6 +723,13 @@ you to choose deliberately; it never substitutes the first listed checkout.
 Start checks the selected checkout again, including its registration, path,
 Git identity and root protection. Register a project with `a` when no project
 is available.
+
+**Create new branch…** opens the branch-only child form. The parent session
+form stays suspended with its prompt, destination, focus, and explicit harness
+or model choices. `Esc` from the unsubmitted child returns to that exact form.
+After a successful, identity-matched branch readback, the new checkout becomes
+the selected destination; the Agent still starts only when you submit the
+parent form.
 
 The picker opens even when the current workspace cannot launch. This does not
 change the separate **Create terminal** form or its existing root-workspace
@@ -820,54 +827,43 @@ Resume, unavailable plugin support and unsupported options remain native with
 reporting unavailable.
 See [Cursor harness](cursor-harness.md) for the runtime capability check and passive plugin contract.
 
-### Create workspace (`w`)
+### Create branch (`w`)
 
-Type a task, or choose a branch, and what to start: **Agent**, **Terminal**, or
-**Nothing yet**. There is no separate workspace name. Agent and Terminal have the same options as terminal creation.
-Only the selected program starts; an Agent launch does not also open a shell.
-Nothing yet creates an empty workspace.
+`w` opens a branch-only form. Project starts at the current project and can be
+changed. Branch name starts empty; `feature/auth-refresh` is a placeholder, not
+a submitted value. **Workspace options** is collapsed by default and contains
+Base. The detected local default branch fills Base when one is found. Detection
+uses the repository's local Git state, including `origin/HEAD` when available;
+it does not fetch or assume `main`. If no default can be resolved, Base stays
+empty until a valid local branch or detected default is entered.
 
-The worktree folder under the project's workspace root is named after the branch:
-`feature/Login-Form` becomes `feature-login-form`, and a name already in use gets
-`-2`, `-3`, ….
+Git suggestions load in the background and time out after two seconds. A branch
+name must pass `git check-ref-format --branch` and must not already exist in the
+repository. Base must resolve to a local branch or the detected default. While
+suggestions are pending, Submit waits; if the lookup fails, the form explains
+why it cannot validate a Base. No workspace is created until both names are
+valid and resolved.
 
-Each project remembers its last successfully launched Agent and preset, or
-Terminal choice, across dashboard restarts. One-off command text and tasks are never saved.
-Nothing yet leaves the preference unchanged. A project without a preference
-starts with Terminal selected. If a remembered agent is unavailable, choose a
-replacement explicitly before launching.
+The worktree folder under the project root is derived from the branch name:
+`feature/auth-refresh` becomes `feature-auth-refresh`. Workspace creation uses
+the Server's automatic local-terminal setting. It never starts an Agent from
+this form. From New agent session, the child hides the parent form while keeping
+its prompt, branch choice, focus, and explicit harness/model choices; after a
+correlated successful receipt and matching fresh registry/hierarchy readback,
+the new branch is selected and the parent form returns. `Esc` before Submit
+restores that parent form. While creation or readback is pending, the child
+stays visible and cannot be dismissed or submitted again.
 
-The form opens on **Task** (optional). Typing a task fills Branch with the
-prefix and a slug of the task (`Fix the login bug` → `feature/fix-the-login-bug`:
-lowercase ASCII letters, digits and `_`, other runs one `-`, at most 50
-characters) until you edit Branch yourself. The task names the first session and,
-for an agent that takes a first message, starts it with that message, as under
-Create terminal; with Terminal it only names the session, with Nothing yet only
-the branch. A workspace request cannot name its session, so with a task the
-Dashboard creates the workspace first and starts the named session when that
-succeeds; if that session cannot start, the workspace stays and the same
-recovery choices below apply. `w`, type the task, `Enter` is the whole flow.
+When `w` is used on its own, a verified branch returns to Browse with its
+workspace selected, even if the Server also created a local terminal. A normal
+`n` start submits the Agent only after the parent form is confirmed. `Create
+terminal` remains a separate command for an already registered workspace.
 
-Project defaults to the selected terminal's project. Branch starts as
-`feature/`; typing there appends to that prefix. `Enter` submits from
-any field. A new branch needs a name after the prefix that Git accepts as a
-branch name (the rules of `git check-ref-format --branch`); otherwise nothing is
-sent and the reason shows under Branch. `Tab` and `Shift-Tab` reach the other
-fields. On Branch mode, `Space` or Left/Right switches between `new` and
-`existing`. Existing mode lists local branches and hides Base.
-
-Base defaults to the repository's `origin/HEAD` target, then `main`, `master`, or
-the current HEAD. A remote-only default uses its full Git ref as Base. Git
-suggestions load in the background, are cached per project until the palette
-closes, and time out after two seconds. A footer note explains failures, after
-which Branch and Base accept free text. Submission waits for pending suggestions.
-
-If creation fails before the workspace exists (Git refuses the branch or base),
-the form returns with its values and the reason, and submitting again reuses the
-same workspace identity. If the workspace is created but its first program
-cannot launch, the workspace remains and the form turns into its recovery
-choices: Retry, choose another agent, or open a shell in that existing
-workspace. Retry does not confirm that a previous process has stopped.
+If creation fails before a workspace exists, the child keeps its branch and
+Base values for correction and retry with the same workspace identity. After a
+partial failure, the Dashboard performs a fresh Inspect and List before it
+allows another attempt; an uncertain or already-registered identity blocks
+retry to avoid creating a duplicate checkout.
 
 If a program starts and later exits, or the server restarts, the session row
 stays. Reopen in a fresh shell is an explicit action on that same row; it does
@@ -978,7 +974,7 @@ not change which keys work or what input a pane accepts. Every key a card
 names comes from the same key table as the footer and the menu.
 
 - **No project registered:** `Welcome to OVRCR` with two numbered steps,
-  `1  a  Register a repository` and `2  w  Start an agent in a new workspace`,
+  `1  a  Register a repository` and `2  w  Create a branch`,
   then `Space actions · : commands · ? keys`. The instance directory and
   socket paths are at the top of [Events](#events).
 - **Workspace row selected:** the pane header names `project / branch`; the
@@ -989,7 +985,7 @@ names comes from the same key table as the footer and the menu.
   none) and elapsed time. Then
   the next steps: `j open <session>` while the row below is that workspace's
   first session (`j` selects the next row), `Enter expand…` when the workspace
-  is collapsed, `n new agent session`, `w new workspace` and `Space w more`.
+  is collapsed, `n new agent session`, `w create branch` and `Space w more`.
   A key that is unavailable there is left out. `n` opens the branch-based form
   even when a root warning blocks starting in this checkout; the warning
   remains visible and Start is blocked until a valid destination is chosen.
@@ -1000,8 +996,9 @@ names comes from the same key table as the footer and the menu.
   count and attention in the sidebar strip's words and order:
   `? 1 needs input` for a running agent waiting on you, `✓ 1 ready` for an
   Unread reply. Then
-  `w new workspace` and `a register another project`. While the project has no
-  agent yet, the card leads with `Next: press w to start your first agent`.
+  `n new agent session`, `w create branch` and `a register another project`.
+  While the project has no agent yet, the card leads with
+  `Next: press n to start your first agent`.
 - **Nothing selected,** for example right after registering a project: every
   project's card, each led by its name, then the same two keys.
 
