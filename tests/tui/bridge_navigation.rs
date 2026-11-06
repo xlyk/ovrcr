@@ -390,12 +390,9 @@ fn bridge_navigation_discards_unsent_palette_draft_and_ignores_submitted_complet
     submitted.key(KeyCode::Char(' '));
     submitted.key(KeyCode::Char('w'));
     submitted.key(KeyCode::Char('t'));
-    let _ = submitted.event_action(Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::ALT,
-    )));
-    let request = optional_request(submitted.drain_outbox())
-        .expect("terminal creation form must submit");
+    let _ = submitted.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
+    let request =
+        optional_request(submitted.drain_outbox()).expect("terminal creation form must submit");
     let Request::CreateSession(original) = &request.request else {
         panic!("expected session creation")
     };

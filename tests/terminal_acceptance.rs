@@ -1558,7 +1558,10 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
         wait_deadline(),
     )?;
     dashboard.send(b"\rCreate new branch")?;
-    dashboard.wait_until(|screen| screen.contains("Create new branch"), wait_deadline())?;
+    dashboard.wait_until(
+        |screen| screen.contains("Create new branch"),
+        wait_deadline(),
+    )?;
     dashboard.send(b"\r")?;
     dashboard.wait_until(|screen| screen.contains("Branch name"), wait_deadline())?;
     dashboard.send(b"feature/cua-agent-prompt\t ")?;
@@ -1597,7 +1600,10 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
     let output = fixture.read_terminal(session.id)?;
     let arguments = output
         .lines()
-        .filter_map(|line| line.strip_prefix("AGENT_ARG=<").and_then(|line| line.strip_suffix('>')))
+        .filter_map(|line| {
+            line.strip_prefix("AGENT_ARG=<")
+                .and_then(|line| line.strip_suffix('>'))
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         arguments

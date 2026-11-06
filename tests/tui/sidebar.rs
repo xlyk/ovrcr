@@ -1434,10 +1434,9 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("container-target".into()));
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let create = only_request(dashboard.drain_outbox());

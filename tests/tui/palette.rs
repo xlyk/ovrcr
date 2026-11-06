@@ -1,10 +1,10 @@
 //! Command palette, which-key popup, and the creation forms.
 
-use crate::*;
 #[cfg(not(target_os = "macos"))]
 use crate::deadline::wait_deadline;
 #[cfg(target_os = "macos")]
 use crate::live::wait_deadline;
+use crate::*;
 use ratatui::layout::Position;
 
 fn extra_workspace_hierarchy(id: impl Into<String>) -> HierarchySnapshot {
@@ -198,10 +198,9 @@ fn space_w_t_opens_terminal_with_terminal_start_selected() {
     );
 
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let create = only_request(dashboard.drain_outbox());
@@ -209,7 +208,10 @@ fn space_w_t_opens_terminal_with_terminal_start_selected() {
         panic!("New terminal must preserve the terminal creation route");
     };
     assert_eq!(create.kind, ovrcr_protocol::SessionKind::Terminal);
-    assert_eq!((create.project.as_str(), create.workspace.as_str()), ("consigint", "auth"));
+    assert_eq!(
+        (create.project.as_str(), create.workspace.as_str()),
+        ("consigint", "auth")
+    );
 }
 
 #[test]
@@ -442,10 +444,7 @@ fn empty_hierarchy_shows_start_screen() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Welcome to OVRCR"));
     assert!(text.contains("1  a  Register a repository"), "{text}");
-    assert!(
-        text.contains("2  w  Create a branch"),
-        "{text}"
-    );
+    assert!(text.contains("2  w  Create a branch"), "{text}");
     assert!(
         text.contains("Space actions · : commands · ? keys"),
         "{text}"
@@ -791,10 +790,7 @@ fn whichkey_empty_workspace_click_sets_new_agent_destination() {
     let card = palette_text(&dashboard);
     assert!(card.contains("spacelift-agent / empty"), "{card}");
     assert!(card.contains("No sessions yet"), "{card}");
-    assert!(
-        card.contains("n        new agent session"),
-        "{card}"
-    );
+    assert!(card.contains("n        new agent session"), "{card}");
     let action = dashboard.key(KeyCode::Char('n'));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     let requests = dashboard.drain_outbox();
@@ -1213,11 +1209,17 @@ fn standalone_branch_form_requires_an_explicit_valid_name() {
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(dashboard.drain_outbox().is_empty(), "an empty name cannot submit");
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "an empty name cannot submit"
+    );
     assert!(palette_words(&dashboard).contains("Branch name is required"));
     dashboard.event_action(Event::Paste("feature/contains space".into()));
     dashboard.key(KeyCode::Enter);
-    assert!(dashboard.drain_outbox().is_empty(), "Git rejects spaces in refs");
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "Git rejects spaces in refs"
+    );
     assert!(palette_words(&dashboard).contains("Branch names can't contain spaces"));
     dashboard.ctrl('u');
     assert!(!palette_words(&dashboard).contains("Branch names can't contain spaces"));
@@ -1507,7 +1509,10 @@ fn branch_form_uses_detected_default_and_accepts_an_explicit_local_base() {
     dashboard.key(KeyCode::Tab); // Base
     let text = palette_words(&dashboard);
     assert!(text.contains("Base"), "{text}");
-    assert!(text.contains("main"), "the detected default is shown: {text}");
+    assert!(
+        text.contains("main"),
+        "the detected default is shown: {text}"
+    );
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("topic".into()));
     assert_eq!(
@@ -1515,7 +1520,12 @@ fn branch_form_uses_detected_default_and_accepts_an_explicit_local_base() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspace { project, id, branch } = message.request else {
+    let Request::CreateWorkspace {
+        project,
+        id,
+        branch,
+    } = message.request
+    else {
         panic!("{:?}", message.request);
     };
     assert_eq!(project, "consigint");
@@ -1539,7 +1549,10 @@ fn deferred_branch_submit_refuses_a_name_that_already_exists() {
         &mut dashboard,
         "an existing branch name must not create a duplicate worktree",
     );
-    assert!(text.contains("That branch already exists in this repository"), "{text}");
+    assert!(
+        text.contains("That branch already exists in this repository"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1596,8 +1609,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     // confirm the new branch.
     let mid = palette_text(&dashboard);
     assert!(
-        mid.lines().any(|line| line.contains("┌ Create branch"))
-            && mid.contains("Working…"),
+        mid.lines().any(|line| line.contains("┌ Create branch")) && mid.contains("Working…"),
         "{mid}"
     );
     let mut hierarchy = extra_workspace_hierarchy(created_id.clone());
@@ -1733,9 +1745,9 @@ fn branch_creation_selects_workspace_without_launching_a_session() {
         let hierarchy = extra_workspace_hierarchy(created_id);
         accept(&mut dashboard, &message);
         let readbacks = if hierarchy_first {
-            dashboard.handle_server_message(ServerMessage::Event(
-                ServerEvent::HierarchyChanged(hierarchy.clone()),
-            ));
+            dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy.clone(),
+            )));
             assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
             lifecycle_completed(
                 &mut dashboard,
@@ -1749,24 +1761,33 @@ fn branch_creation_selects_workspace_without_launching_a_session() {
                 ovrcr::protocol::LifecycleOutcome::Succeeded,
             );
             assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
-            dashboard.handle_server_message(ServerMessage::Event(
-                ServerEvent::HierarchyChanged(hierarchy.clone()),
-            ));
+            dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy.clone(),
+            )));
             readbacks
         };
         let outgoing = answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
         assert_eq!(dashboard.focused_session(), None);
-        assert!(!outgoing.iter().any(|message| matches!(
-            &message.request,
-            Request::SetView { view } if view.focused == Some(SessionId(99))
-        )), "branch creation must not attach a local shell: {outgoing:?}");
-        assert!(!outgoing.iter().any(|message| matches!(
-            &message.request,
-            Request::CreateSession(_) | Request::CreateAgentSession(_)
-        )), "branch creation must not launch a session: {outgoing:?}");
+        assert!(
+            !outgoing.iter().any(|message| matches!(
+                &message.request,
+                Request::SetView { view } if view.focused == Some(SessionId(99))
+            )),
+            "branch creation must not attach a local shell: {outgoing:?}"
+        );
+        assert!(
+            !outgoing.iter().any(|message| matches!(
+                &message.request,
+                Request::CreateSession(_) | Request::CreateAgentSession(_)
+            )),
+            "branch creation must not launch a session: {outgoing:?}"
+        );
         let text = palette_text(&dashboard);
         assert!(text.contains("consigint / pick-demo"), "{text}");
-        assert!(text.contains("$ local"), "the readback includes its existing local shell: {text}");
+        assert!(
+            text.contains("$ local"),
+            "the readback includes its existing local shell: {text}"
+        );
         assert!(!text.contains("┌ Create branch"), "{text}");
     }
 }
@@ -1790,10 +1811,9 @@ fn created_session_enters_terminal_mode() {
     let mut dashboard = dashboard_fixture();
     open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -2653,10 +2673,14 @@ fn creation_forms_keep_their_title_and_active_field_visible_at_supported_sizes()
     for (width, height) in [(60, 18), (80, 24)] {
         let rows = rendered_rows(&agent, width, height);
         assert!(
-            rows.iter().any(|row| row.contains('┌') && row.contains("New agent session")),
+            rows.iter()
+                .any(|row| row.contains('┌') && row.contains("New agent session")),
             "{rows:?}"
         );
-        assert!(rows.iter().any(|row| row.contains('›')), "active field missing: {rows:?}");
+        assert!(
+            rows.iter().any(|row| row.contains('›')),
+            "active field missing: {rows:?}"
+        );
     }
 
     for (key, title) in [('w', "Create branch"), ('a', "Register project")] {
@@ -2681,10 +2705,14 @@ fn creation_forms_keep_their_title_and_active_field_visible_at_supported_sizes()
     for (width, height) in [(60, 18), (80, 24)] {
         let rows = rendered_rows(&terminal, width, height);
         assert!(
-            rows.iter().any(|row| row.contains('┌') && row.contains("Create terminal")),
+            rows.iter()
+                .any(|row| row.contains('┌') && row.contains("Create terminal")),
             "{rows:?}"
         );
-        assert!(rows.iter().any(|row| row.contains('›')), "active field missing: {rows:?}");
+        assert!(
+            rows.iter().any(|row| row.contains('›')),
+            "active field missing: {rows:?}"
+        );
     }
 }
 
@@ -2958,9 +2986,9 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         workspace.sessions.clear();
         accept(&mut dashboard, &message);
         let readbacks = if hierarchy_first {
-            dashboard.handle_server_message(ServerMessage::Event(
-                ServerEvent::HierarchyChanged(hierarchy.clone()),
-            ));
+            dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy.clone(),
+            )));
             assert_eq!(
                 dashboard.focused_session(),
                 Some(SessionId(1)),
@@ -2982,9 +3010,9 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
                 Some(SessionId(1)),
                 "wait until the created workspace exists in hierarchy"
             );
-            dashboard.handle_server_message(ServerMessage::Event(
-                ServerEvent::HierarchyChanged(hierarchy.clone()),
-            ));
+            dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                hierarchy.clone(),
+            )));
             readbacks
         };
         let outgoing = answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
@@ -2993,20 +3021,23 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
             None,
             "created empty workspace must replace the previous pane selection"
         );
-        assert!(!outgoing.iter().any(|message| matches!(
-            &message.request,
-            Request::SetView { view } if view.focused.is_some()
-        )), "branch-only creation must not attach a session: {outgoing:?}");
-        assert!(!outgoing.iter().any(|message| matches!(
-            &message.request,
-            Request::CreateSession(_) | Request::CreateAgentSession(_)
-        )), "branch-only creation must not launch a session: {outgoing:?}");
+        assert!(
+            !outgoing.iter().any(|message| matches!(
+                &message.request,
+                Request::SetView { view } if view.focused.is_some()
+            )),
+            "branch-only creation must not attach a session: {outgoing:?}"
+        );
+        assert!(
+            !outgoing.iter().any(|message| matches!(
+                &message.request,
+                Request::CreateSession(_) | Request::CreateAgentSession(_)
+            )),
+            "branch-only creation must not launch a session: {outgoing:?}"
+        );
         let text = palette_text(&dashboard);
         assert!(text.contains("consigint / pick-demo"), "{text}");
-        assert!(
-            text.contains("n        new agent session"),
-            "{text}"
-        );
+        assert!(text.contains("n        new agent session"), "{text}");
         assert!(text.contains("No sessions yet"), "{text}");
         assert!(!text.contains("┌ Create branch"), "{text}");
         dashboard.key(KeyCode::Char('n'));
@@ -3109,10 +3140,9 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
     let mut dashboard = dashboard_fixture();
     open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -3214,10 +3244,9 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
     let focused = dashboard.focused_session();
     open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -3373,7 +3402,11 @@ fn answer_branch_readbacks(
     requests: Vec<ClientMessage>,
     hierarchy: &HierarchySnapshot,
 ) -> Vec<ClientMessage> {
-    assert_eq!(requests.len(), 2, "branch creation requires Inspect and List");
+    assert_eq!(
+        requests.len(),
+        2,
+        "branch creation requires Inspect and List"
+    );
     let registry = registry_from_hierarchy(hierarchy);
     let mut outgoing = Vec::new();
     for message in requests {
@@ -3730,7 +3763,10 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         "{words}"
     );
     assert!(!words.contains("Conflict"), "{words}");
-    assert!(words.contains("Branch name › feature/status-check"), "{words}");
+    assert!(
+        words.contains("Branch name › feature/status-check"),
+        "{words}"
+    );
     // Fixing the name retries the same creation.
     dashboard.event_action(Event::Paste("-2".into()));
     assert_eq!(
@@ -3747,10 +3783,13 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         panic!("{:?}", retry.request);
     };
     assert_eq!(retry_id, id);
-    assert_eq!(branch, ovrcr::protocol::BranchRequest::New {
-        branch: "feature/status-check-2".into(),
-        base: "main".into(),
-    });
+    assert_eq!(
+        branch,
+        ovrcr::protocol::BranchRequest::New {
+            branch: "feature/status-check-2".into(),
+            base: "main".into(),
+        }
+    );
 }
 
 #[test]
@@ -3790,10 +3829,9 @@ fn named_terminal_failure_keeps_the_form_and_can_be_dismissed() {
     let mut dashboard = dashboard_fixture();
     open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ))),
+        dashboard.event_action(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT,)
+        )),
         ovrcr::tui::DashboardAction::Redraw
     );
     let create = only_request(dashboard.drain_outbox());
@@ -4906,7 +4944,10 @@ fn warning_disables_new_terminal_and_shows_reason() {
     assert!(menu.contains("New terminal"), "{menu}");
     dashboard.key(KeyCode::Char('t'));
     let menu = palette_text(&dashboard);
-    assert!(menu.contains("Which key"), "blocked action keeps the menu open: {menu}");
+    assert!(
+        menu.contains("Which key"),
+        "blocked action keeps the menu open: {menu}"
+    );
     assert!(!menu.contains("┌ Create terminal"), "{menu}");
     dashboard.key(KeyCode::Down);
     let menu = palette_text(&dashboard)
@@ -4930,12 +4971,8 @@ fn slash_branch_picker_does_not_split_on_slashes() {
     open_new_terminal_from_menu(&mut dashboard);
     let text = palette_text(&dashboard);
     assert!(text.contains("consigint / feature/auth"), "{text}");
-    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::ALT,
-    )));
-    let message = optional_request(dashboard.drain_outbox())
-        .expect("create terminal must submit");
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
+    let message = optional_request(dashboard.drain_outbox()).expect("create terminal must submit");
     let Request::CreateSession(request) = message.request else {
         panic!("{:?}", message.request);
     };
@@ -4969,12 +5006,8 @@ fn shared_internal_ids_are_resolved_with_project() {
     open_new_terminal_from_menu(&mut dashboard);
     let text = palette_text(&dashboard);
     assert!(text.contains("spacelift-agent / feature/other"), "{text}");
-    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::ALT,
-    )));
-    let message = optional_request(dashboard.drain_outbox())
-        .expect("create terminal must submit");
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
+    let message = optional_request(dashboard.drain_outbox()).expect("create terminal must submit");
     let Request::CreateSession(request) = message.request else {
         panic!("{:?}", message.request);
     };
@@ -5009,10 +5042,8 @@ fn terminal_workspace_picker_shows_current_branch_and_keeps_stable_target() {
     );
 
     let submitted = {
-        let _ = dashboard.event_action(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        )));
+        let _ =
+            dashboard.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
         optional_request(dashboard.drain_outbox())
     };
     let message = submitted.expect("create terminal must submit the same workspace");
@@ -5088,12 +5119,15 @@ fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
         );
     }
     dashboard.key(KeyCode::Down);
-    assert_eq!(dashboard.key(KeyCode::Enter), ovrcr::tui::DashboardAction::Redraw);
-    assert!(dashboard.drain_outbox().is_empty(), "accepting a workspace must not submit");
-    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::ALT,
-    )));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "accepting a workspace must not submit"
+    );
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
     let submitted = optional_request(dashboard.drain_outbox()).map(|message| message.request);
     let Some(Request::CreateSession(request)) = submitted else {
         panic!("explicit reselection must permit submission");
@@ -5209,7 +5243,10 @@ fn create_terminal_uses_agent_prompt_and_terminal_command_fields() {
     dashboard.key(KeyCode::Tab); // Start
     dashboard.key(KeyCode::Down); // Terminal
     let words = palette_words(&dashboard);
-    assert!(words.contains("Start") && words.contains("Terminal"), "{words}");
+    assert!(
+        words.contains("Start") && words.contains("Terminal"),
+        "{words}"
+    );
     assert!(words.contains("Command"), "{words}");
     assert!(words.contains("Workspace"), "{words}");
     assert!(words.contains("Name"), "{words}");
