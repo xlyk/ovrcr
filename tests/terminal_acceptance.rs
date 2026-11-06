@@ -1591,9 +1591,13 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
     )?;
     dashboard.send(b"\r")?;
     dashboard.wait_until(|screen| screen.contains("Branch name"), wait_deadline())?;
-    dashboard.send(b"feature/cua-agent-prompt\t ")?;
+    let base = live::git(&fixture.repo, &["symbolic-ref", "--short", "HEAD"]);
+    let base = base.trim();
+    // Expand Workspace options, focus Base, clear its placeholder, and choose
+    // the fixture repository's actual default branch before creating the child.
+    dashboard.send(format!("feature/cua-agent-prompt\t \t\x15{base}").as_bytes())?;
     dashboard.wait_until(
-        |screen| screen.contains("Base") && screen.contains("main"),
+        |screen| screen.contains("Base") && screen.contains(base),
         wait_deadline(),
     )?;
     dashboard.send(b"\r")?;
@@ -1603,7 +1607,10 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
     )?;
     // Agent harness has focus after child success; the next fields are Model,
     // then the multiline Initial prompt.
-    dashboard.send(b"\t\t--help me fix the build\x1b\r")?;
+    let prompt = "--help me fix the build\nand keep this exact second line";
+    let prompt_input = prompt.replace('\n', "\r");
+    // Enter inserts the newline; Escape + Enter is the form's actual Start action.
+    dashboard.send(format!("\t\t{prompt_input}\x1b\r").as_bytes())?;
     dashboard.wait_until(|screen| screen.contains("AGENT_ARGS_END"), wait_deadline())?;
     fixture.managed_pgids = fixture.session_pgids()?;
     let hierarchy = fixture.list()?;
@@ -1623,27 +1630,17 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
         .iter()
         .find(|session| matches!(&session.kind, ovrcr::protocol::SessionKind::Agent { name } if name == "claude"))
         .context("New agent session missing from the selected branch")?;
-    assert_ne!(session.name, "--help me fix the build");
+    assert_ne!(session.name, prompt);
     let output = fixture.read_terminal(session.id)?;
-    let arguments = output
-        .lines()
-        .filter_map(|line| {
-            line.strip_prefix("AGENT_ARG=<")
-                .and_then(|line| line.strip_suffix('>'))
-        })
-        .collect::<Vec<_>>();
+    let prompt_argument = format!("AGENT_ARG=<{prompt}>\n");
     assert_eq!(
-        arguments
-            .iter()
-            .filter(|argument| **argument == "--help me fix the build")
-            .count(),
+        output.matches(&prompt_argument).count(),
         1,
-        "the complete prompt must arrive as exactly one native argument: {output}"
+        "the complete multiline prompt must arrive as exactly one native argument: {output}"
     );
+    let separator_and_prompt = format!("AGENT_ARG=<-->\n{prompt_argument}");
     assert!(
-        arguments
-            .windows(2)
-            .any(|pair| pair == ["--", "--help me fix the build"]),
+        output.contains(&separator_and_prompt),
         "the exact prompt must follow its explicit native argument separator: {output}"
     );
     dashboard.detach()?;
@@ -2549,11 +2546,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         },
         wait_deadline(),
     )?;
-    dashboard.send(b" wn")?;
+    // Space w t opens the named Terminal form.
+    dashboard.send(b" wt")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Create terminal")
-                && screen.contains("Agent")
+                && screen.contains("Start")
+                && screen.contains("Workspace")
                 && !screen.contains("Which key")
         },
         wait_deadline(),

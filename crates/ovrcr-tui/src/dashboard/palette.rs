@@ -5385,6 +5385,7 @@ impl Dashboard {
                 palette.cursor = Default::default();
             }
             self.refresh_workspace_form(palette);
+            self.refresh_model_query(palette);
             self.palette = Some(std::mem::replace(palette, Palette::new()));
         } else {
             self.palette = None;
@@ -8777,6 +8778,115 @@ mod launch_tests {
         set(d, "Branch name", "feature/child");
     }
 
+    fn open_explicit_model_branch_child() -> (Dashboard, ClientMessage) {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::Explicit("sonnet".into()),
+            },
+        );
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
+        );
+        let requests = d.drain_outbox();
+        let [query] = requests.as_slice() else {
+            panic!("New agent setup should have one pending model lookup: {requests:?}");
+        };
+        assert!(matches!(
+            &query.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                argv: requested_argv,
+                project,
+                workspace,
+            } if preset == "claude"
+                && requested_argv == &argv
+                && project == "demo"
+                && workspace == "root"
+        ));
+        set(&mut d, "Name", "Parent draft title");
+        set(&mut d, "Initial prompt", "Parent draft prompt");
+        select_create_branch_action(&mut d, CreateBranchActionPath::Unfiltered);
+        {
+            let palette = d.palette.as_mut().unwrap();
+            palette.suggestions.worker = None;
+            palette.suggestions.in_flight = None;
+            palette.suggestions.project = Some("demo".into());
+            palette.suggestions.cache.insert(
+                "demo".into(),
+                Ok(super::super::git_hints::Hints {
+                    branches: vec!["trunk".into(), "develop".into()],
+                    base: "develop".into(),
+                }),
+            );
+        }
+        set(&mut d, "Branch name", "feature/child");
+        (d, query.clone())
+    }
+
+    fn claude_model_capabilities(
+        binding: &str,
+        resolved: &str,
+    ) -> crate::protocol::AgentModelCapabilities {
+        crate::protocol::AgentModelCapabilities {
+            preset: "claude".into(),
+            binding: Some(binding.into()),
+            models: vec![crate::protocol::AgentModelOption {
+                alias: "sonnet".into(),
+                resolved: resolved.into(),
+            }],
+            reason: None,
+        }
+    }
+
+    fn start_prompted_agent(d: &mut Dashboard) -> crate::protocol::InitialPromptLaunchRequest {
+        let requests = {
+            submit(d);
+            d.drain_outbox()
+        };
+        let [allocation] = requests.as_slice() else {
+            panic!("Start should allocate exactly one initial-prompt intent: {requests:?}");
+        };
+        assert_eq!(allocation.request, Request::AllocateInitialPromptIntent);
+        let followup = d.handle_server_message(ServerMessage::Response {
+            request_id: allocation.request_id,
+            response: Response::InitialPromptIntent(crate::protocol::InitialPromptIntentId {
+                server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+                sequence: 1,
+            }),
+        });
+        let [launch] = followup.as_slice() else {
+            panic!("one intent acknowledgement should produce one launch: {followup:?}");
+        };
+        let Request::CreateAgentSessionWithPrompt(launch) = &launch.request else {
+            panic!("the acknowledged intent should preserve the prompt: {launch:?}");
+        };
+        launch.clone()
+    }
+
     #[derive(Clone, Copy)]
     enum CreateBranchActionPath {
         Unfiltered,
@@ -8919,7 +9029,7 @@ mod launch_tests {
         registry: Registry,
         hierarchy: crate::protocol::HierarchySnapshot,
         list_first: bool,
-    ) {
+    ) -> Vec<ClientMessage> {
         let (inspect_response, list_response) = (
             ServerMessage::Response {
                 request_id: inspect.request_id,
@@ -8933,23 +9043,25 @@ mod launch_tests {
                 response: Response::Hierarchy(hierarchy),
             },
         );
+        let mut outgoing = Vec::new();
         if list_first {
-            d.handle_server_message(list_response);
+            outgoing.extend(d.handle_server_message(list_response));
             assert!(
                 d.palette
                     .as_ref()
                     .is_some_and(|palette| palette.pending.is_some())
             );
-            d.handle_server_message(inspect_response);
+            outgoing.extend(d.handle_server_message(inspect_response));
         } else {
-            d.handle_server_message(inspect_response);
+            outgoing.extend(d.handle_server_message(inspect_response));
             assert!(
                 d.palette
                     .as_ref()
                     .is_some_and(|palette| palette.pending.is_some())
             );
-            d.handle_server_message(list_response);
+            outgoing.extend(d.handle_server_message(list_response));
         }
+        outgoing
     }
 
     fn branch_completion(
@@ -13117,6 +13229,282 @@ mod launch_tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn canceling_branch_child_requeries_models_when_old_response_arrives_while_child_is_open() {
+        let (mut d, old_query) = open_explicit_model_branch_child();
+        d.agent_models_event(
+            old_query.request_id,
+            claude_model_capabilities("stale-root-binding", "stale-root-model"),
+        );
+        assert!(d.model_query.is_none());
+        assert!(d.drain_outbox().is_empty());
+
+        d.key(KeyCode::Esc);
+        let requests = d.drain_outbox();
+        let [fresh_query] = requests.as_slice() else {
+            panic!("cancel should look up models again for the restored parent: {requests:?}");
+        };
+        assert_ne!(fresh_query.request_id, old_query.request_id);
+        assert!(matches!(
+            &fresh_query.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                project,
+                workspace,
+                ..
+            } if preset == "claude" && project == "demo" && workspace == "root"
+        ));
+        let Page::Form {
+            command: Command::NewAgentSession,
+            fields,
+            ..
+        } = &d.palette.as_ref().unwrap().page
+        else {
+            panic!("cancel restores the parent New agent form")
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value,
+            super::super::picker::workspace_pick_value("demo", "root")
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Agent harness")
+                .unwrap()
+                .value,
+            "claude"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Model")
+                .unwrap()
+                .value,
+            "sonnet"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Name")
+                .unwrap()
+                .value,
+            "Parent draft title"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "Parent draft prompt"
+        );
+
+        d.agent_models_event(
+            fresh_query.request_id,
+            claude_model_capabilities("restored-root-binding", "resolved-root-sonnet"),
+        );
+        let launch = start_prompted_agent(&mut d);
+        assert_eq!(launch.prompt, "Parent draft prompt");
+        assert_eq!(launch.launch.session.project, "demo");
+        assert_eq!(launch.launch.session.workspace, "root");
+        assert_eq!(launch.launch.session.name, "Parent draft title");
+        assert_eq!(
+            launch.launch.model_policy,
+            AgentModelPolicy::Explicit("sonnet".into())
+        );
+        assert_eq!(
+            launch.launch.model_binding.as_deref(),
+            Some("restored-root-binding")
+        );
+        assert_eq!(
+            launch.launch.expected_model.as_deref(),
+            Some("resolved-root-sonnet")
+        );
+    }
+
+    #[test]
+    fn old_model_response_after_branch_cancel_satisfies_restored_parent_without_duplicate_query() {
+        let (mut d, old_query) = open_explicit_model_branch_child();
+        d.key(KeyCode::Esc);
+        assert!(
+            d.drain_outbox().is_empty(),
+            "the still-pending matching lookup must not be duplicated"
+        );
+        assert_eq!(
+            d.palette.as_ref().unwrap().model_status.as_deref(),
+            Some("Waiting for the current model lookup to finish…")
+        );
+
+        d.agent_models_event(
+            old_query.request_id,
+            claude_model_capabilities("returned-root-binding", "resolved-returned-root-sonnet"),
+        );
+        assert!(d.drain_outbox().is_empty());
+        assert_eq!(
+            d.palette
+                .as_ref()
+                .unwrap()
+                .model_capabilities
+                .as_ref()
+                .unwrap()
+                .binding
+                .as_deref(),
+            Some("returned-root-binding")
+        );
+        let launch = start_prompted_agent(&mut d);
+        assert_eq!(launch.prompt, "Parent draft prompt");
+        assert_eq!(launch.launch.session.workspace, "root");
+        assert_eq!(
+            launch.launch.model_binding.as_deref(),
+            Some("returned-root-binding")
+        );
+        assert_eq!(
+            launch.launch.expected_model.as_deref(),
+            Some("resolved-returned-root-sonnet")
+        );
+    }
+
+    #[test]
+    fn successful_branch_readback_requeries_models_for_new_workspace_before_start() {
+        let (mut d, old_query) = open_explicit_model_branch_child();
+        d.agent_models_event(
+            old_query.request_id,
+            claude_model_capabilities("stale-root-binding", "stale-root-model"),
+        );
+        assert!(d.drain_outbox().is_empty());
+
+        let mutation = request(&mut d);
+        let (project, workspace_id, branch) = match &mutation.request {
+            Request::CreateWorkspace {
+                project,
+                id,
+                branch: BranchRequest::New { branch, .. },
+            } => (project.clone(), id.clone(), branch.clone()),
+            request => panic!("branch child must submit one create request: {request:?}"),
+        };
+        assert_eq!(project, "demo");
+        d.handle_server_message(ServerMessage::Response {
+            request_id: mutation.request_id,
+            response: Response::Ok,
+        });
+        let readback = branch_completion(
+            &mut d,
+            mutation.request_id,
+            &project,
+            &workspace_id,
+            crate::protocol::LifecycleOutcome::Succeeded,
+        );
+        assert_eq!(readback.len(), 2, "successful creation requests readback");
+        let inspect = readback
+            .iter()
+            .find(|message| message.request == Request::Inspect)
+            .unwrap()
+            .clone();
+        let list = readback
+            .iter()
+            .find(|message| message.request == Request::List)
+            .unwrap()
+            .clone();
+        let (registry, hierarchy) = branch_readback(
+            &workspace_id,
+            &branch,
+            "/tmp/workspaces/feature-child",
+            true,
+        );
+        let requests = finish_branch_readback(&mut d, inspect, list, registry, hierarchy, false);
+
+        let [fresh_query] = requests.as_slice() else {
+            panic!("readback should query the selected new workspace: {requests:?}");
+        };
+        assert!(matches!(
+            &fresh_query.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                project: query_project,
+                workspace: query_workspace,
+                ..
+            } if preset == "claude"
+                && query_project == "demo"
+                && query_workspace == &workspace_id
+        ));
+        let Page::Form {
+            command: Command::NewAgentSession,
+            fields,
+            ..
+        } = &d.palette.as_ref().unwrap().page
+        else {
+            panic!("readback restores the parent New agent form")
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .unwrap()
+                .value,
+            super::super::picker::workspace_pick_value(&project, &workspace_id)
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Agent harness")
+                .unwrap()
+                .value,
+            "claude"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Model")
+                .unwrap()
+                .value,
+            "sonnet"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Name")
+                .unwrap()
+                .value,
+            "Parent draft title"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "Parent draft prompt"
+        );
+
+        d.agent_models_event(
+            fresh_query.request_id,
+            claude_model_capabilities("created-workspace-binding", "resolved-child-sonnet"),
+        );
+        let launch = start_prompted_agent(&mut d);
+        assert_eq!(launch.prompt, "Parent draft prompt");
+        assert_eq!(launch.launch.session.project, "demo");
+        assert_eq!(launch.launch.session.workspace, workspace_id);
+        assert_eq!(launch.launch.session.name, "Parent draft title");
+        assert_eq!(
+            launch.launch.model_policy,
+            AgentModelPolicy::Explicit("sonnet".into())
+        );
+        assert_eq!(
+            launch.launch.model_binding.as_deref(),
+            Some("created-workspace-binding")
+        );
+        assert_eq!(
+            launch.launch.expected_model.as_deref(),
+            Some("resolved-child-sonnet")
+        );
     }
 
     #[test]
