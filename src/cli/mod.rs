@@ -26,7 +26,7 @@ use ovrcr::protocol::client;
 use ovrcr::protocol::{ErrorCode, Request, Response};
 use ovrcr::server::{ServerPaths, run_server};
 use ovrcr::session::{SessionId, SessionSummary};
-use ovrcr::tui::run_dashboard;
+use ovrcr::tui::{DashboardInputProfile, run_dashboard_with_input_profile};
 use serde_json::json;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
@@ -72,10 +72,11 @@ fn run(cli: Cli) -> AppResult<()> {
     let json_output = cli.json;
     let Some(command) = cli.command else {
         let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
-        return run_dashboard(
+        return run_dashboard_with_input_profile(
             startup::run(&paths).map_err(RuntimeError::internal)?,
             startup_hooks::status_off(),
             startup_hooks::connect,
+            DashboardInputProfile::from_environment(),
         )
         .map_err(RuntimeError::internal);
     };

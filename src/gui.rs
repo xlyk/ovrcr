@@ -24,48 +24,25 @@ const FOCUS_REPORTING_ENABLE: &[u8] = b"\x1b[?1004h";
 const FOCUS_REPORTING_DISABLE: &[u8] = b"\x1b[?1004l";
 
 #[derive(Default)]
-struct KeyboardEnhancementObserver {
+struct ModeObserver {
     enabled: bool,
     tail: Vec<u8>,
 }
 
-impl KeyboardEnhancementObserver {
-    fn process(&mut self, bytes: &[u8]) -> bool {
+impl ModeObserver {
+    fn process(&mut self, bytes: &[u8], enable: &[u8], disable: &[u8]) -> bool {
         let mut input = std::mem::take(&mut self.tail);
         input.extend_from_slice(bytes);
         for start in 0..input.len() {
             let remaining = &input[start..];
-            if remaining.starts_with(KITTY_KEYBOARD_PUSH) {
+            if remaining.starts_with(enable) {
                 self.enabled = true;
-            } else if remaining.starts_with(KITTY_KEYBOARD_POP) {
+            } else if remaining.starts_with(disable) {
                 self.enabled = false;
             }
         }
-        let keep = input.len().saturating_sub(KITTY_KEYBOARD_PUSH.len() - 1);
-        self.tail.extend_from_slice(&input[keep..]);
-        self.enabled
-    }
-}
-
-#[derive(Default)]
-struct FocusReportingObserver {
-    enabled: bool,
-    tail: Vec<u8>,
-}
-
-impl FocusReportingObserver {
-    fn process(&mut self, bytes: &[u8]) -> bool {
-        let mut input = std::mem::take(&mut self.tail);
-        input.extend_from_slice(bytes);
-        for start in 0..input.len() {
-            let remaining = &input[start..];
-            if remaining.starts_with(FOCUS_REPORTING_ENABLE) {
-                self.enabled = true;
-            } else if remaining.starts_with(FOCUS_REPORTING_DISABLE) {
-                self.enabled = false;
-            }
-        }
-        let keep = input.len().saturating_sub(FOCUS_REPORTING_ENABLE.len() - 1);
+        let retained = enable.len().max(disable.len()).saturating_sub(1);
+        let keep = input.len().saturating_sub(retained);
         self.tail.extend_from_slice(&input[keep..]);
         self.enabled
     }
@@ -365,6 +342,10 @@ impl Demo {
         command.env("OVRCR_SERVER_EXECUTABLE", &self.executable);
         command.env("OVRCR_HOME", &self.root);
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
+        command.env(
+            crate::tui::DASHBOARD_INPUT_PROFILE_ENV,
+            crate::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
+        );
         command.env_remove("OVRCR_DASHBOARD_CONFIG");
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
@@ -516,8 +497,8 @@ impl Terminal {
                 .spawn(move || {
                     let mut reader = reader;
                     let mut buffer = [0; 8192];
-                    let mut keyboard_mode = KeyboardEnhancementObserver::default();
-                    let mut focus_reporting = FocusReportingObserver::default();
+                    let mut keyboard_mode = ModeObserver::default();
+                    let mut focus_reporting = ModeObserver::default();
                     while !stopping.load(Ordering::Relaxed) {
                         let mut poll = libc::pollfd {
                             fd,
@@ -539,9 +520,17 @@ impl Terminal {
                         match reader.read(&mut buffer) {
                             Ok(0) => break,
                             Ok(count) => {
-                                let enabled = keyboard_mode.process(&buffer[..count]);
+                                let enabled = keyboard_mode.process(
+                                    &buffer[..count],
+                                    KITTY_KEYBOARD_PUSH,
+                                    KITTY_KEYBOARD_POP,
+                                );
                                 keyboard_enhancement_enabled.store(enabled, Ordering::Release);
-                                let enabled = focus_reporting.process(&buffer[..count]);
+                                let enabled = focus_reporting.process(
+                                    &buffer[..count],
+                                    FOCUS_REPORTING_ENABLE,
+                                    FOCUS_REPORTING_DISABLE,
+                                );
                                 focus_reporting_enabled.store(enabled, Ordering::Release);
                                 parser.lock().unwrap().process(&buffer[..count]);
                                 if !stopping.load(Ordering::Relaxed) {
@@ -657,31 +646,55 @@ mod tests {
 
     #[test]
     fn keyboard_mode_observer_tracks_split_push_and_pop_sequences() {
-        let mut observer = KeyboardEnhancementObserver::default();
-        assert!(!observer.process(b"dashboard output\x1b[>11"));
-        assert!(observer.process(b"uordinary output\x1b[<"));
-        assert!(!observer.process(b"1u"));
+        let mut observer = ModeObserver::default();
+        assert!(!observer.process(
+            b"dashboard output\x1b[>11",
+            KITTY_KEYBOARD_PUSH,
+            KITTY_KEYBOARD_POP,
+        ));
+        assert!(observer.process(
+            b"uordinary output\x1b[<",
+            KITTY_KEYBOARD_PUSH,
+            KITTY_KEYBOARD_POP,
+        ));
+        assert!(!observer.process(b"1u", KITTY_KEYBOARD_PUSH, KITTY_KEYBOARD_POP));
     }
 
     #[test]
     fn keyboard_mode_observer_ignores_different_flags() {
-        let mut observer = KeyboardEnhancementObserver::default();
-        assert!(!observer.process(b"\x1b[>1u"));
-        assert!(!observer.process(b"\x1b[<1u"));
+        let mut observer = ModeObserver::default();
+        assert!(!observer.process(b"\x1b[>1u", KITTY_KEYBOARD_PUSH, KITTY_KEYBOARD_POP));
+        assert!(!observer.process(b"\x1b[<1u", KITTY_KEYBOARD_PUSH, KITTY_KEYBOARD_POP));
     }
 
     #[test]
     fn focus_reporting_observer_tracks_split_enable_and_disable_sequences() {
-        let mut observer = FocusReportingObserver::default();
-        assert!(!observer.process(b"dashboard output\x1b[?100"));
-        assert!(observer.process(b"4hordinary output\x1b[?1004"));
-        assert!(!observer.process(b"l"));
+        let mut observer = ModeObserver::default();
+        assert!(!observer.process(
+            b"dashboard output\x1b[?100",
+            FOCUS_REPORTING_ENABLE,
+            FOCUS_REPORTING_DISABLE,
+        ));
+        assert!(observer.process(
+            b"4hordinary output\x1b[?1004",
+            FOCUS_REPORTING_ENABLE,
+            FOCUS_REPORTING_DISABLE,
+        ));
+        assert!(!observer.process(b"l", FOCUS_REPORTING_ENABLE, FOCUS_REPORTING_DISABLE));
     }
 
     #[test]
     fn focus_reporting_observer_ignores_other_modes() {
-        let mut observer = FocusReportingObserver::default();
-        assert!(!observer.process(b"\x1b[?1000h"));
-        assert!(!observer.process(b"\x1b[?1000l"));
+        let mut observer = ModeObserver::default();
+        assert!(!observer.process(
+            b"\x1b[?1000h",
+            FOCUS_REPORTING_ENABLE,
+            FOCUS_REPORTING_DISABLE,
+        ));
+        assert!(!observer.process(
+            b"\x1b[?1000l",
+            FOCUS_REPORTING_ENABLE,
+            FOCUS_REPORTING_DISABLE,
+        ));
     }
 }

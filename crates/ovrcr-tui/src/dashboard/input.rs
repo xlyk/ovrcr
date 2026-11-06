@@ -4,6 +4,14 @@ use ovrcr_terminal::key::{Key, Modifiers, encode_key as encode_terminal_key};
 use ovrcr_terminal::vt100;
 
 pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
+    // The shared terminal encoder knows Ctrl, Alt and Shift. Preserve an
+    // unsupported modifier as unsupported instead of turning Cmd-x into x.
+    if event
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
+    {
+        return KeyEncoding::Ignore;
+    }
     if is_browse_key(event) {
         return KeyEncoding::Browse;
     }
@@ -37,6 +45,12 @@ pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
 }
 
 pub(super) fn is_browse_key(key: KeyEvent) -> bool {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
+    {
+        return false;
+    }
     (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('g' | 'G')))
         || matches!(key.code, KeyCode::Char('\u{7}'))
 }

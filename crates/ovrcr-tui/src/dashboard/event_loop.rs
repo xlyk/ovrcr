@@ -37,15 +37,33 @@ pub fn dashboard_message_channel() -> (
 }
 
 pub fn run_dashboard(
-    mut stream: UnixStream,
+    stream: UnixStream,
     task_request: TaskRequestFn,
     configuration_paths: (PathBuf, PathBuf),
     status_off: Option<String>,
     connect_status: crate::ConnectStatusFn,
 ) -> Result<()> {
+    run_dashboard_with_input_profile(
+        stream,
+        task_request,
+        configuration_paths,
+        status_off,
+        connect_status,
+        super::DashboardInputProfile::Standard,
+    )
+}
+
+pub fn run_dashboard_with_input_profile(
+    mut stream: UnixStream,
+    task_request: TaskRequestFn,
+    configuration_paths: (PathBuf, PathBuf),
+    status_off: Option<String>,
+    connect_status: crate::ConnectStatusFn,
+    input_profile: super::DashboardInputProfile,
+) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
-    let mut dashboard = Dashboard::new(pane_size);
+    let mut dashboard = Dashboard::with_input_profile(pane_size, input_profile);
     // Workspace roots default beside the instance directory. Settings arrive
     // from the Server after hello; changing one is a request to the Server.
     if let Some(parent) = configuration_paths.0.parent() {
@@ -895,6 +913,7 @@ mod outbox_dispatch_tests {
     #[test]
     fn production_view_geometry_change_cancels_the_current_jump_hold() {
         let (mut dashboard, current) = super::unread_review_tests::fixture();
+        dashboard.input_profile = crate::dashboard::DashboardInputProfile::VerifiedOvrcrGui;
         dashboard.install_area(Rect::new(0, 0, 120, 20));
         let mut target = current;
         target.id = SessionId(2);
@@ -1046,6 +1065,7 @@ mod outbox_dispatch_tests {
         use std::collections::VecDeque;
 
         let (mut dashboard, current) = super::unread_review_tests::fixture();
+        dashboard.input_profile = crate::dashboard::DashboardInputProfile::VerifiedOvrcrGui;
         dashboard.install_area(Rect::new(0, 0, 120, 20));
         let mut target = current.clone();
         target.id = SessionId(2);

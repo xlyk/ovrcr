@@ -51,6 +51,18 @@ fn agents_with_separate_destination() -> HierarchySnapshot {
 }
 
 fn agents_dashboard() -> Dashboard {
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize { rows: 38, cols: 88 },
+        super::DashboardInputProfile::VerifiedOvrcrGui,
+    );
+    dashboard.install_area(Rect::new(0, 0, 88, 38));
+    dashboard.install_hierarchy(agents_hierarchy());
+    dashboard.install_focus(SessionId(1));
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard
+}
+
+fn unverified_agents_dashboard() -> Dashboard {
     let mut dashboard = dashboard_fixture();
     dashboard.install_hierarchy(agents_hierarchy());
     dashboard
@@ -241,7 +253,10 @@ fn command_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
             .find(|session| session.id == SessionId(1))
             .unwrap()
             .title = Some(unicode_title.into());
-        let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
+        let mut dashboard = Dashboard::with_input_profile(
+            TerminalSize { rows, cols },
+            DashboardInputProfile::VerifiedOvrcrGui,
+        );
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_area(Rect::new(0, 0, cols, rows));
         dashboard.install_focus(SessionId(1));
@@ -398,7 +413,8 @@ fn a_nonlabel_command_key_cancels_without_navigating() {
             KeyModifiers::SUPER,
             KeyEventKind::Press,
         )),
-        DashboardAction::Redraw
+        DashboardAction::None,
+        "a non-label Command shortcut falls through to ordinary Dashboard dispatch"
     );
     assert_eq!(dashboard.focused_session(), focused);
     assert!(
@@ -407,6 +423,108 @@ fn a_nonlabel_command_key_cancels_without_navigating() {
             .any(|row| row.contains("[1]"))
     );
     assert!(rendered_footer(&dashboard, 120).contains("Session jump cancelled"));
+}
+
+#[test]
+fn unverified_frontend_keeps_command_keys_out_of_browse_actions_and_child_input() {
+    assert_eq!(
+        DashboardInputProfile::from_environment_value(Some(
+            ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
+        )),
+        DashboardInputProfile::VerifiedOvrcrGui
+    );
+    assert_eq!(
+        DashboardInputProfile::from_environment_value(Some("another-terminal")),
+        DashboardInputProfile::Standard
+    );
+    let mut dashboard = unverified_agents_dashboard();
+    let focused = dashboard.focused_session();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(!rows.iter().any(|row| row.contains("[1]")));
+    assert!(!rendered_footer(&dashboard, 120).contains("Cmd+digit"));
+
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('k'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "Command must not be stripped into the Browse k binding"
+    );
+    assert_eq!(dashboard.focused_session(), focused);
+
+    dashboard.key(KeyCode::Enter);
+    dashboard.drain_outbox();
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('2'),
+            KeyModifiers::SUPER,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "unsupported Command input must not become an unmodified child byte"
+    );
+    assert!(dashboard.drain_outbox().is_empty());
+    assert_eq!(dashboard.focused_session(), focused);
+}
+
+#[test]
+fn gui_palette_shortcut_cancels_a_live_hold_and_keeps_dashboard_handling() {
+    let mut dashboard = agents_dashboard();
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]"))
+    );
+
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::None,
+        "the ordinary Browse Ctrl-g handling remains available"
+    );
+    assert_eq!(
+        dashboard.event_action(command_event(
+            KeyCode::Char(':'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw
+    );
+    assert!(palette_text(&dashboard).contains("Command palette"));
+}
+
+#[test]
+fn shared_jump_binding_appears_in_footer_key_popup_and_palette() {
+    let mut dashboard = agents_dashboard();
+    assert!(rendered_footer(&dashboard, 120).contains("Cmd hold Jump to visible Agent"));
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('v'));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("Jump to visible Agent")
+    );
+
+    dashboard.key(KeyCode::Esc);
+    dashboard.key(KeyCode::Char(':'));
+    dashboard.event_action(Event::Paste("Jump".into()));
+    assert!(palette_text(&dashboard).contains("Jump to visible Agent"));
 }
 
 #[test]
@@ -497,10 +615,13 @@ fn ten_visible_agents_use_two_digit_labels_and_search_stays_available() {
         agent.title = Some(format!("agent-title-{id}"));
         sessions.push(agent);
     }
-    let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
-        cols: 120,
-    });
+    let mut dashboard = Dashboard::with_input_profile(
+        TerminalSize {
+            rows: 40,
+            cols: 120,
+        },
+        DashboardInputProfile::VerifiedOvrcrGui,
+    );
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.event_action(command_event(
