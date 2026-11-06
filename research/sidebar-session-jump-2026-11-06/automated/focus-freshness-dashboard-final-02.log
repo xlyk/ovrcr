@@ -1,0 +1,9 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-401-focus-freshness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.26s
+     Running tests/gui.rs (/private/tmp/ovrcr-401-build-freshness/debug/deps/gui-3bfb59ff72ef80e7)
+
+running 1 test
+test gui_focus_loss_cancels_a_selected_jump_before_terminal_mode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 9.57s
+

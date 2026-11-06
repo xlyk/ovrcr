@@ -1,0 +1,8 @@
+{
+  "root_absent": true,
+  "socket_absent": true,
+  "remaining_owned_groups": [],
+  "retained_same_run": true,
+  "retained_phase": "exited",
+  "retained_pid": null
+}

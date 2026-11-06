@@ -478,7 +478,7 @@ fn command_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
 }
 
 #[test]
-fn more_than_nine_visible_agents_are_not_silently_truncated() {
+fn ten_visible_agents_use_two_digit_labels_and_search_stays_available() {
     let mut hierarchy = agents_hierarchy();
     let template = hierarchy
         .projects
@@ -508,21 +508,15 @@ fn more_than_nine_visible_agents_are_not_silently_truncated() {
         KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
-    assert!(
-        !rendered_rows(&dashboard, 120, 40)
-            .iter()
-            .any(|row| row.contains("[1]"))
-    );
-    assert!(rendered_footer(&dashboard, 120).contains("supports up to nine"));
-    assert_eq!(
-        dashboard.event_action(command_event(
-            KeyCode::Char('1'),
-            KeyModifiers::SUPER,
-            KeyEventKind::Press,
-        )),
-        DashboardAction::None,
-        "a large list does not expose only the first nine rows"
-    );
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(rows.iter().any(|row| row.contains("[01]")));
+    assert!(rows.iter().any(|row| row.contains("[10]")));
+    assert!(rendered_footer(&dashboard, 120).contains("two digits"));
+    dashboard.event_action(command_event(
+        KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    ));
     open_agents(&mut dashboard);
     assert!(palette_text(&dashboard).contains("Agents"));
 }

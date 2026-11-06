@@ -20,6 +20,8 @@ pub const DEMO_SETTINGS_ALLOWLIST: &[&str] = &["automatic_local_terminals", "quo
 
 const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>11u";
 const KITTY_KEYBOARD_POP: &[u8] = b"\x1b[<1u";
+const FOCUS_REPORTING_ENABLE: &[u8] = b"\x1b[?1004h";
+const FOCUS_REPORTING_DISABLE: &[u8] = b"\x1b[?1004l";
 
 #[derive(Default)]
 struct KeyboardEnhancementObserver {
@@ -40,6 +42,30 @@ impl KeyboardEnhancementObserver {
             }
         }
         let keep = input.len().saturating_sub(KITTY_KEYBOARD_PUSH.len() - 1);
+        self.tail.extend_from_slice(&input[keep..]);
+        self.enabled
+    }
+}
+
+#[derive(Default)]
+struct FocusReportingObserver {
+    enabled: bool,
+    tail: Vec<u8>,
+}
+
+impl FocusReportingObserver {
+    fn process(&mut self, bytes: &[u8]) -> bool {
+        let mut input = std::mem::take(&mut self.tail);
+        input.extend_from_slice(bytes);
+        for start in 0..input.len() {
+            let remaining = &input[start..];
+            if remaining.starts_with(FOCUS_REPORTING_ENABLE) {
+                self.enabled = true;
+            } else if remaining.starts_with(FOCUS_REPORTING_DISABLE) {
+                self.enabled = false;
+            }
+        }
+        let keep = input.len().saturating_sub(FOCUS_REPORTING_ENABLE.len() - 1);
         self.tail.extend_from_slice(&input[keep..]);
         self.enabled
     }
@@ -441,6 +467,7 @@ pub struct Terminal {
     stopping: Arc<AtomicBool>,
     read_error: Arc<Mutex<Option<String>>>,
     keyboard_enhancement_enabled: Arc<AtomicBool>,
+    focus_reporting_enabled: Arc<AtomicBool>,
     context: egui::Context,
 }
 
@@ -464,6 +491,7 @@ impl Terminal {
         let stopping = Arc::new(AtomicBool::new(false));
         let read_error = Arc::new(Mutex::new(None));
         let keyboard_enhancement_enabled = Arc::new(AtomicBool::new(false));
+        let focus_reporting_enabled = Arc::new(AtomicBool::new(false));
         let mut terminal = Self {
             master: pair.master,
             writer,
@@ -473,12 +501,14 @@ impl Terminal {
             stopping,
             read_error,
             keyboard_enhancement_enabled,
+            focus_reporting_enabled,
             context,
         };
         let parser = Arc::clone(&terminal.parser);
         let stopping = Arc::clone(&terminal.stopping);
         let read_error = Arc::clone(&terminal.read_error);
         let keyboard_enhancement_enabled = Arc::clone(&terminal.keyboard_enhancement_enabled);
+        let focus_reporting_enabled = Arc::clone(&terminal.focus_reporting_enabled);
         let context = terminal.context.clone();
         terminal.reader = Some(
             thread::Builder::new()
@@ -487,6 +517,7 @@ impl Terminal {
                     let mut reader = reader;
                     let mut buffer = [0; 8192];
                     let mut keyboard_mode = KeyboardEnhancementObserver::default();
+                    let mut focus_reporting = FocusReportingObserver::default();
                     while !stopping.load(Ordering::Relaxed) {
                         let mut poll = libc::pollfd {
                             fd,
@@ -510,6 +541,8 @@ impl Terminal {
                             Ok(count) => {
                                 let enabled = keyboard_mode.process(&buffer[..count]);
                                 keyboard_enhancement_enabled.store(enabled, Ordering::Release);
+                                let enabled = focus_reporting.process(&buffer[..count]);
+                                focus_reporting_enabled.store(enabled, Ordering::Release);
                                 parser.lock().unwrap().process(&buffer[..count]);
                                 if !stopping.load(Ordering::Relaxed) {
                                     context.request_repaint();
@@ -541,6 +574,13 @@ impl Terminal {
     /// on the outer PTY. The GUI never infers modifier support from platform alone.
     pub fn keyboard_enhancement_enabled(&self) -> bool {
         self.keyboard_enhancement_enabled.load(Ordering::Acquire)
+    }
+
+    /// Whether this Dashboard has requested terminal focus-change reports.
+    /// `vt100` does not expose DEC mode 1004, so observe the exact mode sequence
+    /// emitted by the Dashboard guard instead.
+    pub fn focus_reporting_enabled(&self) -> bool {
+        self.focus_reporting_enabled.load(Ordering::Acquire)
     }
 
     pub fn send(&mut self, bytes: &[u8]) -> Result<()> {
@@ -628,5 +668,20 @@ mod tests {
         let mut observer = KeyboardEnhancementObserver::default();
         assert!(!observer.process(b"\x1b[>1u"));
         assert!(!observer.process(b"\x1b[<1u"));
+    }
+
+    #[test]
+    fn focus_reporting_observer_tracks_split_enable_and_disable_sequences() {
+        let mut observer = FocusReportingObserver::default();
+        assert!(!observer.process(b"dashboard output\x1b[?100"));
+        assert!(observer.process(b"4hordinary output\x1b[?1004"));
+        assert!(!observer.process(b"l"));
+    }
+
+    #[test]
+    fn focus_reporting_observer_ignores_other_modes() {
+        let mut observer = FocusReportingObserver::default();
+        assert!(!observer.process(b"\x1b[?1000h"));
+        assert!(!observer.process(b"\x1b[?1000l"));
     }
 }

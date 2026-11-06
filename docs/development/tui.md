@@ -27,13 +27,16 @@ that blocks shutdown.
 Sidebar session-jump labels are derived from the drawn tree order, viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
-Only an observed standalone Super press starts a hold; freeze its mapping until
-release, hide labels on selection, and keep the normal Agents search available
-when the host does not deliver modifier events. A selected destination remains
-in Browse until both the held modifier is released and the existing view/input
-boundary is drained. Shortcut events, release events, and queued loading input
-must never become child bytes. Opening an overlay, losing focus, scrolling, or
-resizing cancels the hold.
+Use one-digit codes for one through nine visible targets and zero-padded
+two-digit codes for ten through fifty. Capture the code width and mapping on an
+observed standalone Super press; a two-digit prefix may emphasize matching
+badges and appear in the footer without changing row geometry. Hide labels on
+selection, and keep the normal Agents search available when the host does not
+deliver modifier events. A selected running destination remains in Browse until
+both the held modifier is released and the existing view/input boundary is
+drained. Shortcut events, release events, and queued loading input must never
+become child bytes. Opening an overlay, losing focus, scrolling, or resizing
+cancels the hold.
 
 Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.
 Request its modes at Dashboard entry, restore the owned mode on normal exit,
