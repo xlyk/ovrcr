@@ -1,4 +1,4 @@
-//! Current-Dashboard model discovery and validation for managed Claude launch.
+//! Current-Dashboard model discovery and validation for managed agent launch.
 use super::*;
 use anyhow::Context;
 use ovrcr_protocol::{
@@ -227,7 +227,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             "Only detected launchers can expose verified model choices.",
         );
     }
-    if input.preset != "claude" {
+    if !matches!(input.preset.as_str(), "claude" | "pi") {
         return unsupported(
             input.preset.clone(),
             "Verified explicit model selection is not available for this harness yet.",
@@ -240,17 +240,9 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
         );
     }
     let result = (|| -> anyhow::Result<_> {
-        let executable = find_executable(&input.path, "claude")?;
-        let mut native_argv = vec![executable.as_os_str().to_owned()];
-        ovrcr_protocol::apply_default_auto_trust("claude", &mut native_argv);
-        let mut launch_argv = vec![
-            input.launcher.as_os_str().to_owned(),
-            "agent".into(),
-            "run".into(),
-            "claude".into(),
-            "--".into(),
-        ];
-        launch_argv.extend(native_argv.iter().cloned());
+        let executable = find_executable(&input.path, &input.preset)?;
+        let native_argv = native_argv(&input.preset, &executable)?;
+        let launch_argv = detected_launch_argv(&input.preset, &input.launcher, &native_argv);
         if !launch_matches(&input.argv, &launch_argv, false) {
             anyhow::bail!(
                 "selected launcher does not match the Server-resolved executable and arguments"
@@ -263,6 +255,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             "registered Git worktree changed; refresh the workspace"
         );
         let binding = binding(
+            &input.preset,
             &launch_argv,
             &executable,
             &input.cwd,
@@ -270,16 +263,18 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             &input.workspace,
             &input.git_identity,
         )?;
-        let models = crate::claude_delegation::dashboard_catalog(
+        let catalog = dashboard_catalog(
+            &input.preset,
             &executable,
             &native_argv,
             &input.cwd,
             cancelled,
-        )?
-        .into_iter()
-        .filter(|(alias, _)| alias != "default")
-        .map(|(alias, resolved)| AgentModelOption { alias, resolved })
-        .collect::<Vec<_>>();
+        )?;
+        let models = catalog
+            .into_iter()
+            .filter(|(alias, _)| alias != "default")
+            .map(|(alias, resolved)| AgentModelOption { alias, resolved })
+            .collect::<Vec<_>>();
         Ok((binding, models))
     })();
     match result {
@@ -291,11 +286,11 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
         },
         Ok(_) => unsupported(
             input.preset.clone(),
-            "Claude returned no selectable model aliases.",
+            format!("{} returned no selectable models.", input.preset),
         ),
         Err(error) => unsupported(
             input.preset.clone(),
-            format!("Claude model discovery is unavailable: {}", error),
+            format!("{} model discovery is unavailable: {}", input.preset, error),
         ),
     }
 }
@@ -319,7 +314,49 @@ fn find_executable(path: &std::ffi::OsStr, name: &str) -> anyhow::Result<PathBuf
             return Ok(candidate);
         }
     }
-    anyhow::bail!("native Claude executable is unavailable")
+    anyhow::bail!("native {name} executable is unavailable")
+}
+
+fn native_argv(preset: &str, executable: &Path) -> anyhow::Result<Vec<std::ffi::OsString>> {
+    anyhow::ensure!(
+        matches!(preset, "claude" | "pi"),
+        "detected model selection is not supported for this harness"
+    );
+    let mut argv = vec![executable.as_os_str().to_owned()];
+    ovrcr_protocol::apply_default_auto_trust(preset, &mut argv);
+    Ok(argv)
+}
+
+fn detected_launch_argv(
+    preset: &str,
+    launcher: &Path,
+    native_argv: &[std::ffi::OsString],
+) -> Vec<std::ffi::OsString> {
+    let mut argv = vec![
+        launcher.as_os_str().to_owned(),
+        "agent".into(),
+        "run".into(),
+        preset.into(),
+        "--".into(),
+    ];
+    argv.extend(native_argv.iter().cloned());
+    argv
+}
+
+fn dashboard_catalog(
+    preset: &str,
+    executable: &Path,
+    native_argv: &[std::ffi::OsString],
+    cwd: &Path,
+    cancelled: &AtomicBool,
+) -> anyhow::Result<Vec<(String, String)>> {
+    match preset {
+        "claude" => {
+            crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
+        }
+        "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
+        _ => anyhow::bail!("verified model discovery is not available for this harness"),
+    }
 }
 
 /// Detected managed argv has a fixed wrapper layout. Compare every argument
@@ -376,6 +413,12 @@ pub(super) fn prepare_initial_prompt_session(
     state: &ServerState,
     request: CreateAgentSessionRequest,
 ) -> anyhow::Result<CreateSessionRequest> {
+    let preset = request
+        .session
+        .label
+        .as_deref()
+        .filter(|preset| matches!(*preset, "claude" | "pi"))
+        .context("Initial prompts require a supported detected harness")?;
     anyhow::ensure!(
         !state
             .settings
@@ -385,31 +428,24 @@ pub(super) fn prepare_initial_prompt_session(
             .settings
             .agents
             .iter()
-            .any(|agent| agent.name == "claude"),
-        "configured Claude launchers do not support Initial prompts"
+            .any(|agent| agent.name == preset),
+        "configured launchers do not support Initial prompts"
     );
-    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), "claude")?;
+    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), preset)?;
+    let native = native_argv(preset, &executable)?;
     let launcher = std::env::current_exe()?;
-    let mut expected = vec![
-        launcher.as_os_str().to_owned(),
-        "agent".into(),
-        "run".into(),
-        "claude".into(),
-        "--".into(),
-    ];
-    let mut native = vec![executable.as_os_str().to_owned()];
-    ovrcr_protocol::apply_default_auto_trust("claude", &mut native);
-    expected.extend(native);
+    let expected = detected_launch_argv(preset, &launcher, &native);
     anyhow::ensure!(
-        matches!(request.session.kind, SessionKind::Agent { ref name } if name == "claude")
-            && request.session.label.as_deref() == Some("claude")
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset)
+            && request.session.label.as_deref() == Some(preset)
             && launch_matches(&request.session.argv, &expected, false),
-        "Initial prompts require the current detected Claude launcher and arguments"
+        "Initial prompts require the current detected launcher and arguments"
     );
     prepare_session(state, request)
 }
 
 fn binding(
+    preset: &str,
     launch_argv: &[std::ffi::OsString],
     executable: &Path,
     cwd: &Path,
@@ -434,7 +470,7 @@ fn binding(
         })
         .collect::<std::io::Result<Vec<_>>>()?;
     let identity = serde_json::json!({
-        "preset":"claude",
+        "preset":preset,
         "origin":"detected",
         "argv":argv,
         "executable":executable,
@@ -467,10 +503,15 @@ pub(super) fn prepare_session(
         return Ok(request.session);
     };
     anyhow::ensure!(request.model_policy.is_valid(), "explicit model is invalid");
+    let preset = request
+        .session
+        .label
+        .as_deref()
+        .filter(|preset| matches!(*preset, "claude" | "pi"))
+        .context("explicit model selection is not supported for this harness")?;
     anyhow::ensure!(
-        matches!(request.session.kind, SessionKind::Agent { ref name } if name == "claude")
-            && request.session.label.as_deref() == Some("claude"),
-        "explicit model selection is supported only for the detected Claude launcher"
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
+        "explicit model selection requires a matching managed agent launcher"
     );
     anyhow::ensure!(
         !state
@@ -481,24 +522,16 @@ pub(super) fn prepare_session(
             .settings
             .agents
             .iter()
-            .any(|agent| agent.name == "claude"),
-        "configured Claude launchers do not support explicit model overrides"
+            .any(|agent| agent.name == preset),
+        "configured launchers do not support explicit model overrides"
     );
-    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), "claude")?;
-    let mut native_argv = vec![executable.as_os_str().to_owned()];
-    ovrcr_protocol::apply_default_auto_trust("claude", &mut native_argv);
+    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), preset)?;
+    let native_argv = native_argv(preset, &executable)?;
     let launcher = std::env::current_exe()?;
-    let mut expected = vec![
-        launcher.as_os_str().to_owned(),
-        "agent".into(),
-        "run".into(),
-        "claude".into(),
-        "--".into(),
-    ];
-    expected.extend(native_argv.iter().cloned());
+    let expected = detected_launch_argv(preset, &launcher, &native_argv);
     anyhow::ensure!(
         launch_matches(&request.session.argv, &expected, true),
-        "Claude launch configuration changed or is unsupported"
+        "selected launch configuration changed or is unsupported"
     );
     let workspace = state
         .registry
@@ -515,6 +548,7 @@ pub(super) fn prepare_session(
         "registered Git worktree changed; refresh the workspace"
     );
     let current_binding = binding(
+        preset,
         &expected,
         &executable,
         &workspace.path,
@@ -524,9 +558,16 @@ pub(super) fn prepare_session(
     )?;
     anyhow::ensure!(
         request.model_binding.as_deref() == Some(current_binding.as_str()),
-        "Claude model capability is stale; refresh the model list"
+        "model capability is stale; refresh the model list"
     );
-    let catalog = crate::claude_delegation::dashboard_catalog(
+    if preset == "pi" {
+        anyhow::ensure!(
+            ovrcr_protocol::DelegationSettings::valid_model(model),
+            "Pi explicit models require an exact provider/model ID"
+        );
+    }
+    let catalog = dashboard_catalog(
+        preset,
         &executable,
         &native_argv,
         &workspace.path,
@@ -538,7 +579,7 @@ pub(super) fn prepare_session(
         .map(|(_, resolved)| resolved);
     anyhow::ensure!(
         resolved.is_some() && request.expected_model.as_ref() == resolved,
-        "selected Claude model resolution changed; choose the current model"
+        "selected {preset} model resolution changed; choose the current model"
     );
     request
         .session
