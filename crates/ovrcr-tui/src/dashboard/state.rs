@@ -3943,7 +3943,7 @@ impl Dashboard {
                     self.on_lifecycle_completed(client_token, op, outcome);
                 }
                 ServerEvent::InitialPromptIntentChanged(snapshot) => {
-                    self.install_initial_prompt_snapshot(snapshot);
+                    self.install_initial_prompt_snapshot(*snapshot);
                 }
                 ServerEvent::Output {
                     session,

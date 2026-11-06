@@ -932,7 +932,7 @@ fn model_query_target(
         }
         AgentOrigin::Detected => {}
     }
-    if preset != "claude" {
+    if !matches!(preset.as_str(), "claude" | "codex") {
         return Err(
             "Verified explicit model selection is not available for this harness yet.".into(),
         );
@@ -3733,7 +3733,7 @@ impl Dashboard {
             && !self.supports_initial_prompt_launch(launch)
         {
             palette.error = Some(
-                "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+                "Initial prompts require the current detected Claude Code or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
             );
             return DashboardAction::Redraw;
         }
@@ -3815,15 +3815,16 @@ impl Dashboard {
         &self,
         launch: &ovrcr_protocol::CreateAgentSessionRequest,
     ) -> bool {
-        if !matches!(
-            &launch.session.kind,
-            SessionKind::Agent { name } if name == "claude"
-        ) || launch.session.label.as_deref() != Some("claude")
+        let SessionKind::Agent { name } = &launch.session.kind else {
+            return false;
+        };
+        if !matches!(name.as_str(), "claude" | "codex")
+            || launch.session.label.as_deref() != Some(name.as_str())
         {
             return false;
         }
         self.detected_agents().into_iter().any(|entry| {
-            entry.name == "claude"
+            entry.name == *name
                 && entry.source == AgentSource::Detected
                 && entry.origin == AgentOrigin::Detected
                 && entry.argv == launch.session.argv
@@ -3850,12 +3851,12 @@ impl Dashboard {
             if let Some(mut form) = form {
                 form.pending = None;
                 form.error = Some(
-                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+                    "Initial prompts require the current detected Claude Code or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
                 );
                 self.palette = Some(*form);
             } else {
                 self.set_error(
-                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.",
+                    "Initial prompts require the current detected Claude Code or Codex launcher. Clear the prompt or choose one of those detected launchers.",
                 );
             }
             return;
@@ -6421,6 +6422,85 @@ mod mouse_tests {
             d.drain_outbox().is_empty(),
             "pending request cannot repeat on click"
         );
+    }
+}
+
+#[cfg(test)]
+mod codex_adapter_tests {
+    use super::*;
+
+    fn detected_codex_entry() -> super::super::agents::AgentEntry {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "codex".into(),
+            "--".into(),
+            "/fixture/codex".into(),
+            "--approve-for-me".into(),
+        ];
+        super::super::agents::AgentEntry {
+            name: "codex".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }
+    }
+
+    #[test]
+    fn codex_model_and_initial_prompt_require_the_exact_detected_launcher() {
+        let entry = detected_codex_entry();
+        let fields = vec![
+            text_field("Start", "Agent".into(), false),
+            text_field("Agent", "codex".into(), false),
+            text_field("Workspace", "demo/root".into(), false),
+        ];
+        let target = model_query_target(
+            &Command::CreateTerminal,
+            &fields,
+            std::slice::from_ref(&entry),
+        )
+        .unwrap()
+        .expect("detected Codex has an explicit-model catalog target");
+        assert_eq!(target.preset, "codex");
+        assert_eq!(target.argv, entry.argv);
+        assert_eq!(
+            (target.project.as_str(), target.workspace.as_str()),
+            ("demo", "root")
+        );
+
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        dashboard.model_agent_entries = Some(vec![entry.clone()]);
+        let launch = ovrcr_protocol::CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "demo".into(),
+                workspace: "root".into(),
+                name: "codex-prompt".into(),
+                label: Some("codex".into()),
+                argv: entry.argv.clone(),
+                kind: SessionKind::Agent {
+                    name: "codex".into(),
+                },
+            },
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        assert!(dashboard.supports_initial_prompt_launch(&launch));
+
+        let mut changed = launch;
+        changed.session.argv.push("--profile".into());
+        assert!(!dashboard.supports_initial_prompt_launch(&changed));
+
+        let configured = super::super::agents::AgentEntry {
+            origin: AgentOrigin::Configured,
+            source: AgentSource::Detected,
+            ..entry
+        };
+        assert!(model_query_target(&Command::CreateTerminal, &fields, &[configured]).is_err());
     }
 }
 
