@@ -7,7 +7,7 @@ use super::keymap::{Action, KeyBinding, keymap};
 use super::picker::{
     PathPicker, PickItem, PickList, complete_path, expand_path, split_workspace_pick,
 };
-use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
+use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEXT, clip_text};
 use super::state::{
     find_session, find_workspace, replace_outside_paths, session_workspace_heading,
     workspace_heading, workspace_label,
@@ -361,13 +361,38 @@ enum PaletteTarget {
     Search,
     Entry(usize),
     Field(usize, bool),
+    FieldPair(usize, usize, bool, u16),
     MultilineLine(usize, usize),
     Option(usize, usize),
 }
 
-fn palette_geometry(outer: Rect) -> (Rect, Rect, Rect, Rect) {
-    let width = outer.width.min(82);
-    let height = outer.height.min(19);
+fn palette_geometry_for(outer: Rect, page: Option<&Page>) -> (Rect, Rect, Rect, Rect) {
+    let creation_form = page.is_some_and(|page| {
+        matches!(
+            page,
+            Page::Form {
+                command: Command::NewAgentSession | Command::CreateBranch,
+                ..
+            }
+        )
+    });
+    let creation_under_minimum = page.is_some_and(|page| creation_form_below_minimum(page, outer));
+    let (width, height, footer_limit) = if creation_form && !creation_under_minimum {
+        let height = match page.unwrap() {
+            Page::Form {
+                command: Command::CreateBranch,
+                ..
+            } => 14,
+            _ => 17,
+        };
+        (
+            outer.width.min(80).saturating_sub(8).min(72),
+            outer.height.min(height),
+            3,
+        )
+    } else {
+        (outer.width.min(82), outer.height.min(19), 4)
+    };
     let area = Rect::new(
         outer.x + (outer.width - width) / 2,
         outer.y + (outer.height - height) / 2,
@@ -379,7 +404,7 @@ fn palette_geometry(outer: Rect) -> (Rect, Rect, Rect, Rect) {
     let footer = inner
         .height
         .saturating_sub(button_height)
-        .min(4)
+        .min(footer_limit)
         .min(inner.height / 3);
     let body = Rect::new(
         inner.x,
@@ -394,6 +419,12 @@ fn palette_geometry(outer: Rect) -> (Rect, Rect, Rect, Rect) {
         button_height,
     );
     (area, inner, body, buttons)
+}
+
+#[cfg(test)]
+fn palette_geometry_for_dashboard(dashboard: &Dashboard, outer: Rect) -> (Rect, Rect, Rect, Rect) {
+    let page = dashboard.palette.as_ref().map(|palette| &palette.page);
+    palette_geometry_for(outer, page)
 }
 fn button_text(page: &Page, width: u16, refresh_branch: bool) -> &'static str {
     if width < 17 {
@@ -415,6 +446,32 @@ fn button_text(page: &Page, width: u16, refresh_branch: bool) -> &'static str {
             ..
         } => "[Create branch] [Cancel]",
         Page::Form { .. } => "[Submit] [Cancel]",
+    }
+}
+
+fn palette_button_line(page: &Page, width: u16, refresh_branch: bool) -> Line<'static> {
+    let text = button_text(page, width, refresh_branch);
+    if matches!(
+        page,
+        Page::Form {
+            command: Command::NewAgentSession | Command::CreateBranch,
+            ..
+        }
+    ) && let Some((primary, _)) = text.split_once(" [Cancel]")
+    {
+        Line::from(vec![
+            Span::styled(
+                primary.to_owned(),
+                Style::default()
+                    .fg(CRUST())
+                    .bg(MAUVE())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled("[Cancel]", Style::default().fg(MAUVE())),
+        ])
+    } else {
+        Line::from(text)
     }
 }
 
@@ -1138,6 +1195,201 @@ fn reset_compact_picker(field: &mut Field) {
         list.query.clear();
         list.select_value(&value);
     }
+}
+
+fn field_pair(fields: &[Field], width: u16) -> Option<(usize, usize)> {
+    if width < 56 {
+        return None;
+    }
+    let harness = fields
+        .iter()
+        .position(|field| field.label == "Agent harness")?;
+    let model = fields.iter().position(|field| field.label == "Model")?;
+    (!fields[harness].hidden && !fields[model].hidden).then_some((harness, model))
+}
+
+fn pair_columns(body: Rect) -> (u16, u16, u16, u16) {
+    let gap = 2.min(body.width);
+    let columns = body.width.saturating_sub(gap);
+    let left = columns / 2;
+    let right = columns.saturating_sub(left);
+    let split = body.x.saturating_add(left).saturating_add(gap / 2);
+    (left, gap, right, split)
+}
+
+fn creation_label_style(active: bool) -> Style {
+    let mut style = Style::default().fg(if active { MAUVE() } else { SUBTEXT() });
+    if active {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+fn creation_field_label(label: &str, _width: u16, active: bool) -> Line<'static> {
+    if let Some(name) = label.strip_suffix(" (optional)") {
+        Line::from(vec![
+            Span::styled(name.to_owned(), creation_label_style(active)),
+            Span::styled(" (optional)", Style::default().fg(MUTED())),
+        ])
+    } else {
+        Line::styled(label.to_owned(), creation_label_style(active))
+    }
+}
+
+fn creation_surface_spans(
+    text: &str,
+    width: u16,
+    active: bool,
+    placeholder: bool,
+) -> Vec<Span<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let background = if active { SURFACE2() } else { SURFACE0() };
+    let style = Style::default()
+        .fg(if placeholder { MUTED() } else { TEXT() })
+        .bg(background);
+    let marker_style = Style::default()
+        .fg(if active { MAUVE() } else { SUBTEXT() })
+        .bg(background);
+    let marker = if active { "› " } else { "  " };
+    let marker_width = UnicodeWidthStr::width(marker).min(usize::from(width));
+    let content_width = usize::from(width).saturating_sub(marker_width);
+    let content = clip_text(text, content_width);
+    let content_width = UnicodeWidthStr::width(content.as_str()).min(content_width);
+    let padding = usize::from(width).saturating_sub(marker_width + content_width);
+    vec![
+        Span::styled(marker.to_owned(), marker_style),
+        Span::styled(content, style),
+        Span::styled(" ".repeat(padding), style),
+    ]
+}
+
+fn creation_surface_line(text: &str, width: u16, active: bool, placeholder: bool) -> Line<'static> {
+    Line::from(creation_surface_spans(text, width, active, placeholder))
+}
+
+fn creation_inline_surface_line(
+    label: &str,
+    value: &str,
+    width: u16,
+    active: bool,
+    placeholder: bool,
+) -> Line<'static> {
+    if width == 0 {
+        return Line::default();
+    }
+    let background = if active { SURFACE2() } else { SURFACE0() };
+    let value_style = Style::default()
+        .fg(if placeholder { MUTED() } else { TEXT() })
+        .bg(background);
+    let marker = if active { "› " } else { "  " };
+    let marker_width = UnicodeWidthStr::width(marker).min(usize::from(width));
+    let label_text = format!("{label}: ");
+    let label_width = UnicodeWidthStr::width(label_text.as_str())
+        .min(usize::from(width).saturating_sub(marker_width));
+    let remaining = usize::from(width).saturating_sub(marker_width + label_width);
+    let label_text = clip_text(&label_text, label_width);
+    let value = clip_text(value, remaining);
+    let used = label_width + UnicodeWidthStr::width(value.as_str()).min(remaining);
+    let padding = usize::from(width).saturating_sub(marker_width + used);
+    Line::from(vec![
+        Span::styled(
+            marker.to_owned(),
+            Style::default()
+                .fg(if active { MAUVE() } else { SUBTEXT() })
+                .bg(background),
+        ),
+        Span::styled(label_text, Style::default().fg(SUBTEXT()).bg(background)),
+        Span::styled(value, value_style),
+        Span::styled(" ".repeat(padding), Style::default().bg(background)),
+    ])
+}
+
+fn creation_pair_labels(
+    left: &str,
+    right: &str,
+    left_width: u16,
+    gap: u16,
+    right_width: u16,
+    left_active: bool,
+    right_active: bool,
+) -> Line<'static> {
+    let mut spans = creation_label_spans(left, left_width, left_active);
+    spans.push(Span::raw(" ".repeat(usize::from(gap))));
+    spans.extend(creation_label_spans(right, right_width, right_active));
+    Line::from(spans)
+}
+
+fn creation_label_spans(label: &str, width: u16, active: bool) -> Vec<Span<'static>> {
+    let text = clip_text(label, usize::from(width));
+    let padding = usize::from(width).saturating_sub(UnicodeWidthStr::width(text.as_str()));
+    vec![
+        Span::styled(text, creation_label_style(active)),
+        Span::styled(" ".repeat(padding), Style::default()),
+    ]
+}
+
+struct PairedFieldSurface<'a> {
+    text: &'a str,
+    active: bool,
+    placeholder: bool,
+    width: u16,
+}
+
+fn creation_pair_surfaces(
+    left: PairedFieldSurface<'_>,
+    gap: u16,
+    right: PairedFieldSurface<'_>,
+) -> Line<'static> {
+    let mut spans = creation_surface_spans(left.text, left.width, left.active, left.placeholder);
+    spans.push(Span::styled(
+        " ".repeat(usize::from(gap)),
+        Style::default().bg(if left.active || right.active {
+            SURFACE2()
+        } else {
+            SURFACE0()
+        }),
+    ));
+    spans.extend(creation_surface_spans(
+        right.text,
+        right.width,
+        right.active,
+        right.placeholder,
+    ));
+    Line::from(spans)
+}
+
+fn creation_field_display(
+    field: &Field,
+    index: usize,
+    active: usize,
+    palette: &Palette,
+    width: u16,
+) -> (String, bool) {
+    if field.label == "Branch name" && field.value.is_empty() {
+        return ("feature/auth-refresh".into(), true);
+    }
+    let editing = match &field.kind {
+        FieldKind::Pick(list) if index == active && !list.query.is_empty() => list.query.as_str(),
+        FieldKind::Pick(list) => list
+            .items
+            .iter()
+            .find(|item| item.value == field.value)
+            .map(|item| item.label.as_str())
+            .unwrap_or(field.value.as_str()),
+        _ => field.value.as_str(),
+    };
+    let cursor = if index == active {
+        palette.cursor
+    } else {
+        Default::default()
+    };
+    let (mut display, _) = cursor.display(editing, usize::from(width.saturating_sub(2)));
+    if index != active {
+        display.pop();
+    }
+    (display, false)
 }
 
 /// A deferred submit replays Enter on a pick list the user never saw, so only
@@ -2953,9 +3205,9 @@ impl Dashboard {
         {
             return self.close_confirm_mouse(mouse, area);
         }
-        let (_, _, body, buttons) = palette_geometry(area);
         let point = Position::new(mouse.column, mouse.row);
         let palette = self.palette.as_ref().unwrap();
+        let (_, _, body, buttons) = palette_geometry_for(area, Some(&palette.page));
         if creation_form_below_minimum(&palette.page, area) {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) && buttons.contains(point) {
                 let refresh_branch = palette.pending.is_none()
@@ -3053,10 +3305,28 @@ impl Dashboard {
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return DashboardAction::None;
         }
+        let mut paired_field_click = None;
         let target = targets
             .into_iter()
             .find(|(row, _)| *row == scroll + usize::from(mouse.row - body.y))
-            .map(|(_, t)| t);
+            .map(|(_, target)| match target {
+                PaletteTarget::FieldPair(left, right, value, split) => {
+                    let left_clicked = mouse.column < split;
+                    let (left_width, gap, right_width, _) = pair_columns(body);
+                    let (index, origin, width) = if left_clicked {
+                        (left, body.x, left_width)
+                    } else {
+                        (
+                            right,
+                            body.x.saturating_add(left_width).saturating_add(gap),
+                            right_width,
+                        )
+                    };
+                    paired_field_click = Some((index, origin, width));
+                    PaletteTarget::Field(index, value)
+                }
+                target => target,
+            });
         let Some(target) = target else {
             return DashboardAction::None;
         };
@@ -3117,10 +3387,14 @@ impl Dashboard {
                             }
                             _ => &field.value,
                         };
+                        let (origin, width) = paired_field_click
+                            .filter(|(paired, _, _)| *paired == index)
+                            .map(|(_, origin, width)| (origin, width))
+                            .unwrap_or((body.x, body.width));
                         palette.cursor.click(
                             text,
-                            body.width.saturating_sub(2) as usize,
-                            mouse.column.saturating_sub(body.x + 2) as usize,
+                            width.saturating_sub(2) as usize,
+                            mouse.column.saturating_sub(origin.saturating_add(2)) as usize,
                         );
                     }
                     _ => {}
@@ -6663,6 +6937,15 @@ impl Dashboard {
                 0,
             );
         }
+        if let Page::Form {
+            command: command @ (Command::NewAgentSession | Command::CreateBranch),
+            fields,
+            active,
+            ..
+        } = &palette.page
+        {
+            return self.creation_form_body(body, command, fields, *active, palette);
+        }
         let mut lines = Vec::new();
         let mut focus_line = 0;
         let mut targets = Vec::new();
@@ -7109,6 +7392,294 @@ impl Dashboard {
         (lines, targets, scroll)
     }
 
+    fn creation_form_body<'a>(
+        &self,
+        body: Rect,
+        command: &Command,
+        fields: &'a [Field],
+        active: usize,
+        palette: &Palette,
+    ) -> (Vec<Line<'a>>, Vec<(usize, PaletteTarget)>, usize) {
+        let picker_open = palette.new_agent_picker_open;
+        let compact_controls = picker_open || body.width < 56;
+        let pair = (matches!(command, Command::NewAgentSession) && !picker_open)
+            .then(|| field_pair(fields, body.width))
+            .flatten();
+        let mut lines = Vec::new();
+        let mut targets = Vec::new();
+        let mut focus_line = 0;
+        let mut index = 0;
+
+        while index < fields.len() {
+            let field = &fields[index];
+            if field.hidden {
+                index += 1;
+                continue;
+            }
+            if matches!(field.kind, FieldKind::Notice) {
+                let notice = match field.label {
+                    "Destination" | "Shared files" => field.value.clone(),
+                    label => format!("{label}: {}", field.value),
+                };
+                lines.push(Line::styled(
+                    clip_text(&notice, usize::from(body.width)),
+                    Style::default().fg(MUTED()),
+                ));
+                index += 1;
+                continue;
+            }
+
+            if let Some((_, model)) = pair
+                && index == model
+            {
+                index += 1;
+                continue;
+            }
+
+            if let Some((harness, model)) = pair
+                && index == harness
+            {
+                let (left_width, gap, right_width, split_x) = pair_columns(body);
+                targets.push((
+                    lines.len(),
+                    PaletteTarget::FieldPair(harness, model, false, split_x),
+                ));
+                lines.push(creation_pair_labels(
+                    fields[harness].label,
+                    fields[model].label,
+                    left_width,
+                    gap,
+                    right_width,
+                    active == harness,
+                    active == model,
+                ));
+                targets.push((
+                    lines.len(),
+                    PaletteTarget::FieldPair(harness, model, true, split_x),
+                ));
+                let left =
+                    creation_field_display(&fields[harness], harness, active, palette, left_width);
+                let right =
+                    creation_field_display(&fields[model], model, active, palette, right_width);
+                lines.push(creation_pair_surfaces(
+                    PairedFieldSurface {
+                        text: &left.0,
+                        active: active == harness,
+                        placeholder: left.1,
+                        width: left_width,
+                    },
+                    gap,
+                    PairedFieldSurface {
+                        text: &right.0,
+                        active: active == model,
+                        placeholder: right.1,
+                        width: right_width,
+                    },
+                ));
+                if active == harness || active == model {
+                    focus_line = lines.len().saturating_sub(1);
+                }
+                for paired in [harness, model] {
+                    if let Some((_, problem)) =
+                        palette.invalid.as_ref().filter(|(at, _)| *at == paired)
+                    {
+                        lines.push(Line::styled(
+                            clip_text(problem, usize::from(body.width)),
+                            Style::default().fg(PEACH()),
+                        ));
+                        if active == paired {
+                            focus_line = lines.len().saturating_sub(1);
+                        }
+                    }
+                }
+                if let Some(status) = palette
+                    .model_status
+                    .as_deref()
+                    .or_else(|| palette.model_capabilities.as_ref()?.reason.as_deref())
+                {
+                    lines.push(Line::styled(
+                        clip_text(status, usize::from(body.width)),
+                        Style::default().fg(MUTED()),
+                    ));
+                    if active == model {
+                        focus_line = lines.len().saturating_sub(1);
+                    }
+                }
+                index = model + 1;
+                continue;
+            }
+
+            if matches!(field.kind, FieldKind::Toggle) {
+                let expanded = field.value == "expanded";
+                let line = format!("{} {}", if expanded { "▾" } else { "▸" }, field.label);
+                targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                lines.push(Line::styled(
+                    clip_text(&line, usize::from(body.width)),
+                    Style::default()
+                        .fg(if active == index { MAUVE() } else { SUBTEXT() })
+                        .add_modifier(if active == index {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ));
+                if active == index {
+                    focus_line = lines.len().saturating_sub(1);
+                }
+                index += 1;
+                continue;
+            }
+
+            let compact_picker = compact_controls && compact_picker_field(command, field);
+            if matches!(field.kind, FieldKind::Multiline) {
+                let display_label = if field.label == "Initial prompt" {
+                    "Prompt (optional)"
+                } else {
+                    field.label
+                };
+                targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                lines.push(creation_field_label(
+                    display_label,
+                    body.width,
+                    active == index,
+                ));
+                let text_lines = field.value.bytes().filter(|byte| *byte == b'\n').count() + 1;
+                let default_rows = if body.width >= 56 && !picker_open {
+                    3
+                } else {
+                    1
+                };
+                let visible_rows = text_lines.max(default_rows);
+                let cursor_line = palette.cursor.line(&field.value);
+                let inner_width = body.width.saturating_sub(2) as usize;
+                for line_index in 0..visible_rows {
+                    let placeholder = field.value.is_empty() && line_index == 0 && active != index;
+                    let display = if placeholder {
+                        "What should the agent work on?".to_owned()
+                    } else {
+                        palette
+                            .cursor
+                            .display_line(&field.value, line_index, inner_width)
+                            .unwrap_or_default()
+                    };
+                    targets.push((lines.len(), PaletteTarget::MultilineLine(index, line_index)));
+                    lines.push(creation_surface_line(
+                        &display,
+                        body.width,
+                        active == index && cursor_line == line_index,
+                        placeholder,
+                    ));
+                    if active == index && cursor_line == line_index {
+                        focus_line = lines.len().saturating_sub(1);
+                    }
+                }
+                if let Some((_, problem)) = palette.invalid.as_ref().filter(|(at, _)| *at == index)
+                {
+                    lines.push(Line::styled(
+                        clip_text(problem, usize::from(body.width)),
+                        Style::default().fg(PEACH()),
+                    ));
+                    if active == index {
+                        focus_line = lines.len().saturating_sub(1);
+                    }
+                }
+                index += 1;
+                continue;
+            }
+
+            let display_label = if field.label == "Initial prompt" {
+                "Prompt (optional)"
+            } else {
+                field.label
+            };
+            let display = creation_field_display(field, index, active, palette, body.width);
+            let value_line = if compact_picker {
+                targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                creation_inline_surface_line(
+                    display_label,
+                    &display.0,
+                    body.width,
+                    active == index,
+                    display.1,
+                )
+            } else {
+                targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                lines.push(creation_field_label(
+                    display_label,
+                    body.width,
+                    active == index,
+                ));
+                targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                creation_surface_line(&display.0, body.width, active == index, display.1)
+            };
+            lines.push(value_line);
+            if active == index {
+                focus_line = lines.len().saturating_sub(1);
+            }
+
+            if field.label == "Model"
+                && let Some(status) = palette
+                    .model_status
+                    .as_deref()
+                    .or_else(|| palette.model_capabilities.as_ref()?.reason.as_deref())
+            {
+                lines.push(Line::styled(
+                    clip_text(status, usize::from(body.width)),
+                    Style::default().fg(MUTED()),
+                ));
+                if active == index {
+                    focus_line = lines.len().saturating_sub(1);
+                }
+            }
+            if let Some((_, problem)) = palette.invalid.as_ref().filter(|(at, _)| *at == index) {
+                lines.push(Line::styled(
+                    clip_text(problem, usize::from(body.width)),
+                    Style::default().fg(PEACH()),
+                ));
+                if active == index {
+                    focus_line = lines.len().saturating_sub(1);
+                }
+            }
+
+            if active == index
+                && picker_open
+                && compact_picker
+                && let FieldKind::Pick(list) = &field.kind
+            {
+                let reserve_after = creation_rows_after(
+                    fields,
+                    index + 1,
+                    command,
+                    picker_open,
+                    pair,
+                    palette,
+                    body.width,
+                );
+                let room = usize::from(body.height)
+                    .saturating_sub(lines.len())
+                    .saturating_sub(reserve_after);
+                let (options, option_rows) = list.lines_bounded(room);
+                for (offset, option) in option_rows {
+                    targets.push((lines.len() + offset, PaletteTarget::Option(index, option)));
+                }
+                let has_options = !options.is_empty();
+                lines.extend(options);
+                if has_options {
+                    focus_line = lines.len().saturating_sub(1);
+                }
+            }
+            index += 1;
+        }
+
+        let scroll = palette
+            .scroll
+            .unwrap_or_else(|| {
+                focus_line.saturating_sub(usize::from(body.height.saturating_sub(1)))
+            })
+            .min(lines.len().saturating_sub(usize::from(body.height)));
+        (lines, targets, scroll)
+    }
+
     fn close_confirm_text(&self, palette: &Palette) -> CloseConfirmText {
         let Page::Confirm { request, target } = &palette.page else {
             return CloseConfirmText {
@@ -7233,7 +7804,7 @@ impl Dashboard {
             self.draw_close_confirm(frame, palette);
             return;
         }
-        let (area, inner, body, buttons) = palette_geometry(frame.area());
+        let (area, inner, body, buttons) = palette_geometry_for(frame.area(), Some(&palette.page));
         let undersized_creation_form = creation_form_below_minimum(&palette.page, frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
@@ -7417,21 +7988,18 @@ impl Dashboard {
                 Rect::new(inner.x, status_area.bottom(), inner.width, 1),
             );
         }
+        let refresh_branch = palette.pending.is_none()
+            && palette
+                .branch_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.blocked);
+        let button_line = if undersized_creation_form {
+            Line::from("[Resize to 60×18] [Cancel]")
+        } else {
+            palette_button_line(&palette.page, buttons.width, refresh_branch)
+        };
         frame.render_widget(
-            Paragraph::new(if undersized_creation_form {
-                "[Resize to 60×18] [Cancel]"
-            } else {
-                button_text(
-                    &palette.page,
-                    buttons.width,
-                    palette.pending.is_none()
-                        && palette
-                            .branch_attempt
-                            .as_ref()
-                            .is_some_and(|attempt| attempt.blocked),
-                )
-            })
-            .style(Style::default().fg(MAUVE())),
+            Paragraph::new(button_line).style(Style::default().fg(MAUVE())),
             buttons,
         );
         frame.render_widget(
@@ -7494,6 +8062,82 @@ fn field_rows_after(
                     .is_some_and(|capabilities| capabilities.reason.is_some())),
     );
     (if compact { 1 } else { 2 }) + problem + model_status
+}
+
+fn creation_rows_after(
+    fields: &[Field],
+    start: usize,
+    command: &Command,
+    picker_open: bool,
+    pair: Option<(usize, usize)>,
+    palette: &Palette,
+    width: u16,
+) -> usize {
+    let mut rows = 0;
+    let mut index = start;
+    while index < fields.len() {
+        let field = &fields[index];
+        if field.hidden {
+            index += 1;
+            continue;
+        }
+        if let Some((_, model)) = pair
+            && index == model
+        {
+            index += 1;
+            continue;
+        }
+        if let Some((harness, model)) = pair
+            && index == harness
+        {
+            rows += 2;
+            for paired in [harness, model] {
+                rows += usize::from(
+                    palette
+                        .invalid
+                        .as_ref()
+                        .is_some_and(|(invalid, _)| *invalid == paired),
+                );
+            }
+            rows += usize::from(
+                palette.model_status.is_some()
+                    || palette
+                        .model_capabilities
+                        .as_ref()
+                        .is_some_and(|capabilities| capabilities.reason.is_some()),
+            );
+            index = model + 1;
+            continue;
+        }
+        if matches!(field.kind, FieldKind::Notice | FieldKind::Toggle) {
+            rows += 1;
+        } else if matches!(field.kind, FieldKind::Multiline) {
+            let text_lines = field.value.bytes().filter(|byte| *byte == b'\n').count() + 1;
+            let default_rows = if width >= 56 && !picker_open { 3 } else { 1 };
+            rows += 1 + text_lines.max(default_rows);
+        } else if (picker_open || width < 56) && compact_picker_field(command, field) {
+            rows += 1;
+        } else {
+            rows += 2;
+        }
+        if field.label == "Model"
+            && (palette.model_status.is_some()
+                || palette
+                    .model_capabilities
+                    .as_ref()
+                    .is_some_and(|capabilities| capabilities.reason.is_some()))
+        {
+            rows += 1;
+        }
+        rows += usize::from(
+            palette
+                .invalid
+                .as_ref()
+                .is_some_and(|(invalid, _)| *invalid == index),
+        );
+        index += 1;
+    }
+    rows
 }
 
 fn mark_form_edit(
@@ -8229,7 +8873,7 @@ mod mouse_tests {
         list.selected = 10;
         fields[0].kind = FieldKind::Pick(list);
         // Wheel the rendered option viewport beyond its initial eight rows.
-        let (_, _, body, _) = palette_geometry(Rect::new(0, 0, 100, 30));
+        let (_, _, body, _) = palette_geometry_for_dashboard(&d, Rect::new(0, 0, 100, 30));
         let (_, targets, scroll) = d.palette_body(body);
         let y = targets
             .iter()
@@ -8333,7 +8977,7 @@ mod mouse_tests {
         let mut d = dashboard();
         d.open_register_project();
         let area = Rect::new(0, 0, 22, 9);
-        let (_, _, body, _) = palette_geometry(area);
+        let (_, _, body, _) = palette_geometry_for_dashboard(&d, area);
         for _ in 0..12 {
             d.mouse_action(mouse(MouseEventKind::ScrollDown, body.x, body.y), area);
         }
@@ -8924,7 +9568,7 @@ mod launch_tests {
             }
             CreateBranchActionPath::Mouse => {
                 let area = Rect::new(0, 0, 100, 30);
-                let (_, _, body, _) = palette_geometry(area);
+                let (_, _, body, _) = palette_geometry_for_dashboard(d, area);
                 let (_, targets, scroll) = d.palette_body(body);
                 let row = targets
                     .iter()
@@ -8942,7 +9586,7 @@ mod launch_tests {
                     },
                     area,
                 );
-                let (_, _, body, _) = palette_geometry(area);
+                let (_, _, body, _) = palette_geometry_for_dashboard(d, area);
                 let (_, targets, scroll) = d.palette_body(body);
                 let option = match &d.palette.as_ref().unwrap().page {
                     Page::Form { fields, .. } => match &fields[branch_index].kind {
@@ -9097,7 +9741,7 @@ mod launch_tests {
 
     fn visible_palette_text(d: &Dashboard, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
-        let (_, _, body, _) = palette_geometry(area);
+        let (_, _, body, _) = palette_geometry_for_dashboard(d, area);
         let (lines, _, scroll) = d.palette_body(body);
         lines
             .iter()
@@ -9127,7 +9771,7 @@ mod launch_tests {
 
     fn visible_palette_dialog_text(d: &Dashboard, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
-        let dialog = palette_geometry(area).0;
+        let dialog = palette_geometry_for_dashboard(d, area).0;
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal
@@ -9227,7 +9871,7 @@ mod launch_tests {
 
         for (width, height) in [(80, 24), (60, 18)] {
             let text = visible_palette_text(&d, width, height);
-            for control in ["Branch", "Agent harness", "Model", "Initial prompt"] {
+            for control in ["Branch", "Agent harness", "Model", "Prompt (optional)"] {
                 assert!(
                     text.contains(control),
                     "{width}x{height} hid {control}:\n{text}"
@@ -9268,7 +9912,7 @@ mod launch_tests {
         }
         for (width, height) in [(80, 24), (60, 18)] {
             let text = visible_palette_text(&d, width, height);
-            for control in ["Branch", "Agent harness", "Model", "Initial prompt"] {
+            for control in ["Branch", "Agent harness", "Model", "Prompt (optional)"] {
                 assert!(
                     text.contains(control),
                     "{width}x{height} hid {control} after Tab:\n{text}"
@@ -9384,7 +10028,7 @@ mod launch_tests {
                     "Branch",
                     "Agent harness",
                     "Model",
-                    "Initial prompt",
+                    "Prompt (optional)",
                     "Advanced options",
                     "Review this change",
                     "Keep the assertions",
@@ -9579,7 +10223,7 @@ mod launch_tests {
             assert!(visible.contains("[Resize to 60×18]"), "{visible}");
             assert!(visible.contains("[Cancel]"), "{visible}");
 
-            let (_, _, _, buttons) = palette_geometry(area);
+            let (_, _, _, buttons) = palette_geometry_for_dashboard(&d, area);
             d.palette_mouse(
                 MouseEvent {
                     kind: MouseEventKind::Down(MouseButton::Left),
@@ -9737,7 +10381,7 @@ mod launch_tests {
             .position(|field| field.label == "Branch")
             .unwrap();
         let area = Rect::new(0, 0, 80, 24);
-        let (_, _, body, _) = palette_geometry(area);
+        let (_, _, body, _) = palette_geometry_for_dashboard(&d, area);
         let (_, targets, scroll) = d.palette_body(body);
         let row = targets
             .iter()
@@ -9757,7 +10401,7 @@ mod launch_tests {
         );
         assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
 
-        let (_, _, body, _) = palette_geometry(area);
+        let (_, _, body, _) = palette_geometry_for_dashboard(&d, area);
         let (_, targets, scroll) = d.palette_body(body);
         let selected = new_agent_fields(&d)
             .0
@@ -10711,7 +11355,7 @@ mod launch_tests {
             d.palette_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         }
         let area = Rect::new(0, 0, 100, 30);
-        let (_, _, body, _) = palette_geometry(area);
+        let (_, _, body, _) = palette_geometry_for_dashboard(&d, area);
         let (_, targets, scroll) = d.palette_body(body);
         let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
             panic!("Agent creation should remain a form");
@@ -14198,7 +14842,7 @@ mod form_tests {
 
     /// The options a 120×40 screen actually shows.
     fn shown_options(d: &Dashboard) -> Vec<String> {
-        let (_, _, body, _) = palette_geometry(Rect::new(0, 0, 120, 40));
+        let (_, _, body, _) = palette_geometry_for_dashboard(d, Rect::new(0, 0, 120, 40));
         let (lines, _, scroll) = d.palette_body(body);
         lines
             .iter()
@@ -14689,6 +15333,319 @@ mod close_confirm_tests {
         assert!(flat.contains("[Cancel]"));
         assert!(!flat.contains("[Enter Close]"));
         assert!(!flat.contains("Close terminal?"));
+    }
+}
+
+#[cfg(test)]
+mod creation_form_visual_tests {
+    use super::*;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    fn new_agent_dashboard() -> Dashboard {
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
+        let shared = Field {
+            label: "Shared files",
+            value: "6 agents share these files".into(),
+            required: false,
+            hidden: false,
+            edited: false,
+            kind: FieldKind::Notice,
+        };
+        let prompt = Field {
+            label: "Initial prompt",
+            value: String::new(),
+            required: false,
+            hidden: false,
+            edited: false,
+            kind: FieldKind::Multiline,
+        };
+        let mut advanced = text_field("Advanced options", "collapsed".into(), false);
+        advanced.kind = FieldKind::Toggle;
+        let fields = vec![
+            pick_field(
+                "Branch",
+                "feature/auth".into(),
+                vec![
+                    PickItem {
+                        label: "feature/auth".into(),
+                        value: "feature/auth".into(),
+                    },
+                    PickItem {
+                        label: "fix/reconnect".into(),
+                        value: "fix/reconnect".into(),
+                    },
+                ],
+            ),
+            notice_field(
+                "Destination",
+                "consigint / feature/auth · workspace ready".into(),
+                false,
+            ),
+            shared,
+            pick_field(
+                "Agent harness",
+                "Claude Code".into(),
+                vec![PickItem {
+                    label: "Claude Code".into(),
+                    value: "Claude Code".into(),
+                }],
+            ),
+            pick_field(
+                "Model",
+                HARNESS_DEFAULT_MODEL.into(),
+                vec![PickItem {
+                    label: "Harness default".into(),
+                    value: HARNESS_DEFAULT_MODEL.into(),
+                }],
+            ),
+            prompt,
+            advanced,
+            {
+                let mut name = text_field("Name", String::new(), false);
+                name.hidden = true;
+                name
+            },
+        ];
+        dashboard.palette = Some(Palette {
+            page: Page::Form {
+                command: Command::NewAgentSession,
+                fields,
+                active: 0,
+                name_edited: false,
+                root_edited: false,
+            },
+            ..Palette::new()
+        });
+        dashboard
+    }
+
+    fn branch_dashboard() -> Dashboard {
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize { rows: 24, cols: 80 });
+        let mut project = pick_field(
+            "Project",
+            "consigint".into(),
+            vec![PickItem {
+                label: "consigint".into(),
+                value: "consigint".into(),
+            }],
+        );
+        project.required = true;
+        let mut options = text_field("Workspace options", "collapsed".into(), false);
+        options.kind = FieldKind::Toggle;
+        let mut base = text_field("Base", "main".into(), true);
+        base.hidden = true;
+        dashboard.palette = Some(Palette {
+            page: Page::Form {
+                command: Command::CreateBranch,
+                fields: vec![
+                    project,
+                    text_field("Branch name", String::new(), true),
+                    options,
+                    base,
+                ],
+                active: 1,
+                name_edited: false,
+                root_edited: false,
+            },
+            ..Palette::new()
+        });
+        dashboard
+    }
+
+    fn render(dashboard: &Dashboard, width: u16, height: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw_dashboard_at(frame, dashboard, 0))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn row(buffer: &Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    fn find_label(buffer: &Buffer, label: &str) -> (u16, u16) {
+        let chars: Vec<char> = label.chars().collect();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if chars.iter().enumerate().all(|(offset, ch)| {
+                    let col = x.saturating_add(u16::try_from(offset).unwrap());
+                    col < buffer.area.width && buffer[(col, y)].symbol() == ch.to_string()
+                }) {
+                    return (x, y);
+                }
+            }
+        }
+        panic!("missing rendered label {label}");
+    }
+
+    fn click(dashboard: &mut Dashboard, column: u16, row: u16, width: u16, height: u16) {
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, width, height),
+        );
+    }
+
+    #[test]
+    fn supported_floor_keeps_all_new_agent_fields_and_actions_visible() {
+        let mut dashboard = new_agent_dashboard();
+        let palette = dashboard.palette.as_mut().unwrap();
+        palette.model_status = Some("Model choices are loading.".into());
+        palette.invalid = Some((4, "Model lookup failed".into()));
+        let buffer = render(&dashboard, 60, 18);
+        let branch = find_label(&buffer, "Branch");
+        let harness = find_label(&buffer, "Agent harness");
+        let model = find_label(&buffer, "Model");
+        let prompt = find_label(&buffer, "Prompt (optional)");
+        let advanced = find_label(&buffer, "Advanced options");
+        let start = find_label(&buffer, "[Start agent]");
+        let cancel = find_label(&buffer, "[Cancel]");
+
+        assert!(branch.1 < harness.1);
+        assert!(harness.1 < model.1);
+        assert!(model.1 < prompt.1);
+        assert!(prompt.1 < advanced.1);
+        assert!(advanced.1 < start.1);
+        assert_eq!(start.1, cancel.1);
+        let visible = (0..buffer.area.height)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains("6 agents share these files"), "{visible}");
+        assert!(visible.contains("Model choices are loading."), "{visible}");
+        assert!(visible.contains("Model lookup failed"), "{visible}");
+    }
+
+    #[test]
+    fn wide_new_agent_pairs_harness_and_model_and_mouse_targets_the_clicked_half() {
+        let mut dashboard = new_agent_dashboard();
+        let buffer = render(&dashboard, 80, 24);
+        let harness = find_label(&buffer, "Agent harness");
+        let model = find_label(&buffer, "Model");
+        assert_eq!(harness.1, model.1, "fields should share the label row");
+        assert!(harness.0 < model.0, "model should occupy the right column");
+
+        let model_value = find_label(&buffer, "Harness default");
+        assert_eq!(model_value.1, model.1 + 1);
+        click(&mut dashboard, model_value.0, model_value.1, 80, 24);
+        let Page::Form { fields, active, .. } = &dashboard.palette.as_ref().unwrap().page else {
+            panic!("New agent session form should remain active");
+        };
+        assert_eq!(fields[*active].label, "Model");
+    }
+
+    #[test]
+    fn floor_picker_keeps_remaining_fields_and_primary_action_visible() {
+        let mut dashboard = new_agent_dashboard();
+        let Some(palette) = dashboard.palette.as_mut() else {
+            unreachable!()
+        };
+        palette.new_agent_picker_open = true;
+        palette.model_status = Some("Model choices are loading.".into());
+        palette.invalid = Some((4, "Model lookup failed".into()));
+        let buffer = render(&dashboard, 60, 18);
+        let visible = (0..buffer.area.height)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for text in [
+            "feature/auth",
+            "Model lookup failed",
+            "› feature/auth",
+            "Agent harness",
+            "Model",
+            "6 agents share these files",
+            "Model choices are loading.",
+            "Prompt (optional)",
+            "Advanced options",
+            "[Start agent]",
+            "[Cancel]",
+        ] {
+            assert!(visible.contains(text), "missing {text}:\n{visible}");
+        }
+    }
+
+    #[test]
+    fn floor_picker_mouse_accepts_the_option_that_was_clicked() {
+        let mut dashboard = new_agent_dashboard();
+        dashboard.palette.as_mut().unwrap().new_agent_picker_open = true;
+        let buffer = render(&dashboard, 60, 18);
+        let mut option = None;
+        for y in 0..buffer.area.height {
+            let line = row(&buffer, y);
+            if let Some(x) = line.find("fix/reconnect") {
+                option = Some((u16::try_from(x).unwrap(), y));
+                break;
+            }
+        }
+        let (x, y) = option.expect("the second visible branch should have a mouse target");
+        click(&mut dashboard, x, y, 60, 18);
+        let Page::Form { fields, active, .. } = &dashboard.palette.as_ref().unwrap().page else {
+            panic!("accepting a branch should keep the session form open");
+        };
+        assert_eq!(fields[*active].label, "Branch");
+        assert_eq!(fields[*active].value, "fix/reconnect");
+    }
+
+    #[test]
+    fn creation_forms_use_theme_surfaces_and_emphasize_the_primary_action() {
+        let session = new_agent_dashboard();
+        let buffer = render(&session, 80, 24);
+        let prompt = find_label(&buffer, "Prompt (optional)");
+        let start = find_label(&buffer, "[Start agent]");
+        for row in 1..=3 {
+            assert_eq!(
+                buffer[(prompt.0, prompt.1 + row)].bg,
+                crate::theme::SURFACE0(),
+                "the wide prompt area should have three visible rows"
+            );
+        }
+        assert_eq!(buffer[(start.0, start.1)].bg, crate::theme::MAUVE());
+
+        let branch = branch_dashboard();
+        let buffer = render(&branch, 80, 24);
+        let name = find_label(&buffer, "Branch name");
+        let create = find_label(&buffer, "[Create branch]");
+        assert_eq!(buffer[(name.0, name.1 + 1)].bg, crate::theme::SURFACE2());
+        assert_eq!(buffer[(create.0, create.1)].bg, crate::theme::MAUVE());
+    }
+
+    #[test]
+    fn disclosure_and_prompt_surfaces_keep_their_mouse_actions() {
+        let mut branch = branch_dashboard();
+        let buffer = render(&branch, 80, 24);
+        let (options_x, options_y) = find_label(&buffer, "Workspace options");
+        click(&mut branch, options_x, options_y, 80, 24);
+        let buffer = render(&branch, 80, 24);
+        assert!(find_label(&buffer, "Base").1 > options_y);
+
+        let mut session = new_agent_dashboard();
+        let buffer = render(&session, 80, 24);
+        let (prompt_x, prompt_y) = find_label(&buffer, "What should the agent work on?");
+        click(&mut session, prompt_x, prompt_y, 80, 24);
+        session.palette_paste("draft from mouse");
+        let Page::Form { fields, .. } = &session.palette.as_ref().unwrap().page else {
+            panic!("New agent session form should remain active");
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "draft from mouse"
+        );
     }
 }
 
