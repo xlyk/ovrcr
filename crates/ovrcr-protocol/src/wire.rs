@@ -350,10 +350,10 @@ impl InitialPromptLaunchRequest {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
         if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex"))
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex" | "omp"))
                 || !matches!(
                     self.launch.session.label.as_deref(),
-                    Some("claude" | "pi" | "codex")
+                    Some("claude" | "pi" | "codex" | "omp")
                 )
                 || !matches!(
                     (&self.launch.session.kind, self.launch.session.label.as_deref()),
@@ -361,7 +361,8 @@ impl InitialPromptLaunchRequest {
                 ))
         {
             return Err(
-                "initial prompts require a detected Claude Code, Pi, or Codex launcher".into(),
+                "initial prompts require a detected Claude Code, Pi, Codex, or Oh My Pi launcher"
+                    .into(),
             );
         }
         if self.launch.session.argv.len() > 128
@@ -1016,18 +1017,26 @@ mod wire_snapshot {
                 session: CreateSessionRequest {
                     project: "p".into(),
                     workspace: "w".into(),
-                    name: "codex".into(),
-                    label: Some("codex".into()),
-                    argv: vec!["codex".into()],
-                    kind: SessionKind::Agent {
-                        name: "codex".into(),
-                    },
+                    name: "n".into(),
+                    label: Some("omp".into()),
+                    argv: vec!["ovrcr".into(), "agent".into(), "run".into(), "omp".into()],
+                    kind: SessionKind::Agent { name: "omp".into() },
                 },
                 model_policy: crate::AgentModelPolicy::HarnessDefault,
                 model_binding: None,
                 expected_model: None,
             },
-            prompt: "a Codex startup prompt".into(),
+            prompt: "first line\n-- a message, not an option".into(),
+        };
+        request
+            .validate()
+            .expect("OMP accepts a nonblank Initial prompt request");
+
+        request.launch.session.name = "codex".into();
+        request.launch.session.label = Some("codex".into());
+        request.launch.session.argv = vec!["codex".into()];
+        request.launch.session.kind = SessionKind::Agent {
+            name: "codex".into(),
         };
         assert!(request.validate().is_ok());
 

@@ -146,6 +146,15 @@ model discovery, exact model revalidation, native option placement and the
 multiline prompt through the compiled Server and managed launch path. It does
 not establish provider acceptance or resolve Pi's post-check fuzzy fallback.
 
+The Oh My Pi adapter case uses a task-owned fake `omp` CLI to exercise the
+installed 18.10.3 `models --json` contract, exact selector revalidation, the
+preserved `--auto-approve` launch option, the native `--` message boundary,
+multiline prompt delivery, blank interactive start, reconnect and privacy. The
+fake catalog proves OVRCR's composition and refusal behavior only; it does not
+prove that OMP applied a model, accepted a prompt, or completed a task. OMP's
+native resolver may fuzzy-match after exact lookup, so a passing fixture does
+not close that native behavior gate.
+
 Node 22; the Pi extension and its host run outside cargo.
 
 On macOS, the Cursor dependency packaging check exercises the real installer and

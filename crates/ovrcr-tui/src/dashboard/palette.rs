@@ -990,7 +990,7 @@ fn model_query_target(
         }
         AgentOrigin::Detected => {}
     }
-    if !matches!(preset.as_str(), "claude" | "pi" | "codex") {
+    if !matches!(preset.as_str(), "claude" | "pi" | "codex" | "omp") {
         return Err(
             "Verified explicit model selection is not available for this harness yet.".into(),
         );
@@ -4496,7 +4496,7 @@ impl Dashboard {
             && !self.supports_initial_prompt_launch(launch)
         {
             palette.error = Some(
-                "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
+                "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.".into(),
             );
             return DashboardAction::Redraw;
         }
@@ -4582,7 +4582,7 @@ impl Dashboard {
             .session
             .label
             .as_deref()
-            .filter(|preset| matches!(*preset, "claude" | "pi" | "codex"))
+            .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
         else {
             return false;
         };
@@ -4620,12 +4620,12 @@ impl Dashboard {
             if let Some(mut form) = form {
                 form.pending = None;
                 form.error = Some(
-                    "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
+                    "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.".into(),
                 );
                 self.palette = Some(*form);
             } else {
                 self.set_error(
-                    "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.",
+                    "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.",
                 );
             }
             return;
@@ -8846,6 +8846,171 @@ mod launch_tests {
                 expected_model: launch.expected_model.clone(),
             })
         );
+    }
+
+    #[test]
+    fn detected_omp_model_query_exposes_exact_selectors_and_initial_prompt_support() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "omp".into(),
+            "--".into(),
+            "/fixture/omp".into(),
+            "--auto-approve".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "omp".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "omp".into(),
+                model_policy: AgentModelPolicy::Explicit("openai/gpt-5.4".into()),
+            },
+        );
+        d.open_create_terminal();
+        let query = d
+            .drain_one_request()
+            .expect("detected OMP loads its native catalog");
+        assert!(matches!(
+            query.request,
+            Request::QueryAgentModels {
+                preset,
+                origin: AgentOrigin::Detected,
+                argv: ref selected,
+                project,
+                workspace,
+            } if preset == "omp"
+                && selected == &argv
+                && project == "demo"
+                && workspace == "root"
+        ));
+
+        let capabilities = crate::protocol::AgentModelCapabilities {
+            preset: "omp".into(),
+            binding: Some("omp-launch-binding".into()),
+            models: vec![crate::protocol::AgentModelOption {
+                alias: "openai/gpt-5.4".into(),
+                resolved: "openai/gpt-5.4".into(),
+            }],
+            reason: None,
+        };
+        d.agent_models_event(query.request_id, capabilities.clone());
+        let Page::Form {
+            fields: current_fields,
+            ..
+        } = &d.palette.as_ref().unwrap().page
+        else {
+            panic!("Agent creation should remain a form");
+        };
+        assert_eq!(
+            current_fields
+                .iter()
+                .find(|field| field.label == "Model")
+                .unwrap()
+                .value,
+            "openai/gpt-5.4",
+            "the project remembers its exact OMP model selection"
+        );
+        let mut fields = d.launch_fields("demo", false);
+        for (label, value) in [
+            ("Start", "Agent"),
+            ("Agent", "omp"),
+            ("Model", "openai/gpt-5.4"),
+        ] {
+            fields
+                .iter_mut()
+                .find(|field| field.label == label)
+                .unwrap()
+                .value = value.into();
+        }
+        let launch = d
+            .selected_launch(&fields, "", Some(&capabilities))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            launch.model_policy,
+            AgentModelPolicy::Explicit("openai/gpt-5.4".into())
+        );
+        assert_eq!(launch.model_binding.as_deref(), Some("omp-launch-binding"));
+        assert_eq!(launch.expected_model.as_deref(), Some("openai/gpt-5.4"));
+        assert_eq!(launch.argv, argv);
+        assert!(
+            d.supports_initial_prompt_launch(&ovrcr_protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "demo".into(),
+                    workspace: "root".into(),
+                    name: "omp-prompt".into(),
+                    label: launch.label.clone(),
+                    argv: launch.argv.clone(),
+                    kind: launch.kind.clone(),
+                },
+                model_policy: launch.model_policy.clone(),
+                model_binding: launch.model_binding.clone(),
+                expected_model: launch.expected_model.clone(),
+            })
+        );
+    }
+
+    #[test]
+    fn configured_omp_keeps_model_and_initial_prompt_controls_read_only() {
+        let argv = vec![
+            "/custom/omp-wrapper".into(),
+            "--profile".into(),
+            "work".into(),
+        ];
+        let mut d = dashboard();
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "omp".into(),
+            argv: argv.clone(),
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Configured,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "omp".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
+        d.open_create_terminal();
+        assert!(d.drain_one_request().is_none());
+        let palette = d.palette.as_ref().unwrap();
+        assert!(
+            palette
+                .model_status
+                .as_deref()
+                .is_some_and(|status| { status.contains("named launcher is configured") })
+        );
+        let Page::Form { fields, .. } = &palette.page else {
+            panic!("Agent creation should remain a form");
+        };
+        let model = fields.iter().find(|field| field.label == "Model").unwrap();
+        let FieldKind::Pick(list) = &model.kind else {
+            panic!("Model must remain a picker");
+        };
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].value, HARNESS_DEFAULT_MODEL);
+
+        let launch = ovrcr_protocol::CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "demo".into(),
+                workspace: "root".into(),
+                name: "configured-omp".into(),
+                label: Some("omp".into()),
+                argv,
+                kind: SessionKind::Agent { name: "omp".into() },
+            },
+            model_policy: AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        assert!(!d.supports_initial_prompt_launch(&launch));
     }
 
     #[test]
