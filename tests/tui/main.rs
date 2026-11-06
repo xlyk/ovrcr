@@ -43,6 +43,7 @@ mod mouse;
 mod operator;
 mod palette;
 mod quota;
+mod session_jump_adaptive;
 mod settings;
 mod sidebar;
 mod split;
