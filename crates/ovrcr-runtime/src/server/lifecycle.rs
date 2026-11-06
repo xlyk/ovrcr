@@ -117,7 +117,10 @@ impl Lifecycle {
             ));
         }
         let sequence = book.next_sequence.checked_add(1).ok_or_else(|| {
-            error_response(ErrorCode::Internal, "initial-prompt identity space is exhausted")
+            error_response(
+                ErrorCode::Internal,
+                "initial-prompt identity space is exhausted",
+            )
         })?;
         book.next_sequence = sequence;
         book.latest_issued = sequence;
@@ -138,20 +141,19 @@ impl Lifecycle {
 
     pub(super) fn prompt_intents(&self) -> Vec<InitialPromptIntentSnapshot> {
         let book = self.prompt_intents.lock().unwrap();
-        let mut records: Vec<_> = book.records.values().map(|record| record.snapshot.clone()).collect();
+        let mut records: Vec<_> = book
+            .records
+            .values()
+            .map(|record| record.snapshot.clone())
+            .collect();
         records.sort_by_key(|record| record.id.sequence);
         records
     }
 
-    fn prompt_launch(
-        &self,
-        id: &InitialPromptIntentId,
-    ) -> Option<InitialPromptLaunchRequest> {
+    fn prompt_launch(&self, id: &InitialPromptIntentId) -> Option<InitialPromptLaunchRequest> {
         let book = self.prompt_intents.lock().unwrap();
         let record = book.records.get(&id.sequence)?;
-        if record.snapshot.id != *id
-            || record.snapshot.state != InitialPromptIntentState::Pending
-        {
+        if record.snapshot.id != *id || record.snapshot.state != InitialPromptIntentState::Pending {
             return None;
         }
         Some(InitialPromptLaunchRequest {
@@ -305,10 +307,13 @@ pub(super) fn try_accept_prompt(
         return Response::InitialPromptIntents(vec![snapshot]);
     }
     if request.intent.sequence != book.latest_issued
-        || !book.records.get(&request.intent.sequence).is_some_and(|record| {
-            record.snapshot.id == request.intent
-                && record.snapshot.state == InitialPromptIntentState::Issued
-        })
+        || !book
+            .records
+            .get(&request.intent.sequence)
+            .is_some_and(|record| {
+                record.snapshot.id == request.intent
+                    && record.snapshot.state == InitialPromptIntentState::Issued
+            })
     {
         return Response::InitialPromptIntents(vec![empty_prompt_intent(
             request.intent,
@@ -332,13 +337,22 @@ pub(super) fn try_accept_prompt(
     let previous_consumed = book.consumed_through;
     let record = book.records.get_mut(&request.intent.sequence).unwrap();
     record.snapshot.state = InitialPromptIntentState::Pending;
-    record.snapshot.project.clone_from(&request.launch.session.project);
+    record
+        .snapshot
+        .project
+        .clone_from(&request.launch.session.project);
     record
         .snapshot
         .workspace
         .clone_from(&request.launch.session.workspace);
-    record.snapshot.name.clone_from(&request.launch.session.name);
-    record.snapshot.label.clone_from(&request.launch.session.label);
+    record
+        .snapshot
+        .name
+        .clone_from(&request.launch.session.name);
+    record
+        .snapshot
+        .label
+        .clone_from(&request.launch.session.label);
     record.launch = Some(request.launch);
     record.prompt = Some(request.prompt);
     book.consumed_through = request.intent.sequence;
@@ -470,14 +484,12 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                     &result,
                     prompt.as_deref().unwrap_or(""),
                 );
-                let (outcome, publish_hierarchy) = match result {
+                let (_outcome, publish_hierarchy) = match result {
                     Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
                     Err(error) => {
                         let (mut outcome, publish_hierarchy) = outcome_from_error(error);
-                        if let (
-                            LifecycleOutcome::Failed { message, .. },
-                            Some(prompt),
-                        ) = (&mut outcome, prompt.as_deref())
+                        if let (LifecycleOutcome::Failed { message, .. }, Some(prompt)) =
+                            (&mut outcome, prompt.as_deref())
                         {
                             *message = redact_prompt(std::mem::take(message), prompt);
                         }
@@ -485,18 +497,21 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                     }
                 };
                 clear_inflight(&state, job.client_token);
-                publish_completed(
-                    &state,
-                    job.client_token,
-                    op,
-                    outcome,
-                    publish_hierarchy,
-                );
+                if publish_hierarchy {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                }
                 if let Some(snapshot) = snapshot {
                     state.dashboard.try_send(ServerMessage::Event(
                         ServerEvent::InitialPromptIntentChanged(snapshot),
                     ));
                 }
+                // The stable intent event owns completion for this launch. Do
+                // not publish the connection-local client token: a replacement
+                // Dashboard can reuse it for unrelated work.
                 continue;
             }
             JobKind::CloseTerminal {

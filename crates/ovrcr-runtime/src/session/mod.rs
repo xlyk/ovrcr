@@ -175,7 +175,10 @@ impl std::fmt::Debug for SessionSpec {
             .debug_struct("SessionSpec")
             .field("scope", &self.scope)
             .field("restore_command", &self.restore_command)
-            .field("initial_prompt", &self.initial_prompt.as_ref().map(|_| "[redacted]"))
+            .field(
+                "initial_prompt",
+                &self.initial_prompt.as_ref().map(|_| "[redacted]"),
+            )
             .field("project", &self.project)
             .field("workspace", &self.workspace)
             .field("name", &self.name)

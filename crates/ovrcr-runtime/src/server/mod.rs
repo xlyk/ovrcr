@@ -861,9 +861,9 @@ impl ServerState {
         &self,
         request: ovrcr_protocol::InitialPromptLaunchRequest,
     ) -> Result<SessionSummary> {
-        request
-            .validate()
-            .map_err(|message| crate::session::NoProcessStarted::context(anyhow::anyhow!(message)))?;
+        request.validate().map_err(|message| {
+            crate::session::NoProcessStarted::context(anyhow::anyhow!(message))
+        })?;
         let prompt = request.prompt;
         let has_prompt = !prompt.trim().is_empty();
         let session = if has_prompt {
@@ -876,12 +876,7 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()
             .map_err(crate::session::NoProcessStarted::context)?;
-        self.create_session_locked(
-            session,
-            None,
-            None,
-            has_prompt.then_some(prompt),
-        )
+        self.create_session_locked(session, None, None, has_prompt.then_some(prompt))
     }
 
     /// Remember a Dashboard agent choice only after the launch succeeds. The
@@ -1593,7 +1588,8 @@ impl ServerState {
                 &self.server_lifetime,
             )?;
         }
-        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged, None)?;
+        let summary =
+            self.spawn_record_locked(id, expected_run, vec![shell], None, staged, None)?;
         if let Some(command) = input {
             let session = self
                 .sessions

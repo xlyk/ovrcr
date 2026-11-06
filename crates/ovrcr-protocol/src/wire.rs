@@ -340,7 +340,12 @@ impl InitialPromptLaunchRequest {
             return Err("initial prompt is empty or invalid".into());
         }
         if !matches!(self.launch.session.kind, SessionKind::Agent { .. })
-            || self.launch.session.label.as_deref().is_none_or(str::is_empty)
+            || self
+                .launch
+                .session
+                .label
+                .as_deref()
+                .is_none_or(str::is_empty)
         {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
@@ -348,10 +353,19 @@ impl InitialPromptLaunchRequest {
             && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if name == "claude")
                 || self.launch.session.label.as_deref() != Some("claude"))
         {
-            return Err("initial prompts are supported only for the detected Claude launcher".into());
+            return Err(
+                "initial prompts are supported only for the detected Claude launcher".into(),
+            );
         }
         if self.launch.session.argv.len() > 128
-            || self.launch.session.argv.iter().map(|arg| arg.len()).sum::<usize>() > 64 * 1024
+            || self
+                .launch
+                .session
+                .argv
+                .iter()
+                .map(|arg| arg.len())
+                .sum::<usize>()
+                > 64 * 1024
         {
             return Err("agent launch arguments exceed the supported size".into());
         }
@@ -970,7 +984,9 @@ mod wire_snapshot {
                     name: "n".into(),
                     label: Some("claude".into()),
                     argv: vec!["claude".into()],
-                    kind: SessionKind::Agent { name: "claude".into() },
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
                 },
                 model_policy: crate::AgentModelPolicy::HarnessDefault,
                 model_binding: None,
@@ -1375,7 +1391,9 @@ mod wire_snapshot {
                             name: "n".into(),
                             label: Some("claude".into()),
                             argv: vec!["claude".into()],
-                            kind: SessionKind::Agent { name: "claude".into() },
+                            kind: SessionKind::Agent {
+                                name: "claude".into(),
+                            },
                         },
                         model_policy: crate::AgentModelPolicy::HarnessDefault,
                         model_binding: None,

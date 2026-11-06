@@ -44,7 +44,10 @@ impl TextCursor {
     /// The logical line that contains the current byte cursor.
     pub(crate) fn line(self, text: &str) -> usize {
         let position = self.position(text);
-        text[..position].bytes().filter(|byte| *byte == b'\n').count()
+        text[..position]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
     }
 
     /// Display one logical line with the shared grapheme-aware cursor window.
@@ -298,5 +301,41 @@ impl TextCursor {
             cell += cells;
         }
         self.0 = Some(text.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multiline_cursor_tracks_lines_and_graphemes() {
+        let text = "first\n界e\u{301}z";
+        let mut cursor = TextCursor(Some("first\n界".len()));
+        assert_eq!(cursor.line(text), 1);
+        assert_eq!(
+            cursor.display_line(text, 1, 10).as_deref(),
+            Some("界▏e\u{301}z")
+        );
+        let mut editable = text.to_owned();
+        cursor.line_key(&mut editable, KeyCode::Home);
+        assert_eq!(cursor.position(&editable), "first\n".len());
+
+        // Column 0 is the rendered cursor glyph, so three cells lands after
+        // the two-cell CJK grapheme.
+        cursor.click_line(&editable, 1, 10, 3);
+        assert_eq!(cursor.position(&editable), "first\n界".len());
+    }
+
+    #[test]
+    fn multiline_vertical_motion_keeps_cell_column() {
+        let text = "界z\nab";
+        let mut cursor = TextCursor(Some("界".len()));
+        cursor.vertical(text, true);
+        assert_eq!(
+            cursor.position(text),
+            text.len(),
+            "short target clamps the column"
+        );
     }
 }
