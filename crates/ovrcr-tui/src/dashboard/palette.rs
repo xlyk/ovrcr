@@ -7235,10 +7235,11 @@ mod launch_tests {
                     request_id: m.request_id,
                     response: Response::Ok,
                 });
-                assert!(d
-                    .provisional
-                    .as_ref()
-                    .is_some_and(|row| !row.then.is_empty()));
+                assert!(
+                    d.provisional
+                        .as_ref()
+                        .is_some_and(|row| !row.then.is_empty())
+                );
                 let follow_up = d.handle_server_message(ServerMessage::Event(
                     ServerEvent::LifecycleCompleted {
                         client_token: m.request_id,
@@ -7248,9 +7249,7 @@ mod launch_tests {
                 ));
                 let allocation = follow_up
                     .into_iter()
-                    .find(|message| {
-                        message.request == Request::AllocateInitialPromptIntent
-                    })
+                    .find(|message| message.request == Request::AllocateInitialPromptIntent)
                     .unwrap();
                 assert_eq!(allocation.request, Request::AllocateInitialPromptIntent);
                 let launch = d.handle_server_message(ServerMessage::Response {
