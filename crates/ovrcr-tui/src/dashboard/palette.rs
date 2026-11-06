@@ -5721,8 +5721,6 @@ impl Dashboard {
                         continue;
                     }
                     let top = lines.len();
-                    targets.push((lines.len(), PaletteTarget::Field(index, false)));
-                    lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
                     let pick_label;
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
@@ -5744,6 +5742,55 @@ impl Dashboard {
                     } else {
                         Default::default()
                     };
+                    let compact_new_agent_picker = matches!(command, Command::NewAgentSession)
+                        && palette.new_agent_picker_open;
+                    let compact_pick =
+                        compact_new_agent_picker && matches!(field.kind, FieldKind::Pick(_));
+                    let compact_advanced = compact_new_agent_picker
+                        && field.label == "Advanced options"
+                        && matches!(field.kind, FieldKind::Toggle);
+                    if compact_pick {
+                        let label = format!("{}: ", field.label);
+                        let (mut text, _) = cursor.display(
+                            editing,
+                            body.width.saturating_sub(label.width() as u16 + 2) as usize,
+                        );
+                        if index != *active {
+                            text.pop();
+                        }
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                        lines.push(Line::from(vec![
+                            Span::styled(label, Style::default().fg(SUBTEXT())),
+                            Span::styled(
+                                format!("{} {text}", if index == *active { "›" } else { " " }),
+                                Style::default().fg(if index == *active {
+                                    MAUVE()
+                                } else {
+                                    TEXT()
+                                }),
+                            ),
+                        ]));
+                    } else if compact_advanced {
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("{}: ", field.label),
+                                Style::default().fg(SUBTEXT()),
+                            ),
+                            Span::styled(
+                                field.value.as_str(),
+                                Style::default().fg(if index == *active {
+                                    MAUVE()
+                                } else {
+                                    TEXT()
+                                }),
+                            ),
+                        ]));
+                    } else {
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
+                    }
                     if matches!(&field.kind, FieldKind::Multiline) {
                         let focused_line = cursor.line(editing);
                         let width = body.width.saturating_sub(2) as usize;
@@ -5787,16 +5834,18 @@ impl Dashboard {
                         }
                         continue;
                     }
-                    let (mut text, _) =
-                        cursor.display(editing, body.width.saturating_sub(2) as usize);
-                    if index != *active {
-                        text.pop();
+                    if !compact_pick && !compact_advanced {
+                        let (mut text, _) =
+                            cursor.display(editing, body.width.saturating_sub(2) as usize);
+                        if index != *active {
+                            text.pop();
+                        }
+                        targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                        lines.push(Line::styled(
+                            format!("{} {text}", if index == *active { "›" } else { " " }),
+                            Style::default().fg(if index == *active { MAUVE() } else { TEXT() }),
+                        ));
                     }
-                    targets.push((lines.len(), PaletteTarget::Field(index, true)));
-                    lines.push(Line::styled(
-                        format!("{} {text}", if index == *active { "›" } else { " " }),
-                        Style::default().fg(if index == *active { MAUVE() } else { TEXT() }),
-                    ));
                     if field.label == "Model"
                         && let Some(status) = palette
                             .model_status
@@ -5819,23 +5868,57 @@ impl Dashboard {
                     if index != *active {
                         continue;
                     }
-                    // An open list gets whatever the body has left after this
-                    // field's own lines, so every option shows when they fit
-                    // and the focused field never scrolls out of view.
-                    let room = usize::from(body.height)
-                        .saturating_sub(lines.len() - top)
-                        .max(1);
+                    // The New agent session picker shares its bounded viewport
+                    // with every remaining form control, model status/error,
+                    // multiline prompt content, and the fixed action/footer rows.
+                    let bounded_new_agent_picker =
+                        compact_new_agent_picker && matches!(field.kind, FieldKind::Pick(_));
+                    let room = if bounded_new_agent_picker {
+                        let reserve_after = fields
+                            .iter()
+                            .enumerate()
+                            .skip(index + 1)
+                            .map(|(future_index, future)| {
+                                field_rows_after(
+                                    future,
+                                    future_index,
+                                    palette,
+                                    compact_new_agent_picker,
+                                )
+                            })
+                            .sum::<usize>();
+                        usize::from(body.height)
+                            .saturating_sub(lines.len())
+                            .saturating_sub(reserve_after)
+                    } else {
+                        usize::from(body.height)
+                            .saturating_sub(lines.len() - top)
+                            .max(1)
+                    };
                     if let FieldKind::Pick(list) = &field.kind
                         && (!matches!(command, Command::NewAgentSession)
                             || palette.new_agent_picker_open)
                     {
-                        let (options, _) = list.lines(room);
-                        let window = list.window(room);
-                        for (offset, option) in window.enumerate() {
-                            targets
-                                .push((lines.len() + offset, PaletteTarget::Option(index, option)));
+                        if bounded_new_agent_picker {
+                            let (options, option_rows) = list.lines_bounded(room);
+                            for (offset, option) in option_rows {
+                                targets.push((
+                                    lines.len() + offset,
+                                    PaletteTarget::Option(index, option),
+                                ));
+                            }
+                            lines.extend(options);
+                        } else {
+                            let (options, _) = list.lines(room);
+                            let window = list.window(room);
+                            for (offset, option) in window.enumerate() {
+                                targets.push((
+                                    lines.len() + offset,
+                                    PaletteTarget::Option(index, option),
+                                ));
+                            }
+                            lines.extend(options);
                         }
-                        lines.extend(options);
                     }
                     if let FieldKind::Path(picker) = &field.kind
                         && let Some(listing) = picker.cached()
@@ -6209,6 +6292,41 @@ fn form_list_active(page: &Page) -> bool {
             Some(FieldKind::Pick(_) | FieldKind::Path(_))
         )
     )
+}
+
+fn field_rows_after(
+    field: &Field,
+    index: usize,
+    palette: &Palette,
+    compact_new_agent_picker: bool,
+) -> usize {
+    if field.hidden {
+        return 0;
+    }
+    if matches!(field.kind, FieldKind::Notice) {
+        return 1;
+    }
+    let problem = usize::from(
+        palette
+            .invalid
+            .as_ref()
+            .is_some_and(|(invalid, _)| *invalid == index),
+    );
+    if matches!(field.kind, FieldKind::Multiline) {
+        return 2 + field.value.bytes().filter(|byte| *byte == b'\n').count() + problem;
+    }
+    let compact = compact_new_agent_picker
+        && (matches!(field.kind, FieldKind::Pick(_))
+            || (field.label == "Advanced options" && matches!(field.kind, FieldKind::Toggle)));
+    let model_status = usize::from(
+        field.label == "Model"
+            && (palette.model_status.is_some()
+                || palette
+                    .model_capabilities
+                    .as_ref()
+                    .is_some_and(|capabilities| capabilities.reason.is_some())),
+    );
+    (if compact { 1 } else { 2 }) + problem + model_status
 }
 
 fn mark_form_edit(
@@ -7453,6 +7571,25 @@ mod launch_tests {
             .join("\n")
     }
 
+    fn visible_palette_dialog_text(d: &Dashboard, width: u16, height: u16) -> String {
+        let area = Rect::new(0, 0, width, height);
+        let dialog = palette_geometry(area).0;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw_dashboard_at(frame, d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (dialog.y..dialog.bottom())
+            .map(|row| {
+                (dialog.x..dialog.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn n_opens_agent_setup_even_when_the_current_workspace_cannot_launch() {
         let mut d = dashboard();
@@ -7587,6 +7724,139 @@ mod launch_tests {
                 !text.contains("feature/extra-"),
                 "Tab must not open the Branch picker:\n{text}"
             );
+        }
+    }
+
+    #[test]
+    fn new_agent_open_pickers_keep_controls_visible_for_branch_harness_and_model() {
+        for picker_label in ["Branch", "Agent harness", "Model"] {
+            let mut d = dashboard();
+            d.selected_container = Some(super::super::TreeRow::Workspace {
+                project: "demo".into(),
+                id: "root".into(),
+            });
+            let mut workspaces = vec![workspace_record("root", "/tmp/unused", "root")];
+            for index in 0..9 {
+                let id = format!("extra-{index}");
+                let path = format!("/tmp/{id}");
+                let branch = format!("feature/{index}");
+                d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+                    project: "demo".into(),
+                    name: branch.clone(),
+                    id: id.clone(),
+                    root: false,
+                    warning: None,
+                    path: path.clone().into(),
+                    sessions: vec![],
+                });
+                workspaces.push(workspace_record(&id, &path, &branch));
+            }
+            open_registered_agent_form(&mut d, registry(workspaces));
+
+            if picker_label != "Branch" {
+                d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            }
+            if picker_label == "Model" {
+                d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            }
+            let selected_label = if picker_label == "Branch" {
+                let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                    panic!("New agent form")
+                };
+                let field = fields
+                    .iter_mut()
+                    .find(|field| field.label == "Branch")
+                    .unwrap();
+                let FieldKind::Pick(list) = &mut field.kind else {
+                    panic!("Branch picker")
+                };
+                let selected = list.items.last().unwrap().clone();
+                list.select_value(&selected.value);
+                field.value.clone_from(&selected.value);
+                selected.label
+            } else {
+                let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                    panic!("New agent form")
+                };
+                let field = fields
+                    .iter_mut()
+                    .find(|field| field.label == picker_label)
+                    .unwrap();
+                let selected_value = format!("{picker_label}-9");
+                let items = (0..10)
+                    .map(|index| PickItem {
+                        label: format!("{picker_label}-{index}"),
+                        value: format!("{picker_label}-{index}"),
+                    })
+                    .collect::<Vec<_>>();
+                let mut list = PickList::new(items);
+                list.select_value(&selected_value);
+                field.value.clone_from(&selected_value);
+                field.kind = FieldKind::Pick(list);
+                selected_value
+            };
+            if picker_label == "Agent harness" {
+                d.palette.as_mut().unwrap().launch_harness = Some(selected_label.clone());
+            }
+            let model_index = new_agent_fields(&d)
+                .0
+                .iter()
+                .position(|field| field.label == "Model")
+                .unwrap();
+            {
+                let palette = d.palette.as_mut().unwrap();
+                palette.model_status = Some("Loading verified model choices…".into());
+                palette.invalid = Some((model_index, "Model lookup failed".into()));
+                let Page::Form { fields, .. } = &mut palette.page else {
+                    panic!("New agent form")
+                };
+                fields
+                    .iter_mut()
+                    .find(|field| field.label == "Initial prompt")
+                    .unwrap()
+                    .value = "Review this change\nKeep the assertions".into();
+            }
+
+            d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+            assert_eq!(
+                new_agent_fields(&d).0[new_agent_fields(&d).1].label,
+                picker_label
+            );
+
+            for (width, height) in [(164, 60), (80, 24), (60, 22), (60, 18)] {
+                let text = visible_palette_dialog_text(&d, width, height);
+                for control in [
+                    "Branch",
+                    "Agent harness",
+                    "Model",
+                    "Initial prompt",
+                    "Advanced options",
+                    "Review this change",
+                    "Keep the assertions",
+                    "Loading verified model choices",
+                    "Model lookup failed",
+                ] {
+                    assert!(
+                        text.contains(control),
+                        "{picker_label} picker at {width}x{height} hid {control}:\n{text}"
+                    );
+                }
+                assert!(
+                    text.lines()
+                        .any(|line| line.contains("›") && line.contains(&selected_label)),
+                    "{picker_label} picker at {width}x{height} hid the selected option {selected_label}:\n{text}"
+                );
+                let dialog = visible_palette_dialog_text(&d, width, height);
+                assert!(
+                    dialog.contains("[Start agent]"),
+                    "{picker_label} picker at {width}x{height} hid Start:\n{dialog}"
+                );
+                assert!(
+                    dialog.contains("[Cancel]"),
+                    "{picker_label} picker at {width}x{height} hid Cancel:\n{dialog}"
+                );
+            }
         }
     }
 
