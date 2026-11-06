@@ -37,90 +37,56 @@ fn narrow_sidebar(dashboard: &mut Dashboard) {
     assert_eq!(dashboard.pane_rects(area)[0].terminal.x, 20);
 }
 
-/// The sidebar's last row, where the one-line quota summary sits.
-fn quota_row(dashboard: &Dashboard, width: u16, now: u64) -> String {
-    sidebar_rows(dashboard, width, now)[38].clone()
-}
-
-/// The quota row's cells with their colours.
-fn quota_cells(dashboard: &Dashboard, now: u64) -> Vec<(String, Color)> {
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal
-        .draw(|frame| draw_dashboard_at(frame, dashboard, now))
-        .unwrap();
-    (0..39)
-        .map(|x| {
-            let cell = &terminal.backend().buffer()[(x, 38)];
-            (cell.symbol().to_owned(), cell.fg)
-        })
-        .collect()
-}
-
-/// The colours of `token`'s cells on the quota row.
-fn token_colors(cells: &[(String, Color)], token: &str) -> Vec<Color> {
-    let len = token.chars().count();
-    let at = (0..cells.len() - len)
-        .find(|&x| {
-            cells[x..x + len]
-                .iter()
-                .map(|(symbol, _)| symbol.as_str())
-                .collect::<String>()
-                == token
-        })
-        .unwrap_or_else(|| panic!("{token} missing: {cells:?}"));
-    cells[at..at + len].iter().map(|(_, fg)| *fg).collect()
-}
-
-const MUTED: Color = Color::Rgb(108, 112, 134);
-const RED: Color = Color::Rgb(243, 139, 168);
-const TEXT: Color = Color::Rgb(205, 214, 244);
-
 #[test]
 fn quota_waiting_providers_are_visible_before_the_first_native_report() {
-    let mut dashboard = Dashboard::new(TerminalSize {
+    let dashboard = Dashboard::new(TerminalSize {
         rows: 40,
         cols: 120,
     });
-    assert_eq!(quota_row(&dashboard, 39, 1_000), " Claude ?");
-    let mut snapshot = QuotaSnapshot::default();
-    for provider in [&mut snapshot.codex, &mut snapshot.grok] {
-        provider.state = QuotaState::Checking;
-        provider.reason = None;
-    }
-    publish_quota(&mut dashboard, snapshot);
-    assert_eq!(
-        quota_row(&dashboard, 39, 1_000),
-        " Claude ? · Codex ? · Grok ?",
-        "a provider still checking is named; one switched off is omitted"
+    let rows = sidebar_rows(&dashboard, 39, 1_000);
+    assert!(
+        rows.iter().any(|row| row.contains("QUOTA LEFT")),
+        "{rows:?}"
     );
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
+        assert!(
+            rows.iter().any(|row| row == expected),
+            "{expected}: {rows:?}"
+        );
+    }
 }
 
 #[test]
-fn quota_narrow_sidebar_keeps_whole_providers_and_points_to_the_rest() {
+fn quota_narrow_sidebar_preserves_waiting_provider_and_full_state() {
     let mut dashboard = dashboard_fixture();
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
         Box::default(),
     )));
     narrow_sidebar(&mut dashboard);
-    assert_eq!(quota_row(&dashboard, 19, 1_000), " Claude ?");
-    publish_quota(&mut dashboard, mixed_snapshot());
-    assert_eq!(
-        quota_row(&dashboard, 19, NOW),
-        " Codex 37% …",
-        "providers without a value give way first; never a clipped number"
-    );
+    let rows = sidebar_rows(&dashboard, 19, 1_000);
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
+        assert!(
+            rows.iter().any(|row| row == expected),
+            "{expected}: {rows:?}"
+        );
+    }
 }
 
 #[test]
-fn quota_line_shows_the_least_allowance_left_and_mutes_stale_values() {
-    for (used, over_limit, reset, now, expected, color) in [
-        (Some(10_000), false, None, 1_000, " Claude 0%", RED),
-        (Some(5_000), false, None, 301_001, " Claude 50%", MUTED),
-        (Some(10_000), false, None, 301_001, " Claude 0%", MUTED),
-        (None, true, None, 1_000, " Claude 0%", RED),
-        (None, true, None, 301_001, " Claude 0%", MUTED),
-        // A passed reset leaves the seven-day window's value.
-        (Some(5_000), false, Some(1_000), 1_000, " Claude 80%", TEXT),
+fn quota_narrow_sidebar_preserves_window_identity_percentage_and_full_state() {
+    for (used, over_limit, reset, now, expected) in [
+        (Some(10_000), false, None, 1_000, &["0% exhausted"][..]),
+        (Some(5_000), false, None, 301_001, &["50% left  stale 5m"]),
+        (
+            Some(10_000),
+            false,
+            None,
+            301_001,
+            &["0% exhausted  stale", "5m"],
+        ),
+        (None, true, None, 1_000, &["over limit"]),
+        (None, true, None, 301_001, &["over limit  stale", "5m"]),
+        (Some(5_000), false, Some(1_000), 1_000, &["— reset due"]),
     ] {
         let mut dashboard = dashboard_fixture();
         narrow_sidebar(&mut dashboard);
@@ -145,20 +111,42 @@ fn quota_line_shows_the_least_allowance_left_and_mutes_stale_values() {
                 resets_unix_ms: None,
             },
         ];
-        publish_quota(&mut dashboard, snapshot);
-        let row = quota_row(&dashboard, 19, now);
-        assert_eq!(row, expected, "{used:?} {over_limit} {reset:?} {now}");
-        let cells = quota_cells(&dashboard, now);
-        let value = expected.trim_start().trim_start_matches("Claude ");
-        assert!(
-            token_colors(&cells, value).iter().all(|fg| *fg == color),
-            "{row}: {cells:?}"
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+            snapshot,
+        ))));
+        let rows = sidebar_rows(&dashboard, 19, now);
+        let five_hour = rows
+            .iter()
+            .position(|row| row.contains("Claude") && row.contains("5h"))
+            .expect("provider and five-hour window identity");
+        assert_eq!(
+            rows[five_hour + 1..five_hour + 1 + expected.len()],
+            *expected,
+            "{rows:?}"
         );
+        let seven_day = rows
+            .iter()
+            .position(|row| row.trim() == "7d")
+            .expect("independent seven-day window identity");
+        assert_eq!(
+            rows[seven_day + 1],
+            if now > 301_000 {
+                "80% left  stale 5m"
+            } else {
+                "80%"
+            },
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row == "Codex · usage off"),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|row| row == "Grok · usage off"), "{rows:?}");
     }
 }
 
 #[test]
-fn quota_line_sits_under_the_last_tree_row_and_a_click_opens_details() {
+fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits() {
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
@@ -198,14 +186,13 @@ fn quota_line_sits_under_the_last_tree_row_and_a_click_opens_details() {
     ))));
     let current = sidebar_rows(&dashboard, 19, 1_000);
     let expired = sidebar_rows(&dashboard, 19, 301_001);
-    assert_eq!(current[38], " Claude 0%");
+    let quota_row = current
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("quota heading");
     assert_eq!(
-        expired[38], " Claude ?",
-        "a passed reset leaves no value, and the line keeps its row"
-    );
-    assert_eq!(
-        current[..38],
-        expired[..38],
+        expired.iter().position(|row| row.contains("QUOTA LEFT")),
+        Some(quota_row),
         "expiry must preserve tree geometry"
     );
     let last_tree_row = current
@@ -217,7 +204,7 @@ fn quota_line_sits_under_the_last_tree_row_and_a_click_opens_details() {
         current[last_tree_row], "▌      └ sh",
         "the stacked label is the last selectable tree line"
     );
-    assert_eq!(last_tree_row + 1, 38, "{current:?}");
+    assert_eq!(last_tree_row + 1, quota_row, "{current:?}");
     dashboard.install_focus(SessionId(49));
     let action = dashboard.mouse_action(
         mouse_event(
@@ -233,33 +220,28 @@ fn quota_line_sits_under_the_last_tree_row_and_a_click_opens_details() {
         "last tree row must select: {action:?}"
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
-    dashboard.drain_outbox();
-    dashboard.mouse_action(
-        mouse_event(MouseEventKind::Moved, 18, 38, KeyModifiers::NONE),
-        area,
-    );
-    assert_eq!(
+    for row in quota_row as u16..39 {
         dashboard.mouse_action(
-            mouse_event(
-                MouseEventKind::Down(MouseButton::Left),
-                18,
-                38,
-                KeyModifiers::NONE
+            mouse_event(MouseEventKind::Moved, 18, row, KeyModifiers::NONE),
+            area,
+        );
+        assert!(
+            matches!(
+                dashboard.mouse_action(
+                    mouse_event(
+                        MouseEventKind::Down(MouseButton::Left),
+                        18,
+                        row,
+                        KeyModifiers::NONE
+                    ),
+                    area
+                ),
+                DashboardAction::None | DashboardAction::Redraw
             ),
-            area
-        ),
-        DashboardAction::Redraw
-    );
-    assert_eq!(
-        dashboard.focused_session(),
-        Some(SessionId(50)),
-        "the quota line must not close or select a session"
-    );
-    assert!(dashboard.drain_outbox().is_empty());
-    assert!(
-        details_text(&dashboard, 1_000).contains("Quota details"),
-        "the same details as u"
-    );
+            "quota row {row} must not close or select a session"
+        );
+        assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
+    }
 }
 
 const NOW: u64 = 1_800_000_000_000;
@@ -313,65 +295,124 @@ fn rows_at(dashboard: &Dashboard, height: u16, now: u64) -> Vec<String> {
 }
 
 #[test]
-fn quota_line_shows_checking_current_and_failed_providers() {
+fn quota_block_shows_off_checking_current_and_failed_with_retry() {
     let mut dashboard = dashboard_fixture();
-    assert_eq!(quota_row(&dashboard, 39, NOW), " Claude ?");
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
+        assert!(
+            rows.iter().any(|row| row == expected),
+            "{expected}: {rows:?}"
+        );
+    }
     publish_quota(&mut dashboard, mixed_snapshot());
-    // Checking and failed providers have no value to show; when the failed one retries is
-    // in the details.
-    assert_eq!(
-        quota_row(&dashboard, 39, NOW),
-        " Claude ? · Codex 37% · Grok ?"
-    );
-    let cells = quota_cells(&dashboard, NOW);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
     assert!(
-        token_colors(&cells, "Claude ?")
-            .iter()
-            .all(|fg| *fg == MUTED)
+        rows.iter().any(|row| row == "Claude · checking"),
+        "{rows:?}"
     );
-    assert!(token_colors(&cells, "Grok ?").iter().all(|fg| *fg == MUTED));
-    assert!(token_colors(&cells, " 37%").iter().all(|fg| *fg == TEXT));
+    assert!(
+        rows.iter().any(|row| {
+            row.contains("Codex")
+                && row.contains("5h")
+                && row.contains('━')
+                && row.contains("37%")
+                && !row.contains('[')
+                && !row.contains(']')
+        }),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == "Grok · unavailable · retry 3m"),
+        "{rows:?}"
+    );
+    // The retry marker counts down from next_check, never resets on redraw.
+    let later = sidebar_rows(&dashboard, 39, NOW + 120_000);
+    assert!(
+        later
+            .iter()
+            .any(|row| row == "Grok · unavailable · retry 1m"),
+        "{later:?}"
+    );
+    let due = sidebar_rows(&dashboard, 39, NOW + 170_000);
+    assert!(
+        due.iter()
+            .any(|row| row == "Grok · unavailable · retry now"),
+        "{due:?}"
+    );
 }
 
 #[test]
-fn quota_line_mutes_a_stale_value() {
+fn quota_block_shows_a_stale_value_with_its_age() {
     let mut dashboard = dashboard_fixture();
     let mut snapshot = mixed_snapshot();
     snapshot.codex.state = QuotaState::Unavailable;
     snapshot.codex.checked_unix_ms = Some(NOW - 12 * 60_000);
     snapshot.codex.observed_unix_ms = Some(NOW - 30 * 60_000);
     publish_quota(&mut dashboard, snapshot);
-    assert_eq!(
-        quota_row(&dashboard, 39, NOW),
-        " Claude ? · Codex 37% · Grok ?",
-        "the last good value is kept; its age is in the details"
-    );
-    let cells = quota_cells(&dashboard, NOW);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
     assert!(
-        token_colors(&cells, "Codex 37%")
+        rows.iter().any(|row| {
+            row.contains("Codex")
+                && row.contains("5h")
+                && row.contains("37%")
+                && row.contains("stale 12m")
+                && !row.contains("left")
+        }),
+        "{rows:?}"
+    );
+    let hours = sidebar_rows(&dashboard, 39, NOW + 3 * 3_600_000);
+    assert!(
+        hours
             .iter()
-            .all(|fg| *fg == MUTED),
-        "{cells:?}"
+            .any(|row| row.contains("37%") && row.contains("stale 3h")),
+        "{hours:?}"
     );
 }
 
 #[test]
-fn quota_line_hides_below_the_operator_heading_and_three_tree_lines() {
+fn quota_block_ladder_gives_four_lines_then_one_then_none() {
     let mut dashboard = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.clear();
     dashboard.install_hierarchy(hierarchy);
     publish_quota(&mut dashboard, mixed_snapshot());
+    let full = rows_at(&dashboard, 12, NOW);
+    assert!(
+        full.iter().any(|row| row.contains("QUOTA LEFT")),
+        "{full:?}"
+    );
+    let mut seen = Vec::new();
     for height in (3..12).rev() {
         let rows = rows_at(&dashboard, height, NOW);
-        // Title and footer rows sit outside the sidebar.
-        let shown = height - 2 >= 5;
-        assert_eq!(
-            rows.iter().position(|row| row.starts_with(" Claude ?")),
-            shown.then_some(usize::from(height) - 2),
-            "height {height}: {rows:?}"
-        );
+        let compact = [
+            "Claude · checking",
+            "Codex 5h 37%",
+            "Grok · unavailable · retry 3m",
+            "Cursor · usage off",
+        ];
+        let state = if rows.iter().any(|row| row.contains("QUOTA LEFT")) {
+            "full"
+        } else if let Some(at) = rows.iter().position(|row| row == compact[0]) {
+            assert_eq!(rows[at..at + 4], compact, "height {height}: {rows:?}");
+            "four"
+        } else if rows.iter().any(|row| row == "Quota: u") {
+            "one"
+        } else {
+            assert!(
+                !rows.iter().any(|row| row.contains("QUOTA")
+                    || row.contains("Quota")
+                    || row.contains("Claude")
+                    || row.contains("Codex")),
+                "height {height}: {rows:?}"
+            );
+            "none"
+        };
+        if seen.last() != Some(&state) {
+            seen.push(state);
+        }
     }
+    assert_eq!(seen, ["full", "four", "one", "none"]);
 }
 
 fn details_text(dashboard: &Dashboard, now: u64) -> String {
@@ -387,22 +428,6 @@ fn details_text(dashboard: &Dashboard, now: u64) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// A popup clock time as `when` writes it in the local zone: the weekday joins it only when
-/// the moment falls on another local day than `NOW`.
-fn clock(stamp: u64) -> String {
-    let local = |ms: u64| {
-        chrono::DateTime::from_timestamp_millis(ms as i64)
-            .unwrap()
-            .with_timezone(&chrono::Local)
-    };
-    let pattern = if local(stamp).date_naive() == local(NOW).date_naive() {
-        "%-I:%M %p"
-    } else {
-        "%a %-I:%M %p"
-    };
-    local(stamp).format(pattern).to_string()
 }
 
 #[test]
@@ -488,8 +513,10 @@ fn palette_refresh_quota_sends_refresh_and_shows_cooldown_in_footer() {
         },
     });
     let footer = rendered_footer(&dashboard, 120);
-    // A cooldown is an expected limit, not an error.
-    assert_eq!(footer, "Quota refresh cooling down: 24s left");
+    assert!(
+        footer.contains("Quota refresh cooling down: 24s left"),
+        "{footer}"
+    );
     // An accepted refresh clears it; the Server's next snapshot is the result.
     let message = palette_request(&mut dashboard, "refresh quota");
     dashboard.handle_server_message(ServerMessage::Response {
@@ -521,10 +548,10 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
         request_id: message.request_id,
         response: Response::Ok,
     });
-    assert_eq!(
-        quota_row(&dashboard, 39, NOW),
-        " Claude ?",
-        "Codex stays off until the Server republishes"
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    assert!(
+        rows.iter().any(|row| row == "Codex · usage off"),
+        "{rows:?}"
     );
     // Once the Server republishes the setting on, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
@@ -579,7 +606,7 @@ fn quota_details_show_a_probe_reading_in_words_without_its_provenance() {
 }
 
 #[test]
-fn quota_line_skips_unknown_windows_and_names_each_provider_once() {
+fn quota_rows_keep_reported_windows_and_dash_missing_allowance() {
     let mut dashboard = dashboard_fixture();
     let mut snapshot = QuotaSnapshot::default();
     snapshot.claude.state = QuotaState::Current;
@@ -613,17 +640,32 @@ fn quota_line_skips_unknown_windows_and_names_each_provider_once() {
     }];
     publish_quota(&mut dashboard, snapshot);
     let rows = sidebar_rows(&dashboard, 39, NOW);
-    assert_eq!(rows[38], " Claude 58% · Grok 76%", "{rows:?}");
     let joined = rows.join("\n");
-    for gone in ["QUOTA LEFT", "━", "5h", "7d", "wk"] {
-        assert!(!joined.contains(gone), "{gone}: {rows:?}");
-    }
-    let cells = quota_cells(&dashboard, NOW);
+    assert!(joined.contains("QUOTA LEFT"), "{rows:?}");
     assert!(
-        token_colors(&cells, "Grok 76%")
-            .iter()
-            .all(|fg| *fg == MUTED),
-        "a reading without a time cannot vouch for itself"
+        rows.iter()
+            .any(|row| row.contains("Claude") && row.contains("5h") && row.contains("58%")),
+        "{rows:?}"
+    );
+    let seven = rows
+        .iter()
+        .find(|row| row.contains("7d"))
+        .expect("seven-day row");
+    assert!(seven.contains('—') || seven.contains("—"), "{seven}");
+    assert!(
+        !seven.contains('━') || seven.contains('─'),
+        "missing allowance must be track-only: {seven}"
+    );
+    assert!(
+        !seven.contains('█') && !seven.contains('░') && !seven.contains('['),
+        "legacy bar glyphs: {seven}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Grok")
+            && row.contains("wk")
+            && !row.contains("5h")
+            && !row.contains("7d")),
+        "{rows:?}"
     );
 }
 
@@ -675,4 +717,33 @@ fn cursor_details_display_used_remaining_and_unknown_without_fabricated_zero() {
     assert!(details.contains("  on-demand  unknown"), "{details}");
     assert!(details.contains("    — used · — left"), "{details}");
     assert!(!details.contains("cursor/"), "{details}");
+}
+
+fn clock(stamp: u64) -> String {
+    let local = |ms: u64| {
+        chrono::DateTime::from_timestamp_millis(ms as i64)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+    };
+    let pattern = if local(stamp).date_naive() == local(NOW).date_naive() {
+        "%-I:%M %p"
+    } else {
+        "%a %-I:%M %p"
+    };
+    local(stamp).format(pattern).to_string()
+}
+
+#[test]
+fn cursor_plan_bar_keeps_its_complete_remaining_percentage() {
+    let mut dashboard = dashboard_fixture();
+    let mut quota = QuotaSnapshot::default();
+    quota.cursor.state = QuotaState::Current;
+    quota.cursor.checked_unix_ms = Some(NOW);
+    quota.cursor.observed_unix_ms = Some(NOW);
+    quota.cursor.windows = vec![window("plan", 3000)];
+    publish_quota(&mut dashboard, quota);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    let row = rows.iter().find(|row| row.contains("Cursor plan")).unwrap();
+    assert!(row.ends_with("70%"), "{row}");
+    assert!(row.contains('━'), "{row}");
 }
