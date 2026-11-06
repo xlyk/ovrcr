@@ -7,8 +7,8 @@ use ovrcr_protocol::{
 };
 use sha2::{Digest, Sha256};
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
-use std::sync::Condvar;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Condvar, MutexGuard, TryLockError};
 
 #[derive(Clone)]
 struct QueryInput {
@@ -50,9 +50,59 @@ struct CatalogQueueState {
 pub(crate) struct CatalogQueue {
     state: Mutex<CatalogQueueState>,
     ready: Condvar,
+    process_owner: Mutex<crate::catalog_process::CatalogProcessOwner>,
+}
+
+pub(super) struct CatalogShutdownPermit<'a> {
+    owner: MutexGuard<'a, crate::catalog_process::CatalogProcessOwner>,
+}
+
+impl CatalogShutdownPermit<'_> {
+    pub(super) fn close(&mut self) {
+        self.owner.close();
+    }
 }
 
 impl CatalogQueue {
+    fn process_owner(
+        &self,
+    ) -> anyhow::Result<MutexGuard<'_, crate::catalog_process::CatalogProcessOwner>> {
+        match self.process_owner.try_lock() {
+            Ok(owner) => Ok(owner),
+            Err(TryLockError::WouldBlock) => Err(crate::catalog_process::owner_error(
+                "native model catalog process is active",
+            )),
+            Err(TryLockError::Poisoned(_)) => Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is unavailable",
+            )),
+        }
+    }
+
+    pub(super) fn with_process_owner<T>(
+        &self,
+        operation: impl FnOnce(&mut crate::catalog_process::CatalogProcessOwner) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let mut owner = self.process_owner()?;
+        if owner.is_closed() {
+            return Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is closed",
+            ));
+        }
+        owner.resolve_existing()?;
+        operation(&mut owner)
+    }
+
+    pub(super) fn try_shutdown(&self) -> anyhow::Result<CatalogShutdownPermit<'_>> {
+        let mut owner = self.process_owner()?;
+        if owner.is_closed() {
+            return Err(crate::catalog_process::owner_error(
+                "native model catalog process owner is already closed",
+            ));
+        }
+        owner.resolve_existing()?;
+        Ok(CatalogShutdownPermit { owner })
+    }
+
     pub(super) fn attach(&self) {
         let mut state = self.state.lock().unwrap();
         state.attached = true;
@@ -102,7 +152,10 @@ fn send_catalog_result(request: CatalogRequest, capabilities: AgentModelCapabili
 }
 
 pub(super) fn run(state: Arc<ServerState>) {
-    run_with(state, discover_capabilities);
+    let catalog_state = Arc::clone(&state);
+    run_with(state, move |input, cancelled| {
+        discover_capabilities(input, cancelled, &catalog_state.agent_model_catalog)
+    });
 }
 
 fn run_with<F>(state: Arc<ServerState>, discover: F)
@@ -220,7 +273,11 @@ pub(super) fn request(
     Response::Ok
 }
 
-fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentModelCapabilities {
+fn discover_capabilities(
+    input: &QueryInput,
+    cancelled: &AtomicBool,
+    catalog_queue: &CatalogQueue,
+) -> AgentModelCapabilities {
     if input.origin != AgentLaunchOrigin::Detected {
         return unsupported(
             input.preset.clone(),
@@ -264,6 +321,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             &input.git_identity,
         )?;
         let catalog = dashboard_catalog(
+            catalog_queue,
             &input.preset,
             &executable,
             &native_argv,
@@ -361,6 +419,7 @@ fn detected_launch_argv(
 }
 
 fn dashboard_catalog(
+    catalog_queue: &CatalogQueue,
     preset: &str,
     executable: &Path,
     native_argv: &[std::ffi::OsString],
@@ -368,16 +427,30 @@ fn dashboard_catalog(
     cancelled: &AtomicBool,
 ) -> anyhow::Result<Vec<(String, String)>> {
     match preset {
-        "claude" => {
+        "claude" => catalog_queue.with_process_owner(|_owner| {
             crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
-        "codex" => {
+        }),
+        "codex" => catalog_queue.with_process_owner(|_owner| {
             crate::codex_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
-        "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
-        "omp" => {
-            crate::omp_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled)
-        }
+        }),
+        "pi" => catalog_queue.with_process_owner(|owner| {
+            crate::pi_model_catalog::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
+        }),
+        "omp" => catalog_queue.with_process_owner(|owner| {
+            crate::omp_model_catalog::dashboard_catalog(
+                executable,
+                native_argv,
+                cwd,
+                cancelled,
+                owner,
+            )
+        }),
         _ => anyhow::bail!("verified model discovery is not available for this harness"),
     }
 }
@@ -593,6 +666,7 @@ pub(super) fn prepare_session(
         );
     }
     let catalog = dashboard_catalog(
+        &state.agent_model_catalog,
         preset,
         &executable,
         &native_argv,
@@ -618,12 +692,139 @@ pub(super) fn prepare_session(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn discover_for_test(input: &QueryInput) -> AgentModelCapabilities {
+        let catalog_queue = CatalogQueue::default();
+        discover_capabilities(input, &AtomicBool::new(false), &catalog_queue)
+    }
 
     fn executable(path: &Path) {
         std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn unresolved_catalog_child_blocks_repeated_spawns_and_bounded_shutdown_until_waited() {
+        let root = tempfile::tempdir().unwrap();
+        let ready = root.path().join("ready");
+        let release = root.path().join("release");
+        let refused_spawn = root.path().join("must-not-spawn");
+        let recovered_spawn = root.path().join("recovered-spawn");
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                &format!(
+                    "printf ready > '{}'; while [ ! -e '{}' ]; do /bin/sleep 0.01; done",
+                    ready.display(),
+                    release.display()
+                ),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let capture =
+            crate::catalog_process::CatalogCapture::take_from_child(&mut child, 1024, 1024);
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        while !ready.exists() && Instant::now() < ready_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if !ready.exists() || unsafe { libc::getpgid(pid) } == pid {
+            let _ = std::fs::write(&release, "release\n");
+            let _ = child.wait();
+            panic!("synthetic unresolved catalog child did not start in a nonmatching group");
+        }
+
+        let queue = CatalogQueue::default();
+        let adopted = queue.process_owner.lock().unwrap().retain_unresolved_child(
+            "synthetic",
+            child,
+            capture,
+        );
+        let shutdown_started = Instant::now();
+        let shutdown_refused = queue.try_shutdown().is_err();
+        let shutdown_elapsed = shutdown_started.elapsed();
+        let child_still_owned = unsafe { libc::kill(pid, 0) } == 0;
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("printf spawned > '{}'", refused_spawn.display()));
+        let repeated_request_refused = queue
+            .with_process_owner(|owner| {
+                owner.run_command(
+                    "synthetic",
+                    &mut command,
+                    1024,
+                    1024,
+                    Duration::from_secs(1),
+                    &AtomicBool::new(false),
+                )
+            })
+            .is_err();
+
+        std::fs::write(&release, "release\n").unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(format!(
+            "printf recovered > '{}'",
+            recovered_spawn.display()
+        ));
+        let recovered = queue.with_process_owner(|owner| {
+            let waited_pid_absent = unsafe { libc::kill(pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let waited_group_absent = unsafe { libc::kill(-pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let output = owner.run_command(
+                "synthetic",
+                &mut command,
+                1024,
+                1024,
+                Duration::from_secs(1),
+                &AtomicBool::new(false),
+            )?;
+            Ok((output, waited_pid_absent, waited_group_absent))
+        });
+        let final_shutdown = queue.try_shutdown();
+        let closed = final_shutdown.is_ok();
+        if let Ok(mut permit) = final_shutdown {
+            permit.close();
+        }
+        let after_close_refused = queue.with_process_owner(|_| Ok(())).is_err();
+
+        assert!(adopted.is_ok());
+        assert!(shutdown_refused, "uncertain cleanup must refuse shutdown");
+        assert!(shutdown_elapsed < Duration::from_secs(3));
+        assert!(child_still_owned, "failed shutdown must retain its Child");
+        assert!(
+            repeated_request_refused,
+            "uncertain owner must gate later spawns"
+        );
+        assert!(
+            !refused_spawn.exists(),
+            "a repeated request spawned a second child"
+        );
+        let (_output, waited_pid_absent, waited_group_absent) = recovered
+            .expect("a later exit observation must recover the owner and permit a new spawn");
+        assert!(recovered_spawn.exists());
+        assert!(
+            waited_pid_absent,
+            "recovery must wait the exact retained Child"
+        );
+        assert!(
+            waited_group_absent,
+            "recovery must prove the exact retained process group absent before a new spawn"
+        );
+        assert!(closed, "shutdown should proceed after exact cleanup");
+        assert!(
+            after_close_refused,
+            "accepted shutdown must close catalog admission"
+        );
     }
 
     #[test]
@@ -728,7 +929,7 @@ mod tests {
                 configured_override: false,
             };
 
-            let capabilities = discover_capabilities(&input, &AtomicBool::new(false));
+            let capabilities = discover_for_test(&input);
             assert!(capabilities.models.is_empty());
             assert!(
                 capabilities
@@ -770,7 +971,7 @@ mod tests {
             configured_override: false,
         };
 
-        let capabilities = discover_capabilities(&input, &AtomicBool::new(false));
+        let capabilities = discover_for_test(&input);
         assert!(capabilities.binding.is_none());
         assert!(capabilities.models.is_empty());
         assert!(
@@ -784,21 +985,18 @@ mod tests {
     #[test]
     fn configured_origin_never_reaches_native_model_discovery() {
         for preset in ["claude", "omp"] {
-            let capabilities = discover_capabilities(
-                &QueryInput {
-                    preset: preset.into(),
-                    origin: AgentLaunchOrigin::Configured,
-                    argv: Vec::new(),
-                    project: "p".into(),
-                    workspace: "w".into(),
-                    cwd: PathBuf::new(),
-                    git_identity: String::new(),
-                    path: std::ffi::OsString::new(),
-                    launcher: PathBuf::new(),
-                    configured_override: false,
-                },
-                &AtomicBool::new(false),
-            );
+            let capabilities = discover_for_test(&QueryInput {
+                preset: preset.into(),
+                origin: AgentLaunchOrigin::Configured,
+                argv: Vec::new(),
+                project: "p".into(),
+                workspace: "w".into(),
+                cwd: PathBuf::new(),
+                git_identity: String::new(),
+                path: std::ffi::OsString::new(),
+                launcher: PathBuf::new(),
+                configured_override: false,
+            });
             assert!(capabilities.binding.is_none());
             assert!(capabilities.models.is_empty());
             assert!(

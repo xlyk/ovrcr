@@ -4,21 +4,19 @@
 //! configured provider extensions while excluding ambient hooks. Do not add
 //! `--no-extensions` or fabricate a delegated-session authority here.
 
-use anyhow::{Context, Result, bail, ensure};
+use crate::catalog_process::CatalogProcessOwner;
+use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 const CATALOG_LIMIT: u64 = 2 * 1024 * 1024;
 const DIAGNOSTIC_LIMIT: u64 = 64 * 1024;
 const CATALOG_DEADLINE: Duration = Duration::from_secs(20);
-const PROCESS_GROUP_CLEANUP_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +43,7 @@ pub(crate) fn dashboard_catalog(
     native_argv: &[OsString],
     cwd: &Path,
     cancelled: &AtomicBool,
+    owner: &mut CatalogProcessOwner,
 ) -> Result<Vec<(String, String)>> {
     let mut expected = vec![executable.as_os_str().to_owned()];
     ovrcr_protocol::apply_default_auto_trust("omp", &mut expected);
@@ -59,16 +58,8 @@ pub(crate) fn dashboard_catalog(
     let cwd = cwd.canonicalize().context("OMP workspace is unavailable")?;
     ensure!(cwd.is_dir(), "OMP workspace is unavailable");
 
-    let mut output = tempfile::tempfile()?;
-    let diagnostics = tempfile::tempfile()?;
     let mut command = Command::new(&executable);
-    command
-        .current_dir(cwd)
-        .args(["models", "--json"])
-        .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
-        .stderr(diagnostics.try_clone()?)
-        .process_group(0);
+    command.current_dir(cwd).args(["models", "--json"]);
     for name in [
         "OVRCR_AGENT_SOCKET",
         "OVRCR_AGENT_TOKEN",
@@ -84,52 +75,19 @@ pub(crate) fn dashboard_catalog(
         command.env_remove(name);
     }
 
-    let mut child = command
-        .spawn()
-        .context("native OMP model discovery unavailable")?;
-    let pid = child.id() as libc::pid_t;
-    let deadline = Instant::now() + CATALOG_DEADLINE;
-    let probe = (|| -> Result<()> {
-        loop {
-            ensure!(
-                !cancelled.load(Ordering::Acquire),
-                "native OMP model discovery cancelled"
-            );
-            ensure!(
-                output.metadata()?.len() <= CATALOG_LIMIT,
-                "native OMP model discovery output bound"
-            );
-            ensure!(
-                diagnostics.metadata()?.len() <= DIAGNOSTIC_LIMIT,
-                "native OMP model discovery diagnostic bound"
-            );
-            if child_exited_unreaped(pid)? {
-                return Ok(());
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "native OMP model discovery deadline"
-            );
-            std::thread::park_timeout(Duration::from_millis(10));
-        }
-    })();
-    let status = reap_process_group(&mut child, pid, probe.is_err())?;
-    probe?;
-    ensure!(status.success(), "native OMP model inventory failed");
+    let output = owner.run_command(
+        "OMP",
+        &mut command,
+        CATALOG_LIMIT as usize,
+        DIAGNOSTIC_LIMIT as usize,
+        CATALOG_DEADLINE,
+        cancelled,
+    )?;
     ensure!(
-        diagnostics.metadata()?.len() == 0,
+        output.stderr_total == 0,
         "native OMP model listing produced diagnostics"
     );
-    ensure!(
-        output.metadata()?.len() <= CATALOG_LIMIT,
-        "native OMP model discovery output bound"
-    );
-    output.seek(SeekFrom::Start(0))?;
-    let mut text = String::new();
-    output
-        .take(CATALOG_LIMIT)
-        .read_to_string(&mut text)
-        .context("native OMP model catalog is not UTF-8")?;
+    let text = String::from_utf8(output.stdout).context("native OMP model catalog is not UTF-8")?;
     parse_model_json(&text)
 }
 
@@ -167,149 +125,14 @@ fn parse_model_json(output: &str) -> Result<Vec<(String, String)>> {
     Ok(models.into_iter().collect())
 }
 
-fn reap_process_group(
-    child: &mut Child,
-    process_group: libc::pid_t,
-    terminate_if_running: bool,
-) -> Result<std::process::ExitStatus> {
-    let leader_exited = child_exited_unreaped(process_group)?;
-    ensure!(
-        leader_exited || terminate_if_running,
-        "native OMP discovery exited without an ownership observation"
-    );
-    // Keep the unreaped leader as the process-group identity while clearing
-    // owned descendants. Never signal the group after reaping that leader.
-    let mut signal_error = None;
-    let sent = match signal_group(process_group) {
-        Ok(sent) => sent,
-        Err(error) if !leader_exited => return Err(error),
-        Err(error) => {
-            signal_error = Some(error);
-            false
-        }
-    };
-    if !leader_exited && !sent {
-        bail!("native OMP discovery cleanup group disappeared while leader remained live");
-    }
-    if !leader_exited {
-        wait_for_child_exit_unreaped(process_group)?;
-    }
-    let waited = child.wait().context("native OMP discovery cleanup failed");
-    let absent = process_group_absent(process_group);
-    let waited = waited?;
-    match absent {
-        Ok(()) => {}
-        Err(error) => {
-            if let Some(signal_error) = signal_error {
-                bail!(
-                    "native OMP discovery cleanup is uncertain (signal: {signal_error:#}; absence: {error:#})"
-                );
-            }
-            return Err(error);
-        }
-    }
-    Ok(waited)
-}
-
-fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
-    for _ in 0..10 {
-        if observed_child_exit(child)? {
-            return Ok(true);
-        }
-        let observed_group = unsafe { libc::getpgid(child) };
-        if observed_group == child {
-            return Ok(false);
-        }
-        let group_errno = if observed_group == -1 {
-            std::io::Error::last_os_error().raw_os_error()
-        } else {
-            None
-        };
-        if observed_group == -1 && group_errno == Some(libc::ESRCH) {
-            std::thread::park_timeout(Duration::from_millis(1));
-            continue;
-        }
-        bail!("native OMP discovery process-group ownership is uncertain");
-    }
-    bail!("native OMP discovery process-group ownership is uncertain")
-}
-
-fn observed_child_exit(child: libc::pid_t) -> Result<bool> {
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let observed = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child as u32,
-            &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    ensure!(observed == 0, "native OMP discovery ownership probe failed");
-    let observed_pid = unsafe { info.si_pid() };
-    ensure!(
-        observed_pid == 0 || observed_pid == child,
-        "native OMP discovery cleanup ownership is uncertain"
-    );
-    Ok(observed_pid != 0)
-}
-
-fn wait_for_child_exit_unreaped(child: libc::pid_t) -> Result<()> {
-    let deadline = Instant::now() + PROCESS_GROUP_CLEANUP_GRACE;
-    loop {
-        if child_exited_unreaped(child)? {
-            return Ok(());
-        }
-        ensure!(
-            Instant::now() < deadline,
-            "native OMP discovery cleanup termination was not observed"
-        );
-        std::thread::park_timeout(Duration::from_millis(10));
-    }
-}
-
-fn signal_group(process_group: libc::pid_t) -> Result<bool> {
-    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-    if result == 0 {
-        return Ok(true);
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(false);
-    }
-    bail!(
-        "native OMP discovery cleanup signal failed (errno {:?})",
-        error.raw_os_error()
-    )
-}
-
-fn process_group_absent(process_group: libc::pid_t) -> Result<()> {
-    let deadline = Instant::now() + PROCESS_GROUP_CLEANUP_GRACE;
-    loop {
-        let result = unsafe { libc::kill(-process_group, 0) };
-        let error = if result == -1 {
-            std::io::Error::last_os_error().raw_os_error()
-        } else {
-            None
-        };
-        if result == -1 && error == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "native OMP discovery cleanup is uncertain (process group {process_group} absence errno {error:?})"
-            );
-        }
-        std::thread::park_timeout(Duration::from_millis(10));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     const CHAT_MODELS: &str = r#"{"models":[
         {"provider":"openai","kind":"chat","id":"gpt-5.4","selector":"openai/gpt-5.4","name":"GPT-5.4"},
@@ -321,6 +144,16 @@ mod tests {
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn catalog(
+        executable: &Path,
+        argv: &[OsString],
+        cwd: &Path,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<(String, String)>> {
+        let mut owner = CatalogProcessOwner::default();
+        dashboard_catalog(executable, argv, cwd, cancelled, &mut owner)
     }
 
     fn detected_native_argv(executable: &Path) -> Vec<OsString> {
@@ -384,7 +217,7 @@ mod tests {
                 CHAT_MODELS.replace('\'', "'\\''")
             ),
         );
-        let models = dashboard_catalog(
+        let models = catalog(
             &executable_path,
             &detected_native_argv(&executable_path),
             root.path(),
@@ -417,7 +250,7 @@ mod tests {
                 CHAT_MODELS
             ),
         );
-        let error = dashboard_catalog(
+        let error = catalog(
             &executable_path,
             &detected_native_argv(&executable_path),
             root.path(),
@@ -441,7 +274,7 @@ mod tests {
         argv.push("other".into());
 
         assert!(
-            dashboard_catalog(
+            catalog(
                 &executable_path,
                 &argv,
                 root.path(),
@@ -465,7 +298,7 @@ mod tests {
                 pid_file.display()
             ),
         );
-        let models = dashboard_catalog(
+        let models = catalog(
             &executable_path,
             &detected_native_argv(&executable_path),
             root.path(),
@@ -474,7 +307,13 @@ mod tests {
         .unwrap();
         assert_eq!(models.len(), 2);
         let pid: libc::pid_t = std::fs::read_to_string(pid_file).unwrap().parse().unwrap();
-        process_group_absent(pid).unwrap();
+        let absent = unsafe { libc::kill(-pid, 0) };
+        let absence_errno = if absent == -1 {
+            std::io::Error::last_os_error().raw_os_error()
+        } else {
+            None
+        };
+        assert_eq!((absent, absence_errno), (-1, Some(libc::ESRCH)));
     }
 
     #[test]
@@ -482,11 +321,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let executable_path = root.path().join("omp");
         let pid_file = root.path().join("pid");
+        let release_file = root.path().join("release");
         executable(
             &executable_path,
             &format!(
-                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /bin/sleep 30\n",
-                pid_file.display()
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile [ ! -e '{}' ]; do /bin/sleep 0.01; done\n",
+                pid_file.display(),
+                release_file.display()
             ),
         );
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -494,8 +335,16 @@ mod tests {
         let worker_path = executable_path.clone();
         let worker_argv = detected_native_argv(&executable_path);
         let worker_cwd = root.path().to_path_buf();
+        let worker_release = release_file.clone();
         let worker = thread::spawn(move || {
-            dashboard_catalog(&worker_path, &worker_argv, &worker_cwd, &worker_cancelled)
+            let mut owner = CatalogProcessOwner::default();
+            dashboard_catalog(
+                &worker_path,
+                &worker_argv,
+                &worker_cwd,
+                &worker_cancelled,
+                &mut owner,
+            )
         });
 
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -506,13 +355,17 @@ mod tests {
         let pid: libc::pid_t = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
         assert_eq!(unsafe { libc::getpgid(pid) }, pid);
         cancelled.store(true, Ordering::Release);
-        let finish_deadline = Instant::now() + Duration::from_millis(500);
+        let finish_deadline = Instant::now() + Duration::from_secs(3);
         while !worker.is_finished() && Instant::now() < finish_deadline {
             thread::sleep(Duration::from_millis(5));
         }
         let cancelled_and_joined = worker.is_finished();
         if !cancelled_and_joined {
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            let _ = std::fs::write(worker_release, "release\n");
+            let finish_deadline = Instant::now() + Duration::from_secs(3);
+            while !worker.is_finished() && Instant::now() < finish_deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
         }
         let result = worker.join().unwrap();
         assert!(
@@ -524,6 +377,11 @@ mod tests {
             "native OMP model discovery cancelled"
         );
         assert_eq!(unsafe { libc::kill(-pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),
             Some(libc::ESRCH)

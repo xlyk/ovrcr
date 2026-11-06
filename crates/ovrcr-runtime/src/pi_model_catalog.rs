@@ -3,20 +3,18 @@
 //! The catalog command keeps Pi's normal profile, workspace, extension, and
 //! trust behavior. OVRCR adds only Pi's documented `--list-models` action and
 //! strips OVRCR-only authority from the child environment.
+use crate::catalog_process::CatalogProcessOwner;
 use anyhow::{Context, Result, bail, ensure};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 const CATALOG_LIMIT: u64 = 512 * 1024;
 const DIAGNOSTIC_LIMIT: u64 = 64 * 1024;
 const CATALOG_DEADLINE: Duration = Duration::from_secs(20);
-const PROCESS_GROUP_CLEANUP_GRACE: Duration = Duration::from_secs(2);
 
 /// Read the effective Pi model catalog for the selected workspace.
 ///
@@ -30,6 +28,7 @@ pub(crate) fn dashboard_catalog(
     native_argv: &[OsString],
     cwd: &Path,
     cancelled: &AtomicBool,
+    owner: &mut CatalogProcessOwner,
 ) -> Result<Vec<(String, String)>> {
     let mut expected = vec![executable.as_os_str().to_owned()];
     ovrcr_protocol::apply_default_auto_trust("pi", &mut expected);
@@ -44,17 +43,11 @@ pub(crate) fn dashboard_catalog(
     let cwd = cwd.canonicalize().context("Pi workspace is unavailable")?;
     ensure!(cwd.is_dir(), "Pi workspace is unavailable");
 
-    let mut output = tempfile::tempfile()?;
-    let diagnostics = tempfile::tempfile()?;
     let mut command = Command::new(&executable);
     command
         .current_dir(cwd)
         .args(native_argv.iter().skip(1))
-        .arg("--list-models")
-        .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
-        .stderr(diagnostics.try_clone()?)
-        .process_group(0);
+        .arg("--list-models");
     for name in [
         "OVRCR_AGENT_SOCKET",
         "OVRCR_AGENT_TOKEN",
@@ -70,227 +63,20 @@ pub(crate) fn dashboard_catalog(
         command.env_remove(name);
     }
 
-    let mut child = command
-        .spawn()
-        .context("native Pi model discovery unavailable")?;
-    let pid = child.id() as libc::pid_t;
-    let deadline = Instant::now() + CATALOG_DEADLINE;
-    let probe = (|| -> Result<()> {
-        loop {
-            ensure!(
-                !cancelled.load(Ordering::Acquire),
-                "native Pi model discovery cancelled"
-            );
-            ensure!(
-                output.metadata()?.len() <= CATALOG_LIMIT,
-                "native Pi model discovery output bound"
-            );
-            ensure!(
-                diagnostics.metadata()?.len() <= DIAGNOSTIC_LIMIT,
-                "native Pi model discovery diagnostic bound"
-            );
-            if child_exited_unreaped(pid)? {
-                return Ok(());
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "native Pi model discovery deadline"
-            );
-            std::thread::park_timeout(Duration::from_millis(10));
-        }
-    })();
-    let status = reap_process_group(&mut child, pid, probe.is_err())?;
-    probe?;
-    ensure!(status.success(), "native Pi model inventory failed");
+    let output = owner.run_command(
+        "Pi",
+        &mut command,
+        CATALOG_LIMIT as usize,
+        DIAGNOSTIC_LIMIT as usize,
+        CATALOG_DEADLINE,
+        cancelled,
+    )?;
     ensure!(
-        diagnostics.metadata()?.len() == 0,
+        output.stderr_total == 0,
         "native Pi model listing produced diagnostics"
     );
-    ensure!(
-        output.metadata()?.len() <= CATALOG_LIMIT,
-        "native Pi model discovery output bound"
-    );
-    output.seek(SeekFrom::Start(0))?;
-    let mut text = String::new();
-    output
-        .take(CATALOG_LIMIT)
-        .read_to_string(&mut text)
-        .context("native Pi model catalog is not UTF-8")?;
+    let text = String::from_utf8(output.stdout).context("native Pi model catalog is not UTF-8")?;
     parse_model_list(&text)
-}
-
-fn reap_process_group(
-    child: &mut Child,
-    process_group: libc::pid_t,
-    terminate_if_running: bool,
-) -> Result<std::process::ExitStatus> {
-    let leader_exited = child_exited_unreaped(process_group)?;
-    ensure!(
-        leader_exited || terminate_if_running,
-        "native Pi discovery exited without an ownership observation"
-    );
-    // Always clear same-group descendants while the unreaped leader reserves
-    // this process-group identity. On an error path, don't block on a live
-    // leader if signaling or group ownership is uncertain.
-    let mut signal_error = None;
-    let sent = match signal_group(process_group) {
-        Ok(sent) => sent,
-        Err(error) if !leader_exited => return Err(error),
-        Err(error) => {
-            signal_error = Some(error);
-            false
-        }
-    };
-    if !leader_exited && !sent {
-        bail!("native Pi discovery cleanup group disappeared while leader remained live");
-    }
-    if !leader_exited {
-        wait_for_child_exit_unreaped(process_group)?;
-    }
-    let waited = child.wait().context("native Pi discovery cleanup failed");
-    let absent = process_group_absent(process_group);
-    let waited = waited?;
-    // A pre-reap signal error is resolved only by a successful post-reap
-    // absence proof; a remaining or inaccessible group stays uncertain.
-    match absent {
-        Ok(()) => {}
-        Err(error) => {
-            if let Some(signal_error) = signal_error {
-                bail!(
-                    "native Pi discovery cleanup is uncertain (signal: {signal_error:#}; absence: {error:#})"
-                );
-            }
-            return Err(error);
-        }
-    }
-    Ok(waited)
-}
-
-fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
-    for check in 1..=10 {
-        if observed_child_exit(child)? {
-            return Ok(true);
-        }
-        let observed_group = unsafe { libc::getpgid(child) };
-        if observed_group == child {
-            return Ok(false);
-        }
-        let group_errno = if observed_group == -1 {
-            std::io::Error::last_os_error().raw_os_error()
-        } else {
-            None
-        };
-        if observed_group == -1 && group_errno == Some(libc::ESRCH) {
-            // The leader can exit between waitid and getpgid. Recheck the
-            // unreaped status briefly before treating group ownership as lost.
-            if check == 10 {
-                return Err(ownership_uncertain(
-                    child,
-                    false,
-                    observed_group,
-                    group_errno,
-                    check,
-                ));
-            }
-            std::thread::park_timeout(Duration::from_millis(1));
-            continue;
-        }
-        return Err(ownership_uncertain(
-            child,
-            false,
-            observed_group,
-            group_errno,
-            check,
-        ));
-    }
-    unreachable!("ownership retry loop returns after its tenth check")
-}
-
-fn ownership_uncertain(
-    child: libc::pid_t,
-    waitid_exit_observed: bool,
-    observed_group: libc::pid_t,
-    group_errno: Option<i32>,
-    checks: u8,
-) -> anyhow::Error {
-    eprintln!(
-        "ovrcr: native Pi discovery ownership uncertain: pid={child} waitid_exit_observed={waitid_exit_observed} observed_group={observed_group} getpgid_errno={group_errno:?} checks={checks}"
-    );
-    anyhow::anyhow!(
-        "native Pi discovery process-group ownership is uncertain (child {child}, WNOWAIT exit observed {waitid_exit_observed}, getpgid {observed_group}, errno {group_errno:?}, checks {checks})"
-    )
-}
-
-fn observed_child_exit(child: libc::pid_t) -> Result<bool> {
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let observed = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child as u32,
-            &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if observed == -1 {
-        let errno = std::io::Error::last_os_error().raw_os_error();
-        bail!("native Pi discovery WNOWAIT probe failed (child {child}, errno {errno:?})");
-    }
-    let observed_pid = unsafe { info.si_pid() };
-    ensure!(
-        observed_pid == 0 || observed_pid == child,
-        "native Pi discovery cleanup ownership is uncertain (child {child}, WNOWAIT reported pid {observed_pid})"
-    );
-    Ok(observed_pid != 0)
-}
-
-fn wait_for_child_exit_unreaped(child: libc::pid_t) -> Result<()> {
-    let deadline = Instant::now() + PROCESS_GROUP_CLEANUP_GRACE;
-    loop {
-        if child_exited_unreaped(child)? {
-            return Ok(());
-        }
-        ensure!(
-            Instant::now() < deadline,
-            "native Pi discovery cleanup termination was not observed"
-        );
-        std::thread::park_timeout(Duration::from_millis(10));
-    }
-}
-
-fn signal_group(process_group: libc::pid_t) -> Result<bool> {
-    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-    if result == 0 {
-        return Ok(true);
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(false);
-    }
-    bail!(
-        "native Pi discovery cleanup signal failed (errno {:?})",
-        error.raw_os_error()
-    )
-}
-
-fn process_group_absent(process_group: libc::pid_t) -> Result<()> {
-    let deadline = Instant::now() + PROCESS_GROUP_CLEANUP_GRACE;
-    loop {
-        let result = unsafe { libc::kill(-process_group, 0) };
-        let error = if result == -1 {
-            std::io::Error::last_os_error().raw_os_error()
-        } else {
-            None
-        };
-        if result == -1 && error == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "native Pi discovery cleanup is uncertain (process group {process_group} absence errno {error:?})"
-            );
-        }
-        std::thread::park_timeout(Duration::from_millis(10));
-    }
 }
 
 fn parse_model_list(output: &str) -> Result<Vec<(String, String)>> {
@@ -370,6 +156,8 @@ fn valid_token_count(value: &str) -> bool {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
 
     fn executable(path: &Path, contents: &str) {
         std::fs::write(path, contents).unwrap();
@@ -433,11 +221,13 @@ mod tests {
         );
         let mut argv = vec![executable_path.as_os_str().to_owned()];
         ovrcr_protocol::apply_default_auto_trust("pi", &mut argv);
+        let mut owner = CatalogProcessOwner::default();
         let models = dashboard_catalog(
             &executable_path,
             &argv,
             root.path(),
             &AtomicBool::new(false),
+            &mut owner,
         )
         .unwrap();
         assert_eq!(
@@ -465,11 +255,13 @@ mod tests {
         );
         let mut argv = vec![executable_path.as_os_str().to_owned()];
         ovrcr_protocol::apply_default_auto_trust("pi", &mut argv);
+        let mut owner = CatalogProcessOwner::default();
         let models = dashboard_catalog(
             &executable_path,
             &argv,
             root.path(),
             &AtomicBool::new(false),
+            &mut owner,
         )
         .unwrap();
         assert_eq!(
@@ -477,7 +269,13 @@ mod tests {
             vec![("openai/gpt-5.4".into(), "openai/gpt-5.4".into())]
         );
         let pid: libc::pid_t = std::fs::read_to_string(pid_file).unwrap().parse().unwrap();
-        process_group_absent(pid).unwrap();
+        let absent = unsafe { libc::kill(-pid, 0) };
+        let absence_errno = if absent == -1 {
+            std::io::Error::last_os_error().raw_os_error()
+        } else {
+            None
+        };
+        assert_eq!((absent, absence_errno), (-1, Some(libc::ESRCH)));
     }
 
     #[test]
@@ -487,11 +285,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let executable_path = root.path().join("pi");
         let pid_file = root.path().join("pid");
+        let release_file = root.path().join("release");
         executable(
             &executable_path,
             &format!(
-                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /bin/sleep 30\n",
-                pid_file.display()
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile [ ! -e '{}' ]; do /bin/sleep 0.01; done\n",
+                pid_file.display(),
+                release_file.display()
             ),
         );
         let mut argv = vec![executable_path.as_os_str().to_owned()];
@@ -501,8 +301,16 @@ mod tests {
         let worker_path = executable_path.clone();
         let worker_argv = argv.clone();
         let worker_cwd = root.path().to_path_buf();
+        let worker_release = release_file.clone();
         let worker = std::thread::spawn(move || {
-            dashboard_catalog(&worker_path, &worker_argv, &worker_cwd, &worker_cancelled)
+            let mut owner = CatalogProcessOwner::default();
+            dashboard_catalog(
+                &worker_path,
+                &worker_argv,
+                &worker_cwd,
+                &worker_cancelled,
+                &mut owner,
+            )
         });
 
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -517,14 +325,18 @@ mod tests {
             "fake Pi catalog was not group leader"
         );
         cancelled.store(true, Ordering::Release);
-        let finish_deadline = Instant::now() + Duration::from_millis(500);
+        let finish_deadline = Instant::now() + Duration::from_secs(3);
         while !worker.is_finished() && Instant::now() < finish_deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
         let cancelled_and_joined = worker.is_finished();
         if !cancelled_and_joined {
-            // Keep the test bounded and remove only the task-owned fake child.
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            // Let the task-owned fake child exit naturally if cancellation regresses.
+            let _ = std::fs::write(worker_release, "release\n");
+            let finish_deadline = Instant::now() + Duration::from_secs(3);
+            while !worker.is_finished() && Instant::now() < finish_deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
         }
         let result = worker.join().unwrap();
         assert!(
@@ -546,5 +358,12 @@ mod tests {
             (-1, Some(libc::ESRCH)),
             "the canceled catalog process group must be absent"
         );
+        let pid_result = unsafe { libc::kill(pid, 0) };
+        let pid_errno = if pid_result == -1 {
+            std::io::Error::last_os_error().raw_os_error()
+        } else {
+            None
+        };
+        assert_eq!((pid_result, pid_errno), (-1, Some(libc::ESRCH)));
     }
 }
