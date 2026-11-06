@@ -1442,7 +1442,30 @@ fn standalone_branch_shortcut_creates_and_returns_to_browse() -> Result<()> {
         |screen| {
             screen.contains("feature/wizard")
                 && screen.contains("BROWSE")
+                && !screen.contains("Terminal mode")
                 && !screen.contains("┌ Create branch")
+                && screen
+                    .lines()
+                    .any(|line| line.starts_with("▌") && line.contains("feature/wizard"))
+                && screen.lines().any(|line| {
+                    line.split_once('│').is_some_and(|(_, right)| {
+                        let hint = right.trim_start();
+                        hint.starts_with('j') && hint.contains("open local")
+                    })
+                })
+        },
+        Duration::from_secs(5),
+    )?;
+    // Creation leaves the new workspace selected in Browse. Follow its card's
+    // advertised row navigation explicitly before attaching to the local shell.
+    dashboard.send(b"j")?;
+    dashboard.wait_until(
+        |screen| {
+            screen
+                .lines()
+                .any(|line| line.starts_with("▌") && line.contains("$ local"))
+                && screen.contains("BROWSE")
+                && !screen.contains("Terminal mode")
         },
         Duration::from_secs(5),
     )?;
@@ -1477,6 +1500,10 @@ fn standalone_branch_shortcut_creates_and_returns_to_browse() -> Result<()> {
     assert_eq!(
         terminal.name, "local",
         "an automatic first terminal keeps its standard workspace-local name"
+    );
+    assert!(
+        matches!(&terminal.kind, ovrcr::protocol::SessionKind::Terminal),
+        "automatic workspace creation must not start an agent session"
     );
     let branch = Command::new("git")
         .arg("-C")
