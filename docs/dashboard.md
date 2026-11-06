@@ -604,7 +604,8 @@ never offered the save. With `save_uncommitted_work` on, removal and server shut
 those refs without asking. The repository-root workspace cannot be removed. Remove every
 other workspace first, stop or acknowledge remaining sessions, then unregister
 the project; repository files stay on disk. Archived context is kept. `Space w n`
-creates a terminal, `Space p n` creates a workspace, `Space v t` opens tasks,
+opens New agent session, `Space w t` creates a terminal, `Space p n` creates a
+branch, `Space v t` opens tasks,
 `Space v b` hides or shows the sidebar, and `Space v ,` opens Settings.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
@@ -635,8 +636,7 @@ shortcuts.
 Session rows read `<project> / <branch> / <title>`. Two sessions that would read
 the same also show their ID, `(#id)`, which clipping keeps visible. Long text
 ends with an ellipsis; filtering still searches the full identity, including a
-session's ID (`#7`) that is not drawn. Creation forms use their task name as the
-window title.
+session's ID (`#7`) that is not drawn.
 
 `:` in Browse, or `Ctrl-g` then `:` from a terminal, opens the palette. If the
 dashboard has detached it reconnects first. Type to filter actions or to search a
@@ -647,7 +647,7 @@ Entries are, in order: `New agent session (n)`, `Create terminal`, `Create branc
 `Register project (a)`, the selected session's actions (`Rename terminal`,
 resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
 Settings, Events, quota actions, `Archived sessions`, one row per session, and
-the remaining key-popup actions by name. The palette follows the key popup's
+the remaining key-popup actions by name, including `New terminal`. The palette follows the key popup's
 rule: it drops actions the current target cannot use, and keeps one that is
 waiting for the pane's screen or blocked (such as `Create terminal` while the
 root workspace is off its default branch) with the reason below it, so rows do
@@ -659,9 +659,13 @@ Searching also finds every setting by its label or its `dashboard.toml` key, as
 appear only for a search, not in the unfiltered list.
 
 Within a form, `Enter` submits from any field, the same as the Submit control.
-In **New agent session**, `Enter` on a choice picker accepts that choice and
-keeps the form open; the multiline prompt uses `Enter` for a newline and
-`Alt-Enter` to submit.
+In **New agent session**, `Enter` opens or accepts a Branch, Agent harness or
+Model choice and keeps the form open; use `Alt-Enter` to start. The multiline
+prompt uses `Enter` for a newline and `Alt-Enter` to start. In the child
+**Create branch** form, `Enter` opens or accepts the Project choice and keeps
+the form open; use `Alt-Enter` to create. Other forms keep their existing Enter
+submission behavior, including the explicit confirmation shown by removal
+forms.
 It first checks the whole form: a required field left empty, a choice that is
 not in its list, or a branch Git would refuse keeps the form open, moves the
 focus to the first such field and says what is wrong just below it
@@ -676,6 +680,10 @@ it. The footer lists only the keys that work for the form and its focused field.
 Click a field to focus it and position its cursor, click options or
 toggles to choose them, and use the wheel to scroll lists and long forms.
 Input stays in the palette while it is open.
+
+The New agent session and Create branch dialogs need at least 60 columns by
+18 rows. Below that size, the draft stays open with resize guidance; edits and
+submission wait until the window is large enough, and Escape still cancels.
 
 Creating a workspace or terminal and removing a workspace run as Lifecycle jobs:
 the form steps aside and the sidebar shows `Creating…` or `Removing…` while the
@@ -761,21 +769,17 @@ Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately.
 
-This separate **Create terminal** action retains its existing Start = Agent
-choice and **Task** field; use `n` for the dedicated New agent session form
-above. The task names
-the session when Name is blank (one line, at most 60 characters) and, for agents
-whose CLI takes a first message, starts the agent with it: the launch arguments end
-with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
-`codex`, `pi`, `omp` and `grok`. Hermes (`-z` is one-shot only), Cursor (a
-prompt turns its reporting off) and other agents start without it; the footer
-says which applies (`Names the session; claude gets it as its first message`,
-`Only names the session; hermes starts without it`). The task is one-off: it is
-never part of the remembered launch choice, and Retry, Reopen, resume and
-server-restart recovery never send it again (recovery keeps only provider launch
-options before `--`). In this Create terminal flow, a selected root workspace
-with a warning blocks submission; `n` still opens New agent session so you can
-choose an eligible checkout. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
+The generic **Create terminal** command keeps the existing **Start** choice.
+For Agent, its optional **Initial prompt** is sent only through a supported,
+current detected harness; it does not supply the session name. For Terminal, the
+prompt and Agent fields are hidden and the optional **Command** runs through
+`/bin/sh -lc`. Custom commands belong to Terminal, even when they invoke an
+agent. The prompt is one-off and is never replayed by retry, reopen, resume, or
+server-restart recovery. **New terminal** in `Space w t` opens this same form
+with Terminal already selected, so shell creation does not require changing
+Start. A selected root workspace with a warning blocks terminal creation;
+`n` still opens New agent session so you can choose an eligible checkout.
+Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,

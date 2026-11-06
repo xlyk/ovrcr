@@ -46,6 +46,9 @@ enum Command {
     TransferWorkflow(Box<crate::protocol::WorkflowTransfer>),
     NewAgentSession,
     CreateTerminal,
+    // Kept for internal request-composition regression tests; public creation
+    // routes use the branch-only CreateBranch form.
+    #[allow(dead_code)]
     CreateWorkspace,
     CreateBranch,
     RenameTerminal(SessionId),
@@ -142,6 +145,7 @@ fn command_action(command: &Command) -> Option<Action> {
         Command::NewAgentSession => Some(Action::NewAgentSession),
         Command::CreateTerminal => Some(Action::CreateTerminal),
         Command::CreateWorkspace => Some(Action::CreateWorkspace),
+        Command::CreateBranch => Some(Action::CreateWorkspace),
         Command::RegisterProject => Some(Action::RegisterProject),
         Command::CloseTerminal(_) => Some(Action::CloseTerminal),
         Command::Hint(action) => Some(*action),
@@ -224,6 +228,9 @@ pub(super) struct Palette {
     branch_attempt: Option<BranchAttempt>,
     /// Project to preselect while the branch-only child is open.
     branch_project: Option<String>,
+    /// Last committed registered destination before the parent branch picker
+    /// accepts the Create new branch action.
+    parent_branch_target: Option<(String, bool)>,
 }
 
 struct SuspendedSessionForm {
@@ -737,6 +744,7 @@ impl Palette {
             suspended_session_form: None,
             branch_attempt: None,
             branch_project: None,
+            parent_branch_target: None,
         }
     }
 
@@ -1108,6 +1116,24 @@ fn compact_picker_field(command: &Command, field: &Field) -> bool {
             || matches!(command, Command::CreateBranch) && field.label == "Project")
 }
 
+fn committed_parent_branch_target(command: &Command, field: &Field) -> Option<(String, bool)> {
+    (matches!(command, Command::NewAgentSession)
+        && field.label == "Branch"
+        && !field.value.is_empty()
+        && field.value != CREATE_BRANCH_PICK_VALUE)
+        .then(|| (field.value.clone(), field.edited))
+}
+
+fn creation_form_below_minimum(page: &Page, area: Rect) -> bool {
+    matches!(
+        page,
+        Page::Form {
+            command: Command::NewAgentSession | Command::CreateBranch,
+            ..
+        }
+    ) && (area.width < 60 || area.height < 18)
+}
+
 fn reset_compact_picker(field: &mut Field) {
     let value = field.value.clone();
     if let FieldKind::Pick(list) = &mut field.kind {
@@ -1319,6 +1345,14 @@ impl Dashboard {
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
+        self.open_terminal_form(None)
+    }
+
+    pub(super) fn open_new_terminal(&mut self) -> DashboardAction {
+        self.open_terminal_form(Some("Terminal"))
+    }
+
+    fn open_terminal_form(&mut self, start: Option<&str>) -> DashboardAction {
         if let Some(warning) = self
             .current_workspace()
             .and_then(|workspace| workspace.warning.clone())
@@ -1335,6 +1369,23 @@ impl Dashboard {
             page: self.palette_form(Command::CreateTerminal),
             ..Palette::new()
         };
+        if let Some(start) = start
+            && let Page::Form { fields, active, .. } = &mut palette.page
+            && let Some(start_index) = fields.iter().position(|field| field.label == "Start")
+        {
+            fields[start_index].value = start.into();
+            fields[start_index].edited = true;
+            if let FieldKind::Pick(list) = &mut fields[start_index].kind {
+                list.query.clear();
+                list.select_value(start);
+            }
+            self.refresh_terminal_form(fields, false);
+            *active = fields
+                .iter()
+                .position(|field| field.label == "Workspace" && !field.hidden)
+                .or_else(|| fields.iter().position(|field| !field.hidden))
+                .unwrap_or(start_index);
+        }
         self.refresh_model_query(&mut palette);
         self.palette = Some(palette);
         self.mode = InputMode::Browse;
@@ -1384,6 +1435,15 @@ impl Dashboard {
         }
         self.refresh_workspace_form(palette);
         self.refresh_model_query(palette);
+        palette.parent_branch_target = match &palette.page {
+            Page::Form {
+                command, fields, ..
+            } => fields
+                .iter()
+                .find(|field| field.label == "Branch")
+                .and_then(|field| committed_parent_branch_target(command, field)),
+            _ => None,
+        };
     }
 
     pub(super) fn open_create_workspace(&mut self) -> DashboardAction {
@@ -1421,7 +1481,7 @@ impl Dashboard {
         Page::Form {
             command: Command::CreateBranch,
             fields: vec![project, branch, options, base],
-            active: 0,
+            active: 1,
             name_edited: false,
             root_edited: false,
         }
@@ -1438,7 +1498,7 @@ impl Dashboard {
                 .map(|project| project.name.clone())
                 .unwrap_or_else(|| self.creation_context().0)
         };
-        let parent = SuspendedSessionForm {
+        let mut parent = SuspendedSessionForm {
             page: std::mem::replace(
                 &mut palette.page,
                 Page::Search {
@@ -1454,6 +1514,21 @@ impl Dashboard {
             workspace_acknowledged: palette.workspace_acknowledged,
             branch_project: palette.branch_project.take(),
         };
+        if let Some((target, edited)) = palette.parent_branch_target.take()
+            && let Page::Form {
+                command: Command::NewAgentSession,
+                fields,
+                ..
+            } = &mut parent.page
+            && let Some(field) = fields.iter_mut().find(|field| field.label == "Branch")
+        {
+            field.value = target.clone();
+            field.edited = edited;
+            if let FieldKind::Pick(list) = &mut field.kind {
+                list.query.clear();
+                list.select_value(&target);
+            }
+        }
         palette.suspended_session_form = Some(parent);
         palette.cursor = Default::default();
         palette.scroll = None;
@@ -1461,6 +1536,7 @@ impl Dashboard {
         palette.workspace_acknowledged = false;
         palette.branch_attempt = None;
         palette.new_agent_picker_open = false;
+        palette.parent_branch_target = None;
         palette.branch_project = Some(project.clone());
         palette.page = self.create_branch_form(&project);
         self.refresh_workspace_form(palette);
@@ -1478,6 +1554,7 @@ impl Dashboard {
         palette.workspace_id = parent.workspace_id;
         palette.workspace_acknowledged = parent.workspace_acknowledged;
         palette.branch_project = parent.branch_project;
+        palette.parent_branch_target = None;
         palette.pending = None;
         palette.branch_attempt = None;
         true
@@ -2532,6 +2609,10 @@ impl Dashboard {
 
     pub(super) fn palette_paste(&mut self, text: &str) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
+        if creation_form_below_minimum(&palette.page, self.outer_area) {
+            self.palette = Some(palette);
+            return DashboardAction::Redraw;
+        }
         palette.insert(text);
         self.refresh_workspace_form(&mut palette);
         self.refresh_model_query(&mut palette);
@@ -2666,7 +2747,7 @@ impl Dashboard {
         let mut entries: Vec<Entry> = [
             ("New agent session (n)", Command::NewAgentSession),
             ("Create terminal", Command::CreateTerminal),
-            ("Create branch (w)", Command::CreateWorkspace),
+            ("Create branch (w)", Command::CreateBranch),
             ("Register project (a)", Command::RegisterProject),
         ]
         .into_iter()
@@ -2877,6 +2958,22 @@ impl Dashboard {
         let (_, _, body, buttons) = palette_geometry(area);
         let point = Position::new(mouse.column, mouse.row);
         let palette = self.palette.as_ref().unwrap();
+        if creation_form_below_minimum(&palette.page, area) {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) && buttons.contains(point) {
+                let refresh_branch = palette.pending.is_none()
+                    && palette
+                        .branch_attempt
+                        .as_ref()
+                        .is_some_and(|attempt| attempt.blocked);
+                let label = button_text(&palette.page, buttons.width, refresh_branch);
+                let cancel = label.rfind('[').unwrap() as u16;
+                if mouse.column.saturating_sub(buttons.x) >= cancel {
+                    return self
+                        .palette_key_inner(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true);
+                }
+            }
+            return DashboardAction::None;
+        }
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) && buttons.contains(point) {
             let refresh_branch = palette.pending.is_none()
                 && palette
@@ -2996,6 +3093,9 @@ impl Dashboard {
                 let field = &mut fields[index];
                 let new_agent_pick = compact_picker_field(command, field);
                 if new_agent_pick {
+                    if let Some(target) = committed_parent_branch_target(command, field) {
+                        palette.parent_branch_target = Some(target);
+                    }
                     palette.new_agent_picker_open = true;
                     if !was_active || !picker_was_open {
                         palette.cursor = Default::default();
@@ -3055,6 +3155,9 @@ impl Dashboard {
                 if explicit_compact_choice {
                     palette.new_agent_picker_open = true;
                 }
+                if let Some(target) = committed_parent_branch_target(command, &fields[index]) {
+                    palette.parent_branch_target = Some(target);
+                }
                 if explicit_compact_choice {
                     fields[index].edited = true;
                 }
@@ -3079,6 +3182,9 @@ impl Dashboard {
                 {
                     fields[index].value = value;
                     fields[index].edited = true;
+                    if let Some(target) = committed_parent_branch_target(command, &fields[index]) {
+                        palette.parent_branch_target = Some(target);
+                    }
                 }
             }
             _ => {}
@@ -3105,6 +3211,10 @@ impl Dashboard {
         history_before_request: bool,
     ) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
+        if key.code != KeyCode::Esc && creation_form_below_minimum(&palette.page, self.outer_area) {
+            self.palette = Some(palette);
+            return DashboardAction::Redraw;
+        }
         if (key.code == KeyCode::Esc || is_browse_key(key))
             && matches!(
                 &palette.page,
@@ -3351,6 +3461,16 @@ impl Dashboard {
                     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
                 ) =>
             {
+                if let Page::Form {
+                    command,
+                    fields,
+                    active,
+                    ..
+                } = &palette.page
+                    && let Some(target) = committed_parent_branch_target(command, &fields[*active])
+                {
+                    palette.parent_branch_target = Some(target);
+                }
                 palette.insert(&ch.to_string());
             }
             KeyCode::Enter if multiline_active && !submit_chord => {
@@ -3362,6 +3482,18 @@ impl Dashboard {
             | KeyCode::Right
             | KeyCode::Home
             | KeyCode::End => {
+                let remembered_target = match &palette.page {
+                    Page::Form {
+                        command,
+                        fields,
+                        active,
+                        ..
+                    } => committed_parent_branch_target(command, &fields[*active]),
+                    _ => None,
+                };
+                if let Some(target) = remembered_target {
+                    palette.parent_branch_target = Some(target);
+                }
                 let editing = matches!(key.code, KeyCode::Backspace | KeyCode::Delete);
                 match &mut palette.page {
                     Page::Search { query, selected } => {
@@ -3400,6 +3532,10 @@ impl Dashboard {
                             {
                                 list.cycle(if key.code == KeyCode::Left { -1 } else { 1 });
                                 accept_pick(field);
+                                if let Some(target) = committed_parent_branch_target(command, field)
+                                {
+                                    palette.parent_branch_target = Some(target);
+                                }
                             }
                             FieldKind::Pick(list) => {
                                 palette.cursor.key(&mut list.query, key.code);
@@ -3440,6 +3576,18 @@ impl Dashboard {
                 }
             }
             KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
+                let remembered_target = match &palette.page {
+                    Page::Form {
+                        command,
+                        fields,
+                        active,
+                        ..
+                    } => committed_parent_branch_target(command, &fields[*active]),
+                    _ => None,
+                };
+                if let Some(target) = remembered_target {
+                    palette.parent_branch_target = Some(target);
+                }
                 if let Page::Form {
                     command,
                     fields,
@@ -3461,6 +3609,11 @@ impl Dashboard {
                         FieldKind::Pick(list) => {
                             list.move_selection(delta);
                             accept_pick(&mut fields[*active]);
+                            if let Some(target) =
+                                committed_parent_branch_target(command, &fields[*active])
+                            {
+                                palette.parent_branch_target = Some(target);
+                            }
                             if matches!(command, Command::CreateBranch)
                                 && fields[*active].label == "Project"
                             {
@@ -3778,12 +3931,32 @@ impl Dashboard {
                     name_edited,
                     root_edited,
                 } => {
+                    if !submit_chord
+                        && matches!(command, Command::CreateTerminal)
+                        && fields[*active].label == "Workspace"
+                        && matches!(fields[*active].kind, FieldKind::Pick(_))
+                    {
+                        if accept_pick(&mut fields[*active]) {
+                            palette.invalid = None;
+                            self.refresh_terminal_form(fields, *name_edited);
+                        } else {
+                            palette.invalid =
+                                Some((*active, "Workspace not found in available choices".into()));
+                        }
+                        self.palette = Some(palette);
+                        return action;
+                    }
                     if !submit_chord && compact_picker_field(command, &fields[*active]) {
                         if palette.new_agent_picker_open {
                             let parent_branch = matches!(command, Command::NewAgentSession)
                                 && fields[*active].label == "Branch";
                             let child_project = matches!(command, Command::CreateBranch)
                                 && fields[*active].label == "Project";
+                            if let Some(target) =
+                                committed_parent_branch_target(command, &fields[*active])
+                            {
+                                palette.parent_branch_target = Some(target);
+                            }
                             let previous_branch_project = if parent_branch {
                                 split_workspace_pick(&fields[*active].value).0
                             } else {
@@ -3810,6 +3983,13 @@ impl Dashboard {
                                     };
                                     self.open_create_branch_child(&mut palette, project);
                                 } else {
+                                    if parent_branch {
+                                        palette.parent_branch_target =
+                                            committed_parent_branch_target(
+                                                command,
+                                                &fields[*active],
+                                            );
+                                    }
                                     reset_compact_picker(&mut fields[*active]);
                                     palette.new_agent_picker_open = false;
                                     palette.invalid = None;
@@ -3821,6 +4001,11 @@ impl Dashboard {
                                 }
                             }
                         } else {
+                            if let Some(target) =
+                                committed_parent_branch_target(command, &fields[*active])
+                            {
+                                palette.parent_branch_target = Some(target);
+                            }
                             reset_compact_picker(&mut fields[*active]);
                             palette.new_agent_picker_open = true;
                         }
@@ -3832,65 +4017,6 @@ impl Dashboard {
                         if compact_picker_field(command, &fields[*active]) {
                             reset_compact_picker(&mut fields[*active]);
                         }
-                    }
-                    if matches!(fields[*active].kind, FieldKind::Pick(_)) && !submit_chord {
-                        let previous_branch_project = if matches!(command, Command::NewAgentSession)
-                            && fields[*active].label == "Branch"
-                        {
-                            split_workspace_pick(&fields[*active].value).0
-                        } else {
-                            String::new()
-                        };
-                        if matches!(command, Command::NewAgentSession)
-                            && matches!(fields[*active].label, "Branch" | "Agent harness" | "Model")
-                        {
-                            // Accepting the highlighted default is still an explicit choice.
-                            // Destination changes may refresh only inherited defaults.
-                            fields[*active].edited = true;
-                        }
-                        accept_pick(&mut fields[*active]);
-                        let selected_branch = fields[*active].value.clone();
-                        if matches!(command, Command::CreateBranch)
-                            && fields[*active].label == "Project"
-                        {
-                            fields[*active].edited = true;
-                        }
-                        let create_branch_child = matches!(command, Command::NewAgentSession)
-                            && fields[*active].label == "Branch"
-                            && selected_branch == CREATE_BRANCH_PICK_VALUE;
-                        if matches!(command, Command::NewAgentSession)
-                            && fields[*active].label == "Branch"
-                            && let FieldKind::Pick(list) = &mut fields[*active].kind
-                        {
-                            list.query.clear();
-                            list.select_value(&selected_branch);
-                            palette.invalid = None;
-                            palette.error = None;
-                        }
-                        if create_branch_child {
-                            let project = if !previous_branch_project.is_empty() {
-                                previous_branch_project
-                            } else {
-                                palette
-                                    .launch_project
-                                    .clone()
-                                    .or_else(|| {
-                                        palette
-                                            .workspace_inventory
-                                            .as_ref()
-                                            .and_then(|registry| registry.projects.first())
-                                            .map(|project| project.name.clone())
-                                    })
-                                    .unwrap_or_else(|| self.creation_context().0)
-                            };
-                            self.open_create_branch_child(&mut palette, project);
-                            self.palette = Some(palette);
-                            return action;
-                        }
-                        self.refresh_terminal_form(fields, *name_edited);
-                        self.refresh_project_form(fields, *name_edited, *root_edited);
-                        self.palette = Some(palette);
-                        return action;
                     }
                     // A field that Start just hid is no longer part of the form.
                     let branch_is_unselected = matches!(command, Command::NewAgentSession)
@@ -5254,7 +5380,11 @@ impl Dashboard {
                     list.query.clear();
                     list.select_value(&selected);
                 }
-                *active = index;
+                *active = visible_indices(fields)
+                    .into_iter()
+                    .find(|candidate| *candidate > index)
+                    .unwrap_or(index);
+                palette.cursor = Default::default();
             }
             self.refresh_workspace_form(palette);
             self.palette = Some(std::mem::replace(palette, Palette::new()));
@@ -6518,6 +6648,22 @@ impl Dashboard {
 
     fn palette_body(&self, body: Rect) -> (Vec<Line<'_>>, Vec<(usize, PaletteTarget)>, usize) {
         let palette = self.palette.as_ref().unwrap();
+        if creation_form_below_minimum(&palette.page, self.outer_area) {
+            return (
+                vec![
+                    Line::styled(
+                        "Resize to at least 60 columns × 18 rows.",
+                        Style::default().fg(PEACH()),
+                    ),
+                    Line::styled(
+                        "Your draft will be kept while you resize.",
+                        Style::default().fg(SUBTEXT()),
+                    ),
+                ],
+                Vec::new(),
+                0,
+            );
+        }
         let mut lines = Vec::new();
         let mut focus_line = 0;
         let mut targets = Vec::new();
@@ -6704,8 +6850,6 @@ impl Dashboard {
                         continue;
                     }
                     let top = lines.len();
-                    targets.push((lines.len(), PaletteTarget::Field(index, false)));
-                    lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
                     let pick_label;
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
@@ -6727,6 +6871,55 @@ impl Dashboard {
                     } else {
                         Default::default()
                     };
+                    let compact_choice_picker =
+                        palette.new_agent_picker_open && compact_picker_field(command, field);
+                    let compact_choice_dialog = palette.new_agent_picker_open
+                        && matches!(command, Command::NewAgentSession | Command::CreateBranch);
+                    let compact_pick = compact_choice_picker;
+                    let compact_toggle =
+                        compact_choice_dialog && matches!(field.kind, FieldKind::Toggle);
+                    if compact_pick {
+                        let label = format!("{}: ", field.label);
+                        let (mut text, _) = cursor.display(
+                            editing,
+                            body.width.saturating_sub(label.width() as u16 + 2) as usize,
+                        );
+                        if index != *active {
+                            text.pop();
+                        }
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                        lines.push(Line::from(vec![
+                            Span::styled(label, Style::default().fg(SUBTEXT())),
+                            Span::styled(
+                                format!("{} {text}", if index == *active { "›" } else { " " }),
+                                Style::default().fg(if index == *active {
+                                    MAUVE()
+                                } else {
+                                    TEXT()
+                                }),
+                            ),
+                        ]));
+                    } else if compact_toggle {
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("{}: ", field.label),
+                                Style::default().fg(SUBTEXT()),
+                            ),
+                            Span::styled(
+                                field.value.as_str(),
+                                Style::default().fg(if index == *active {
+                                    MAUVE()
+                                } else {
+                                    TEXT()
+                                }),
+                            ),
+                        ]));
+                    } else {
+                        targets.push((lines.len(), PaletteTarget::Field(index, false)));
+                        lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT())));
+                    }
                     if matches!(&field.kind, FieldKind::Multiline) {
                         let focused_line = cursor.line(editing);
                         let width = body.width.saturating_sub(2) as usize;
@@ -6770,32 +6963,34 @@ impl Dashboard {
                         }
                         continue;
                     }
-                    let placeholder = field.label == "Branch name" && field.value.is_empty();
-                    let (mut text, _) = if placeholder {
-                        (
-                            clip_text(
-                                "feature/auth-refresh",
-                                body.width.saturating_sub(2) as usize,
-                            ),
-                            0,
-                        )
-                    } else {
-                        cursor.display(editing, body.width.saturating_sub(2) as usize)
-                    };
-                    if index != *active && !placeholder {
-                        text.pop();
-                    }
-                    targets.push((lines.len(), PaletteTarget::Field(index, true)));
-                    lines.push(Line::styled(
-                        format!("{} {text}", if index == *active { "›" } else { " " }),
-                        Style::default().fg(if placeholder {
-                            MUTED()
-                        } else if index == *active {
-                            MAUVE()
+                    if !compact_pick && !compact_toggle {
+                        let placeholder = field.label == "Branch name" && field.value.is_empty();
+                        let (mut text, _) = if placeholder {
+                            (
+                                clip_text(
+                                    "feature/auth-refresh",
+                                    body.width.saturating_sub(2) as usize,
+                                ),
+                                0,
+                            )
                         } else {
-                            TEXT()
-                        }),
-                    ));
+                            cursor.display(editing, body.width.saturating_sub(2) as usize)
+                        };
+                        if index != *active && !placeholder {
+                            text.pop();
+                        }
+                        targets.push((lines.len(), PaletteTarget::Field(index, true)));
+                        lines.push(Line::styled(
+                            format!("{} {text}", if index == *active { "›" } else { " " }),
+                            Style::default().fg(if placeholder {
+                                MUTED()
+                            } else if index == *active {
+                                MAUVE()
+                            } else {
+                                TEXT()
+                            }),
+                        ));
+                    }
                     if field.label == "Model"
                         && let Some(status) = palette
                             .model_status
@@ -6818,23 +7013,57 @@ impl Dashboard {
                     if index != *active {
                         continue;
                     }
-                    // An open list gets whatever the body has left after this
-                    // field's own lines, so every option shows when they fit
-                    // and the focused field never scrolls out of view.
-                    let room = usize::from(body.height)
-                        .saturating_sub(lines.len() - top)
-                        .max(1);
+                    // The New agent session picker shares its bounded viewport
+                    // with every remaining form control, model status/error,
+                    // multiline prompt content, and the fixed action/footer rows.
+                    let bounded_choice_picker =
+                        compact_choice_picker && matches!(field.kind, FieldKind::Pick(_));
+                    let room = if bounded_choice_picker {
+                        let reserve_after = fields
+                            .iter()
+                            .enumerate()
+                            .skip(index + 1)
+                            .map(|(future_index, future)| {
+                                field_rows_after(
+                                    future,
+                                    future_index,
+                                    palette,
+                                    command,
+                                    compact_choice_dialog,
+                                )
+                            })
+                            .sum::<usize>();
+                        usize::from(body.height)
+                            .saturating_sub(lines.len())
+                            .saturating_sub(reserve_after)
+                    } else {
+                        usize::from(body.height)
+                            .saturating_sub(lines.len() - top)
+                            .max(1)
+                    };
                     if let FieldKind::Pick(list) = &field.kind
-                        && (!matches!(command, Command::NewAgentSession)
-                            || palette.new_agent_picker_open)
+                        && (!compact_picker_field(command, field) || palette.new_agent_picker_open)
                     {
-                        let (options, _) = list.lines(room);
-                        let window = list.window(room);
-                        for (offset, option) in window.enumerate() {
-                            targets
-                                .push((lines.len() + offset, PaletteTarget::Option(index, option)));
+                        if bounded_choice_picker {
+                            let (options, option_rows) = list.lines_bounded(room);
+                            for (offset, option) in option_rows {
+                                targets.push((
+                                    lines.len() + offset,
+                                    PaletteTarget::Option(index, option),
+                                ));
+                            }
+                            lines.extend(options);
+                        } else {
+                            let (options, _) = list.lines(room);
+                            let window = list.window(room);
+                            for (offset, option) in window.enumerate() {
+                                targets.push((
+                                    lines.len() + offset,
+                                    PaletteTarget::Option(index, option),
+                                ));
+                            }
+                            lines.extend(options);
                         }
-                        lines.extend(options);
                     }
                     if let FieldKind::Path(picker) = &field.kind
                         && let Some(listing) = picker.cached()
@@ -7006,6 +7235,7 @@ impl Dashboard {
             return;
         }
         let (area, inner, body, buttons) = palette_geometry(frame.area());
+        let undersized_creation_form = creation_form_below_minimum(&palette.page, frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
             Page::Search { .. } if palette.agents.is_some() => "Agents",
@@ -7132,26 +7362,35 @@ impl Dashboard {
         let recovering = palette.pending.is_none()
             && (palette.error.is_some() || palette.invalid.is_some())
             && status_area.height > 1;
-        let keys = match &palette.page {
-            Page::Search { .. } => detail
-                .clone()
-                .unwrap_or_else(|| "↑/↓ select · Enter continue · Esc cancel".into()),
-            Page::Form {
-                command,
-                fields,
-                active,
-                ..
-            } => form_keys(
-                command,
-                fields,
-                *active,
-                recovering,
-                palette.new_agent_picker_open,
-            ),
-            Page::Confirm { .. } => "Enter confirm · Esc cancel".into(),
+        let keys = if undersized_creation_form {
+            "Resize to 60×18 to continue · Esc cancel".into()
+        } else {
+            match &palette.page {
+                Page::Search { .. } => detail
+                    .clone()
+                    .unwrap_or_else(|| "↑/↓ select · Enter continue · Esc cancel".into()),
+                Page::Form {
+                    command,
+                    fields,
+                    active,
+                    ..
+                } => form_keys(
+                    command,
+                    fields,
+                    *active,
+                    recovering,
+                    palette.new_agent_picker_open,
+                ),
+                Page::Confirm { .. } => "Enter confirm · Esc cancel".into(),
+            }
         };
         let status = if palette.pending.is_some() {
             "Working…".to_owned()
+        } else if undersized_creation_form {
+            palette.error.as_ref().map_or_else(
+                || "Resize to at least 60×18; the draft will be kept.".to_owned(),
+                |error| format!("{error} · resize to at least 60×18; the draft will be kept"),
+            )
         } else if let Some(error) = &palette.error {
             error.clone()
         } else if palette.submit_when_ready {
@@ -7180,15 +7419,19 @@ impl Dashboard {
             );
         }
         frame.render_widget(
-            Paragraph::new(button_text(
-                &palette.page,
-                buttons.width,
-                palette.pending.is_none()
-                    && palette
-                        .branch_attempt
-                        .as_ref()
-                        .is_some_and(|attempt| attempt.blocked),
-            ))
+            Paragraph::new(if undersized_creation_form {
+                "[Resize to 60×18] [Cancel]"
+            } else {
+                button_text(
+                    &palette.page,
+                    buttons.width,
+                    palette.pending.is_none()
+                        && palette
+                            .branch_attempt
+                            .as_ref()
+                            .is_some_and(|attempt| attempt.blocked),
+                )
+            })
             .style(Style::default().fg(MAUVE())),
             buttons,
         );
@@ -7217,6 +7460,41 @@ fn form_list_active(page: &Page) -> bool {
             Some(FieldKind::Pick(_) | FieldKind::Path(_))
         )
     )
+}
+
+fn field_rows_after(
+    field: &Field,
+    index: usize,
+    palette: &Palette,
+    command: &Command,
+    compact_choice_dialog: bool,
+) -> usize {
+    if field.hidden {
+        return 0;
+    }
+    if matches!(field.kind, FieldKind::Notice) {
+        return 1;
+    }
+    let problem = usize::from(
+        palette
+            .invalid
+            .as_ref()
+            .is_some_and(|(invalid, _)| *invalid == index),
+    );
+    if matches!(field.kind, FieldKind::Multiline) {
+        return 2 + field.value.bytes().filter(|byte| *byte == b'\n').count() + problem;
+    }
+    let compact = compact_choice_dialog
+        && (compact_picker_field(command, field) || matches!(field.kind, FieldKind::Toggle));
+    let model_status = usize::from(
+        field.label == "Model"
+            && (palette.model_status.is_some()
+                || palette
+                    .model_capabilities
+                    .as_ref()
+                    .is_some_and(|capabilities| capabilities.reason.is_some())),
+    );
+    (if compact { 1 } else { 2 }) + problem + model_status
 }
 
 fn mark_form_edit(
@@ -7298,12 +7576,20 @@ fn form_keys(
         FieldKind::Multiline => keys.push("Enter newline"),
         FieldKind::Toggle => keys.push("Space/←/→ switch"),
         FieldKind::Notice => {}
-        FieldKind::Pick(list) if matches!(command, Command::NewAgentSession) => {
+        FieldKind::Pick(list) if compact_picker_field(command, field) => {
             keys.push(if new_agent_picker_open {
                 "↑/↓ choose · type to filter · Enter accept"
             } else {
                 "Enter open choices · ←/→ cycle"
             });
+            if !list.query.is_empty() && !recovering {
+                keys.push("Ctrl-u clear filter");
+            }
+        }
+        FieldKind::Pick(list)
+            if matches!(command, Command::CreateTerminal) && field.label == "Workspace" =>
+        {
+            keys.push("↑/↓ choose · type to filter · Enter accept");
             if !list.query.is_empty() && !recovering {
                 keys.push("Ctrl-u clear filter");
             }
@@ -7342,12 +7628,12 @@ fn form_keys(
         } else {
             "Alt-Enter start"
         }
-    } else if matches!(&field.kind, FieldKind::Pick(_))
-        && matches!(command, Command::NewAgentSession)
+    } else if matches!(command, Command::NewAgentSession)
+        && matches!(&field.kind, FieldKind::Pick(_))
     {
         "Alt-Enter start"
-    } else if matches!(&field.kind, FieldKind::Pick(_)) {
-        "Alt-Enter submit"
+    } else if matches!(command, Command::CreateBranch) && compact_picker_field(command, field) {
+        "Alt-Enter create"
     } else {
         match command {
             Command::NewAgentSession => "Enter continue · Alt-Enter start",
@@ -7567,9 +7853,9 @@ impl Dashboard {
     fn plain_failure(&self, palette: &Palette, message: &str) -> String {
         let lead = match &palette.page {
             Page::Form {
-                command: Command::CreateWorkspace,
+                command: Command::CreateBranch,
                 ..
-            } => "Couldn't create the workspace".to_owned(),
+            } => "Couldn't create the branch".to_owned(),
             Page::Form {
                 command: Command::CreateTerminal | Command::RecoverLaunch,
                 ..
@@ -7609,6 +7895,20 @@ impl Dashboard {
                         .unwrap_or_default()
                 };
                 (value("Project"), id.clone(), value("Branch"))
+            }),
+            Page::Form {
+                command: Command::CreateBranch,
+                fields,
+                ..
+            } => palette.workspace_id.as_ref().map(|id| {
+                let value = |label| {
+                    fields
+                        .iter()
+                        .find(|field| field.label == label)
+                        .map(|field| field.value.trim().to_owned())
+                        .unwrap_or_default()
+                };
+                (value("Project"), id.clone(), value("Branch name"))
             }),
             _ => None,
         };
@@ -8426,24 +8726,35 @@ mod launch_tests {
     }
 
     fn open_branch_child(d: &mut Dashboard) {
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
         open_registered_agent_form(
             d,
             registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
         );
-        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+        let Page::Form { fields, active, .. } = &mut d.palette.as_mut().unwrap().page else {
             panic!("parent session form")
         };
-        let branch = fields
+        let branch_index = fields
             .iter_mut()
-            .find(|field| field.label == "Branch")
+            .position(|field| field.label == "Branch")
             .unwrap();
-        branch.value = CREATE_BRANCH_PICK_VALUE.into();
+        *active = branch_index;
+        let branch = &mut fields[branch_index];
+        assert_eq!(
+            branch.value,
+            super::super::picker::workspace_pick_value("demo", "root"),
+            "the helper must start from a real selected registered destination"
+        );
         let FieldKind::Pick(list) = &mut branch.kind else {
             panic!("branch picker")
         };
-        list.select_value(CREATE_BRANCH_PICK_VALUE);
+        list.select_value(&branch.value);
         d.key(KeyCode::Enter);
         assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+        d.palette_paste("Create new branch");
         d.key(KeyCode::Enter);
         assert!(matches!(
             d.palette.as_ref().map(|palette| &palette.page),
@@ -8466,6 +8777,102 @@ mod launch_tests {
             );
         }
         set(d, "Branch name", "feature/child");
+    }
+
+    #[derive(Clone, Copy)]
+    enum CreateBranchActionPath {
+        Unfiltered,
+        Cycle,
+        Mouse,
+    }
+
+    fn select_create_branch_action(d: &mut Dashboard, path: CreateBranchActionPath) {
+        let branch_index = match &d.palette.as_ref().unwrap().page {
+            Page::Form { fields, .. } => fields
+                .iter()
+                .position(|field| field.label == "Branch")
+                .unwrap(),
+            _ => panic!("New agent session form"),
+        };
+        match path {
+            CreateBranchActionPath::Unfiltered => {
+                d.key(KeyCode::Enter);
+                d.key(KeyCode::Down);
+                let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+                    panic!("New agent session form")
+                };
+                assert_eq!(fields[branch_index].value, CREATE_BRANCH_PICK_VALUE);
+                d.key(KeyCode::Enter);
+            }
+            CreateBranchActionPath::Cycle => {
+                d.key(KeyCode::Right);
+                let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+                    panic!("New agent session form")
+                };
+                assert_eq!(fields[branch_index].value, CREATE_BRANCH_PICK_VALUE);
+                d.key(KeyCode::Enter);
+                assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+                d.key(KeyCode::Enter);
+            }
+            CreateBranchActionPath::Mouse => {
+                let area = Rect::new(0, 0, 100, 30);
+                let (_, _, body, _) = palette_geometry(area);
+                let (_, targets, scroll) = d.palette_body(body);
+                let row = targets
+                    .iter()
+                    .find_map(|(row, target)| {
+                        matches!(target, PaletteTarget::Field(index, false) if *index == branch_index)
+                            .then_some(*row)
+                    })
+                    .unwrap();
+                d.palette_mouse(
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: body.x + 2,
+                        row: body.y + (row - scroll) as u16,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    area,
+                );
+                let (_, _, body, _) = palette_geometry(area);
+                let (_, targets, scroll) = d.palette_body(body);
+                let option = match &d.palette.as_ref().unwrap().page {
+                    Page::Form { fields, .. } => match &fields[branch_index].kind {
+                        FieldKind::Pick(list) => list
+                            .filtered()
+                            .iter()
+                            .position(|item| item.value == CREATE_BRANCH_PICK_VALUE)
+                            .unwrap(),
+                        _ => panic!("Branch picker"),
+                    },
+                    _ => panic!("New agent session form"),
+                };
+                let row = targets
+                    .iter()
+                    .find_map(|(row, target)| {
+                        matches!(target, PaletteTarget::Option(index, selected)
+                            if *index == branch_index && *selected == option)
+                        .then_some(*row)
+                    })
+                    .unwrap();
+                d.palette_mouse(
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: body.x + 4,
+                        row: body.y + (row - scroll) as u16,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    area,
+                );
+            }
+        }
+        assert!(matches!(
+            d.palette.as_ref().map(|palette| &palette.page),
+            Some(Page::Form {
+                command: Command::CreateBranch,
+                ..
+            })
+        ));
     }
 
     fn branch_readback(
@@ -8608,6 +9015,25 @@ mod launch_tests {
             .join("\n")
     }
 
+    fn visible_palette_dialog_text(d: &Dashboard, width: u16, height: u16) -> String {
+        let area = Rect::new(0, 0, width, height);
+        let dialog = palette_geometry(area).0;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw_dashboard_at(frame, d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (dialog.y..dialog.bottom())
+            .map(|row| {
+                (dialog.x..dialog.right())
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn n_opens_agent_setup_even_when_the_current_workspace_cannot_launch() {
         let mut d = dashboard();
@@ -8741,6 +9167,323 @@ mod launch_tests {
             assert!(
                 !text.contains("feature/extra-"),
                 "Tab must not open the Branch picker:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_agent_open_pickers_keep_controls_visible_for_branch_harness_and_model() {
+        for picker_label in ["Branch", "Agent harness", "Model"] {
+            let mut d = dashboard();
+            d.selected_container = Some(super::super::TreeRow::Workspace {
+                project: "demo".into(),
+                id: "root".into(),
+            });
+            let mut workspaces = vec![workspace_record("root", "/tmp/unused", "root")];
+            for index in 0..9 {
+                let id = format!("extra-{index}");
+                let path = format!("/tmp/{id}");
+                let branch = format!("feature/{index}");
+                d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+                    project: "demo".into(),
+                    name: branch.clone(),
+                    id: id.clone(),
+                    root: false,
+                    warning: None,
+                    path: path.clone().into(),
+                    sessions: vec![],
+                });
+                workspaces.push(workspace_record(&id, &path, &branch));
+            }
+            open_registered_agent_form(&mut d, registry(workspaces));
+
+            if picker_label != "Branch" {
+                d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            }
+            if picker_label == "Model" {
+                d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            }
+            let selected_label = if picker_label == "Branch" {
+                let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                    panic!("New agent form")
+                };
+                let field = fields
+                    .iter_mut()
+                    .find(|field| field.label == "Branch")
+                    .unwrap();
+                let FieldKind::Pick(list) = &mut field.kind else {
+                    panic!("Branch picker")
+                };
+                let selected = list.items.last().unwrap().clone();
+                list.select_value(&selected.value);
+                field.value.clone_from(&selected.value);
+                selected.label
+            } else {
+                let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                    panic!("New agent form")
+                };
+                let field = fields
+                    .iter_mut()
+                    .find(|field| field.label == picker_label)
+                    .unwrap();
+                let selected_value = format!("{picker_label}-9");
+                let items = (0..10)
+                    .map(|index| PickItem {
+                        label: format!("{picker_label}-{index}"),
+                        value: format!("{picker_label}-{index}"),
+                    })
+                    .collect::<Vec<_>>();
+                let mut list = PickList::new(items);
+                list.select_value(&selected_value);
+                field.value.clone_from(&selected_value);
+                field.kind = FieldKind::Pick(list);
+                selected_value
+            };
+            if picker_label == "Agent harness" {
+                d.palette.as_mut().unwrap().launch_harness = Some(selected_label.clone());
+            }
+            let model_index = new_agent_fields(&d)
+                .0
+                .iter()
+                .position(|field| field.label == "Model")
+                .unwrap();
+            {
+                let palette = d.palette.as_mut().unwrap();
+                palette.model_status = Some("Loading verified model choices…".into());
+                palette.invalid = Some((model_index, "Model lookup failed".into()));
+                let Page::Form { fields, .. } = &mut palette.page else {
+                    panic!("New agent form")
+                };
+                fields
+                    .iter_mut()
+                    .find(|field| field.label == "Initial prompt")
+                    .unwrap()
+                    .value = "Review this change\nKeep the assertions".into();
+            }
+
+            d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+            assert_eq!(
+                new_agent_fields(&d).0[new_agent_fields(&d).1].label,
+                picker_label
+            );
+
+            for (width, height) in [(164, 60), (80, 24), (60, 22), (60, 18)] {
+                let text = visible_palette_dialog_text(&d, width, height);
+                for control in [
+                    "Branch",
+                    "Agent harness",
+                    "Model",
+                    "Initial prompt",
+                    "Advanced options",
+                    "Review this change",
+                    "Keep the assertions",
+                    "Loading verified model choices",
+                    "Model lookup failed",
+                ] {
+                    assert!(
+                        text.contains(control),
+                        "{picker_label} picker at {width}x{height} hid {control}:\n{text}"
+                    );
+                }
+                assert!(
+                    text.lines()
+                        .any(|line| line.contains("›") && line.contains(&selected_label)),
+                    "{picker_label} picker at {width}x{height} hid the selected option {selected_label}:\n{text}"
+                );
+                let dialog = visible_palette_dialog_text(&d, width, height);
+                assert!(
+                    dialog.contains("[Start agent]"),
+                    "{picker_label} picker at {width}x{height} hid Start:\n{dialog}"
+                );
+                assert!(
+                    dialog.contains("[Cancel]"),
+                    "{picker_label} picker at {width}x{height} hid Cancel:\n{dialog}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn create_branch_project_picker_keeps_child_fields_and_actions_visible() {
+        let mut d = dashboard();
+        open_branch_child(&mut d);
+        let mut palette = d.palette.take().unwrap();
+        let projects = (0..10)
+            .map(|index| {
+                let name = format!("project-{index:02}");
+                let path = format!("/tmp/{name}");
+                palette
+                    .suggestions
+                    .repos
+                    .insert(name.clone(), format!("{path}/repo").into());
+                ProjectRecord {
+                    name,
+                    repo: format!("{path}/repo").into(),
+                    workspace_root: format!("{path}/workspaces").into(),
+                    workspaces: vec![workspace_record("root", &path, "main")],
+                }
+            })
+            .collect();
+        palette.workspace_inventory = Some(Registry { projects });
+        palette.branch_project = Some("project-09".into());
+        palette.suggestions.cache.insert(
+            "project-09".into(),
+            Ok(super::super::git_hints::Hints {
+                branches: vec!["main".into()],
+                base: "main".into(),
+            }),
+        );
+        if let Page::Form { fields, .. } = &mut palette.page {
+            fields
+                .iter_mut()
+                .find(|field| field.label == "Project")
+                .unwrap()
+                .value = "project-09".into();
+            fields
+                .iter_mut()
+                .find(|field| field.label == "Branch name")
+                .unwrap()
+                .value = "feature/child".into();
+            fields
+                .iter_mut()
+                .find(|field| field.label == "Workspace options")
+                .unwrap()
+                .value = "expanded".into();
+            let base = fields
+                .iter_mut()
+                .find(|field| field.label == "Base")
+                .unwrap();
+            base.value = "main".into();
+            base.hidden = false;
+        }
+        d.refresh_workspace_form(&mut palette);
+        if let Page::Form { fields, active, .. } = &mut palette.page {
+            *active = fields
+                .iter()
+                .position(|field| field.label == "Branch name")
+                .unwrap();
+        }
+        d.palette = Some(palette);
+
+        d.key(KeyCode::BackTab);
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Create branch form")
+        };
+        assert_eq!(fields[*active].label, "Project", "BackTab focuses Project");
+        d.key(KeyCode::Enter);
+        assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+
+        for (width, height) in [(164, 60), (80, 24), (60, 22), (60, 18)] {
+            let dialog = visible_palette_dialog_text(&d, width, height);
+            for control in [
+                "Project",
+                "Branch name",
+                "feature/child",
+                "Workspace options",
+                "Base",
+                "main",
+                "[Create branch]",
+                "[Cancel]",
+            ] {
+                assert!(
+                    dialog.contains(control),
+                    "Create branch picker at {width}x{height} hid {control}:\n{dialog}"
+                );
+            }
+            assert!(
+                dialog
+                    .lines()
+                    .any(|line| line.contains("›") && line.contains("project-09")),
+                "Create branch picker at {width}x{height} hid the selected project:\n{dialog}"
+            );
+        }
+    }
+
+    #[test]
+    fn undersized_creation_forms_keep_drafts_and_block_input_until_resized() {
+        for child in [false, true] {
+            let mut d = dashboard();
+            let area = if child {
+                open_branch_child(&mut d);
+                Rect::new(0, 0, 60, 17)
+            } else {
+                open_registered_agent_form(
+                    &mut d,
+                    registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
+                );
+                let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+                    panic!("New agent session form")
+                };
+                fields
+                    .iter_mut()
+                    .find(|field| field.label == "Initial prompt")
+                    .unwrap()
+                    .value = "retained prompt".into();
+                Rect::new(0, 0, 59, 18)
+            };
+            d.install_area(area);
+            let visible = visible_palette_dialog_text(&d, area.width, area.height);
+            assert!(
+                visible.contains("Resize to at least 60 columns × 18 rows"),
+                "{visible}"
+            );
+            assert!(visible.contains("[Resize to 60×18]"), "{visible}");
+            assert!(visible.contains("[Cancel]"), "{visible}");
+
+            let (_, _, _, buttons) = palette_geometry(area);
+            d.palette_mouse(
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: buttons.x + 2,
+                    row: buttons.y,
+                    modifiers: KeyModifiers::NONE,
+                },
+                area,
+            );
+            d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+            d.palette_paste("must not edit the draft");
+            assert!(
+                d.drain_outbox().is_empty(),
+                "undersized form must not submit"
+            );
+
+            let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+                panic!("undersized form should remain open")
+            };
+            if child {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .find(|field| field.label == "Branch name")
+                        .unwrap()
+                        .value,
+                    "feature/child"
+                );
+            } else {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .find(|field| field.label == "Initial prompt")
+                        .unwrap()
+                        .value,
+                    "retained prompt"
+                );
+            }
+
+            d.install_area(Rect::new(0, 0, 60, 18));
+            let resized = visible_palette_dialog_text(&d, 60, 18);
+            assert!(
+                !resized.contains("Resize to at least 60 columns × 18 rows"),
+                "{resized}"
+            );
+            assert!(
+                resized.contains(if child {
+                    "feature/child"
+                } else {
+                    "retained prompt"
+                }),
+                "draft was not retained after resizing:\n{resized}"
             );
         }
     }
@@ -9460,14 +10203,71 @@ mod launch_tests {
         d.palette_key(KeyEvent::new(KeyCode::Enter, modifiers))
     }
     fn request(d: &mut Dashboard) -> ClientMessage {
-        let Some(mut message) = ({
+        let requests = {
             submit(d);
-            d.drain_one_request()
-        }) else {
-            panic!(
-                "expected request: {:?}",
-                d.palette.as_ref().and_then(|p| p.error.as_ref())
-            );
+            d.drain_outbox()
+        };
+        let mut message = match requests.as_slice() {
+            [message] if !matches!(message.request, Request::QueryAgentModels { .. }) => {
+                message.clone()
+            }
+            [query, mutation] if matches!(mutation.request, Request::CreateWorkspace { .. }) => {
+                let palette = d.palette.as_ref().expect("branch child remains open");
+                let parent = palette
+                    .suspended_session_form
+                    .as_ref()
+                    .expect("branch child suspends the New Agent form");
+                let Page::Form {
+                    command, fields, ..
+                } = &parent.page
+                else {
+                    panic!("suspended New Agent form")
+                };
+                let agents = palette
+                    .agent_catalog
+                    .as_deref()
+                    .expect("New Agent form retains its harness catalog");
+                let expected = model_query_target(command, fields, agents)
+                    .expect("parent model query inputs are valid")
+                    .expect("parent model query has a registered target");
+                let Request::QueryAgentModels {
+                    preset,
+                    origin,
+                    argv,
+                    project,
+                    workspace,
+                } = &query.request
+                else {
+                    panic!("only a model lookup may precede branch creation: {requests:?}")
+                };
+                assert_eq!(preset, &expected.preset);
+                assert_eq!(origin, &expected.origin);
+                assert_eq!(argv, &expected.argv);
+                assert_eq!(project, &expected.project);
+                assert_eq!(workspace, &expected.workspace);
+                assert!(
+                    query.request_id < mutation.request_id,
+                    "the read-only parent model lookup must precede the branch mutation"
+                );
+                assert_eq!(
+                    requests
+                        .iter()
+                        .filter(|message| !matches!(
+                            message.request,
+                            Request::QueryAgentModels { .. }
+                        ))
+                        .count(),
+                    1,
+                    "branch submission emits exactly one mutation"
+                );
+                mutation.clone()
+            }
+            _ => panic!(
+                "expected one mutation, optionally preceded by its matching read-only model query; got {requests:?}; form error: {:?}",
+                d.palette
+                    .as_ref()
+                    .and_then(|palette| palette.error.as_ref())
+            ),
         };
         if message.request == Request::AllocateInitialPromptIntent {
             let sequence = d
@@ -11576,6 +12376,10 @@ mod launch_tests {
     #[test]
     fn create_new_branch_opens_child_and_cancel_restores_parent_draft_and_focus() {
         let mut d = dashboard();
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
         open_registered_agent_form(
             &mut d,
             registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
@@ -11595,11 +12399,28 @@ mod launch_tests {
             .find(|field| field.label == "Initial prompt")
             .unwrap();
         prompt.value = "keep this parent draft".into();
+        let harness = fields
+            .iter_mut()
+            .find(|field| field.label == "Agent harness")
+            .unwrap();
+        harness.value = "claude".into();
+        harness.edited = true;
+        let model = fields
+            .iter_mut()
+            .find(|field| field.label == "Model")
+            .unwrap();
+        model.value = "claude-sonnet-4-6".into();
+        model.edited = true;
         *active = fields
             .iter()
             .position(|field| field.label == "Branch")
             .unwrap();
-        fields[*active].value = CREATE_BRANCH_PICK_VALUE.into();
+        let target = fields[*active].value.clone();
+        assert_eq!(
+            target,
+            super::super::picker::workspace_pick_value("demo", "root"),
+            "the existing registered destination should be preselected"
+        );
         let branch = &mut fields[*active];
         let FieldKind::Pick(list) = &mut branch.kind else {
             panic!("registered-workspace picker")
@@ -11611,10 +12432,21 @@ mod launch_tests {
                 .count(),
             1
         );
-        list.select_value("@create-new-branch");
+        list.select_value(&target);
 
         d.key(KeyCode::Enter);
         assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
+        d.palette_paste("Create new branch");
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("new agent session form")
+        };
+        let FieldKind::Pick(list) = &fields[*active].kind else {
+            panic!("registered-workspace picker")
+        };
+        assert_eq!(
+            list.accepted().map(|item| item.value.as_str()),
+            Some(CREATE_BRANCH_PICK_VALUE)
+        );
         d.key(KeyCode::Enter);
 
         let palette = d.palette.as_ref().unwrap();
@@ -11655,7 +12487,8 @@ mod launch_tests {
                 .value,
             "collapsed"
         );
-        assert_eq!(fields[*active].label, "Project");
+        assert_eq!(fields[*active].label, "Branch name");
+        assert!(!palette.new_agent_picker_open);
         assert!(
             fields
                 .iter()
@@ -11682,10 +12515,82 @@ mod launch_tests {
             "keep this parent draft"
         );
         assert_eq!(fields[*active].label, "Branch");
+        assert_eq!(fields[*active].value, target);
         assert!(
-            fields[*active].edited,
-            "the child action remains an explicit choice"
+            !fields[*active].edited,
+            "cancel restores the original destination choice state"
         );
+        let FieldKind::Pick(list) = &fields[*active].kind else {
+            panic!("registered-workspace picker")
+        };
+        assert_eq!(
+            list.accepted().map(|item| item.value.as_str()),
+            Some(target.as_str())
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|f| f.label == "Agent harness")
+                .unwrap()
+                .value,
+            "claude"
+        );
+        assert_eq!(
+            fields.iter().find(|f| f.label == "Model").unwrap().value,
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn cancel_restores_registered_target_after_unfiltered_mouse_and_cycle_create_actions() {
+        for path in [
+            CreateBranchActionPath::Unfiltered,
+            CreateBranchActionPath::Mouse,
+            CreateBranchActionPath::Cycle,
+        ] {
+            let mut d = dashboard();
+            d.selected_container = Some(super::super::TreeRow::Workspace {
+                project: "demo".into(),
+                id: "root".into(),
+            });
+            open_registered_agent_form(
+                &mut d,
+                registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
+            );
+            let Page::Form { fields, active, .. } = &mut d.palette.as_mut().unwrap().page else {
+                panic!("New agent session form")
+            };
+            let branch_index = fields
+                .iter()
+                .position(|field| field.label == "Branch")
+                .unwrap();
+            *active = branch_index;
+            let target = super::super::picker::workspace_pick_value("demo", "root");
+            assert_eq!(fields[branch_index].value, target);
+
+            select_create_branch_action(&mut d, path);
+            d.key(KeyCode::Esc);
+
+            let Page::Form {
+                command: Command::NewAgentSession,
+                fields,
+                active,
+                ..
+            } = &d.palette.as_ref().unwrap().page
+            else {
+                panic!("cancel restores parent form")
+            };
+            assert_eq!(fields[*active].label, "Branch");
+            assert_eq!(fields[*active].value, target);
+            assert!(!fields[*active].edited);
+            let FieldKind::Pick(list) = &fields[*active].kind else {
+                panic!("registered-workspace picker")
+            };
+            assert_eq!(
+                list.accepted().map(|item| item.value.as_str()),
+                Some(target.as_str())
+            );
+        }
     }
 
     #[test]
@@ -11694,6 +12599,11 @@ mod launch_tests {
         open_branch_child(&mut d);
         assert!(!d.palette.as_ref().unwrap().new_agent_picker_open);
 
+        d.key(KeyCode::BackTab);
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Create branch form")
+        };
+        assert_eq!(fields[*active].label, "Project");
         d.key(KeyCode::Enter);
         assert!(d.palette.as_ref().unwrap().new_agent_picker_open);
         d.key(KeyCode::Esc);
@@ -11745,6 +12655,7 @@ mod launch_tests {
         d.refresh_workspace_form(&mut palette);
         d.palette = Some(palette);
 
+        d.key(KeyCode::BackTab);
         d.key(KeyCode::Enter);
         d.key(KeyCode::Up);
         d.key(KeyCode::Enter);
@@ -11898,7 +12809,7 @@ mod launch_tests {
                 .value,
             super::super::picker::workspace_pick_value(&project, &workspace_id)
         );
-        assert_eq!(fields[*active].label, "Branch");
+        assert_eq!(fields[*active].label, "Agent harness");
     }
 
     #[test]
