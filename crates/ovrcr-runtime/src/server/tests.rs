@@ -9009,7 +9009,7 @@ fn agent_create_rechecks_git_generation_even_for_harness_default() {
     std::fs::write(git_dir.join("ovrcr-identity"), "replacement-generation\n").unwrap();
     assert_ne!(crate::git::worktree_identity(&workspace).unwrap(), identity);
 
-    let socket_root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let socket_root = tempfile::tempdir_in("/tmp").unwrap();
     let socket = socket_root.path().join("s");
     let _listener = UnixListener::bind(&socket)
         .unwrap_or_else(|error| panic!("bind fixture socket {}: {error}", socket.display()));
