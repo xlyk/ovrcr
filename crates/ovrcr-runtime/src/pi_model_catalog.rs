@@ -285,11 +285,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let executable_path = root.path().join("pi");
         let pid_file = root.path().join("pid");
+        let pid_temp_file = root.path().join("pid.tmp");
         let release_file = root.path().join("release");
         executable(
             &executable_path,
             &format!(
-                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile [ ! -e '{}' ]; do /bin/sleep 0.01; done\n",
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nmv '{}' '{}'\nwhile [ ! -e '{}' ]; do /bin/sleep 0.01; done\n",
+                pid_temp_file.display(),
+                pid_temp_file.display(),
                 pid_file.display(),
                 release_file.display()
             ),
@@ -314,16 +317,22 @@ mod tests {
         });
 
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pid_file.exists() {
-            assert!(Instant::now() < deadline, "fake Pi catalog did not start");
+        let pid: libc::pid_t = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.parse().ok())
+            {
+                break pid;
+            }
+            if Instant::now() >= deadline {
+                cancelled.store(true, Ordering::Release);
+                let _ = std::fs::write(&release_file, "release\n");
+                let cleanup = worker.join();
+                panic!("fake Pi catalog did not publish a parseable PID; cleanup: {cleanup:?}");
+            }
             std::thread::sleep(Duration::from_millis(5));
-        }
-        let pid: libc::pid_t = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
-        assert_eq!(
-            unsafe { libc::getpgid(pid) },
-            pid,
-            "fake Pi catalog was not group leader"
-        );
+        };
+        let is_group_leader = unsafe { libc::getpgid(pid) } == pid;
         cancelled.store(true, Ordering::Release);
         let finish_deadline = Instant::now() + Duration::from_secs(3);
         while !worker.is_finished() && Instant::now() < finish_deadline {
@@ -339,6 +348,7 @@ mod tests {
             }
         }
         let result = worker.join().unwrap();
+        assert!(is_group_leader, "fake Pi catalog was not group leader");
         assert!(
             cancelled_and_joined,
             "shutdown must cancel and join Pi catalog work"

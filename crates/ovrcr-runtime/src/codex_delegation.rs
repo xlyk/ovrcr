@@ -1291,11 +1291,16 @@ exit 0
         std::fs::create_dir(&workspace).unwrap();
         let executable = root.path().join("codex");
         let pid_file = workspace.join("app-server-pid");
+        let pid_temp_file = workspace.join("app-server-pid.tmp");
+        let release_file = workspace.join("release");
         std::fs::write(
             &executable,
             format!(
-                "#!/bin/sh\nif [ \"$4\" = \"--print-startup-config\" ]; then printf '%s\\n' '{{\"appServerVersion\":\"0.164.0\",\"configRequirements\":{{\"requirements\":null}}}}'; exit 0; fi\nprintf '%s' \"$$\" > '{}'\nexec /bin/sleep 30\n",
-                pid_file.display()
+                "#!/bin/sh\nif [ \"$4\" = \"--print-startup-config\" ]; then printf '%s\\n' '{{\"appServerVersion\":\"0.164.0\",\"configRequirements\":{{\"requirements\":null}}}}'; exit 0; fi\nprintf '%s' \"$$\" > '{}'\nmv '{}' '{}'\nwhile [ ! -e '{}' ]; do /bin/sleep 0.01; done\n",
+                pid_temp_file.display(),
+                pid_temp_file.display(),
+                pid_file.display(),
+                release_file.display()
             ),
         )
         .unwrap();
@@ -1318,14 +1323,34 @@ exit 0
             )
         });
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pid_file.exists() {
-            assert!(Instant::now() < deadline, "fake app-server did not start");
+        let pid: i32 = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.parse().ok())
+            {
+                break pid;
+            }
+            if Instant::now() >= deadline {
+                cancelled.store(true, Ordering::Release);
+                let _ = std::fs::write(&release_file, "release\n");
+                let cleanup = worker.join();
+                panic!("fake app-server did not publish a parseable PID; cleanup: {cleanup:?}");
+            }
+            std::thread::park_timeout(Duration::from_millis(5));
+        };
+        let is_group_leader = unsafe { libc::getpgid(pid) } == pid;
+        cancelled.store(true, Ordering::Release);
+        let finish_deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < finish_deadline {
             std::thread::park_timeout(Duration::from_millis(5));
         }
-        let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
-        assert_eq!(unsafe { libc::getpgid(pid) }, pid);
-        cancelled.store(true, Ordering::Release);
+        let cancelled_and_joined = worker.is_finished();
+        if !cancelled_and_joined {
+            let _ = std::fs::write(&release_file, "release\n");
+        }
         let error = worker.join().unwrap().unwrap_err().to_string();
+        assert!(is_group_leader, "fake app-server was not group leader");
+        assert!(cancelled_and_joined, "Codex catalog should cancel promptly");
         assert!(error.contains("cancelled"), "unexpected result: {error}");
         assert_eq!(unsafe { libc::kill(-pid, 0) }, -1);
         assert_eq!(
