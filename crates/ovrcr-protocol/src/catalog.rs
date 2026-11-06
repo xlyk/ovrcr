@@ -910,7 +910,7 @@ mod tests {
         );
         assert_eq!(
             element_fields("launch_choices"),
-            Some(&["kind", "preset"][..])
+            Some(&["kind", "preset", "model_policy"][..])
         );
         assert_eq!(element_fields("picker_roots"), None);
         assert_eq!(write_of(&dotted("quota.missing")), None);
