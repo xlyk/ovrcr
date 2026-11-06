@@ -29,6 +29,11 @@ const FAKE_LAUNCH_MARKER: &str = "__OVRCR_FAKE_CLAUDE_LAUNCH__";
 const PI_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_PI_CAPTURE";
 const PI_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_PI_CATALOG";
 const FAKE_PI_LAUNCH_MARKER: &str = "__OVRCR_FAKE_PI_LAUNCH__";
+const PI_CALLS_ENV: &str = "OVRCR_TEST_FAKE_PI_CALLS";
+const PI_PIDS_ENV: &str = "OVRCR_TEST_FAKE_PI_PIDS";
+const PI_BLOCK_ENV: &str = "OVRCR_TEST_FAKE_PI_BLOCK";
+const PI_STARTED_ENV: &str = "OVRCR_TEST_FAKE_PI_STARTED";
+const PI_RELEASE_ENV: &str = "OVRCR_TEST_FAKE_PI_RELEASE";
 const OMP_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_OMP_CAPTURE";
 const OMP_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_OMP_CATALOG";
 const FAKE_OMP_LAUNCH_MARKER: &str = "__OVRCR_FAKE_OMP_LAUNCH__";
@@ -76,6 +81,130 @@ fn install_fake_pi(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     )
     .unwrap();
     (executable, capture, catalog)
+}
+
+struct GatedPi {
+    executable: PathBuf,
+    capture: PathBuf,
+    catalog: PathBuf,
+    calls: PathBuf,
+    pids: PathBuf,
+    block: PathBuf,
+    started: PathBuf,
+    release: PathBuf,
+    server_log: PathBuf,
+}
+
+fn install_gated_pi(live: &Live) -> GatedPi {
+    let bin = live.root.path().join("gated-pi-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let executable = bin.join("pi");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"--list-models\" ]; then\n    printf 'catalog\\n' >> \"${PI_CALLS_ENV}\"\n    printf '%s\\n' \"$$\" >> \"${PI_PIDS_ENV}\"\n    if [ -e \"${PI_BLOCK_ENV}\" ]; then\n      printf '%s' \"$$\" > \"${PI_STARTED_ENV}\"\n      while [ ! -e \"${PI_RELEASE_ENV}\" ]; do /bin/sleep 0.01; done\n    fi\n    cat \"${PI_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_PI_LAUNCH_MARKER}' >> \"${PI_CAPTURE_ENV}\"\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let catalog = live.root.path().join("gated-pi-models.txt");
+    std::fs::write(
+        &catalog,
+        "provider  model                     context  max-out  thinking  images\n\
+         openai    gpt-5.4                   256K     64K      yes       yes\n",
+    )
+    .unwrap();
+    GatedPi {
+        executable,
+        capture: live.root.path().join("gated-pi-argv.txt"),
+        catalog,
+        calls: live.root.path().join("gated-pi-calls.txt"),
+        pids: live.root.path().join("gated-pi-pids.txt"),
+        block: live.root.path().join("gated-pi-block"),
+        started: live.root.path().join("gated-pi-started"),
+        release: live.root.path().join("gated-pi-release"),
+        server_log: live.root.path().join("gated-pi-server.stderr.log"),
+    }
+}
+
+fn start_server_with_gated_pi(live: &Live, fake: &GatedPi) {
+    let mut entries = vec![fake.executable.parent().unwrap().to_path_buf()];
+    entries.extend(std::env::split_paths(&live.path()));
+    let path = std::env::join_paths(entries).unwrap();
+    live.start_binary_logged(
+        &[
+            ("PATH", path.as_os_str()),
+            (PI_CAPTURE_ENV, fake.capture.as_os_str()),
+            (PI_CATALOG_ENV, fake.catalog.as_os_str()),
+            (PI_CALLS_ENV, fake.calls.as_os_str()),
+            (PI_PIDS_ENV, fake.pids.as_os_str()),
+            (PI_BLOCK_ENV, fake.block.as_os_str()),
+            (PI_STARTED_ENV, fake.started.as_os_str()),
+            (PI_RELEASE_ENV, fake.release.as_os_str()),
+        ],
+        &fake.server_log,
+    );
+}
+
+fn wait_for_path(path: &Path, description: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "{description} did not appear");
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn pi_catalog_call_count(path: &Path) -> usize {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .count()
+}
+
+fn owned_pi_groups_absent(pids: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(pids) else {
+        return false;
+    };
+    contents.lines().all(|line| {
+        let Ok(pid) = line.parse::<libc::pid_t>() else {
+            return false;
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(-pid, 0) };
+            if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    })
+}
+
+fn owned_pi_processes_absent(pids: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(pids) else {
+        return false;
+    };
+    !contents.trim().is_empty()
+        && contents.lines().all(|line| {
+            let Ok(pid) = line.parse::<libc::pid_t>() else {
+                return false;
+            };
+            let result = unsafe { libc::kill(pid, 0) };
+            result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        })
+}
+
+struct ReleaseGateOnDrop(PathBuf);
+
+impl Drop for ReleaseGateOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.0, "release\n");
+    }
 }
 
 fn install_fake_omp(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
@@ -1374,6 +1503,193 @@ fn pi_model_catalog_and_initial_prompt_use_the_detected_native_launcher() {
 
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+}
+
+#[test]
+fn pi_catalog_gate_refuses_fresh_start_and_shutdown_until_cleanup_recovers() {
+    let live = Live::idle().bounded();
+    let fake = install_gated_pi(&live);
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_gated_pi(&live, &fake);
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let launch = detected_pi_launch(
+        &live,
+        &fake.executable,
+        "pi-catalog-gate-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let initial = query_pi_models(&mut dashboard, 3, &launch);
+    let binding = initial.binding.expect("initial catalog binds Pi launcher");
+    assert_eq!(pi_catalog_call_count(&fake.calls), 1);
+
+    let _release_gate = ReleaseGateOnDrop(fake.release.clone());
+    std::fs::write(&fake.block, "block\n").unwrap();
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::QueryAgentModels {
+                preset: "pi".into(),
+                origin: ovrcr::protocol::AgentLaunchOrigin::Detected,
+                argv: launch.session.argv.clone(),
+                project: launch.session.project.clone(),
+                workspace: launch.session.workspace.clone(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    wait_for_path(&fake.started, "blocked Pi catalog child");
+    let pid: libc::pid_t = std::fs::read_to_string(&fake.started)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+    assert_eq!(pi_catalog_call_count(&fake.calls), 2);
+
+    let intent = allocate_intent(&mut dashboard);
+    let intent_id = intent.clone();
+    let mut explicit = launch;
+    explicit.model_policy = AgentModelPolicy::Explicit("openai/gpt-5.4".into());
+    explicit.model_binding = Some(binding);
+    explicit.expected_model = Some("openai/gpt-5.4".into());
+    let start = InitialPromptLaunchRequest {
+        intent,
+        launch: explicit,
+        prompt: String::new(),
+    };
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 6,
+            request: Request::CreateAgentSessionWithPrompt(start),
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while pi_catalog_call_count(&fake.calls) < 3 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let shutdown_while_owned = live.request(Request::Shutdown { kill: true });
+    let calls_while_owned = pi_catalog_call_count(&fake.calls);
+    std::fs::write(&fake.release, "release\n").unwrap();
+
+    if shutdown_while_owned == Response::Ok {
+        live.join();
+        assert!(
+            owned_pi_groups_absent(&fake.pids),
+            "every fake Pi process group must be absent after accepted shutdown"
+        );
+        assert_eq!(
+            calls_while_owned, 2,
+            "fresh Start must not bypass the active catalog owner"
+        );
+        assert_ne!(
+            shutdown_while_owned,
+            Response::Ok,
+            "shutdown must be refused while the catalog worker owns a native child"
+        );
+    }
+
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut start_response = None;
+    let mut refused_intent = None;
+    let mut catalog_result = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while start_response.is_none() || refused_intent.is_none() || catalog_result.is_none() {
+        assert!(Instant::now() < deadline, "gate responses did not finish");
+        match read_frame::<ServerMessage>(&mut dashboard).expect("read catalog gate response") {
+            ServerMessage::Response {
+                request_id: 6,
+                response,
+            } => start_response = Some(response),
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id: 4,
+                capabilities,
+            }) => catalog_result = Some(capabilities),
+            ServerMessage::Event(ServerEvent::InitialPromptIntentChanged(snapshot))
+                if snapshot.id == intent_id
+                    && snapshot.state == InitialPromptIntentState::Refused =>
+            {
+                refused_intent = Some(snapshot)
+            }
+            ServerMessage::Event(_) | ServerMessage::Response { .. } => {}
+        }
+    }
+    let start_response = start_response.unwrap();
+    let refused_intent = refused_intent.unwrap();
+    let catalog_result = catalog_result.unwrap();
+    let calls_after_recovery = pi_catalog_call_count(&fake.calls);
+    let recorded_pids = std::fs::read_to_string(&fake.pids)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let groups_absent = owned_pi_groups_absent(&fake.pids);
+    let waited_processes_absent = owned_pi_processes_absent(&fake.pids);
+    let server_responded_after_recovery = if matches!(shutdown_while_owned, Response::Ok) {
+        false
+    } else {
+        matches!(live.request(Request::List), Response::Hierarchy(_))
+    };
+
+    assert!(matches!(
+        shutdown_while_owned,
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        calls_while_owned, 2,
+        "fresh Start did not bypass the active catalog owner"
+    );
+    assert_eq!(
+        calls_after_recovery, 2,
+        "refused fresh Start must not spawn after catalog recovery"
+    );
+    assert_eq!(
+        recorded_pids.len(),
+        2,
+        "only initial and held catalog requests should own native children"
+    );
+    assert_eq!(start_response, Response::Ok);
+    assert_eq!(refused_intent.state, InitialPromptIntentState::Refused);
+    assert!(
+        refused_intent
+            .message
+            .as_deref()
+            .is_some_and(|message| { message.contains("native model catalog process is active") })
+    );
+    assert!(catalog_result.reason.is_none(), "{catalog_result:?}");
+    assert_eq!(catalog_result.models, initial.models);
+    assert!(
+        groups_absent,
+        "a fake Pi process group remained after event delivery"
+    );
+    assert!(
+        waited_processes_absent,
+        "a fake Pi leader remained unreaped"
+    );
+    assert!(
+        server_responded_after_recovery,
+        "the same Server must answer after recovery and before final Shutdown"
+    );
+    eprintln!(
+        "CATALOG_CLEANUP_RECEIPT calls_while_owned={calls_while_owned} calls_after_recovery={calls_after_recovery} recorded_pids={recorded_pids:?} groups_absent={groups_absent} waited_pids_absent={waited_processes_absent} same_server_responded={server_responded_after_recovery}"
+    );
+    assert_eq!(
+        live.request(Request::Shutdown { kill: true }),
+        Response::Ok,
+        "cleanup recovery permits a later bounded shutdown"
+    );
     live.join();
 }
 

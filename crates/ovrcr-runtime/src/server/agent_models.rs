@@ -704,6 +704,9 @@ pub(super) fn prepare_session(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     fn discover_for_test(input: &QueryInput) -> AgentModelCapabilities {
         let catalog_queue = CatalogQueue::default();
@@ -715,6 +718,125 @@ mod tests {
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn unresolved_catalog_child_blocks_repeated_spawns_and_bounded_shutdown_until_waited() {
+        let root = tempfile::tempdir().unwrap();
+        let ready = root.path().join("ready");
+        let release = root.path().join("release");
+        let refused_spawn = root.path().join("must-not-spawn");
+        let recovered_spawn = root.path().join("recovered-spawn");
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                &format!(
+                    "printf ready > '{}'; while [ ! -e '{}' ]; do /bin/sleep 0.01; done",
+                    ready.display(),
+                    release.display()
+                ),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id() as libc::pid_t;
+        let capture =
+            crate::catalog_process::CatalogCapture::take_from_child(&mut child, 1024, 1024);
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        while !ready.exists() && Instant::now() < ready_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if !ready.exists() || unsafe { libc::getpgid(pid) } == pid {
+            let _ = std::fs::write(&release, "release\n");
+            let _ = child.wait();
+            panic!("synthetic unresolved catalog child did not start in a nonmatching group");
+        }
+
+        let queue = CatalogQueue::default();
+        let adopted = queue.process_owner.lock().unwrap().retain_unresolved_child(
+            "synthetic",
+            child,
+            capture,
+        );
+        let shutdown_started = Instant::now();
+        let shutdown_refused = queue.try_shutdown().is_err();
+        let shutdown_elapsed = shutdown_started.elapsed();
+        let child_still_owned = unsafe { libc::kill(pid, 0) } == 0;
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("printf spawned > '{}'", refused_spawn.display()));
+        let repeated_request_refused = queue
+            .with_process_owner(|owner| {
+                owner.run_command(
+                    "synthetic",
+                    &mut command,
+                    1024,
+                    1024,
+                    Duration::from_secs(1),
+                    &AtomicBool::new(false),
+                )
+            })
+            .is_err();
+
+        std::fs::write(&release, "release\n").unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(format!(
+            "printf recovered > '{}'",
+            recovered_spawn.display()
+        ));
+        let recovered = queue.with_process_owner(|owner| {
+            let waited_pid_absent = unsafe { libc::kill(pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let waited_group_absent = unsafe { libc::kill(-pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let output = owner.run_command(
+                "synthetic",
+                &mut command,
+                1024,
+                1024,
+                Duration::from_secs(1),
+                &AtomicBool::new(false),
+            )?;
+            Ok((output, waited_pid_absent, waited_group_absent))
+        });
+        let final_shutdown = queue.try_shutdown();
+        let closed = final_shutdown.is_ok();
+        if let Ok(mut permit) = final_shutdown {
+            permit.close();
+        }
+        let after_close_refused = queue.with_process_owner(|_| Ok(())).is_err();
+
+        assert!(adopted.is_ok());
+        assert!(shutdown_refused, "uncertain cleanup must refuse shutdown");
+        assert!(shutdown_elapsed < Duration::from_secs(3));
+        assert!(child_still_owned, "failed shutdown must retain its Child");
+        assert!(
+            repeated_request_refused,
+            "uncertain owner must gate later spawns"
+        );
+        assert!(
+            !refused_spawn.exists(),
+            "a repeated request spawned a second child"
+        );
+        let (_output, waited_pid_absent, waited_group_absent) = recovered
+            .expect("a later exit observation must recover the owner and permit a new spawn");
+        assert!(recovered_spawn.exists());
+        assert!(
+            waited_pid_absent,
+            "recovery must wait the exact retained Child"
+        );
+        assert!(
+            waited_group_absent,
+            "recovery must prove the exact retained process group absent before a new spawn"
+        );
+        assert!(closed, "shutdown should proceed after exact cleanup");
+        assert!(
+            after_close_refused,
+            "accepted shutdown must close catalog admission"
+        );
     }
 
     #[test]
