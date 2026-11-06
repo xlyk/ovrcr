@@ -1,6 +1,11 @@
 //! Command palette, which-key popup, and the creation forms.
 
 use crate::*;
+#[cfg(not(target_os = "macos"))]
+use crate::deadline::wait_deadline;
+#[cfg(target_os = "macos")]
+use crate::live::wait_deadline;
+use ratatui::layout::Position;
 
 fn extra_workspace_hierarchy(id: impl Into<String>) -> HierarchySnapshot {
     let id = id.into();
@@ -56,6 +61,20 @@ fn stopped_fixture() -> Dashboard {
     dashboard
 }
 
+fn open_new_terminal_from_menu(dashboard: &mut Dashboard) {
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('w'));
+    dashboard.key(KeyCode::Char('t'));
+}
+
+fn open_generic_create_terminal_from_palette(dashboard: &mut Dashboard) {
+    dashboard.key(KeyCode::Char(':'));
+    // The command palette's initial inspection is unrelated to the form under test.
+    dashboard.drain_outbox();
+    dashboard.event_action(Event::Paste("Create terminal".into()));
+    dashboard.key(KeyCode::Enter);
+}
+
 /// Everything inside the palette's border as one line of words, so a message
 /// the palette wrapped still reads whole.
 fn palette_words(dashboard: &Dashboard) -> String {
@@ -83,7 +102,7 @@ fn palette_words(dashboard: &Dashboard) -> String {
 }
 
 #[test]
-fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
+fn space_p_n_opens_branch_form_with_project_and_explicit_name() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('p'));
@@ -93,12 +112,21 @@ fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
     );
     let message = only_request(dashboard.drain_outbox());
     assert_eq!(message.request, Request::Inspect);
-    dashboard.event_action(Event::Paste("leader-workspace".into()));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Inventory {
+            registry: fixture_registry(),
+            sessions: Vec::new(),
+        },
+    });
+    dashboard.event_action(Event::Paste("feature/leader-workspace".into()));
     let text = palette_text(&dashboard);
     assert!(!text.contains("Which key"));
     assert!(text.contains("feature/leader-workspace"));
     assert!(text.contains("consigint"));
-    assert!(text.contains("Branch mode"));
+    assert!(text.contains("Branch name"));
+    assert!(!text.contains("Task"));
+    assert!(!text.contains("Start"));
 }
 
 #[test]
@@ -135,7 +163,7 @@ fn palette_hint_action_ignores_late_inspection_error() {
 }
 
 #[test]
-fn space_w_n_opens_the_terminal_form() {
+fn space_w_n_opens_new_agent_setup() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     let text = palette_text(&dashboard);
@@ -145,8 +173,43 @@ fn space_w_n_opens_the_terminal_form() {
     dashboard.key(KeyCode::Char('n'));
     let text = palette_text(&dashboard);
     assert!(!text.contains("Which key"));
-    assert!(text.contains("Create terminal"));
-    assert!(text.contains("Agent"));
+    assert!(text.contains("New agent session"));
+    assert!(text.contains("Agent harness"));
+}
+
+#[test]
+fn space_w_t_opens_terminal_with_terminal_start_selected() {
+    let mut dashboard = dashboard_fixture();
+    open_new_terminal_from_menu(&mut dashboard);
+    let words = palette_words(&dashboard);
+    let screen = palette_text(&dashboard);
+    assert!(screen.contains("Create terminal"), "{screen}");
+    assert!(screen.contains("Start: Terminal"), "{screen}");
+    assert!(words.contains("Start Terminal"), "{words}");
+    for control in ["Workspace", "Name", "Command"] {
+        assert!(words.contains(control), "{control}: {words}");
+    }
+    for control in ["Initial prompt", "Agent harness", "Model", "Agent", "Task"] {
+        assert!(!words.contains(control), "{control}: {words}");
+    }
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "the named Terminal action must not start agent model discovery"
+    );
+
+    assert_eq!(
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(create) = create.request else {
+        panic!("New terminal must preserve the terminal creation route");
+    };
+    assert_eq!(create.kind, ovrcr_protocol::SessionKind::Terminal);
+    assert_eq!((create.project.as_str(), create.workspace.as_str()), ("consigint", "auth"));
 }
 
 #[test]
@@ -326,7 +389,7 @@ fn narrow_popup_moves_description_to_detail_line() {
         .collect();
     let row = lines
         .iter()
-        .position(|line| line.contains("n  Create workspace"))
+        .position(|line| line.contains("n  Create branch"))
         .unwrap();
     assert!(!lines[row].contains("consigint"));
     let detail = lines
@@ -380,7 +443,7 @@ fn empty_hierarchy_shows_start_screen() {
     assert!(text.contains("Welcome to OVRCR"));
     assert!(text.contains("1  a  Register a repository"), "{text}");
     assert!(
-        text.contains("2  w  Start an agent in a new workspace"),
+        text.contains("2  w  Create a branch"),
         "{text}"
     );
     assert!(
@@ -393,13 +456,12 @@ fn empty_hierarchy_shows_start_screen() {
 }
 
 #[test]
-fn palette_entries_show_keys_and_descriptions() {
+fn palette_search_finds_the_create_branch_entry() {
     let mut dashboard = dashboard_fixture();
-    palette_search(&mut dashboard, "create workspace");
+    palette_search(&mut dashboard, "create branch");
     let text = palette_text(&dashboard);
-    assert!(text.contains("w"));
-    assert!(text.contains("Create a worktree"));
-    assert!(text.contains("consigint"));
+    assert!(text.contains("Create branch (w)"), "{text}");
+    assert!(!text.contains("Task"), "{text}");
 }
 
 #[test]
@@ -690,7 +752,7 @@ fn whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture() {
 }
 
 #[test]
-fn whichkey_empty_workspace_click_sets_terminal_form_target() {
+fn whichkey_empty_workspace_click_sets_new_agent_destination() {
     let mut dashboard = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[0].workspaces.push(WorkspaceSummary {
@@ -702,7 +764,8 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
         path: "/tmp/empty".into(),
         sessions: vec![],
     });
-    dashboard.install_hierarchy(hierarchy);
+    let registry = registry_from_hierarchy(&hierarchy);
+    dashboard.install_hierarchy(hierarchy.clone());
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -725,19 +788,43 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
         Rect::new(0, 0, 120, 40),
     );
     assert_eq!(dashboard.focused_session(), None);
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
     let card = palette_text(&dashboard);
     assert!(card.contains("spacelift-agent / empty"), "{card}");
     assert!(card.contains("No sessions yet"), "{card}");
     assert!(
-        card.contains("n        new agent or terminal here"),
+        card.contains("n        new agent session"),
         "{card}"
     );
-    dashboard.key(KeyCode::Char('n'));
-    assert!(palette_text(&dashboard).contains("spacelift-agent / empty"));
+    let action = dashboard.key(KeyCode::Char('n'));
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    let requests = dashboard.drain_outbox();
+    assert!(
+        requests.len() == 2
+            && requests
+                .iter()
+                .any(|message| matches!(message.request, Request::Inspect))
+            && requests
+                .iter()
+                .any(|message| matches!(message.request, Request::List)),
+        "direct n must request read-only Inspect and List after selecting an empty workspace: {requests:?}"
+    );
+    for message in requests {
+        let response = match message.request {
+            Request::Inspect => Response::Inventory {
+                registry: registry.clone(),
+                sessions: vec![],
+            },
+            Request::List => Response::Hierarchy(hierarchy.clone()),
+            other => panic!("new-agent setup must start with read-only requests: {other:?}"),
+        };
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: message.request_id,
+            response,
+        });
+    }
+    let form = palette_text(&dashboard);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(form.contains("spacelift-agent / empty"), "{form}");
 }
 
 #[test]
@@ -976,36 +1063,30 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
 }
 
 #[test]
-fn create_workspace_form_submits_branch_without_name() {
+fn create_branch_form_submits_explicit_name_without_launch() {
     use ovrcr::protocol::{BranchRequest, Request};
     let mut dashboard = dashboard_fixture();
-    palette_search(&mut dashboard, "create workspace");
-    dashboard.key(KeyCode::Enter);
+    let repo = hint_repository(&[]);
+    open_palette_branch_command_with_repo(&mut dashboard, repo.path());
+    wait_for_branch_hints(&mut dashboard);
     let text = palette_text(&dashboard);
-    assert!(text.contains("Branch"), "{text}");
+    assert!(text.contains("Create branch"), "{text}");
+    assert!(text.contains("Branch name"), "{text}");
+    assert!(text.contains("Workspace options"), "{text}");
+    assert!(!text.contains("Task"), "{text}");
+    assert!(!text.contains("Agent"), "{text}");
+    assert!(!text.contains("Start"), "{text}");
     assert!(!text.contains("Name"), "{text}");
-    dashboard.key(KeyCode::Tab); // Project
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("consigint".into()));
-    dashboard.key(KeyCode::Tab);
-    dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("feature/palette".into()));
-    dashboard.key(KeyCode::Tab); // mode
-    dashboard.key(KeyCode::Tab); // base
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("main".into()));
-    dashboard.key(KeyCode::BackTab); // mode
-    dashboard.key(KeyCode::BackTab); // branch
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
+    let Request::CreateWorkspace {
         project,
         id,
         branch,
-        launch,
     } = message.request
     else {
         panic!("expected create workspace: {:?}", message.request);
@@ -1019,7 +1100,6 @@ fn create_workspace_form_submits_branch_without_name() {
             base: "main".into(),
         }
     );
-    assert!(launch.is_some());
 }
 
 /// Settings with three named agents, remembered for `consigint`.
@@ -1055,69 +1135,99 @@ fn assert_in_order(text: &str, parts: &[&str]) {
     }
 }
 
-/// Opens Create workspace with Git suggestions settled (no repository known),
-/// focused on Branch.
+/// Opens the standalone branch form with Branch name focused.
 fn open_workspace_form(dashboard: &mut Dashboard) {
     let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(dashboard, action);
+    answer_palette_inspect_with_fixture_registry(dashboard, action);
+    wait_for_branch_hints(dashboard);
     to_branch(dashboard);
 }
 
-/// The original defect: with Start = Agent the agent picker was the last
-/// field, so Enter there sent Branch = bare `feature/` to Git.
-#[test]
-fn enter_on_the_agent_picker_refuses_a_bare_branch_prefix_inline() {
-    let mut dashboard = dashboard_fixture();
-    fixture_agents(&mut dashboard);
-    open_workspace_form(&mut dashboard);
-    for _ in 0..4 {
-        dashboard.key(KeyCode::Tab); // Branch mode, Base, Start, Agent
-    }
-    assert!(palette_text(&dashboard).contains("› fixture-a"));
+fn open_branch_form_with_repo(dashboard: &mut Dashboard, repo: &std::path::Path) {
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.key(KeyCode::Char('w')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(
-        dashboard.drain_outbox().is_empty(),
-        "nothing reaches Git with a bare prefix"
-    );
-    // The problem sits under Branch, which takes the focus.
-    assert_in_order(
-        &palette_words(&dashboard),
-        &[
-            "Branch › feature/",
-            "Add a name after feature/",
-            "Branch mode",
-        ],
-    );
-    // Typing goes to Branch, and fixing it clears the complaint.
-    dashboard.event_action(Event::Paste("status-check".into()));
-    assert!(!palette_words(&dashboard).contains("Add a name after"));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
+    answer_workspace_inspect(dashboard, inspect.request_id, repo);
+}
+
+fn open_palette_branch_command_with_repo(dashboard: &mut Dashboard, repo: &std::path::Path) {
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.key(KeyCode::Char(':')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch { branch, launch, .. } = message.request else {
-        panic!("{:?}", message.request);
-    };
-    assert_eq!(
-        branch,
-        ovrcr::protocol::BranchRequest::New {
-            branch: "feature/status-check".into(),
-            base: "main".into(),
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
+    answer_workspace_inspect(dashboard, inspect.request_id, repo);
+    dashboard.event_action(Event::Paste("create branch".into()));
+    dashboard.key(KeyCode::Enter);
+}
+
+fn wait_for_branch_hints(dashboard: &mut Dashboard) {
+    let deadline = std::time::Instant::now() + wait_deadline();
+    loop {
+        dashboard.poll_palette();
+        let text = palette_text(dashboard);
+        if !text.contains("Loading the repository default branch") {
+            return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Git hints never reached the branch form: {text}"
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// Types a branch before Git's default-branch lookup returns, then defers the
+/// submit until the registry provides the disposable repository path.
+fn type_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u64 {
+    assert_eq!(
+        dashboard.key(KeyCode::Char('w')),
+        ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(launch.unwrap().label.as_deref(), Some("fixture-a"));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
+    to_branch(dashboard);
+    dashboard.event_action(Event::Paste(branch.into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    inspect.request_id
+}
+
+#[test]
+fn standalone_branch_form_requires_an_explicit_valid_name() {
+    let mut dashboard = dashboard_fixture();
+    open_workspace_form(&mut dashboard);
+    let words = palette_words(&dashboard);
+    assert!(words.contains("Branch name"), "{words}");
+    assert!(words.contains("Workspace options"), "{words}");
+    for removed in ["Task", "Start", "Agent"] {
+        assert!(!words.contains(removed), "{removed}: {words}");
+    }
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.drain_outbox().is_empty(), "an empty name cannot submit");
+    assert!(palette_words(&dashboard).contains("Branch name is required"));
+    dashboard.event_action(Event::Paste("feature/contains space".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(dashboard.drain_outbox().is_empty(), "Git rejects spaces in refs");
+    assert!(palette_words(&dashboard).contains("Branch names can't contain spaces"));
+    dashboard.ctrl('u');
+    assert!(!palette_words(&dashboard).contains("Branch names can't contain spaces"));
 }
 
 #[test]
 fn branch_names_git_would_refuse_are_named_inline() {
     let mut dashboard = dashboard_fixture();
     open_workspace_form(&mut dashboard);
-    dashboard.event_action(Event::Paste("status check".into()));
-    dashboard.key(KeyCode::Tab); // Enter works from any field
+    dashboard.event_action(Event::Paste("feature/status check".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
@@ -1126,12 +1236,11 @@ fn branch_names_git_would_refuse_are_named_inline() {
     assert_in_order(
         &palette_words(&dashboard),
         &[
-            "Branch › feature/status check",
+            "Branch name › feature/status check",
             "Branch names can't contain spaces",
-            "Branch mode",
         ],
     );
-    dashboard.key(KeyCode::Backspace);
+    dashboard.ctrl('u');
     assert!(!palette_words(&dashboard).contains("can't contain spaces"));
 }
 
@@ -1188,7 +1297,7 @@ fn tab_on_a_repository_checkout_moves_to_name() {
 fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
     let mut dashboard = dashboard_fixture();
     fixture_agents(&mut dashboard);
-    dashboard.key(KeyCode::Char('n'));
+    open_generic_create_terminal_from_palette(&mut dashboard);
     let title = |dashboard: &Dashboard| {
         palette_text(dashboard)
             .lines()
@@ -1197,7 +1306,7 @@ fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
             .to_owned()
     };
     assert!(title(&dashboard).contains("Start: Agent (fixture-a)"));
-    dashboard.key(KeyCode::Tab); // Start follows Task
+    dashboard.key(KeyCode::Tab); // Start follows the optional Initial prompt
     // No Tab or Enter: the arrow is the choice, and the form follows it.
     dashboard.key(KeyCode::Down);
     assert!(
@@ -1220,48 +1329,18 @@ fn pick_arrows_change_the_value_at_once_and_left_right_wrap() {
     );
 }
 
-/// The original defect: with the first agent chosen, the list below it was
-/// cut off, so only `claude` showed. Installed agents vary by host, so the
-/// names come from the form itself.
 #[test]
-fn an_open_agent_picker_shows_the_choices_below_the_current_one() {
+fn new_agent_form_exposes_the_harness_and_model_controls() {
     let mut dashboard = dashboard_fixture();
-    fixture_agents(&mut dashboard);
-    open_workspace_form(&mut dashboard);
-    for _ in 0..4 {
-        dashboard.key(KeyCode::Tab); // Branch mode, Base, Start, Agent
-    }
-    let chosen = |dashboard: &Dashboard| {
-        let text = palette_text(dashboard);
-        let title = text
-            .lines()
-            .find(|line| line.contains("┌ Create workspace"))
-            .unwrap_or_default();
-        title
-            .split_once("Start: Agent (")
-            .and_then(|(_, rest)| rest.split_once(')'))
-            .map(|(name, _)| name.to_owned())
-            .unwrap_or_else(|| panic!("no chosen agent in: {text}"))
-    };
-    for _ in 0..20 {
-        dashboard.key(KeyCode::Up);
-    }
-    let first = chosen(&dashboard);
-    dashboard.key(KeyCode::Down);
-    let second = chosen(&dashboard);
-    assert_ne!(first, second, "Down changes the chosen agent at once");
-    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Char('n'));
     let text = palette_text(&dashboard);
-    assert!(text.contains(&format!("  › {first} ")), "{text}");
-    assert!(
-        text.contains(&format!("    {second} ")),
-        "the next choice shows below the current one: {text}"
-    );
-    for _ in 0..20 {
-        dashboard.key(KeyCode::Down);
+    assert!(text.contains("New agent session"), "{text}");
+    for control in ["Branch", "Agent harness", "Model", "Initial prompt"] {
+        assert!(text.contains(control), "{control}: {text}");
     }
-    assert_eq!(chosen(&dashboard), "fixture-c");
-    assert!(palette_text(&dashboard).contains("  › fixture-c "));
+    for removed in ["Task", "Start:"] {
+        assert!(!text.contains(removed), "{removed}: {text}");
+    }
 }
 
 #[test]
@@ -1307,23 +1386,20 @@ fn footer_lists_only_keys_that_work_for_the_focused_field() {
 }
 
 #[test]
-fn create_workspace_existing_branch_keeps_generated_id() {
+fn create_branch_retry_keeps_generated_id_and_branch() {
     use ovrcr::protocol::{BranchRequest, Request};
     let mut dashboard = dashboard_fixture();
-    palette_search(&mut dashboard, "create workspace");
-    dashboard.key(KeyCode::Enter);
+    let repo = hint_repository(&[]);
+    open_palette_branch_command_with_repo(&mut dashboard, repo.path());
+    wait_for_branch_hints(&mut dashboard);
     to_branch(&mut dashboard);
-    dashboard.key(KeyCode::Tab); // mode
-    dashboard.key(KeyCode::Char(' ')); // existing
-    dashboard.key(KeyCode::BackTab); // branch
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("topic".into()));
+    dashboard.event_action(Event::Paste("feature/topic".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let first = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
+    let Request::CreateWorkspace {
         id: first_id,
         branch,
         ..
@@ -1334,8 +1410,9 @@ fn create_workspace_existing_branch_keeps_generated_id() {
     assert_workspace_id(first_id);
     assert_eq!(
         branch,
-        &BranchRequest::Existing {
-            branch: "topic".into()
+        &BranchRequest::New {
+            branch: "feature/topic".into(),
+            base: "main".into(),
         }
     );
     dashboard.handle_server_message(ServerMessage::Response {
@@ -1350,35 +1427,42 @@ fn create_workspace_existing_branch_keeps_generated_id() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let retry = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch { id: retry_id, .. } = retry.request else {
+    let Request::CreateWorkspace {
+        id: retry_id,
+        branch: retry_branch,
+        ..
+    } = retry.request
+    else {
         panic!("{:?}", retry.request);
     };
     assert_eq!(retry_id, *first_id);
+    assert_eq!(retry_branch, *branch);
 }
 
 #[test]
-fn w_opens_workspace_form_with_project_and_derived_branch() {
+fn w_opens_branch_form_with_project_and_explicit_branch() {
     use ovrcr::protocol::BranchRequest;
     let mut dashboard = dashboard_fixture();
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
+    let repo = hint_repository(&[]);
+    open_branch_form_with_repo(&mut dashboard, repo.path());
+    wait_for_branch_hints(&mut dashboard);
     to_branch(&mut dashboard);
-    dashboard.event_action(Event::Paste("pick-demo".into()));
+    dashboard.event_action(Event::Paste("feature/pick-demo".into()));
     let text = palette_text(&dashboard);
-    assert!(text.contains("Create workspace"), "{text}");
+    assert!(text.contains("Create branch"), "{text}");
     assert!(text.contains("consigint"), "{text}");
     assert!(text.contains("feature/pick-demo"), "{text}");
-    assert!(!text.contains("Name"), "{text}");
+    assert!(!text.contains("Task"), "{text}");
+    assert!(!text.contains("Start"), "{text}");
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
+    let Request::CreateWorkspace {
         project,
         id,
         branch,
-        launch,
     } = message.request
     else {
         panic!("{:?}", message.request);
@@ -1392,260 +1476,115 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
             base: "main".into()
         }
     );
-    assert!(launch.is_some());
 }
 
 #[test]
-fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
-    use ovrcr::config::{ProjectRecord, Registry};
-    use std::process::Command;
-    let repo = tempfile::tempdir().unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec![
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "initial",
-        ],
-        vec!["branch", "topic"],
-        vec!["branch", "z1"],
-        vec!["branch", "z2"],
-        vec!["branch", "z3"],
-        vec!["branch", "z4"],
-        vec!["branch", "z5"],
-        vec!["branch", "z6"],
-        vec!["update-ref", "refs/remotes/origin/topic", "HEAD"],
-        vec![
-            "symbolic-ref",
-            "refs/remotes/origin/HEAD",
-            "refs/remotes/origin/topic",
-        ],
-    ] {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo.path())
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+fn branch_form_uses_detected_default_and_accepts_an_explicit_local_base() {
+    use ovrcr::protocol::{BranchRequest, Request};
+    let repo = hint_repository(&["topic"]);
     let mut dashboard = dashboard_fixture();
-    assert_eq!(
-        dashboard.key(KeyCode::Char('w')),
-        ovrcr::tui::DashboardAction::Redraw
-    );
+    let action = dashboard.key(KeyCode::Char('w'));
     let inspect = only_request(dashboard.drain_outbox());
     assert_eq!(inspect.request, Request::Inspect);
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: inspect.request_id,
-        response: Response::Inventory {
-            registry: Registry {
-                projects: vec![ProjectRecord {
-                    name: "consigint".into(),
-                    repo: repo.path().into(),
-                    workspace_root: repo.path().join("worktrees"),
-                    workspaces: vec![],
-                }],
-            },
-            sessions: vec![],
-        },
-    });
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    answer_workspace_inspect(&mut dashboard, inspect.request_id, repo.path());
     let deadline = std::time::Instant::now() + wait_deadline();
     loop {
-        dashboard.event_action(Event::Paste(String::new()));
-        if palette_text(&dashboard).contains("topic") {
+        dashboard.poll_palette();
+        let text = palette_text(&dashboard);
+        if !text.contains("Loading the repository default branch") {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "Git hints never reached the form"
+            "Git hints never reached the branch form: {text}"
         );
         std::thread::yield_now();
     }
-    to_branch(&mut dashboard);
+    dashboard.event_action(Event::Paste("feature/from-topic".into()));
+    dashboard.key(KeyCode::Tab); // Workspace options
+    dashboard.key(KeyCode::Char(' ')); // Expand Base
+    dashboard.key(KeyCode::Tab); // Base
+    let text = palette_words(&dashboard);
+    assert!(text.contains("Base"), "{text}");
+    assert!(text.contains("main"), "the detected default is shown: {text}");
     dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("custom/kept".into()));
-    dashboard.key(KeyCode::Tab); // mode
-    dashboard.key(KeyCode::BackTab); // branch
-    assert!(palette_text(&dashboard).contains("custom/kept"));
-    dashboard.key(KeyCode::Tab); // mode
-    dashboard.key(KeyCode::Right); // existing
-    dashboard.key(KeyCode::BackTab); // branch pick
-    let text = palette_text(&dashboard);
-    assert!(text.contains("main") && text.contains("topic"), "{text}");
-    assert!(!text.contains("Base"), "{text}");
-    for _ in 0..7 {
-        dashboard.key(KeyCode::Down);
-    }
-    let text = palette_text(&dashboard);
-    assert!(
-        text.contains("› z6"),
-        "selected branch must remain visible: {text}"
-    );
     dashboard.event_action(Event::Paste("topic".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
-        project,
-        id,
-        branch,
-        launch,
-    } = message.request
-    else {
+    let Request::CreateWorkspace { project, id, branch } = message.request else {
         panic!("{:?}", message.request);
     };
     assert_eq!(project, "consigint");
     assert_workspace_id(&id);
     assert_eq!(
         branch,
-        ovrcr::protocol::BranchRequest::Existing {
-            branch: "topic".into()
+        BranchRequest::New {
+            branch: "feature/from-topic".into(),
+            base: "topic".into(),
         }
     );
-    assert!(launch.is_some());
 }
 
 #[test]
-fn typed_existing_branch_survives_hint_arrival() {
-    use ovrcr::protocol::BranchRequest;
-    let repo = hint_repository(&["release-2"]);
+fn deferred_branch_submit_refuses_a_name_that_already_exists() {
+    let repo = hint_repository(&["feature/release-2"]);
     let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
-    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let message = loop {
-        dashboard.poll_palette();
-        let mut drained = dashboard.drain_outbox();
-        let text = palette_text(&dashboard);
-        // Without real branches the field would stay text and submit vacuously.
-        assert!(!text.contains("enter branch/base manually"), "{text}");
-        if !drained.is_empty() {
-            break drained.remove(0);
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "Git hints never reached the deferred submit: {text}"
-        );
-        std::thread::yield_now();
-    };
-    let Request::CreateWorkspaceWithLaunch {
-        project,
-        id,
-        branch,
-        launch,
-    } = message.request
-    else {
-        panic!("expected create workspace: {:?}", message.request);
-    };
-    assert_eq!(project, "consigint");
-    assert_workspace_id(&id);
-    assert_eq!(
-        branch,
-        BranchRequest::Existing {
-            branch: "release-2".into()
-        }
-    );
-    assert!(launch.is_some());
-}
-
-#[test]
-fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
-    use ovrcr::protocol::BranchRequest;
-    let repo = hint_repository(&["release-2-old"]);
-    let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
+    let inspect_id = type_branch_and_submit(&mut dashboard, "feature/release-2");
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let text = poll_until_deferred_submit_refused(
         &mut dashboard,
-        "a branch the user never named must not be submitted",
+        "an existing branch name must not create a duplicate worktree",
     );
-    assert!(text.contains("Create workspace"), "{text}");
-    assert!(text.contains("Branch not found in repository"), "{text}");
-    // The refusal is not a dead end: the filtered list is now on screen, so a
-    // second Enter accepts the near match the user can finally see.
-    assert!(text.contains("release-2-old"), "{text}");
+    assert!(text.contains("That branch already exists in this repository"), "{text}");
+}
+
+#[test]
+fn base_matching_is_case_sensitive() {
+    let repo = hint_repository(&["Release-2"]);
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('w'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    answer_workspace_inspect(&mut dashboard, inspect.request_id, repo.path());
+    let deadline = std::time::Instant::now() + wait_deadline();
+    loop {
+        dashboard.poll_palette();
+        let text = palette_text(&dashboard);
+        if !text.contains("Loading the repository default branch") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{text}");
+        std::thread::yield_now();
+    }
+    dashboard.event_action(Event::Paste("feature/child".into()));
+    dashboard.key(KeyCode::Tab); // Workspace options
+    dashboard.key(KeyCode::Char(' ')); // Expand Base
+    dashboard.key(KeyCode::Tab); // Base
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("release-2".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
-        project,
-        id,
-        branch,
-        launch,
-    } = message.request
-    else {
-        panic!("expected create workspace: {:?}", message.request);
-    };
-    assert_eq!(project, "consigint");
-    assert_workspace_id(&id);
-    assert_eq!(
-        branch,
-        BranchRequest::Existing {
-            branch: "release-2-old".into()
-        }
-    );
-    assert!(launch.is_some());
-}
-
-#[test]
-fn case_only_branch_mismatch_is_refused_not_submitted() {
-    // Git refs are case-sensitive, so `Release-2` is a different branch from the `release-2`
-    // the user typed: creating the workspace on it would silently use the wrong branch.
-    let repo = hint_repository(&["Release-2"]);
-    let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
-    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
-    let text = poll_until_deferred_submit_refused(
-        &mut dashboard,
-        "a branch that differs only in case must not be submitted",
-    );
-    assert!(text.contains("Create workspace"), "{text}");
-    assert!(text.contains("Branch not found in repository"), "{text}");
-    assert!(text.contains("Release-2"), "{text}");
-}
-
-#[test]
-fn typed_branch_missing_from_hints_is_refused_not_replaced() {
-    let repo = hint_repository(&[]);
-    let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
-    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
-    let text = poll_until_deferred_submit_refused(
-        &mut dashboard,
-        "a branch missing from the repository must not be submitted",
-    );
-    assert!(text.contains("Create workspace"), "{text}");
-    assert!(text.contains("Branch not found in repository"), "{text}");
-    assert!(!text.contains("Working"), "{text}");
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(palette_words(&dashboard).contains("Base must resolve to a local branch"));
 }
 
 #[test]
 fn workspace_created_with_exited_local_shell_closes_palette() {
     let mut dashboard = dashboard_fixture();
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    to_branch(&mut dashboard);
+    open_workspace_form(&mut dashboard);
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch { id, .. } = &message.request else {
+    let Request::CreateWorkspace { id, .. } = &message.request else {
         panic!("{:?}", message.request);
     };
     let created_id = id.clone();
@@ -1653,18 +1592,15 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         request_id: message.request_id,
         response: Response::Ok,
     });
-    // Lifecycle accept closes the form; Provisional row + strip wait for hierarchy.
+    // Keep the form visible until the lifecycle result and fresh readbacks
+    // confirm the new branch.
     let mid = palette_text(&dashboard);
     assert!(
-        !mid.lines().any(|line| line.contains("┌ Create workspace")),
+        mid.lines().any(|line| line.contains("┌ Create branch"))
+            && mid.contains("Working…"),
         "{mid}"
     );
-    assert!(
-        mid.contains("Creating") || footer_text(&dashboard).contains("Creating"),
-        "expected Creating… provisional/strip, got palette={mid:?} footer={:?}",
-        footer_text(&dashboard)
-    );
-    let mut hierarchy = extra_workspace_hierarchy(created_id);
+    let mut hierarchy = extra_workspace_hierarchy(created_id.clone());
     let workspace = hierarchy
         .projects
         .iter_mut()
@@ -1679,19 +1615,19 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     };
     workspace.sessions[0].pid = None;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
-        hierarchy,
+        hierarchy.clone(),
     )));
-    // Hierarchy alone must not attach an exited local; LifecycleCompleted finishes fiction.
+    // A branch's hierarchy row alone is not completion evidence.
     assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
-    let outgoing =
-        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
-            client_token: message.request_id,
-            op: ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
-            outcome: ovrcr::protocol::LifecycleOutcome::Succeeded,
-        }));
+    let readbacks = lifecycle_completed(
+        &mut dashboard,
+        &message,
+        ovrcr::protocol::LifecycleOutcome::Succeeded,
+    );
+    let outgoing = answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
     let text = palette_text(&dashboard);
     assert!(
-        !text.lines().any(|line| line.contains("┌ Create workspace")),
+        !text.lines().any(|line| line.contains("┌ Create branch")),
         "{text}"
     );
     assert!(!text.contains("Working"), "{text}");
@@ -1734,9 +1670,7 @@ fn palette_switch_drops_late_inventory_without_clearing_current_error() {
 #[test]
 fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     let mut dashboard = dashboard_fixture();
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    to_branch(&mut dashboard);
+    open_workspace_form(&mut dashboard);
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -1748,7 +1682,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
         response: Response::Ok,
     });
     assert!(palette_text(&dashboard).contains("Working"));
-    assert!(palette_text(&dashboard).contains("┌ Create workspace"));
+    assert!(palette_text(&dashboard).contains("┌ Create branch"));
     let hierarchy = extra_workspace_hierarchy("pick-demo");
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy.clone(),
@@ -1762,36 +1696,30 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
         },
     });
     assert!(palette_text(&dashboard).contains("creation refused"));
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    let retry = only_request(dashboard.drain_outbox());
     dashboard.key(KeyCode::Esc);
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: retry.request_id,
-        response: Response::Ok,
-    });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
-        hierarchy,
+        hierarchy.clone(),
     )));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(footer_text(&dashboard).contains("BROWSE"));
-    assert!(
-        !palette_text(&dashboard)
-            .lines()
-            .any(|line| line.contains("┌ Create workspace"))
-    );
+    assert!(!palette_text(&dashboard).contains("┌ Create branch"));
+
+    let mut cancelled = dashboard_fixture();
+    open_workspace_form(&mut cancelled);
+    cancelled.key(KeyCode::Esc);
+    assert!(cancelled.drain_outbox().is_empty());
+    cancelled.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    assert_eq!(cancelled.focused_session(), Some(SessionId(1)));
+    assert!(!palette_text(&cancelled).contains("┌ Create branch"));
 }
 
 #[test]
-fn workspace_creation_attaches_to_its_local_shell() {
-    use ovrcr::tui::DashboardAction;
+fn branch_creation_selects_workspace_without_launching_a_session() {
     for hierarchy_first in [true, false] {
         let mut dashboard = dashboard_fixture();
-        let action = dashboard.key(KeyCode::Char('w'));
-        answer_palette_inspect(&mut dashboard, action);
-        to_branch(&mut dashboard);
+        open_workspace_form(&mut dashboard);
         dashboard.event_action(Event::Paste("pick-demo".into()));
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -1799,61 +1727,73 @@ fn workspace_creation_attaches_to_its_local_shell() {
         );
         let message = only_request(dashboard.drain_outbox());
         let created_id = match &message.request {
-            Request::CreateWorkspaceWithLaunch { id, .. } => id.clone(),
+            Request::CreateWorkspace { id, .. } => id.clone(),
             other => panic!("expected create workspace: {other:?}"),
         };
-        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(extra_workspace_hierarchy(
-            created_id,
-        )));
-        let ack = ServerMessage::Response {
-            request_id: message.request_id,
-            response: Response::Ok,
-        };
-        let outgoing = if hierarchy_first {
-            dashboard.handle_server_message(event);
+        let hierarchy = extra_workspace_hierarchy(created_id);
+        accept(&mut dashboard, &message);
+        let readbacks = if hierarchy_first {
+            dashboard.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy.clone()),
+            ));
             assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
-            dashboard.handle_server_message(ack)
+            lifecycle_completed(
+                &mut dashboard,
+                &message,
+                ovrcr::protocol::LifecycleOutcome::Succeeded,
+            )
         } else {
-            dashboard.handle_server_message(ack);
+            let readbacks = lifecycle_completed(
+                &mut dashboard,
+                &message,
+                ovrcr::protocol::LifecycleOutcome::Succeeded,
+            );
             assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
-            dashboard.handle_server_message(event)
+            dashboard.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy.clone()),
+            ));
+            readbacks
         };
-        assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
-        assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
-        let set_view = outgoing
-            .iter()
-            .find(|m| matches!(&m.request, Request::SetView { view } if view.focused == Some(SessionId(99))))
-            .cloned()
-            .expect("attach must send SetView focused on the new local shell");
-        acknowledge_view_request(&mut dashboard, set_view);
-        assert_eq!(
-            dashboard.key(KeyCode::Char('z')),
-            DashboardAction::PtyBytes(b"z".to_vec())
-        );
+        let outgoing = answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
+        assert_eq!(dashboard.focused_session(), None);
+        assert!(!outgoing.iter().any(|message| matches!(
+            &message.request,
+            Request::SetView { view } if view.focused == Some(SessionId(99))
+        )), "branch creation must not attach a local shell: {outgoing:?}");
+        assert!(!outgoing.iter().any(|message| matches!(
+            &message.request,
+            Request::CreateSession(_) | Request::CreateAgentSession(_)
+        )), "branch creation must not launch a session: {outgoing:?}");
+        let text = palette_text(&dashboard);
+        assert!(text.contains("consigint / pick-demo"), "{text}");
+        assert!(text.contains("$ local"), "the readback includes its existing local shell: {text}");
+        assert!(!text.contains("┌ Create branch"), "{text}");
     }
 }
 
 #[test]
-fn n_opens_terminal_form_prefilled_for_selected_workspace() {
+fn n_opens_new_agent_form_prefilled_for_selected_workspace() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
-    assert_eq!(dashboard.key(KeyCode::Char('n')), DashboardAction::Redraw);
+    let action = dashboard.key(KeyCode::Char('n'));
+    assert_eq!(action, DashboardAction::Redraw);
+    answer_palette_inspect_with_fixture_registry(&mut dashboard, action);
     let text = palette_text(&dashboard);
-    assert!(text.contains("Create terminal"));
+    assert!(text.contains("New agent session"));
     assert!(text.contains("consigint / auth"));
-    assert!(text.contains("Start"), "{text}");
-    assert!(text.contains("Terminal"), "{text}");
+    assert!(text.contains("Agent harness"), "{text}");
+    assert!(text.contains("Model"), "{text}");
 }
 
 #[test]
 fn created_session_enters_terminal_mode() {
     let mut dashboard = dashboard_fixture();
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
+    open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -1910,7 +1850,7 @@ fn browse_footer_lists_only_menu_commands_and_help() {
 }
 
 #[test]
-fn n_is_listed_in_the_hint_table() {
+fn workspace_menu_lists_new_agent_and_new_terminal_actions() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
     dashboard.key(KeyCode::Char('w'));
@@ -1923,23 +1863,28 @@ fn n_is_listed_in_the_hint_table() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        create.contains("n  Create terminal"),
-        "the Workspace group must list n: {create}"
+        create.contains("n  New agent session") && create.contains("t  New terminal"),
+        "the Workspace group must list both named creation actions: {create}"
     );
+    dashboard.key(KeyCode::Down);
+    let text = palette_text(&dashboard);
     let detail = text
         .lines()
-        .skip_while(|line| !line.contains("Choose an agent or shell"))
+        .skip_while(|line| !line.contains("Create a terminal in"))
         .take_while(|line| !line.contains("└ Esc close"))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        detail.contains("consigint / auth"),
-        "the selected n hint must name its workspace below the list: {detail}"
+        detail.contains("consigint /") && detail.contains("auth"),
+        "the selected t hint must name its workspace below the list: {detail}"
     );
     dashboard.key(KeyCode::Enter);
     let form = palette_text(&dashboard);
     assert!(!form.contains("Which key"), "{form}");
-    assert!(form.contains("Agent"), "{form}");
+    assert!(form.contains("Start: Terminal"), "{form}");
     assert!(form.contains("Workspace"), "{form}");
 }
 
@@ -2394,8 +2339,8 @@ fn nested_whichkey_mouse_and_enter_open_groups_before_running_actions() {
     dashboard.key(KeyCode::Backspace);
     click_whichkey_text(&mut dashboard, "w  Workspace", false);
     assert!(whichkey_menu_text(&dashboard).contains("Workspace: consigint / auth"));
-    click_whichkey_text(&mut dashboard, "n  Create terminal", false);
-    assert!(palette_text(&dashboard).contains("Agent"));
+    click_whichkey_text(&mut dashboard, "t  New terminal", false);
+    assert!(palette_text(&dashboard).contains("Start: Terminal"));
     assert!(palette_text(&dashboard).contains("consigint / auth"));
 }
 
@@ -2580,15 +2525,18 @@ fn palette_lists_only_the_actions_the_target_can_run() {
     let menu = whichkey_menu_text(&dashboard);
     assert!(menu.contains("c  Copy screen"), "{menu}");
     dashboard.key(KeyCode::Esc);
-    // A root workspace off its default branch keeps Create terminal listed with why.
+    // A root workspace off its default branch keeps the named Terminal action
+    // discoverable with the reason it cannot run.
     let mut blocked = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[1].warning = Some("main is not checked out".into());
     blocked.install_hierarchy(hierarchy);
-    palette_search(&mut blocked, "create terminal");
-    let text = palette_text(&blocked);
+    blocked.key(KeyCode::Char(' '));
+    blocked.key(KeyCode::Char('w'));
+    blocked.key(KeyCode::Down);
+    let text = whichkey_menu_text(&blocked);
     assert!(
-        text.contains("Create terminal (n)")
+        text.contains("t  New terminal")
             && text.contains("root workspace is not on the default branch"),
         "{text}"
     );
@@ -2596,8 +2544,7 @@ fn palette_lists_only_the_actions_the_target_can_run() {
     let mut empty = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
     palette_search(&mut empty, "create");
     let text = palette_text(&empty);
-    assert!(!text.contains("Create terminal (n)"), "{text}");
-    assert!(!text.contains("Create workspace (w)"), "{text}");
+    assert!(!text.contains("Create branch (w)"), "{text}");
     empty.key(KeyCode::Esc);
     palette_search(&mut empty, "register");
     assert!(palette_text(&empty).contains("Register project (a)"));
@@ -2631,7 +2578,7 @@ fn unfiltered_palette_starts_with_creation_and_keeps_settings_rows_for_search() 
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "");
     let text = palette_text(&dashboard);
-    assert!(text.contains("› Create terminal (n)"), "{text}");
+    assert!(text.contains("› New agent session (n)"), "{text}");
     assert!(!text.contains("› Archived sessions"), "{text}");
     // The last entries are key actions; settings rows are not listed unasked.
     for _ in 0..200 {
@@ -2700,15 +2647,22 @@ fn palette_finds_settings_by_label_or_key_and_opens_that_row() {
 }
 
 #[test]
-fn ux_forms_put_task_name_in_border_and_keep_active_field_visible() {
-    for (key, title) in [
-        ('n', "Create terminal"),
-        ('w', "Create workspace"),
-        ('a', "Register project"),
-    ] {
+fn creation_forms_keep_their_title_and_active_field_visible_at_supported_sizes() {
+    let mut agent = dashboard_fixture();
+    agent.key(KeyCode::Char('n'));
+    for (width, height) in [(60, 18), (80, 24)] {
+        let rows = rendered_rows(&agent, width, height);
+        assert!(
+            rows.iter().any(|row| row.contains('┌') && row.contains("New agent session")),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|row| row.contains('›')), "active field missing: {rows:?}");
+    }
+
+    for (key, title) in [('w', "Create branch"), ('a', "Register project")] {
         let mut dashboard = dashboard_fixture();
         dashboard.key(KeyCode::Char(key));
-        for (width, height) in [(40, 12), (80, 24)] {
+        for (width, height) in [(60, 18), (80, 24)] {
             let rows = rendered_rows(&dashboard, width, height);
             assert!(
                 rows.iter()
@@ -2720,6 +2674,17 @@ fn ux_forms_put_task_name_in_border_and_keep_active_field_visible() {
                 "active field missing: {rows:?}"
             );
         }
+    }
+
+    let mut terminal = dashboard_fixture();
+    open_new_terminal_from_menu(&mut terminal);
+    for (width, height) in [(60, 18), (80, 24)] {
+        let rows = rendered_rows(&terminal, width, height);
+        assert!(
+            rows.iter().any(|row| row.contains('┌') && row.contains("Create terminal")),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|row| row.contains('›')), "active field missing: {rows:?}");
     }
 }
 
@@ -2969,24 +2934,16 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
 fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
     for hierarchy_first in [false, true] {
         let mut dashboard = dashboard_fixture();
-        let action = dashboard.key(KeyCode::Char('w'));
-        answer_palette_inspect(&mut dashboard, action);
-        to_branch(&mut dashboard);
+        open_workspace_form(&mut dashboard);
         dashboard.event_action(Event::Paste("pick-demo".into()));
-        for _ in 0..3 {
-            dashboard.key(KeyCode::Tab);
-        }
-        dashboard.ctrl('u');
-        dashboard.event_action(Event::Paste("Nothing yet".into()));
         assert_eq!(
             dashboard.key(KeyCode::Enter),
             ovrcr::tui::DashboardAction::Redraw
         );
         let message = only_request(dashboard.drain_outbox());
-        let Request::CreateWorkspaceWithLaunch { id, launch, .. } = &message.request else {
+        let Request::CreateWorkspace { id, .. } = &message.request else {
             panic!("{:?}", message.request);
         };
-        assert!(launch.is_none());
         let created_id = id.clone();
         let mut hierarchy = extra_workspace_hierarchy(created_id.clone());
         let workspace = hierarchy
@@ -2997,46 +2954,63 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
             .workspaces
             .last_mut()
             .unwrap();
-        workspace.name = "feature/pick-demo".into();
+        workspace.name = "pick-demo".into();
         workspace.sessions.clear();
-        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(hierarchy));
-        let ack = ServerMessage::Response {
-            request_id: message.request_id,
-            response: Response::Ok,
-        };
-        let outgoing = if hierarchy_first {
-            dashboard.handle_server_message(event);
+        accept(&mut dashboard, &message);
+        let readbacks = if hierarchy_first {
+            dashboard.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy.clone()),
+            ));
             assert_eq!(
                 dashboard.focused_session(),
                 Some(SessionId(1)),
                 "unacknowledged creation must not change selection"
             );
-            dashboard.handle_server_message(ack)
+            lifecycle_completed(
+                &mut dashboard,
+                &message,
+                ovrcr::protocol::LifecycleOutcome::Succeeded,
+            )
         } else {
-            dashboard.handle_server_message(ack);
+            let readbacks = lifecycle_completed(
+                &mut dashboard,
+                &message,
+                ovrcr::protocol::LifecycleOutcome::Succeeded,
+            );
             assert_eq!(
                 dashboard.focused_session(),
                 Some(SessionId(1)),
                 "wait until the created workspace exists in hierarchy"
             );
-            dashboard.handle_server_message(event)
+            dashboard.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy.clone()),
+            ));
+            readbacks
         };
+        let outgoing = answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
         assert_eq!(
             dashboard.focused_session(),
             None,
             "created empty workspace must replace the previous pane selection"
         );
-        assert!(outgoing.iter().any(|m| matches!(&m.request, Request::SetView { view } if view.focused.is_none() && view.panes.is_empty())));
+        assert!(!outgoing.iter().any(|message| matches!(
+            &message.request,
+            Request::SetView { view } if view.focused.is_some()
+        )), "branch-only creation must not attach a session: {outgoing:?}");
+        assert!(!outgoing.iter().any(|message| matches!(
+            &message.request,
+            Request::CreateSession(_) | Request::CreateAgentSession(_)
+        )), "branch-only creation must not launch a session: {outgoing:?}");
         let text = palette_text(&dashboard);
-        assert!(text.contains("consigint / feature/pick-demo"), "{text}");
+        assert!(text.contains("consigint / pick-demo"), "{text}");
         assert!(
-            text.contains("n        new agent or terminal here"),
+            text.contains("n        new agent session"),
             "{text}"
         );
         assert!(text.contains("No sessions yet"), "{text}");
-        assert!(!text.contains("┌ Create workspace"), "{text}");
+        assert!(!text.contains("┌ Create branch"), "{text}");
         dashboard.key(KeyCode::Char('n'));
-        assert!(palette_text(&dashboard).contains("consigint / feature/pick-demo"));
+        assert!(palette_text(&dashboard).contains("consigint / pick-demo"));
     }
 }
 
@@ -3133,12 +3107,12 @@ fn failed_reopen_retries_the_current_run_from_the_confirm() {
 #[test]
 fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
     let mut dashboard = dashboard_fixture();
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
+    open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -3238,12 +3212,12 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
 fn ownership_uncertain_create_does_not_guess_among_two_rows() {
     let mut dashboard = dashboard_fixture();
     let focused = dashboard.focused_session();
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Enter);
+    open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
@@ -3373,13 +3347,50 @@ fn lifecycle_completed(
         Request::CreateSession(_) | Request::CreateAgentSession(_) => {
             ovrcr::protocol::LifecycleOp::CreateSession
         }
+        Request::CreateWorkspace { .. } => ovrcr::protocol::LifecycleOp::CreateWorkspace,
         _ => ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
+    };
+    let target_workspace = match &request.request {
+        Request::CreateWorkspace { project, id, .. }
+        | Request::CreateWorkspaceWithLaunch { project, id, .. } => {
+            Some(ovrcr::protocol::WorkspaceLifecycleIdentity {
+                project: project.clone(),
+                id: id.clone(),
+            })
+        }
+        _ => None,
     };
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
         client_token: request.request_id,
         op,
         outcome,
+        target_workspace,
     }))
+}
+
+fn answer_branch_readbacks(
+    dashboard: &mut Dashboard,
+    requests: Vec<ClientMessage>,
+    hierarchy: &HierarchySnapshot,
+) -> Vec<ClientMessage> {
+    assert_eq!(requests.len(), 2, "branch creation requires Inspect and List");
+    let registry = registry_from_hierarchy(hierarchy);
+    let mut outgoing = Vec::new();
+    for message in requests {
+        let response = match message.request {
+            Request::Inspect => Response::Inventory {
+                registry: registry.clone(),
+                sessions: vec![],
+            },
+            Request::List => Response::Hierarchy(hierarchy.clone()),
+            other => panic!("unexpected branch readback: {other:?}"),
+        };
+        outgoing.extend(dashboard.handle_server_message(ServerMessage::Response {
+            request_id: message.request_id,
+            response,
+        }));
+    }
+    outgoing
 }
 
 /// Answers a Lifecycle job the way the Server does: accepted at once, done later.
@@ -3673,23 +3684,22 @@ fn uncommitted_changes_alone_offer_discard_in_plain_words() {
 /// accept it; returns the request and its workspace id.
 fn create_status_check_workspace(dashboard: &mut Dashboard) -> (ClientMessage, String) {
     open_workspace_form(dashboard);
-    dashboard.event_action(Event::Paste("status-check".into()));
+    dashboard.event_action(Event::Paste("feature/status-check".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     let create = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch { id, .. } = &create.request else {
+    let Request::CreateWorkspace { id, .. } = &create.request else {
         panic!("{:?}", create.request);
     };
     let id = id.clone();
     accept(dashboard, &create);
     let text = palette_text(dashboard);
     assert!(
-        !text.contains("┌ Create workspace"),
-        "the form steps aside while Git works: {text}"
+        text.contains("┌ Create branch") && text.contains("Working…"),
+        "the accepted branch remains visible while Git works: {text}"
     );
-    assert!(text.contains("Creating… feature/status-check"), "{text}");
     (create, id)
 }
 
@@ -3709,18 +3719,18 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         },
     );
     let screen = palette_text(&dashboard);
-    assert!(screen.contains("┌ Create workspace"), "{screen}");
+    assert!(screen.contains("┌ Create branch"), "{screen}");
     assert!(!screen.contains("Not created"), "no failed row: {screen}");
     assert!(!screen.contains(&id), "no internal id: {screen}");
     let words = palette_words(&dashboard);
     assert!(
         words.contains(
-            "Couldn't create the workspace: a branch named 'feature/status-check' already exists"
+            "Couldn't create the branch: a branch named 'feature/status-check' already exists"
         ),
         "{words}"
     );
     assert!(!words.contains("Conflict"), "{words}");
-    assert_in_order(&words, &["Branch › feature/status-check", "Branch mode"]);
+    assert!(words.contains("Branch name › feature/status-check"), "{words}");
     // Fixing the name retries the same creation.
     dashboard.event_action(Event::Paste("-2".into()));
     assert_eq!(
@@ -3728,7 +3738,7 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let retry = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
+    let Request::CreateWorkspace {
         id: retry_id,
         branch,
         ..
@@ -3737,117 +3747,78 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
         panic!("{:?}", retry.request);
     };
     assert_eq!(retry_id, id);
-    assert_eq!(
-        branch,
-        ovrcr::protocol::BranchRequest::New {
-            branch: "feature/status-check-2".into(),
-            base: "main".into(),
-        }
-    );
+    assert_eq!(branch, ovrcr::protocol::BranchRequest::New {
+        branch: "feature/status-check-2".into(),
+        base: "main".into(),
+    });
 }
 
 #[test]
-fn launch_failure_after_creation_offers_recovery_instead_of_vanishing() {
+fn partial_branch_creation_requires_readback_before_retrying() {
     use ovrcr::protocol::LifecycleOutcome;
     let mut dashboard = dashboard_fixture();
     let (create, id) = create_status_check_workspace(&mut dashboard);
-    // The Server publishes the new, still empty workspace before the failure.
-    let mut hierarchy = fixture_hierarchy();
-    hierarchy.projects[1].workspaces.push(WorkspaceSummary {
-        project: "consigint".into(),
-        name: "feature/status-check".into(),
-        id: id.clone(),
-        root: false,
-        warning: None,
-        path: format!("/tmp/workspaces/consigint/{id}").into(),
-        sessions: vec![],
-    });
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
-        hierarchy,
-    )));
-    assert_eq!(
-        dashboard.focused_session(),
-        Some(SessionId(1)),
-        "an empty workspace is not finished while its first program may still fail"
-    );
-    lifecycle_completed(
+    let readbacks = lifecycle_completed(
         &mut dashboard,
         &create,
         LifecycleOutcome::Failed {
             code: ErrorCode::PartialFailure,
-            message: format!(
-                "worktree for workspace {id} remains at /tmp/workspaces/consigint/{id}: session 9 retained: Launch failed before a process started; check the executable and retry"
-            ),
+            message: format!("worktree for workspace {id} remains after a partial create"),
         },
     );
-    let screen = palette_text(&dashboard);
-    assert!(
-        screen.contains("┌ Workspace retained · recover launch"),
-        "{screen}"
-    );
+    let mut hierarchy = extra_workspace_hierarchy(id);
+    let created = hierarchy.projects[1].workspaces.last_mut().unwrap();
+    created.name = "feature/status-check".into();
+    created.sessions.clear();
+    answer_branch_readbacks(&mut dashboard, readbacks, &hierarchy);
+
     let words = palette_words(&dashboard);
-    for choice in ["Retry", "Choose another agent", "Open shell"] {
-        assert!(words.contains(choice), "{choice}: {words}");
-    }
     assert!(
-        words.contains(
-            "Couldn't create the workspace: worktree for workspace feature/status-check remains at"
-        ),
+        words.contains("feature/status-check exists, but the lifecycle result was not successful; retry is blocked"),
         "{words}"
     );
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let retry = only_request(dashboard.drain_outbox());
-    let Request::CreateSession(session) = retry.request else {
-        panic!(
-            "recovery must not recreate the workspace: {:?}",
-            retry.request
-        );
-    };
-    assert_eq!(session.workspace, id);
+    assert!(dashboard.drain_outbox().is_empty());
 }
 
 #[test]
-fn a_failure_while_typing_in_a_terminal_leaves_one_dismissable_row() {
+fn named_terminal_failure_keeps_the_form_and_can_be_dismissed() {
     use ovrcr::protocol::LifecycleOutcome;
-    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
-    let (create, _) = create_status_check_workspace(&mut dashboard);
-    // Back in a terminal while Git works.
-    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    open_new_terminal_from_menu(&mut dashboard);
     assert_eq!(
-        dashboard.key(KeyCode::Char('z')),
-        DashboardAction::PtyBytes(b"z".to_vec())
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
+        ovrcr::tui::DashboardAction::Redraw
     );
+    let create = only_request(dashboard.drain_outbox());
+    let Request::CreateSession(session) = &create.request else {
+        panic!("New terminal must use CreateSession: {:?}", create.request);
+    };
+    assert_eq!(session.kind, ovrcr_protocol::SessionKind::Terminal);
+    accept(&mut dashboard, &create);
     lifecycle_completed(
         &mut dashboard,
         &create,
         LifecycleOutcome::Failed {
-            code: ErrorCode::Conflict,
-            message: "invalid reference: main".into(),
+            code: ErrorCode::Internal,
+            message: "Launch failed before a process started; check the executable and retry"
+                .into(),
         },
     );
-    // Typing keeps reaching the terminal; no form jumps in front of it.
-    assert_eq!(
-        dashboard.key(KeyCode::Char('z')),
-        DashboardAction::PtyBytes(b"z".to_vec())
-    );
     let screen = palette_text(&dashboard);
-    assert!(!screen.contains("┌ Create workspace"), "{screen}");
-    assert!(screen.contains("Not created · Esc dismiss"), "{screen}");
-    assert_eq!(
-        footer_text(&dashboard),
-        "Couldn't create the workspace: invalid reference: main · Esc dismiss"
-    );
+    assert!(screen.contains("┌ Create terminal"), "{screen}");
+    assert!(screen.contains("Command"), "{screen}");
+    assert!(screen.contains("Couldn't start the session"), "{screen}");
+    assert!(!screen.contains("Create branch"), "{screen}");
     dashboard.key(KeyCode::Esc);
-    let screen = palette_text(&dashboard);
-    assert!(
-        !screen.contains("Not created"),
-        "one Esc clears the row: {screen}"
-    );
-    assert!(!footer_text(&dashboard).contains("Esc dismiss"));
+    assert!(!palette_text(&dashboard).contains("┌ Create terminal"));
+    assert!(dashboard.drain_outbox().is_empty());
 }
 
 #[test]
@@ -4903,8 +4874,7 @@ fn duplicate_branch_labels_include_distinguishing_paths() {
     );
     assert!(!one.contains("worktree-two"), "{one}");
     assert!(!two.contains("worktree-one"), "{two}");
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Tab); // Workspace pick list
+    open_new_terminal_from_menu(&mut dashboard);
     let form = palette_text(&dashboard);
     assert!(
         form.contains("/private/var/folders") && form.contains("worktree-one"),
@@ -4930,16 +4900,23 @@ fn warning_disables_new_terminal_and_shows_reason() {
         text.contains("root is on feature/x") || text.contains('!'),
         "{text}"
     );
-    assert_eq!(
-        dashboard.key(KeyCode::Char('n')),
-        ovrcr::tui::DashboardAction::Redraw
-    );
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('w'));
+    let menu = palette_text(&dashboard);
+    assert!(menu.contains("New terminal"), "{menu}");
+    dashboard.key(KeyCode::Char('t'));
+    let menu = palette_text(&dashboard);
+    assert!(menu.contains("Which key"), "blocked action keeps the menu open: {menu}");
+    assert!(!menu.contains("┌ Create terminal"), "{menu}");
+    dashboard.key(KeyCode::Down);
+    let menu = palette_text(&dashboard)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        rendered_rows(&dashboard, 120, 38)
-            .join("\n")
-            .contains("root is on feature/x")
-            || palette_text(&dashboard).is_empty(),
-        "warning must surface instead of opening create terminal"
+        menu.contains("New terminal: root workspace is not")
+            && menu.contains("on the default branch"),
+        "{menu}"
     );
 }
 
@@ -4950,23 +4927,19 @@ fn slash_branch_picker_does_not_split_on_slashes() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    dashboard.key(KeyCode::Char('n'));
+    open_new_terminal_from_menu(&mut dashboard);
     let text = palette_text(&dashboard);
     assert!(text.contains("consigint / feature/auth"), "{text}");
-    let mut submitted = None;
-    for _ in 0..6 {
-        let _ = dashboard.key(KeyCode::Enter);
-        if let Some(message) = optional_request(dashboard.drain_outbox()) {
-            submitted = Some(message);
-            break;
-        }
-    }
-    let message = submitted.expect("create terminal must submit");
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::ALT,
+    )));
+    let message = optional_request(dashboard.drain_outbox())
+        .expect("create terminal must submit");
     let Request::CreateSession(request) = message.request else {
         panic!("{:?}", message.request);
     };
     assert_eq!(request.project, "consigint");
-    assert_eq!(request.workspace, "auth");
     assert_eq!(request.workspace, "auth");
 }
 
@@ -4993,18 +4966,15 @@ fn shared_internal_ids_are_resolved_with_project() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(99));
-    dashboard.key(KeyCode::Char('n'));
+    open_new_terminal_from_menu(&mut dashboard);
     let text = palette_text(&dashboard);
     assert!(text.contains("spacelift-agent / feature/other"), "{text}");
-    let mut submitted = None;
-    for _ in 0..6 {
-        let _ = dashboard.key(KeyCode::Enter);
-        if let Some(message) = optional_request(dashboard.drain_outbox()) {
-            submitted = Some(message);
-            break;
-        }
-    }
-    let message = submitted.expect("create terminal must submit");
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::ALT,
+    )));
+    let message = optional_request(dashboard.drain_outbox())
+        .expect("create terminal must submit");
     let Request::CreateSession(request) = message.request else {
         panic!("{:?}", message.request);
     };
@@ -5015,8 +4985,8 @@ fn shared_internal_ids_are_resolved_with_project() {
 #[test]
 fn terminal_workspace_picker_shows_current_branch_and_keeps_stable_target() {
     let mut dashboard = dashboard_fixture();
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Tab);
+    open_new_terminal_from_menu(&mut dashboard);
+    dashboard.key(KeyCode::Enter);
     let open = palette_text(&dashboard);
     assert!(open.contains("Create terminal"), "{open}");
     assert!(open.contains("consigint / auth"), "{open}");
@@ -5038,14 +5008,13 @@ fn terminal_workspace_picker_shows_current_branch_and_keeps_stable_target() {
         "picker must not keep the old branch label: {text}"
     );
 
-    let mut submitted = None;
-    for _ in 0..6 {
-        let _ = dashboard.key(KeyCode::Enter);
-        if let Some(message) = optional_request(dashboard.drain_outbox()) {
-            submitted = Some(message);
-            break;
-        }
-    }
+    let submitted = {
+        let _ = dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        )));
+        optional_request(dashboard.drain_outbox())
+    };
     let message = submitted.expect("create terminal must submit the same workspace");
     let Request::CreateSession(request) = message.request else {
         panic!("{:?}", message.request);
@@ -5101,8 +5070,7 @@ fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
     hierarchy.projects[1].workspaces[1].name = "feature/foo".into();
     hierarchy.projects[1].workspaces[0].name = "feature/bar".into();
     dashboard.install_hierarchy(hierarchy.clone());
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Tab);
+    open_new_terminal_from_menu(&mut dashboard);
     for character in "feature/foo".chars() {
         dashboard.key(KeyCode::Char(character));
     }
@@ -5113,23 +5081,20 @@ fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
         hierarchy,
     )));
     for _ in 0..6 {
+        let _ = dashboard.key(KeyCode::Enter);
         assert!(
-            {
-                let _ = dashboard.key(KeyCode::Enter);
-                dashboard.drain_outbox().is_empty()
-            },
+            dashboard.drain_outbox().is_empty(),
             "a stale filtered selection must not target the workspace that acquired its branch"
         );
     }
     dashboard.key(KeyCode::Down);
-    let mut submitted = None;
-    for _ in 0..6 {
-        let _ = dashboard.key(KeyCode::Enter);
-        if let Some(message) = optional_request(dashboard.drain_outbox()) {
-            submitted = Some(message.request);
-            break;
-        }
-    }
+    assert_eq!(dashboard.key(KeyCode::Enter), ovrcr::tui::DashboardAction::Redraw);
+    assert!(dashboard.drain_outbox().is_empty(), "accepting a workspace must not submit");
+    let _ = dashboard.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::ALT,
+    )));
+    let submitted = optional_request(dashboard.drain_outbox()).map(|message| message.request);
     let Some(Request::CreateSession(request)) = submitted else {
         panic!("explicit reselection must permit submission");
     };
@@ -5201,10 +5166,8 @@ fn cloud_close_warns_before_archiving_live_and_exited_rows_from_key_and_palette(
     }
 }
 
-/// Fake `claude` and `hermes` executables as the only agents, with claude
-/// remembered for `consigint`. Nothing runs them: the tests read the argv the
-/// form sends.
-fn task_agents(dashboard: &mut Dashboard) -> tempfile::TempDir {
+/// Configure named launchers for form choice tests; these executables are not run.
+fn fixture_agent_overrides(dashboard: &mut Dashboard) -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let mut agents = Vec::new();
@@ -5232,346 +5195,26 @@ fn task_agents(dashboard: &mut Dashboard) -> tempfile::TempDir {
     dir
 }
 
-fn agent_path(dir: &tempfile::TempDir, name: &str) -> std::ffi::OsString {
-    dir.path().join(name).into_os_string()
-}
-
-/// Every outgoing request: those a server message answers with and the outbox.
-fn outgoing(dashboard: &mut Dashboard, answered: Vec<ClientMessage>) -> Vec<ClientMessage> {
-    let mut all = answered;
-    all.extend(dashboard.drain_outbox());
-    all
-}
-
-/// The Server publishes the new workspace `id`, empty, before anything starts there.
-fn publish_empty_workspace(dashboard: &mut Dashboard, id: &str) {
-    let mut hierarchy = extra_workspace_hierarchy(id);
-    for workspace in hierarchy
-        .projects
-        .iter_mut()
-        .flat_map(|project| &mut project.workspaces)
-        .filter(|workspace| workspace.id == id)
-    {
-        workspace.sessions.clear();
-    }
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
-        hierarchy,
-    )));
-}
-
 #[test]
-fn a_task_names_the_branch_until_branch_is_edited() {
+fn create_terminal_uses_agent_prompt_and_terminal_command_fields() {
     let mut dashboard = dashboard_fixture();
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    // The form opens on Task.
-    dashboard.event_action(Event::Paste("Fix the Login bug: v2!".into()));
-    assert_in_order(
-        &palette_words(&dashboard),
-        &[
-            "Task",
-            "Fix the Login bug: v2!",
-            "Branch",
-            "feature/fix-the-login-bug-v2",
-        ],
-    );
-    to_branch(&mut dashboard);
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("feature/mine".into()));
-    dashboard.key(KeyCode::BackTab);
-    dashboard.key(KeyCode::BackTab); // Task
-    dashboard.event_action(Event::Paste(" again".into()));
+    fixture_agent_overrides(&mut dashboard);
+    open_generic_create_terminal_from_palette(&mut dashboard);
     let words = palette_words(&dashboard);
-    assert!(words.contains("feature/mine"), "{words}");
-    assert!(
-        !words.contains("feature/fix"),
-        "an edited Branch stays: {words}"
-    );
-    // A task with nothing ASCII leaves the bare prefix, which asks for a name.
-    dashboard.key(KeyCode::Esc);
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    dashboard.event_action(Event::Paste("修复".into()));
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    assert!(dashboard.drain_outbox().is_empty());
-    assert!(palette_words(&dashboard).contains("Add a name after feature/"));
-}
+    assert_in_order(&words, &["Initial prompt", "Start", "Workspace", "Name"]);
+    assert!(words.contains("Start Agent"), "{words}");
+    assert!(words.contains("Agent claude"), "{words}");
+    assert!(!words.contains("Task"), "{words}");
 
-#[test]
-fn a_task_starts_the_agent_with_it_and_names_the_session() {
-    use ovrcr::protocol::{BranchRequest, LifecycleOutcome, SessionKind};
-    let mut dashboard = dashboard_fixture();
-    let agents = task_agents(&mut dashboard);
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    let task = "Fix the login bug -- and the tests";
-    dashboard.event_action(Event::Paste(task.into()));
-    let words = palette_words(&dashboard);
-    assert!(
-        words.contains("Names the branch and session; claude gets it as its first message"),
-        "{words}"
-    );
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    // The workspace request cannot name a session: it creates the workspace
-    // alone, and the named session follows when it succeeds.
-    let create = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch {
-        project,
-        id,
-        branch,
-        launch,
-    } = &create.request
-    else {
-        panic!("{:?}", create.request);
-    };
-    assert_eq!(project, "consigint");
-    assert_eq!(
-        branch,
-        &BranchRequest::New {
-            branch: "feature/fix-the-login-bug-and-the-tests".into(),
-            base: "main".into(),
-        }
-    );
-    assert!(launch.is_none());
-    let id = id.clone();
-    accept(&mut dashboard, &create);
-    // The empty workspace lands first; its session is still to come.
-    publish_empty_workspace(&mut dashboard, &id);
-    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
-    let session = only_request(outgoing(&mut dashboard, answered));
-    let Request::CreateAgentSession(agent_request) = &session.request else {
-        panic!("{:?}", session.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(request.workspace, id);
-    assert_eq!(request.name, task);
-    assert_eq!(
-        request.argv,
-        vec![agent_path(&agents, "claude"), "--".into(), task.into()]
-    );
-    assert_eq!(request.label.as_deref(), Some("claude"));
-    accept(&mut dashboard, &session);
-    let mut created = session_summary(42, "consigint", &id, task, "claude", Some(7), 0);
-    created.kind = SessionKind::Agent {
-        name: "claude".into(),
-    };
-    let answered = lifecycle_completed(
-        &mut dashboard,
-        &session,
-        LifecycleOutcome::CreatedSession(Box::new(created)),
-    );
-    assert_eq!(dashboard.focused_session(), Some(SessionId(42)));
-    // The remembered launch choice names the agent, never the task.
-    let after = outgoing(&mut dashboard, answered);
-    let remembered = after
-        .iter()
-        .find(|message| matches!(message.request, Request::SetSetting { .. }))
-        .expect("the agent is remembered");
-    assert_eq!(
-        remembered.request,
-        Request::SetSetting {
-            path: "launch_choices.consigint".into(),
-            value: Some(
-                "{ kind = \"Agent\", preset = \"claude\", model_policy = \"HarnessDefault\" }"
-                    .into(),
-            ),
-        }
-    );
-    assert!(
-        !format!("{after:?}").contains("login"),
-        "nothing after the launch carries the task: {after:?}"
-    );
-}
-
-#[test]
-fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
-    let mut dashboard = dashboard_fixture();
-    let agents = task_agents(&mut dashboard);
-    dashboard.key(KeyCode::Char('n'));
-    // Start = Agent (remembered claude): the form opens on Task.
-    dashboard.event_action(Event::Paste("Write the release notes".into()));
-    let words = palette_words(&dashboard);
-    assert_in_order(&words, &["Task", "Start", "Workspace"]);
-    assert!(
-        words.contains("Names the session; claude gets it as its first message"),
-        "{words}"
-    );
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    let message = only_request(dashboard.drain_outbox());
-    let Request::CreateAgentSession(agent_request) = &message.request else {
-        panic!("{:?}", message.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(request.name, "Write the release notes");
-    assert_eq!(
-        request.argv,
-        vec![
-            agent_path(&agents, "claude"),
-            "--".into(),
-            "Write the release notes".into()
-        ]
-    );
-
-    // An agent not verified to take a first message: the task only names it.
-    let mut dashboard = dashboard_fixture();
-    let agents = task_agents(&mut dashboard);
-    dashboard.key(KeyCode::Char('n'));
-    for _ in 0..4 {
-        dashboard.key(KeyCode::Tab); // Start, Workspace, Name, Agent
-    }
-    dashboard.event_action(Event::Paste("hermes".into()));
-    for _ in 0..4 {
-        dashboard.key(KeyCode::BackTab); // Name, Workspace, Start, Task
-    }
-    dashboard.event_action(Event::Paste("Tidy the docs".into()));
-    let words = palette_words(&dashboard);
-    assert!(
-        words.contains("Only names the session; hermes starts without it"),
-        "{words}"
-    );
-    // A typed Name wins over the task.
     dashboard.key(KeyCode::Tab); // Start
-    dashboard.key(KeyCode::Tab); // Workspace
-    dashboard.key(KeyCode::Tab); // Name
-    dashboard.event_action(Event::Paste("docs".into()));
-    assert_eq!(
-        dashboard.key(KeyCode::Enter),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    let message = only_request(dashboard.drain_outbox());
-    let Request::CreateAgentSession(agent_request) = &message.request else {
-        panic!("{:?}", message.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(request.name, "docs");
-    assert_eq!(request.argv, vec![agent_path(&agents, "hermes")]);
-
-    // Terminal: no Task at all.
-    let mut dashboard = dashboard_fixture();
-    task_agents(&mut dashboard);
-    dashboard.key(KeyCode::Char('n'));
-    dashboard.key(KeyCode::Tab); // Start follows Task
     dashboard.key(KeyCode::Down); // Terminal
     let words = palette_words(&dashboard);
+    assert!(words.contains("Start") && words.contains("Terminal"), "{words}");
+    assert!(words.contains("Command"), "{words}");
+    assert!(words.contains("Workspace"), "{words}");
+    assert!(words.contains("Name"), "{words}");
+    assert!(!words.contains("Initial prompt"), "{words}");
+    assert!(!words.contains("Agent claude"), "{words}");
+    assert!(!words.contains("Model"), "{words}");
     assert!(!words.contains("Task"), "{words}");
-}
-
-#[test]
-fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
-    use ovrcr::protocol::LifecycleOutcome;
-    let mut dashboard = dashboard_fixture();
-    let agents = task_agents(&mut dashboard);
-    let action = dashboard.key(KeyCode::Char('w'));
-    answer_palette_inspect(&mut dashboard, action);
-    dashboard.event_action(Event::Paste("status check".into()));
-    dashboard.key(KeyCode::Enter);
-    let create = only_request(dashboard.drain_outbox());
-    let Request::CreateWorkspaceWithLaunch { id, .. } = &create.request else {
-        panic!("{:?}", create.request);
-    };
-    let id = id.clone();
-    accept(&mut dashboard, &create);
-    publish_empty_workspace(&mut dashboard, &id);
-    let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
-    let first = only_request(outgoing(&mut dashboard, answered));
-    let Request::CreateAgentSession(agent_request) = &first.request else {
-        panic!("{:?}", first.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(
-        request.argv,
-        vec![
-            agent_path(&agents, "claude"),
-            "--".into(),
-            "status check".into()
-        ]
-    );
-    accept(&mut dashboard, &first);
-    let answered = lifecycle_completed(
-        &mut dashboard,
-        &first,
-        LifecycleOutcome::Failed {
-            code: ErrorCode::Internal,
-            message: "Launch failed before a process started; check the executable and retry"
-                .into(),
-        },
-    );
-    assert!(outgoing(&mut dashboard, answered).is_empty());
-    // The workspace stands: the same recovery as a launch the workspace
-    // request carried, never the form that would create it again.
-    let screen = palette_text(&dashboard);
-    assert!(
-        screen.contains("┌ Workspace retained · recover launch"),
-        "{screen}"
-    );
-    let words = palette_words(&dashboard);
-    assert!(
-        words.contains("Couldn't start the session: Launch failed before a process started"),
-        "{words}"
-    );
-    // Retry preserves the session name and launch choice, but never replays Task.
-    dashboard.key(KeyCode::Enter);
-    let retry = only_request(dashboard.drain_outbox());
-    let Request::CreateAgentSession(agent_request) = &retry.request else {
-        panic!("{:?}", retry.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(request.name, "status check");
-    assert_eq!(request.argv, vec![agent_path(&agents, "claude")]);
-    accept(&mut dashboard, &retry);
-    lifecycle_completed(
-        &mut dashboard,
-        &retry,
-        LifecycleOutcome::Failed {
-            code: ErrorCode::Internal,
-            message: "still failing".into(),
-        },
-    );
-    // A different verified agent also keeps the name without receiving Task.
-    assert!(dashboard.drain_outbox().is_empty());
-    dashboard.key(KeyCode::Down); // Choose another agent
-    dashboard.key(KeyCode::Enter); // opens on Agent
-    dashboard.event_action(Event::Paste("codex".into()));
-    dashboard.key(KeyCode::Enter);
-    let other = only_request(dashboard.drain_outbox());
-    let Request::CreateAgentSession(agent_request) = &other.request else {
-        panic!("{:?}", other.request);
-    };
-    assert_eq!(
-        agent_request.model_policy,
-        ovrcr_protocol::AgentModelPolicy::HarnessDefault
-    );
-    let request = &agent_request.session;
-    assert_eq!(request.name, "status check");
-    assert_eq!(request.argv, vec![agent_path(&agents, "codex")]);
 }

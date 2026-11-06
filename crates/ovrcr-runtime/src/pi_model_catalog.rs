@@ -167,7 +167,7 @@ fn reap_process_group(
 }
 
 fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
-    for _ in 0..10 {
+    for check in 1..=10 {
         if observed_child_exit(child)? {
             return Ok(true);
         }
@@ -183,12 +183,42 @@ fn child_exited_unreaped(child: libc::pid_t) -> Result<bool> {
         if observed_group == -1 && group_errno == Some(libc::ESRCH) {
             // The leader can exit between waitid and getpgid. Recheck the
             // unreaped status briefly before treating group ownership as lost.
+            if check == 10 {
+                return Err(ownership_uncertain(
+                    child,
+                    false,
+                    observed_group,
+                    group_errno,
+                    check,
+                ));
+            }
             std::thread::park_timeout(Duration::from_millis(1));
             continue;
         }
-        bail!("native Pi discovery process-group ownership is uncertain");
+        return Err(ownership_uncertain(
+            child,
+            false,
+            observed_group,
+            group_errno,
+            check,
+        ));
     }
-    bail!("native Pi discovery process-group ownership is uncertain")
+    unreachable!("ownership retry loop returns after its tenth check")
+}
+
+fn ownership_uncertain(
+    child: libc::pid_t,
+    waitid_exit_observed: bool,
+    observed_group: libc::pid_t,
+    group_errno: Option<i32>,
+    checks: u8,
+) -> anyhow::Error {
+    eprintln!(
+        "ovrcr: native Pi discovery ownership uncertain: pid={child} waitid_exit_observed={waitid_exit_observed} observed_group={observed_group} getpgid_errno={group_errno:?} checks={checks}"
+    );
+    anyhow::anyhow!(
+        "native Pi discovery process-group ownership is uncertain (child {child}, WNOWAIT exit observed {waitid_exit_observed}, getpgid {observed_group}, errno {group_errno:?}, checks {checks})"
+    )
 }
 
 fn observed_child_exit(child: libc::pid_t) -> Result<bool> {
@@ -201,11 +231,14 @@ fn observed_child_exit(child: libc::pid_t) -> Result<bool> {
             libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
         )
     };
-    ensure!(observed == 0, "native Pi discovery ownership probe failed");
+    if observed == -1 {
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        bail!("native Pi discovery WNOWAIT probe failed (child {child}, errno {errno:?})");
+    }
     let observed_pid = unsafe { info.si_pid() };
     ensure!(
         observed_pid == 0 || observed_pid == child,
-        "native Pi discovery cleanup ownership is uncertain"
+        "native Pi discovery cleanup ownership is uncertain (child {child}, WNOWAIT reported pid {observed_pid})"
     );
     Ok(observed_pid != 0)
 }

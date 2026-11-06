@@ -20,6 +20,7 @@ pub(super) enum Action {
     OperatorQuick,
     OperatorKey(KeyCode, KeyModifiers),
     NewAgentSession,
+    NewTerminal,
     CreateTerminal,
     CreateWorkspace,
     RegisterProject,
@@ -292,6 +293,7 @@ impl Dashboard {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
             Action::NewAgentSession => self.open_new_agent_session(),
+            Action::NewTerminal => self.open_new_terminal(),
             Action::CreateTerminal => self.open_create_terminal(),
             Action::CreateWorkspace => self.open_create_workspace(),
             Action::RegisterProject => self.open_register_project(),
@@ -1007,7 +1009,21 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let groups = vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "New agent session", "Choose a registered branch, agent harness and model, then optionally enter an initial prompt".into(), Char('n'), Action::NewAgentSession).group('w', "n"),
-            key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
+            key_binding(
+                "t",
+                "New terminal",
+                format!(
+                    "Create a terminal in {}",
+                    current
+                        .map(|workspace| workspace_heading(dashboard, workspace))
+                        .unwrap_or_else(|| "the selected workspace".into())
+                ),
+                KeyCode::Null,
+                Action::NewTerminal,
+            )
+                .unless(current.and_then(|workspace| workspace.warning.as_ref().map(|_| LAUNCH_BLOCKED)))
+                .group('w', "t"),
+            key_binding("w", "Create branch", format!("Create a worktree for a new branch under {project_target}; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
         KeyGroup { title: "Session".into(), keys: vec![

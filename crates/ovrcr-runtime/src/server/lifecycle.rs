@@ -431,6 +431,7 @@ fn publish_completed(
     op: LifecycleOp,
     outcome: LifecycleOutcome,
     publish_hierarchy: bool,
+    target_workspace: Option<ovrcr_protocol::WorkspaceLifecycleIdentity>,
 ) {
     if publish_hierarchy {
         state
@@ -445,6 +446,7 @@ fn publish_completed(
             client_token,
             op,
             outcome,
+            target_workspace,
         }));
 }
 
@@ -468,6 +470,16 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
             break;
         }
         let op = job.kind.op();
+        let target_workspace = match &job.kind {
+            JobKind::CreateWorkspace { project, id, .. }
+            | JobKind::CreateWorkspaceWithLaunch { project, id, .. } => {
+                Some(ovrcr_protocol::WorkspaceLifecycleIdentity {
+                    project: project.clone(),
+                    id: id.clone(),
+                })
+            }
+            _ => None,
+        };
         let (outcome, publish_hierarchy) = match job.kind {
             JobKind::CreateWorkspace {
                 project,
@@ -565,7 +577,14 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
         // completion with its next job (stop sessions, then remove a workspace),
         // and that job must not be refused as overlapping this finished one.
         clear_inflight(&state, job.client_token);
-        publish_completed(&state, job.client_token, op, outcome, publish_hierarchy);
+        publish_completed(
+            &state,
+            job.client_token,
+            op,
+            outcome,
+            publish_hierarchy,
+            target_workspace,
+        );
     }
 }
 

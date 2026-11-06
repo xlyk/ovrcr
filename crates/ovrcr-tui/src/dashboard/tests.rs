@@ -3551,10 +3551,7 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
         rows: 40,
         cols: 120,
     });
-    assert_eq!(
-        reason(&empty, "n"),
-        Some("no workspace available; register a project first")
-    );
+    assert_eq!(reason(&empty, "n"), None);
     assert_eq!(reason(&empty, "w"), Some("no project registered"));
     assert_eq!(reason(&empty, "a"), None);
 }
@@ -3583,7 +3580,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('t', "X", Action::CloseTerminal),
         ('t', "c", Action::CopyScreen),
         ('t', "h", Action::History),
-        ('w', "n", Action::CreateTerminal),
+        ('w', "n", Action::NewAgentSession),
         ('p', "n", Action::CreateWorkspace),
         ('p', "a", Action::RegisterProject),
         ('v', "t/Ctrl-t", Action::Tasks),

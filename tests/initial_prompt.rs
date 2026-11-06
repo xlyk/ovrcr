@@ -1,6 +1,6 @@
 //! Live, production-path Initial prompt intent regressions.
 //!
-//! The owned `claude` and `pi` executables below are native CLI stand-ins.
+//! The owned `claude`, `pi`, and `omp` executables below are native CLI stand-ins.
 //! Their captures prove what OVRCR passed to those processes; they are not
 //! provider acceptance evidence.
 #[path = "support/live.rs"]
@@ -29,6 +29,9 @@ const FAKE_LAUNCH_MARKER: &str = "__OVRCR_FAKE_CLAUDE_LAUNCH__";
 const PI_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_PI_CAPTURE";
 const PI_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_PI_CATALOG";
 const FAKE_PI_LAUNCH_MARKER: &str = "__OVRCR_FAKE_PI_LAUNCH__";
+const OMP_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_OMP_CAPTURE";
+const OMP_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_OMP_CATALOG";
+const FAKE_OMP_LAUNCH_MARKER: &str = "__OVRCR_FAKE_OMP_LAUNCH__";
 const BRANCH: &str = "feature/initial-prompt-intent";
 
 fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
@@ -73,6 +76,92 @@ fn install_fake_pi(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     )
     .unwrap();
     (executable, capture, catalog)
+}
+
+fn install_fake_omp(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
+    let bin = live.root.path().join("fake-omp-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let executable = bin.join("omp");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_OMP_CATALOG__' >> \"${OMP_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${OMP_CAPTURE_ENV}\"; done\n    cat \"${OMP_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_OMP_LAUNCH_MARKER}' >> \"${OMP_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${OMP_CAPTURE_ENV}\"; done\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let capture = live.root.path().join("fake-omp-argv.txt");
+    let catalog = live.root.path().join("fake-omp-models.json");
+    write_omp_catalog(&catalog, true);
+    (executable, capture, catalog)
+}
+
+fn write_omp_catalog(catalog: &Path, include_openai: bool) {
+    let mut models = String::new();
+    if include_openai {
+        models.push_str(
+            r#"{"provider":"openai","kind":"chat","id":"gpt-5.4","selector":"openai/gpt-5.4","name":"GPT-5.4"},"#,
+        );
+    }
+    models.push_str(
+        r#"{"provider":"anthropic","kind":"chat","id":"claude-sonnet-4-5","selector":"anthropic/claude-sonnet-4-5","name":"Claude Sonnet 4.5"}"#,
+    );
+    std::fs::write(catalog, format!(r#"{{"models":[{models}]}}"#)).unwrap();
+}
+
+fn start_server_with_omp(
+    live: &Live,
+    fake_omp: &Path,
+    capture: &Path,
+    catalog: &Path,
+    log: Option<&Path>,
+) {
+    let mut entries = vec![fake_omp.parent().unwrap().to_path_buf()];
+    entries.extend(std::env::split_paths(&live.path()));
+    let path = std::env::join_paths(entries).unwrap();
+    let environment = [
+        ("PATH", path.as_os_str()),
+        (OMP_CAPTURE_ENV, capture.as_os_str()),
+        (OMP_CATALOG_ENV, catalog.as_os_str()),
+    ];
+    if let Some(log) = log {
+        live.start_binary_logged(&environment, log);
+    } else {
+        live.start_binary_env(&environment);
+    }
+}
+
+fn detected_omp_launch(
+    live: &Live,
+    fake_omp: &Path,
+    name: &str,
+    model_policy: AgentModelPolicy,
+) -> CreateAgentSessionRequest {
+    let mut native = vec![fake_omp.canonicalize().unwrap().into_os_string()];
+    ovrcr::protocol::apply_default_auto_trust("omp", &mut native);
+    let mut argv = vec![
+        live.executable.canonicalize().unwrap().into_os_string(),
+        "agent".into(),
+        "run".into(),
+        "omp".into(),
+        "--".into(),
+    ];
+    argv.extend(native);
+    CreateAgentSessionRequest {
+        session: CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: name.into(),
+            label: Some("omp".into()),
+            argv,
+            kind: SessionKind::Agent { name: "omp".into() },
+        },
+        model_policy,
+        model_binding: None,
+        expected_model: None,
+    }
 }
 
 fn start_server_with_pi(live: &Live, fake_pi: &Path, capture: &Path, catalog: &Path) {
@@ -466,6 +555,41 @@ fn query_pi_models(
     );
     loop {
         match read_frame::<ServerMessage>(connection).expect("read Pi model capability event") {
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id: event_id,
+                capabilities,
+            }) if event_id == request_id => return capabilities,
+            ServerMessage::Event(_) => {}
+            ServerMessage::Response {
+                request_id: event_id,
+                response,
+            } => panic!("unexpected Dashboard response {event_id}: {response:?}"),
+        }
+    }
+}
+
+fn query_omp_models(
+    connection: &mut UnixStream,
+    request_id: u64,
+    launch: &CreateAgentSessionRequest,
+) -> ovrcr::protocol::AgentModelCapabilities {
+    assert_eq!(
+        client::request(
+            connection,
+            request_id,
+            Request::QueryAgentModels {
+                preset: "omp".into(),
+                origin: ovrcr::protocol::AgentLaunchOrigin::Detected,
+                argv: launch.session.argv.clone(),
+                project: launch.session.project.clone(),
+                workspace: launch.session.workspace.clone(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    loop {
+        match read_frame::<ServerMessage>(connection).expect("read OMP model capability event") {
             ServerMessage::Event(ServerEvent::AgentModels {
                 request_id: event_id,
                 capabilities,
@@ -1328,6 +1452,279 @@ fn pi_start_refuses_a_model_removed_from_the_fresh_native_catalog() {
         "the removed model never starts a Pi session"
     );
     assert!(!format!("{refused:?}").contains("T394_PI_STALE_MODEL_PROMPT_41c0e27a"));
+
+    drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+}
+
+#[test]
+fn omp_model_catalog_and_initial_prompt_keep_one_detected_native_launch() {
+    let live = Live::idle().bounded();
+    let (fake_omp, capture, catalog) = install_fake_omp(&live);
+    let log = live.root.path().join("server.stderr.log");
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_omp(&live, &fake_omp, &capture, &catalog, Some(&log));
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let mut launch = detected_omp_launch(
+        &live,
+        &fake_omp,
+        "omp-explicit-prompt-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let capabilities = query_omp_models(&mut dashboard, 3, &launch);
+    assert_eq!(capabilities.preset, "omp");
+    assert!(capabilities.reason.is_none(), "{capabilities:?}");
+    let binding = capabilities
+        .binding
+        .expect("OMP choices carry a launch binding");
+    assert_eq!(
+        capabilities.models,
+        vec![
+            ovrcr::protocol::AgentModelOption {
+                alias: "anthropic/claude-sonnet-4-5".into(),
+                resolved: "anthropic/claude-sonnet-4-5".into(),
+            },
+            ovrcr::protocol::AgentModelOption {
+                alias: "openai/gpt-5.4".into(),
+                resolved: "openai/gpt-5.4".into(),
+            },
+        ],
+        "the picker exposes exact selectors from OMP's native JSON catalog"
+    );
+
+    let intent = allocate_intent(&mut dashboard);
+    launch.model_policy = AgentModelPolicy::Explicit("openai/gpt-5.4".into());
+    launch.model_binding = Some(binding);
+    launch.expected_model = Some("openai/gpt-5.4".into());
+    let prompt = "  T395_OMP_PROMPT_MARKER_73ab9df1\nsecond line remains one argument  ";
+    let request = InitialPromptLaunchRequest {
+        intent: intent.clone(),
+        launch,
+        prompt: prompt.into(),
+    };
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::CreateAgentSessionWithPrompt(request.clone()),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 5;
+    let accepted = wait_for_intent(
+        &mut dashboard,
+        &intent,
+        InitialPromptIntentState::LaunchAccepted,
+        &mut request_id,
+    );
+    assert_eq!(accepted.name, "omp-explicit-prompt-session");
+
+    let output = wait_for_capture(&capture, prompt);
+    let launch_output = output
+        .split_once(FAKE_OMP_LAUNCH_MARKER)
+        .expect("the detected OMP process started")
+        .1;
+    assert!(
+        launch_output.contains("ARG:--model\nARG:openai/gpt-5.4\n"),
+        "explicit selection stays in OMP native argv: {launch_output:?}"
+    );
+    assert!(
+        launch_output.contains("ARG:--auto-approve\n"),
+        "the detected OMP trust option remains in the launch: {launch_output:?}"
+    );
+    assert!(
+        launch_output.contains(&format!("ARG:--\nARG:{prompt}\n")),
+        "the exact multiline prompt is one native positional message: {launch_output:?}"
+    );
+    assert_eq!(
+        output.matches("__OVRCR_FAKE_OMP_CATALOG__").count(),
+        2,
+        "capability lookup and Start each consult OMP's current native catalog"
+    );
+    assert_eq!(
+        output
+            .matches("CATALOG_ARG:models\nCATALOG_ARG:--json\n")
+            .count(),
+        2,
+        "model discovery uses OMP's structured JSON command"
+    );
+    assert!(!output.contains("CATALOG_ARG:--no-extensions"));
+
+    drop(dashboard);
+    let mut dashboard = self::dashboard(&live);
+    let reconciled = reconcile(&mut dashboard, 2, &intent);
+    assert_eq!(reconciled, accepted);
+    let duplicate = client::request(
+        &mut dashboard,
+        3,
+        Request::CreateAgentSessionWithPrompt(request.clone()),
+    )
+    .unwrap();
+    assert_eq!(
+        duplicate,
+        Response::InitialPromptIntents(vec![accepted.clone()]),
+        "replay after reconnect returns the exact accepted OMP session/run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&capture)
+            .unwrap()
+            .matches(FAKE_OMP_LAUNCH_MARKER)
+            .count(),
+        1,
+        "duplicate accepted OMP intent does not start another process"
+    );
+    drop(dashboard);
+    let mut settings_dashboard = self::dashboard(&live);
+    let remembered = next_settings_report(&mut settings_dashboard);
+    assert_eq!(
+        remembered.settings.launch_choices.get(PROJECT),
+        Some(&LaunchChoice::Agent {
+            preset: "omp".into(),
+            model_policy: AgentModelPolicy::Explicit("openai/gpt-5.4".into()),
+        }),
+        "the exact OMP model policy is remembered per project"
+    );
+    drop(settings_dashboard);
+    let mut dashboard = self::dashboard(&live);
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("expected retained session inventory")
+    };
+    let session = accepted.session.unwrap();
+    let run = accepted.run.unwrap();
+    let matching: Vec<_> = sessions
+        .iter()
+        .filter(|entry| entry.id == session && entry.run == run)
+        .collect();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].kind, SessionKind::Agent { name: "omp".into() });
+    assert_eq!(matching[0].label, "omp");
+
+    let blank_intent = allocate_intent(&mut dashboard);
+    let blank_launch = detected_omp_launch(
+        &live,
+        &fake_omp,
+        "omp-blank-interactive-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            5,
+            Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                intent: blank_intent.clone(),
+                launch: blank_launch,
+                prompt: String::new(),
+            }),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 6;
+    let blank_accepted = wait_for_intent(
+        &mut dashboard,
+        &blank_intent,
+        InitialPromptIntentState::LaunchAccepted,
+        &mut request_id,
+    );
+    assert_eq!(blank_accepted.name, "omp-blank-interactive-session");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let output = loop {
+        let contents = std::fs::read_to_string(&capture).unwrap_or_default();
+        if contents.matches(FAKE_OMP_LAUNCH_MARKER).count() >= 2
+            && contents
+                .rsplit_once(FAKE_OMP_LAUNCH_MARKER)
+                .is_some_and(|(_, launch)| launch.contains("ARG:--auto-approve\n"))
+        {
+            break contents;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "second fake OMP process did not start; last output: {contents:?}"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+    };
+    let blank_output = output
+        .rsplit_once(FAKE_OMP_LAUNCH_MARKER)
+        .expect("the second OMP process started")
+        .1;
+    assert!(blank_output.contains("ARG:--auto-approve\n"));
+    assert!(!blank_output.contains("ARG:--model\n"));
+    assert!(!blank_output.contains("ARG:--\n"));
+
+    let event_ring_empty = assert_public_stores_exclude(&live, "T395_OMP_PROMPT_MARKER_73ab9df1");
+    drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+    assert_logs_exclude(
+        &live,
+        &log,
+        "T395_OMP_PROMPT_MARKER_73ab9df1",
+        event_ring_empty,
+    );
+}
+
+#[test]
+fn omp_start_refuses_a_model_removed_from_the_fresh_native_catalog() {
+    let live = Live::idle().bounded();
+    let (fake_omp, capture, catalog) = install_fake_omp(&live);
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_omp(&live, &fake_omp, &capture, &catalog, None);
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let mut launch = detected_omp_launch(
+        &live,
+        &fake_omp,
+        "omp-stale-model-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let capabilities = query_omp_models(&mut dashboard, 3, &launch);
+    let binding = capabilities
+        .binding
+        .expect("OMP choices carry a launch binding");
+    launch.model_policy = AgentModelPolicy::Explicit("openai/gpt-5.4".into());
+    launch.model_binding = Some(binding);
+    launch.expected_model = Some("openai/gpt-5.4".into());
+    write_omp_catalog(&catalog, false);
+
+    let intent = allocate_intent(&mut dashboard);
+    let prompt = "T395_OMP_STALE_PROMPT_MARKER_b9d73e41\nkeep this draft recoverable";
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                intent: intent.clone(),
+                launch,
+                prompt: prompt.into(),
+            }),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 5;
+    let refused = wait_for_intent(
+        &mut dashboard,
+        &intent,
+        InitialPromptIntentState::Refused,
+        &mut request_id,
+    );
+    assert_eq!(refused.recoverable_prompt.as_deref(), Some(prompt));
+    assert!(
+        refused
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("selected omp model resolution changed")),
+        "the removed exact model is refused: {refused:?}"
+    );
+    let output = std::fs::read_to_string(&capture).unwrap_or_default();
+    assert_eq!(output.matches("__OVRCR_FAKE_OMP_CATALOG__").count(), 2);
+    assert!(!output.contains(FAKE_OMP_LAUNCH_MARKER));
+    assert!(!format!("{refused:?}").contains("T395_OMP_STALE_PROMPT_MARKER_b9d73e41"));
 
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);

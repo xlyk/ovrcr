@@ -119,8 +119,8 @@ transient launch path, are redacted from Debug/errors, and are not retained in
 ordinary session metadata, settings, or Events. Successful harness/model memory
 uses the existing settings owner.
 
-Verified explicit model choices currently support only exact detected Claude
-Code and Codex launches. The Dashboard queries through the current Server-owned
+Verified explicit model choices support detected Claude Code, Pi, Codex, and Oh
+My Pi launches. The Dashboard queries through the current Server-owned
 catalog worker against the registered workspace and the Server-resolved native
 argv. It does not trust a client model list or infer a provider. A Codex catalog
 read first uses the pinned app-server one-shot startup-config path to read
@@ -134,6 +134,15 @@ This catalog path starts no thread or turn. At launch, the Server repeats the
 query, verifies the registered Git identity, exact detected argv and fresh model
 resolution, then inserts Codex's native `--model` argument. Harness default
 keeps the native launch argv unchanged.
+
+Detected Oh My Pi model choices come from its native `omp models --json`
+catalog for the selected workspace. The bounded adapter keeps the effective OMP
+profile and configured provider extensions, rejects diagnostics or malformed
+JSON, and verifies the exact provider/model selector again before Start. OMP's
+own `--model` resolver can fuzzy-match after its exact lookup, so this fresh
+preflight does not prove the model that a later native process will apply. Pi
+has a related native fuzzy and custom-model fallback after OVRCR's catalog
+check; see the Dashboard guide for the exact limitation.
 
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt

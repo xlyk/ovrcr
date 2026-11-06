@@ -350,10 +350,10 @@ impl InitialPromptLaunchRequest {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
         if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex"))
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex" | "omp"))
                 || !matches!(
                     self.launch.session.label.as_deref(),
-                    Some("claude" | "pi" | "codex")
+                    Some("claude" | "pi" | "codex" | "omp")
                 )
                 || !matches!(
                     (&self.launch.session.kind, self.launch.session.label.as_deref()),
@@ -361,7 +361,8 @@ impl InitialPromptLaunchRequest {
                 ))
         {
             return Err(
-                "initial prompts require a detected Claude Code, Pi, or Codex launcher".into(),
+                "initial prompts require a detected Claude Code, Pi, Codex, or Oh My Pi launcher"
+                    .into(),
             );
         }
         if self.launch.session.argv.len() > 128
@@ -731,6 +732,14 @@ pub enum LifecycleOutcome {
     Failed { code: ErrorCode, message: String },
 }
 
+/// Exact registered workspace identity carried by a workspace lifecycle receipt.
+/// The client token alone is connection-local and may collide after Dashboard replacement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceLifecycleIdentity {
+    pub project: String,
+    pub id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
@@ -765,11 +774,14 @@ pub enum ServerEvent {
         branch: String,
     },
     /// A Lifecycle job finished. `client_token` is the request_id that accepted
-    /// the job on the Dashboard connection.
+    /// the job on the Dashboard connection. Workspace jobs also repeat their
+    /// frozen target identity so a replacement Dashboard cannot mistake an old
+    /// same-token completion for its own create.
     LifecycleCompleted {
         client_token: u64,
         op: LifecycleOp,
         outcome: LifecycleOutcome,
+        target_workspace: Option<WorkspaceLifecycleIdentity>,
     },
     OperatorChanged(crate::OperatorConversationId),
     /// A current Dashboard's bounded model catalog lookup. The request id is
@@ -1016,18 +1028,26 @@ mod wire_snapshot {
                 session: CreateSessionRequest {
                     project: "p".into(),
                     workspace: "w".into(),
-                    name: "codex".into(),
-                    label: Some("codex".into()),
-                    argv: vec!["codex".into()],
-                    kind: SessionKind::Agent {
-                        name: "codex".into(),
-                    },
+                    name: "n".into(),
+                    label: Some("omp".into()),
+                    argv: vec!["ovrcr".into(), "agent".into(), "run".into(), "omp".into()],
+                    kind: SessionKind::Agent { name: "omp".into() },
                 },
                 model_policy: crate::AgentModelPolicy::HarnessDefault,
                 model_binding: None,
                 expected_model: None,
             },
-            prompt: "a Codex startup prompt".into(),
+            prompt: "first line\n-- a message, not an option".into(),
+        };
+        request
+            .validate()
+            .expect("OMP accepts a nonblank Initial prompt request");
+
+        request.launch.session.name = "codex".into();
+        request.launch.session.label = Some("codex".into());
+        request.launch.session.argv = vec!["codex".into()];
+        request.launch.session.kind = SessionKind::Agent {
+            name: "codex".into(),
         };
         assert!(request.validate().is_ok());
 
@@ -1685,6 +1705,19 @@ mod wire_snapshot {
                     client_token: 7,
                     op: LifecycleOp::CreateSession,
                     outcome: LifecycleOutcome::Succeeded,
+                    target_workspace: None,
+                },
+            ),
+            (
+                "LifecycleCompletedWithWorkspace",
+                ServerEvent::LifecycleCompleted {
+                    client_token: 7,
+                    op: LifecycleOp::CreateWorkspace,
+                    outcome: LifecycleOutcome::Succeeded,
+                    target_workspace: Some(WorkspaceLifecycleIdentity {
+                        project: "p".into(),
+                        id: "w".into(),
+                    }),
                 },
             ),
             (
@@ -3843,13 +3876,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0449017301630168016c0104",
+            "2a044a017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0449017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044a017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3898,18 +3931,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04490000"),
+        ("Response::NotificationNavigation", "0d044a0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0449017301630168016c0104",
+            "0e01016e044a017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010449017301630168016c0164",
+            "0f010708090101690101044a017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004490107080901016901010449017301630168016c0164",
+            "10044a010708090101690101044a017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -3945,14 +3978,18 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0449017301630168016c0104",
+            "08016e044a017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
             "ServerEvent::WipSavePrompt",
             "0a016101620d666561747572652f746f706963",
         ),
-        ("ServerEvent::LifecycleCompleted", "0b070200"),
+        ("ServerEvent::LifecycleCompleted", "0b07020000"),
+        (
+            "ServerEvent::LifecycleCompletedWithWorkspace",
+            "0b0700000101700177",
+        ),
         (
             "ServerEvent::AgentModels",
             "0d0906636c61756465010762696e64696e6701046f7075730b636c617564652d6f70757300",

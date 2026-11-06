@@ -1424,17 +1424,20 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     );
     assert_eq!(dashboard.focused_session(), Some(retained));
 
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('w'));
     assert_eq!(
-        dashboard.key(KeyCode::Char('n')),
+        dashboard.key(KeyCode::Char('t')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    dashboard.key(KeyCode::Tab);
-    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab); // Name
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("container-target".into()));
-    dashboard.key(KeyCode::Tab);
     assert_eq!(
-        dashboard.key(KeyCode::Enter),
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ))),
         ovrcr::tui::DashboardAction::Redraw
     );
     let create = only_request(dashboard.drain_outbox());
