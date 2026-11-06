@@ -1611,8 +1611,9 @@ fn base_matching_is_case_sensitive() {
 
 #[test]
 fn workspace_created_with_exited_local_shell_closes_palette() {
+    let repo = trunk_hint_repository();
     let mut dashboard = dashboard_fixture();
-    open_workspace_form(&mut dashboard);
+    open_workspace_form_with_repo(&mut dashboard, repo.path());
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -1703,8 +1704,9 @@ fn palette_switch_drops_late_inventory_without_clearing_current_error() {
 
 #[test]
 fn workspace_creation_cancel_and_failure_do_not_attach_late() {
+    let repo = trunk_hint_repository();
     let mut dashboard = dashboard_fixture();
-    open_workspace_form(&mut dashboard);
+    open_workspace_form_with_repo(&mut dashboard, repo.path());
     dashboard.event_action(Event::Paste("pick-demo".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -1739,7 +1741,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     assert!(!palette_text(&dashboard).contains("┌ Create branch"));
 
     let mut cancelled = dashboard_fixture();
-    open_workspace_form(&mut cancelled);
+    open_workspace_form_with_repo(&mut cancelled, repo.path());
     cancelled.key(KeyCode::Esc);
     assert!(cancelled.drain_outbox().is_empty());
     cancelled.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
@@ -2992,9 +2994,10 @@ fn manual_title_events_update_sidebar_pane_and_palette_without_identity_change()
 
 #[test]
 fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
+    let repo = trunk_hint_repository();
     for hierarchy_first in [false, true] {
         let mut dashboard = dashboard_fixture();
-        open_workspace_form(&mut dashboard);
+        open_workspace_form_with_repo(&mut dashboard, repo.path());
         dashboard.event_action(Event::Paste("pick-demo".into()));
         assert_eq!(
             dashboard.key(KeyCode::Enter),
@@ -3747,8 +3750,11 @@ fn uncommitted_changes_alone_offer_discard_in_plain_words() {
 
 /// Submits Create workspace for `feature/status-check` and lets the Server
 /// accept it; returns the request and its workspace id.
-fn create_status_check_workspace(dashboard: &mut Dashboard) -> (ClientMessage, String) {
-    open_workspace_form(dashboard);
+fn create_status_check_workspace(
+    dashboard: &mut Dashboard,
+    repo: &std::path::Path,
+) -> (ClientMessage, String) {
+    open_workspace_form_with_repo(dashboard, repo);
     dashboard.event_action(Event::Paste("feature/status-check".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -3851,8 +3857,9 @@ fn failed_workspace_creation_returns_to_the_form_with_its_values() {
 #[test]
 fn partial_branch_creation_requires_readback_before_retrying() {
     use ovrcr::protocol::LifecycleOutcome;
+    let repo = trunk_hint_repository();
     let mut dashboard = dashboard_fixture();
-    let (create, id) = create_status_check_workspace(&mut dashboard);
+    let (create, id) = create_status_check_workspace(&mut dashboard, repo.path());
     let readbacks = lifecycle_completed(
         &mut dashboard,
         &create,
