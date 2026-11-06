@@ -227,7 +227,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             "Only detected launchers can expose verified model choices.",
         );
     }
-    if !matches!(input.preset.as_str(), "claude" | "codex") {
+    if !matches!(input.preset.as_str(), "claude" | "pi" | "codex") {
         return unsupported(
             input.preset.clone(),
             "Verified explicit model selection is not available for this harness yet.",
@@ -241,16 +241,8 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
     }
     let result = (|| -> anyhow::Result<_> {
         let executable = find_executable(&input.path, &input.preset)?;
-        let mut native_argv = vec![executable.as_os_str().to_owned()];
-        ovrcr_protocol::apply_default_auto_trust(&input.preset, &mut native_argv);
-        let mut launch_argv = vec![
-            input.launcher.as_os_str().to_owned(),
-            "agent".into(),
-            "run".into(),
-            input.preset.clone().into(),
-            "--".into(),
-        ];
-        launch_argv.extend(native_argv.iter().cloned());
+        let native_argv = native_argv(&input.preset, &executable)?;
+        let launch_argv = detected_launch_argv(&input.preset, &input.launcher, &native_argv);
         if !launch_matches(&input.argv, &launch_argv, false) {
             anyhow::bail!(
                 "selected launcher does not match the Server-resolved executable and arguments"
@@ -271,17 +263,18 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             &input.workspace,
             &input.git_identity,
         )?;
-        let models = dashboard_catalog(
+        let catalog = dashboard_catalog(
             &input.preset,
             &executable,
             &native_argv,
             &input.cwd,
             cancelled,
-        )?
-        .into_iter()
-        .filter(|(alias, _)| input.preset != "claude" || alias != "default")
-        .map(|(alias, resolved)| AgentModelOption { alias, resolved })
-        .collect::<Vec<_>>();
+        )?;
+        let models = catalog
+            .into_iter()
+            .filter(|(alias, _)| input.preset == "codex" || alias != "default")
+            .map(|(alias, resolved)| AgentModelOption { alias, resolved })
+            .collect::<Vec<_>>();
         Ok((binding, models))
     })();
     match result {
@@ -334,9 +327,36 @@ fn find_executable(path: &std::ffi::OsStr, name: &str) -> anyhow::Result<PathBuf
 fn harness_label(preset: &str) -> &'static str {
     match preset {
         "claude" => "Claude Code",
+        "pi" => "Pi",
         "codex" => "Codex",
         _ => "Agent",
     }
+}
+
+fn native_argv(preset: &str, executable: &Path) -> anyhow::Result<Vec<std::ffi::OsString>> {
+    anyhow::ensure!(
+        matches!(preset, "claude" | "pi" | "codex"),
+        "detected model selection is not supported for this harness"
+    );
+    let mut argv = vec![executable.as_os_str().to_owned()];
+    ovrcr_protocol::apply_default_auto_trust(preset, &mut argv);
+    Ok(argv)
+}
+
+fn detected_launch_argv(
+    preset: &str,
+    launcher: &Path,
+    native_argv: &[std::ffi::OsString],
+) -> Vec<std::ffi::OsString> {
+    let mut argv = vec![
+        launcher.as_os_str().to_owned(),
+        "agent".into(),
+        "run".into(),
+        preset.into(),
+        "--".into(),
+    ];
+    argv.extend(native_argv.iter().cloned());
+    argv
 }
 
 fn dashboard_catalog(
@@ -353,6 +373,7 @@ fn dashboard_catalog(
         "codex" => {
             crate::codex_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
         }
+        "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
         _ => anyhow::bail!("verified model discovery is unavailable for this harness"),
     }
 }
@@ -411,10 +432,12 @@ pub(super) fn prepare_initial_prompt_session(
     state: &ServerState,
     request: CreateAgentSessionRequest,
 ) -> anyhow::Result<CreateSessionRequest> {
-    let preset = match &request.session.kind {
-        SessionKind::Agent { name } if matches!(name.as_str(), "claude" | "codex") => name.clone(),
-        _ => anyhow::bail!("Initial prompts require a detected Claude Code or Codex launcher"),
-    };
+    let preset = request
+        .session
+        .label
+        .as_deref()
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex"))
+        .context("Initial prompts require a supported detected harness")?;
     anyhow::ensure!(
         !state
             .settings
@@ -427,20 +450,16 @@ pub(super) fn prepare_initial_prompt_session(
             .any(|agent| agent.name == preset),
         "configured launchers do not support Initial prompts"
     );
-    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), &preset)?;
-    let launcher = std::env::current_exe()?;
-    let mut expected = vec![
-        launcher.as_os_str().to_owned(),
-        "agent".into(),
-        "run".into(),
-        preset.clone().into(),
-        "--".into(),
-    ];
-    let mut native = vec![executable.as_os_str().to_owned()];
-    ovrcr_protocol::apply_default_auto_trust(&preset, &mut native);
-    expected.extend(native);
     anyhow::ensure!(
-        request.session.label.as_deref() == Some(preset.as_str())
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
+        "Initial prompts require a matching detected agent harness"
+    );
+    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), preset)?;
+    let launcher = std::env::current_exe()?;
+    let native = native_argv(preset, &executable)?;
+    let expected = detected_launch_argv(preset, &launcher, &native);
+    anyhow::ensure!(
+        request.session.label.as_deref() == Some(preset)
             && launch_matches(&request.session.argv, &expected, false),
         "Initial prompts require the current detected launcher and arguments"
     );
@@ -506,13 +525,15 @@ pub(super) fn prepare_session(
         return Ok(request.session);
     };
     anyhow::ensure!(request.model_policy.is_valid(), "explicit model is invalid");
-    let preset = match &request.session.kind {
-        SessionKind::Agent { name } if matches!(name.as_str(), "claude" | "codex") => name.clone(),
-        _ => anyhow::bail!("explicit model selection is unavailable for this harness"),
-    };
+    let preset = request
+        .session
+        .label
+        .as_deref()
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex"))
+        .context("explicit model selection is not supported for this harness")?;
     anyhow::ensure!(
-        request.session.label.as_deref() == Some(preset.as_str()),
-        "explicit model selection requires the detected harness label"
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
+        "explicit model selection requires the matching detected harness label"
     );
     anyhow::ensure!(
         !state
@@ -526,21 +547,13 @@ pub(super) fn prepare_session(
             .any(|agent| agent.name == preset),
         "configured launchers do not support explicit model overrides"
     );
-    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), &preset)?;
-    let mut native_argv = vec![executable.as_os_str().to_owned()];
-    ovrcr_protocol::apply_default_auto_trust(&preset, &mut native_argv);
+    let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), preset)?;
+    let native_argv = native_argv(preset, &executable)?;
     let launcher = std::env::current_exe()?;
-    let mut expected = vec![
-        launcher.as_os_str().to_owned(),
-        "agent".into(),
-        "run".into(),
-        preset.clone().into(),
-        "--".into(),
-    ];
-    expected.extend(native_argv.iter().cloned());
+    let expected = detected_launch_argv(preset, &launcher, &native_argv);
     anyhow::ensure!(
         launch_matches(&request.session.argv, &expected, true),
-        "Claude launch configuration changed or is unsupported"
+        "selected launch configuration changed or is unsupported"
     );
     let workspace = state
         .registry
@@ -557,7 +570,7 @@ pub(super) fn prepare_session(
         "registered Git worktree changed; refresh the workspace"
     );
     let current_binding = binding(
-        &preset,
+        preset,
         &expected,
         &executable,
         &workspace.path,
@@ -569,8 +582,14 @@ pub(super) fn prepare_session(
         request.model_binding.as_deref() == Some(current_binding.as_str()),
         "model capability is stale; refresh the model list"
     );
+    if preset == "pi" {
+        anyhow::ensure!(
+            ovrcr_protocol::DelegationSettings::valid_model(model),
+            "Pi explicit models require an exact provider/model ID"
+        );
+    }
     let catalog = dashboard_catalog(
-        &preset,
+        preset,
         &executable,
         &native_argv,
         &workspace.path,
@@ -582,7 +601,7 @@ pub(super) fn prepare_session(
         .map(|(_, resolved)| resolved);
     anyhow::ensure!(
         resolved.is_some() && request.expected_model.as_ref() == resolved,
-        "selected model resolution changed; choose the current model"
+        "selected {preset} model resolution changed; choose the current model"
     );
     request
         .session

@@ -350,13 +350,19 @@ impl InitialPromptLaunchRequest {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
         if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "codex"))
-                || self.launch.session.label.as_deref().is_none_or(|label| {
-                    !matches!(label, "claude" | "codex")
-                        || !matches!(self.launch.session.kind, SessionKind::Agent { ref name } if name == label)
-                }))
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex"))
+                || !matches!(
+                    self.launch.session.label.as_deref(),
+                    Some("claude" | "pi" | "codex")
+                )
+                || !matches!(
+                    (&self.launch.session.kind, self.launch.session.label.as_deref()),
+                    (SessionKind::Agent { name }, Some(label)) if name == label
+                ))
         {
-            return Err("initial prompts are supported only for a detected Claude Code or Codex launcher".into());
+            return Err(
+                "initial prompts require a detected Claude Code, Pi, or Codex launcher".into(),
+            );
         }
         if self.launch.session.argv.len() > 128
             || self

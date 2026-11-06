@@ -750,6 +750,21 @@ keeps the entry.
 Observed reporting loss shows `status off` in the pane header, and the terminal's JSON
 row keeps the published reason.
 
+The optional **Initial prompt** is a separate multiline field. Leave it blank to
+open the detected Claude Code or Pi launcher interactively. A nonblank prompt
+uses that harness's native positional-message support, and OVRCR does not add it
+to the remembered launch choice. Configured launcher overrides keep their
+stored arguments and cannot use this prompt path.
+
+The **Model** field starts at **Harness default**, which leaves model choice to
+the native launcher. Detected Claude Code and Pi launches can offer current
+catalog choices. Pi choices use exact `provider/model` IDs; OVRCR checks the
+launch binding and rereads the catalog before Start, refusing a changed or
+missing ID. Pi's native `--model` resolver can still fuzzy-match or synthesize
+a model if its catalog changes after that final check, and Pi has no exact-only
+CLI flag. A catalog listing or accepted process start does not prove that the
+provider used or accepted the chosen model.
+
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
 titles and recovery remain unavailable. See [Hermes harness](hermes-harness.md) for
@@ -1138,13 +1153,15 @@ For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
 terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
 Agent entries may include `model_policy = "HarnessDefault"` or
 `model_policy = { Explicit = "opus" }`. The default leaves model selection to
-the native launcher. A concrete model choice is offered only when the Server
-can verify the detected Claude launcher's model list; the Server checks the
-selected alias and its resolved model again before starting the session. If
-that resolution changes, the launch is refused and the remembered choice is
-left unchanged. Older Agent entries without `model_policy` keep using the
-Harness default. These entries contain no one-off command text. Failed launches
-and Nothing yet leave the remembered choice unchanged.
+the native launcher. A concrete model choice is offered only for a detected
+Claude Code or Pi launcher whose current native catalog is available; the
+Server checks the selected model and launch binding again before starting the
+session. Pi choices are exact provider/model IDs, although Pi's native resolver
+may fuzzy-match if the catalog changes after OVRCR's final check. If a choice
+or its launcher binding changes before Start, the launch is refused and the
+remembered choice is left unchanged. Older Agent entries without `model_policy`
+keep using the Harness default. These entries contain no one-off command text.
+Failed launches and Nothing yet leave the remembered choice unchanged.
 
 ### Settings writer
 
