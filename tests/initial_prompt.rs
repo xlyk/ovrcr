@@ -1,8 +1,8 @@
 //! Live, production-path Initial prompt intent regressions.
 //!
-//! The owned `claude` executable below is only a native CLI stand-in. Its
-//! capture proves what OVRCR passed to that process; it is not provider
-//! acceptance evidence.
+//! The owned `claude` and `pi` executables below are native CLI stand-ins.
+//! Their captures prove what OVRCR passed to those processes; they are not
+//! provider acceptance evidence.
 #[path = "support/live.rs"]
 mod live;
 
@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 const CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_CLAUDE_CAPTURE";
 const INTERACTIVE_ENV: &str = "OVRCR_TEST_FAKE_CLAUDE_INTERACTIVE";
 const FAKE_LAUNCH_MARKER: &str = "__OVRCR_FAKE_CLAUDE_LAUNCH__";
+const PI_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_PI_CAPTURE";
+const PI_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_PI_CATALOG";
+const FAKE_PI_LAUNCH_MARKER: &str = "__OVRCR_FAKE_PI_LAUNCH__";
 const BRANCH: &str = "feature/initial-prompt-intent";
 
 fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
@@ -44,6 +47,74 @@ fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
     std::fs::set_permissions(&executable, permissions).unwrap();
     let capture = live.root.path().join("fake-claude-argv.txt");
     (executable, capture)
+}
+
+fn install_fake_pi(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
+    let bin = live.root.path().join("fake-pi-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let executable = bin.join("pi");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\n\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"--list-models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_PI_CATALOG__' >> \"${PI_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${PI_CAPTURE_ENV}\"; done\n    cat \"${PI_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_PI_LAUNCH_MARKER}' >> \"${PI_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${PI_CAPTURE_ENV}\"; done\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let capture = live.root.path().join("fake-pi-argv.txt");
+    let catalog = live.root.path().join("fake-pi-models.txt");
+    std::fs::write(
+        &catalog,
+        "provider  model                     context  max-out  thinking  images\n\
+         openai    gpt-5.4                   256K     64K      yes       yes\n\
+         anthropic claude-sonnet-4-5         200K     16K      yes       yes\n",
+    )
+    .unwrap();
+    (executable, capture, catalog)
+}
+
+fn start_server_with_pi(live: &Live, fake_pi: &Path, capture: &Path, catalog: &Path) {
+    let mut entries = vec![fake_pi.parent().unwrap().to_path_buf()];
+    entries.extend(std::env::split_paths(&live.path()));
+    let path = std::env::join_paths(entries).unwrap();
+    live.start_binary_env(&[
+        ("PATH", path.as_os_str()),
+        (PI_CAPTURE_ENV, capture.as_os_str()),
+        (PI_CATALOG_ENV, catalog.as_os_str()),
+    ]);
+}
+
+fn detected_pi_launch(
+    live: &Live,
+    fake_pi: &Path,
+    name: &str,
+    model_policy: AgentModelPolicy,
+) -> CreateAgentSessionRequest {
+    let mut native = vec![fake_pi.canonicalize().unwrap().into_os_string()];
+    ovrcr::protocol::apply_default_auto_trust("pi", &mut native);
+    let mut argv = vec![
+        live.executable.canonicalize().unwrap().into_os_string(),
+        "agent".into(),
+        "run".into(),
+        "pi".into(),
+        "--".into(),
+    ];
+    argv.extend(native);
+    CreateAgentSessionRequest {
+        session: CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: name.into(),
+            label: Some("pi".into()),
+            argv,
+            kind: SessionKind::Agent { name: "pi".into() },
+        },
+        model_policy,
+        model_binding: None,
+        expected_model: None,
+    }
 }
 
 fn fixture_path(live: &Live, fake_claude: &Path) -> OsString {
@@ -371,6 +442,41 @@ fn dashboard_new_agent_session_starts_on_the_selected_registered_checkout() {
         thread::park_timeout(Duration::from_millis(10));
     };
     assert!(terminal.contains("FIXTURE_AGENT_READY"));
+}
+
+fn query_pi_models(
+    connection: &mut UnixStream,
+    request_id: u64,
+    launch: &CreateAgentSessionRequest,
+) -> ovrcr::protocol::AgentModelCapabilities {
+    assert_eq!(
+        client::request(
+            connection,
+            request_id,
+            Request::QueryAgentModels {
+                preset: "pi".into(),
+                origin: ovrcr::protocol::AgentLaunchOrigin::Detected,
+                argv: launch.session.argv.clone(),
+                project: launch.session.project.clone(),
+                workspace: launch.session.workspace.clone(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    loop {
+        match read_frame::<ServerMessage>(connection).expect("read Pi model capability event") {
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id: event_id,
+                capabilities,
+            }) if event_id == request_id => return capabilities,
+            ServerMessage::Event(_) => {}
+            ServerMessage::Response {
+                request_id: event_id,
+                response,
+            } => panic!("unexpected Dashboard response {event_id}: {response:?}"),
+        }
+    }
 }
 
 fn next_settings_report(connection: &mut UnixStream) -> SettingsReport {
@@ -963,6 +1069,265 @@ fn blank_prompt_uses_the_same_deduplicated_interactive_intent() {
         1,
         "the interactive input reached the exact run"
     );
+
+    drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+}
+
+#[test]
+fn pi_model_catalog_and_initial_prompt_use_the_detected_native_launcher() {
+    let live = Live::idle().bounded();
+    let (fake_pi, capture, catalog) = install_fake_pi(&live);
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_pi(&live, &fake_pi, &capture, &catalog);
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let mut launch = detected_pi_launch(
+        &live,
+        &fake_pi,
+        "pi-explicit-prompt-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let capabilities = query_pi_models(&mut dashboard, 3, &launch);
+    assert_eq!(capabilities.preset, "pi");
+    assert!(capabilities.reason.is_none(), "{capabilities:?}");
+    let binding = capabilities
+        .binding
+        .expect("Pi choices carry a launch binding");
+    assert_eq!(
+        capabilities.models,
+        vec![
+            ovrcr::protocol::AgentModelOption {
+                alias: "anthropic/claude-sonnet-4-5".into(),
+                resolved: "anthropic/claude-sonnet-4-5".into(),
+            },
+            ovrcr::protocol::AgentModelOption {
+                alias: "openai/gpt-5.4".into(),
+                resolved: "openai/gpt-5.4".into(),
+            },
+        ],
+        "the picker exposes exact provider/model IDs from the effective Pi catalog"
+    );
+
+    let intent = allocate_intent(&mut dashboard);
+    launch.model_policy = AgentModelPolicy::Explicit("openai/gpt-5.4".into());
+    launch.model_binding = Some(binding);
+    launch.expected_model = Some("openai/gpt-5.4".into());
+    let prompt = "T394_PI_PROMPT_MARKER_731b9a44\nsecond line remains one argument";
+    let request = InitialPromptLaunchRequest {
+        intent: intent.clone(),
+        launch,
+        prompt: prompt.into(),
+    };
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::CreateAgentSessionWithPrompt(request.clone()),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 5;
+    let accepted = wait_for_intent(
+        &mut dashboard,
+        &intent,
+        InitialPromptIntentState::LaunchAccepted,
+        &mut request_id,
+    );
+    assert_eq!(accepted.name, "pi-explicit-prompt-session");
+
+    let output = wait_for_capture(&capture, prompt);
+    let launch_output = output
+        .split_once(FAKE_PI_LAUNCH_MARKER)
+        .expect("the detected Pi process started")
+        .1;
+    assert!(
+        launch_output.contains("ARG:--model\nARG:openai/gpt-5.4\nARG:--approve\nARG:--\n"),
+        "explicit selection stays inside Pi's native argv and before its prompt delimiter: {launch_output:?}"
+    );
+    assert!(
+        launch_output.contains(&format!("ARG:{prompt}\n")),
+        "the complete multiline prompt reaches the Pi process as one argv item"
+    );
+    assert!(
+        output.matches("__OVRCR_FAKE_PI_CATALOG__").count() >= 2,
+        "capability lookup and Start each consult the current model catalog"
+    );
+    assert!(
+        !output.contains("CATALOG_ARG:--no-extensions")
+            && !output.contains("CATALOG_ARG:--no-skills"),
+        "model discovery uses the same effective extension/trust boundary as the interactive launcher"
+    );
+
+    drop(dashboard);
+    let mut dashboard = self::dashboard(&live);
+    let reconciled = reconcile(&mut dashboard, 2, &intent);
+    assert_eq!(reconciled, accepted);
+    assert_eq!(reconciled.session, accepted.session);
+    assert_eq!(reconciled.run, accepted.run);
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            3,
+            Request::CreateAgentSessionWithPrompt(request),
+        )
+        .unwrap(),
+        Response::InitialPromptIntents(vec![accepted.clone()]),
+        "replaying a Pi intent after reconnect returns the accepted launch"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&capture)
+            .unwrap_or_default()
+            .matches(FAKE_PI_LAUNCH_MARKER)
+            .count(),
+        1,
+        "duplicate accepted Pi intent does not spawn again"
+    );
+
+    let blank_intent =
+        match client::request(&mut dashboard, 4, Request::AllocateInitialPromptIntent).unwrap() {
+            Response::InitialPromptIntent(intent) => intent,
+            other => panic!("expected allocated blank Pi intent, got {other:?}"),
+        };
+    let blank_launch = detected_pi_launch(
+        &live,
+        &fake_pi,
+        "pi-blank-interactive-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            5,
+            Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                intent: blank_intent.clone(),
+                launch: blank_launch,
+                prompt: String::new(),
+            }),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 6;
+    let blank_accepted = wait_for_intent(
+        &mut dashboard,
+        &blank_intent,
+        InitialPromptIntentState::LaunchAccepted,
+        &mut request_id,
+    );
+    assert_eq!(blank_accepted.name, "pi-blank-interactive-session");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let output = loop {
+        let contents = std::fs::read_to_string(&capture).unwrap_or_default();
+        if contents.matches(FAKE_PI_LAUNCH_MARKER).count() >= 2
+            && contents
+                .rsplit_once(FAKE_PI_LAUNCH_MARKER)
+                .is_some_and(|(_, last_launch)| last_launch.contains("ARG:--approve\n"))
+        {
+            break contents;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "second fake Pi launch did not start; last output: {contents:?}"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+    };
+    let blank_launch_output = output
+        .rsplit_once(FAKE_PI_LAUNCH_MARKER)
+        .expect("the second detected Pi process started")
+        .1;
+    assert!(
+        blank_launch_output.contains("ARG:--approve\n"),
+        "blank prompt keeps the detected trust option: {blank_launch_output:?}"
+    );
+    assert!(
+        !blank_launch_output.contains("ARG:--model\n") && !blank_launch_output.contains("ARG:--\n"),
+        "blank prompt leaves Pi interactive with Harness default"
+    );
+
+    drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+}
+
+#[test]
+fn pi_start_refuses_a_model_removed_from_the_fresh_native_catalog() {
+    let live = Live::idle().bounded();
+    let (fake_pi, capture, catalog) = install_fake_pi(&live);
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_pi(&live, &fake_pi, &capture, &catalog);
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let mut launch = detected_pi_launch(
+        &live,
+        &fake_pi,
+        "pi-stale-model-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let capabilities = query_pi_models(&mut dashboard, 3, &launch);
+    let binding = capabilities
+        .binding
+        .expect("Pi choices carry a launch binding");
+    launch.model_policy = AgentModelPolicy::Explicit("openai/gpt-5.4".into());
+    launch.model_binding = Some(binding);
+    launch.expected_model = Some("openai/gpt-5.4".into());
+    std::fs::write(
+        &catalog,
+        "provider  model                     context  max-out  thinking  images\n\
+         anthropic claude-sonnet-4-5         200K     16K      yes       yes\n",
+    )
+    .unwrap();
+
+    let intent = allocate_intent(&mut dashboard);
+    let prompt = "T394_PI_STALE_MODEL_PROMPT_41c0e27a\nkeep this draft recoverable";
+    let request = InitialPromptLaunchRequest {
+        intent: intent.clone(),
+        launch,
+        prompt: prompt.into(),
+    };
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::CreateAgentSessionWithPrompt(request),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 5;
+    let refused = wait_for_intent(
+        &mut dashboard,
+        &intent,
+        InitialPromptIntentState::Refused,
+        &mut request_id,
+    );
+    assert_eq!(refused.recoverable_prompt.as_deref(), Some(prompt));
+    assert!(
+        refused
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("selected pi model resolution changed")),
+        "the exact missing model is refused with an actionable reason: {refused:?}"
+    );
+    let output = std::fs::read_to_string(&capture).unwrap_or_default();
+    assert!(
+        output.contains("__OVRCR_FAKE_PI_CATALOG__"),
+        "the initial lookup ran"
+    );
+    assert_eq!(
+        output.matches("__OVRCR_FAKE_PI_CATALOG__").count(),
+        2,
+        "Start consults the current native catalog again"
+    );
+    assert!(
+        !output.contains(FAKE_PI_LAUNCH_MARKER),
+        "the removed model never starts a Pi session"
+    );
+    assert!(!format!("{refused:?}").contains("T394_PI_STALE_MODEL_PROMPT_41c0e27a"));
 
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
