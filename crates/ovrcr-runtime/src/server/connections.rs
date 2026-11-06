@@ -1127,7 +1127,17 @@ pub(super) fn handle_request_with_id(
             project,
             workspace,
         } => super::agent_models::request(
-            state, dashboard, owner, request_id, preset, origin, argv, project, workspace,
+            state,
+            dashboard,
+            owner,
+            super::agent_models::QueryRequest {
+                request_id,
+                preset,
+                origin,
+                argv,
+                project,
+                workspace,
+            },
         ),
         Request::AllocateInitialPromptIntent
             if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner)) =>

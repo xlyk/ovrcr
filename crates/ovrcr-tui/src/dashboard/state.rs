@@ -1305,7 +1305,7 @@ impl Dashboard {
                 if owns_error {
                     self.error_owning_requests.insert(request_id);
                 }
-                Ok(Some(request))
+                Ok(Some(*request))
             }
             // Coalesced into the pending view, unchanged, or waiting out a refusal: readiness
             // and pane errors are the handshake's to keep.
