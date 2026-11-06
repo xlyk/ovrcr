@@ -1,0 +1,29 @@
+   Compiling vt100 v0.16.2 (/private/tmp/ovrcr-401-focus-freshness/vendor/vt100)
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-401-focus-freshness/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-401-focus-freshness/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-401-focus-freshness/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-401-focus-freshness/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-401-focus-freshness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.06s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-401-build-freshness/debug/deps/ovrcr-1185d10e1d8b1514)
+
+running 1 test
+test gui::input::tests::stale_aggregate_command_after_focus_regain_does_not_restart_a_hold ... FAILED
+
+failures:
+
+---- gui::input::tests::stale_aggregate_command_after_focus_regain_does_not_restart_a_hold stdout ----
+
+thread 'gui::input::tests::stale_aggregate_command_after_focus_regain_does_not_restart_a_hold' (564173452) panicked at src/gui/input.rs:1213:9:
+assertion `left == right` failed: winit can restore Cmd from a mouse event without a fresh Super key press
+  left: [27, 91, 53, 55, 52, 52, 52, 59, 49, 58, 49, 117]
+ right: []
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gui::input::tests::stale_aggregate_command_after_focus_regain_does_not_restart_a_hold
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr --lib`
