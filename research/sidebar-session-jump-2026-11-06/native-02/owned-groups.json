@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1,
+    "pid": 80907,
+    "pgid": 80907,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 2,
+    "pid": 81073,
+    "pgid": 81073,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 3,
+    "pid": 81197,
+    "pgid": 81197,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 4,
+    "pid": 81366,
+    "pgid": 81366,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 5,
+    "pid": 81547,
+    "pgid": 81547,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 6,
+    "pid": 81737,
+    "pgid": 81737,
+    "kind": "terminal",
+    "name": "local"
+  },
+  {
+    "id": 7,
+    "pid": 81962,
+    "pgid": 81962,
+    "kind": {
+      "agent": "claude"
+    },
+    "name": "implement lifecycle cleanup"
+  },
+  {
+    "id": 8,
+    "pid": 82084,
+    "pgid": 82084,
+    "kind": {
+      "agent": "codex"
+    },
+    "name": "review websocket shutdown"
+  },
+  {
+    "id": 9,
+    "pid": 82395,
+    "pgid": 82395,
+    "kind": {
+      "agent": "pi"
+    },
+    "name": "plan snapshot restore"
+  },
+  {
+    "id": 10,
+    "pid": 82517,
+    "pgid": 82517,
+    "kind": {
+      "agent": "grok"
+    },
+    "name": "review auth handoff"
+  },
+  {
+    "id": 11,
+    "pid": 82639,
+    "pgid": 82639,
+    "kind": {
+      "agent": "claude"
+    },
+    "name": "build pipeline progress"
+  },
+  {
+    "id": 12,
+    "pid": 82761,
+    "pgid": 82761,
+    "kind": {
+      "agent": "codex"
+    },
+    "name": "review scope quality"
+  }
+]

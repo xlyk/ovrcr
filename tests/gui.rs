@@ -127,12 +127,25 @@ fn wait_keyboard_enhancement(terminal: &Terminal) -> Result<()> {
     Ok(())
 }
 
+fn wait_focus_reporting(terminal: &Terminal) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !terminal.focus_reporting_enabled() {
+        if Instant::now() >= deadline {
+            bail!("Dashboard never enabled focus-change reporting");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
 fn send_gui_key_event(
     terminal: &mut Terminal,
     keyboard: &mut KeyboardState,
     event: Event,
 ) -> Result<()> {
     let screen = terminal.screen();
+    keyboard.set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+    keyboard.set_focus_reporting_enabled(terminal.focus_reporting_enabled());
     let bytes = encode_event_with_keyboard(
         &event,
         &screen,
@@ -141,7 +154,6 @@ fn send_gui_key_event(
         egui::pos2(0.0, 0.0),
         &mut Mouse::default(),
         keyboard,
-        terminal.keyboard_enhancement_enabled(),
     );
     if !bytes.is_empty() {
         terminal.send(&bytes)?;
@@ -438,6 +450,222 @@ fn gui_kitty_modifier_and_digit_events_drive_a_real_agent_session() -> Result<()
         enter_selected_session(&mut terminal, "fixture: authentication handoff review")?;
         terminal.send(b"printf 'GUI_CMD_JUMP\\n'\r")?;
         wait_screen(&terminal, "GUI_CMD_JUMP")?;
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
+fn gui_aggregate_modifier_and_command_controls_reach_the_real_dashboard() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let initial = terminal.screen().contents();
+        let selected_pane = initial
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split_once('│').map(|(_, pane)| pane))
+            .unwrap_or_default();
+        if selected_pane.contains("review auth handoff") {
+            bail!("the Demo must start on another session to prove the jump");
+        }
+
+        let mut keyboard = KeyboardState::default();
+        let command = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(command),
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Backspace,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Backspace,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(Modifiers::NONE),
+        )?;
+
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(command),
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(Modifiers::NONE),
+        )?;
+
+        // Aggregate-only Cmd must also make the following digit a real jump.
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(command),
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(Modifiers::NONE),
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        enter_selected_session(&mut terminal, "fixture: authentication handoff review")?;
+        terminal.send(b"printf 'GUI_AGGREGATE_CMD_JUMP\\n'\r")?;
+        wait_screen(&terminal, "GUI_AGGREGATE_CMD_JUMP")?;
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
+fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_focus_reporting(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let mut keyboard = KeyboardState::default();
+        let command = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(command),
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        wait_screen(&terminal, "Session selected  release Cmd")?;
+        send_gui_key_event(&mut terminal, &mut keyboard, Event::WindowFocused(false))?;
+        wait_screen_absent(&terminal, "Session selected")?;
+        wait_screen(&terminal, "BROWSE")?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+
+        // Focus regain is also sent only while the Dashboard's observed 1004
+        // mode remains active.
+        send_gui_key_event(&mut terminal, &mut keyboard, Event::WindowFocused(true))?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let screen = terminal.screen().contents();
+        anyhow::ensure!(
+            !screen.contains("Terminal mode"),
+            "focus loss must not let a selected jump enter the Agent"
+        );
         Ok(())
     })();
     terminal.stop()?;

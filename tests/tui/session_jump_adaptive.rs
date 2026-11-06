@@ -79,7 +79,7 @@ fn visible_count_selects_one_or_two_digit_labels_from_zero_to_fifty() {
 
         match count {
             0 => {
-                assert!(screen.find("No visible running Agents").is_some());
+                assert!(screen.find("No visible Agents").is_some());
                 assert!(!screen.contains("[1]"));
             }
             1 | 9 => {

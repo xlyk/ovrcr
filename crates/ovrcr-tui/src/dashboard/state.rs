@@ -570,6 +570,51 @@ pub(super) struct AgentTyping {
 pub(super) struct SidebarJumpTarget {
     pub(super) session: SessionId,
     pub(super) run: SessionRunId,
+    phase: SidebarJumpPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarJumpPhase {
+    Running,
+    Retained,
+}
+
+impl SidebarJumpTarget {
+    fn capture(session: &crate::session::SessionSummary) -> Option<Self> {
+        if session.scope != crate::protocol::SessionScope::Workspace
+            || session.archived
+            || !matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
+        {
+            return None;
+        }
+        let phase = match &session.phase {
+            SessionPhase::Running => SidebarJumpPhase::Running,
+            SessionPhase::Paused => return None,
+            SessionPhase::Exited { .. } | SessionPhase::Stopped | SessionPhase::Interrupted => {
+                SidebarJumpPhase::Retained
+            }
+        };
+        Some(Self {
+            session: session.id,
+            run: session.run,
+            phase,
+        })
+    }
+
+    fn still_matches(self, session: &crate::session::SessionSummary) -> bool {
+        session.scope == crate::protocol::SessionScope::Workspace
+            && !session.archived
+            && session.run == self.run
+            && matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
+            && match (&self.phase, &session.phase) {
+                (SidebarJumpPhase::Running, SessionPhase::Running) => true,
+                (
+                    SidebarJumpPhase::Retained,
+                    SessionPhase::Exited { .. } | SessionPhase::Stopped | SessionPhase::Interrupted,
+                ) => true,
+                _ => false,
+            }
+    }
 }
 
 pub(super) struct SidebarJump {
@@ -1013,14 +1058,7 @@ impl Dashboard {
                     return None;
                 }
                 let session = find_session(self, *id)?;
-                (session.scope == crate::protocol::SessionScope::Workspace
-                    && !session.archived
-                    && session.phase == SessionPhase::Running
-                    && matches!(session.kind, crate::protocol::SessionKind::Agent { .. }))
-                .then_some(SidebarJumpTarget {
-                    session: *id,
-                    run: session.run,
-                })
+                SidebarJumpTarget::capture(session)
             })
             .collect()
     }
@@ -1028,13 +1066,8 @@ impl Dashboard {
     fn sidebar_jump_target_available(&self, target: SidebarJumpTarget) -> bool {
         let row = TreeRow::Session { id: target.session };
         self.provisional_overlay_for(&row).is_none()
-            && find_session(self, target.session).is_some_and(|session| {
-                session.scope == crate::protocol::SessionScope::Workspace
-                    && session.run == target.run
-                    && !session.archived
-                    && session.phase == SessionPhase::Running
-                    && matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
-            })
+            && find_session(self, target.session)
+                .is_some_and(|session| target.still_matches(session))
     }
 
     pub(super) fn sidebar_jump_label(&self, session: SessionId) -> Option<usize> {
@@ -1072,7 +1105,7 @@ impl Dashboard {
             return Some(format!("{hint}  Cmd+digit choose · Esc cancel"));
         }
         if jump.targets.is_empty() {
-            return Some("No visible running Agents  s Agents search".into());
+            return Some("No visible Agents  s Agents search".into());
         }
         if let Some(prefix) = jump.prefix {
             return Some(format!(
@@ -1268,9 +1301,25 @@ impl Dashboard {
                 jump.selected = true;
                 jump.hint = None;
             }
-            // Keep a same-session jump in Browse until Command release and the input boundary.
+            // Retained inspection only changes the view. Running destinations use the
+            // existing release, acknowledged-view, and input-drain boundary before typing.
             self.mode = InputMode::Browse;
-            return self.confirm_agent_switch_after_release(target.session, target.run, true);
+            return match target.phase {
+                SidebarJumpPhase::Running => {
+                    self.confirm_agent_switch_after_release(target.session, target.run, true)
+                }
+                SidebarJumpPhase::Retained => {
+                    self.agent_typing = None;
+                    self.select_session(target.session);
+                    // Showing a retained Interrupted run is inspection, not recovery.
+                    // Match notification navigation's exact-run suppression before its
+                    // view request reaches the ordinary recovery hook.
+                    self.recovery_requests
+                        .entry((target.session, target.run))
+                        .or_insert(None);
+                    self.request_selected()
+                }
+            };
         }
         if key.modifiers.contains(KeyModifiers::SUPER) {
             self.cancel_sidebar_jump();

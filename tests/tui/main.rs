@@ -44,6 +44,7 @@ mod operator;
 mod palette;
 mod quota;
 mod session_jump_adaptive;
+mod session_jump_retained;
 mod settings;
 mod sidebar;
 mod split;
