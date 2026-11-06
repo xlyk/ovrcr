@@ -107,20 +107,20 @@ impl Lifecycle {
     pub(super) fn allocate_prompt_intent(
         &self,
         server_lifetime: &str,
-    ) -> Result<InitialPromptIntentId, Response> {
+    ) -> Result<InitialPromptIntentId, Box<Response>> {
         let mut book = self.prompt_intents.lock().unwrap();
         retire_prompt_intents(&mut book);
         if book.records.len() >= MAX_PROMPT_INTENT_RECORDS {
-            return Err(error_response(
+            return Err(Box::new(error_response(
                 ErrorCode::Conflict,
                 "too many initial-prompt launches are still pending reconciliation",
-            ));
+            )));
         }
         let sequence = book.next_sequence.checked_add(1).ok_or_else(|| {
-            error_response(
+            Box::new(error_response(
                 ErrorCode::Internal,
                 "initial-prompt identity space is exhausted",
-            )
+            ))
         })?;
         book.next_sequence = sequence;
         book.latest_issued = sequence;
@@ -545,7 +545,7 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 }
                 if let Some(snapshot) = snapshot {
                     state.dashboard.try_send(ServerMessage::Event(
-                        ServerEvent::InitialPromptIntentChanged(snapshot),
+                        ServerEvent::InitialPromptIntentChanged(Box::new(snapshot)),
                     ));
                 }
                 // The stable intent event owns completion for this launch. Do

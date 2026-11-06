@@ -119,6 +119,22 @@ transient launch path, are redacted from Debug/errors, and are not retained in
 ordinary session metadata, settings, or Events. Successful harness/model memory
 uses the existing settings owner.
 
+Verified explicit model choices currently support only exact detected Claude
+Code and Codex launches. The Dashboard queries through the current Server-owned
+catalog worker against the registered workspace and the Server-resolved native
+argv. It does not trust a client model list or infer a provider. A Codex catalog
+read first uses the pinned app-server one-shot startup-config path to read
+effective managed feature requirements; if requirements are missing, malformed,
+or require plugins, discovery stops before regular app-server startup. When the
+`features.plugins=false` override is compatible, the query initializes with
+`explicitGatewayOauth`, successfully reads `account/gatewayOAuth/read`, then
+calls `model/list`. A required gateway credential must be locally ready; missing
+or unsupported auth state refuses the catalog without initiating browser login.
+This catalog path starts no thread or turn. At launch, the Server repeats the
+query, verifies the registered Git identity, exact detected argv and fresh model
+resolution, then inserts Codex's native `--model` argument. Harness default
+keeps the native launch argv unchanged.
+
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt
 intents atomically before effects. A tombstone gates new and resumed Accepted

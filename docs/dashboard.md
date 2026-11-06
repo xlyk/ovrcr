@@ -1142,6 +1142,12 @@ that exist. An `[[agents]]` row whose name matches a detected agent replaces its
 argv; a new name becomes an Agent preset. The argv is used as configured; a preset
 name alone does not prove what program it launches or whether reporting is supported.
 
+For detected Claude Code and Codex launchers, the Agent form can offer verified
+model choices for an already registered workspace. The Server reads the
+launcher-specific catalog and checks the selected resolution again before
+launch. Configured and cloud launchers keep their existing model policy. Leaving
+Model at Harness default preserves the native launch arguments.
+
 Successful launches update a per-project `launch_choices` table in this file.
 For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
 terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.

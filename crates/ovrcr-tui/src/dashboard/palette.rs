@@ -108,9 +108,16 @@ enum Page {
         root_edited: bool,
     },
     Confirm {
-        request: Option<Request>,
+        request: Option<Box<Request>>,
         target: String,
     },
+}
+
+fn confirmation_request(page: &Page) -> Option<&Request> {
+    match page {
+        Page::Confirm { request, .. } => request.as_deref(),
+        Page::Search { .. } | Page::Form { .. } => None,
+    }
 }
 
 struct AgentCandidate {
@@ -348,11 +355,8 @@ fn button_text(page: &Page, width: u16) -> &'static str {
 }
 
 fn close_terminal_id(page: &Page) -> Option<SessionId> {
-    match page {
-        Page::Confirm {
-            request: Some(Request::CloseTerminal { session, .. }),
-            ..
-        } => Some(*session),
+    match confirmation_request(page) {
+        Some(Request::CloseTerminal { session, .. }) => Some(*session),
         _ => None,
     }
 }
@@ -936,7 +940,7 @@ fn model_query_target(
         }
         AgentOrigin::Detected => {}
     }
-    if !matches!(preset.as_str(), "claude" | "pi") {
+    if !matches!(preset.as_str(), "claude" | "pi" | "codex") {
         return Err(
             "Verified explicit model selection is not available for this harness yet.".into(),
         );
@@ -1530,10 +1534,12 @@ impl Dashboard {
         self.whichkey = None;
         self.palette = Some(Palette {
             page: Page::Confirm {
-                request: Some(Request::Operator(ovrcr_protocol::OperatorRequest::Close {
-                    conversation: id,
-                    expected_run: run,
-                })),
+                request: Some(Box::new(Request::Operator(
+                    ovrcr_protocol::OperatorRequest::Close {
+                        conversation: id,
+                        expected_run: run,
+                    },
+                ))),
                 target: format!(
                     "Close Operator {} (#{} / session {} / run {}). {}Archive its history.{}",
                     title,
@@ -1558,13 +1564,13 @@ impl Dashboard {
     }
 
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
-        let matches_close = matches!(
-            self.palette.as_ref().map(|palette| &palette.page),
-            Some(Page::Confirm {
-                request: Some(Request::CloseTerminal { session: id, .. }),
-                ..
-            }) if *id == session
-        );
+        let matches_close = self
+            .palette
+            .as_ref()
+            .and_then(|palette| confirmation_request(&palette.page))
+            .is_some_and(|request| {
+                matches!(request, Request::CloseTerminal { session: id, .. } if *id == session)
+            });
         if matches_close {
             self.palette = None;
         }
@@ -1574,18 +1580,16 @@ impl Dashboard {
         let removal = match &self.palette {
             Some(palette) if palette.pending.is_some() => None,
             Some(Palette {
-                page:
-                    Page::Confirm {
-                        request:
-                            Some(Request::RemoveWorkspace {
-                                project,
-                                name,
-                                force,
-                            }),
-                        target,
-                    },
+                page: Page::Confirm { request, target },
                 ..
-            }) => Some((project.clone(), name.clone(), *force, target.clone())),
+            }) => match request.as_deref() {
+                Some(Request::RemoveWorkspace {
+                    project,
+                    name,
+                    force,
+                }) => Some((project.clone(), name.clone(), *force, target.clone())),
+                _ => None,
+            },
             _ => None,
         };
         if let Some((project, name, force, target)) = removal {
@@ -1778,20 +1782,20 @@ impl Dashboard {
                     "Reopen this session in a fresh shell?"
                 };
                 Page::Confirm {
-                    request: Some(Request::ReopenSession {
+                    request: Some(Box::new(Request::ReopenSession {
                         session: id,
                         expected_run: session.run,
                         acknowledge_stopped,
-                    }),
+                    })),
                     target: target.into(),
                 }
             }
             // Carries the run so archived rows, absent from the hierarchy, can be acknowledged too.
             Command::AcknowledgeStopped(id, run) => Page::Confirm {
-                request: Some(Request::AcknowledgeSessionStopped {
+                request: Some(Box::new(Request::AcknowledgeSessionStopped {
                     session: id,
                     expected_run: run,
-                }),
+                })),
                 target: "Acknowledge that previous agent or background processes have stopped, without launching a replacement?".into(),
             },
             Command::AgentResumeUnavailable(id) => Page::Confirm {
@@ -1807,10 +1811,10 @@ impl Dashboard {
             Command::CloseTerminal(id) => {
                 let session = find_session(self, id).expect("close target exists");
                 Page::Confirm {
-                    request: Some(Request::CloseTerminal {
+                    request: Some(Box::new(Request::CloseTerminal {
                         session: id,
                         expected_run: session.run,
-                    }),
+                    })),
                     target: format!(
                         "Close {} / {} (#{}). Stop its currently owned processes and archive its record.",
                         session_workspace_heading(self, session),
@@ -2342,13 +2346,9 @@ impl Dashboard {
     ) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
-            if let Page::Confirm {
-                request:
-                    Some(Request::AnswerWipSave {
-                        project, workspace, ..
-                    }),
-                ..
-            } = &palette.page
+            if let Some(Request::AnswerWipSave {
+                project, workspace, ..
+            }) = confirmation_request(&palette.page)
             {
                 let request = Request::AnswerWipSave {
                     project: project.clone(),
@@ -2558,7 +2558,7 @@ impl Dashboard {
                     let field = &mut fields[*active];
                     palette
                         .cursor
-                        .vertical(&mut field.value, key.code == KeyCode::Down);
+                        .vertical(&field.value, key.code == KeyCode::Down);
                 }
             }
             KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
@@ -2693,11 +2693,11 @@ impl Dashboard {
                                         transfer.parent.0,
                                         transfer.parent_run.0
                                     ),
-                                    request: Some(Request::DashboardWorkflow(
+                                    request: Some(Box::new(Request::DashboardWorkflow(
                                         crate::protocol::DashboardWorkflowRequest::Transfer(
                                             transfer,
                                         ),
-                                    )),
+                                    ))),
                                 };
                             }
 
@@ -2810,10 +2810,10 @@ impl Dashboard {
                             }
                             Command::DeleteArchived(session, expected_run, title) => {
                                 palette.page = Page::Confirm {
-                                    request: Some(Request::DeleteArchivedSession {
+                                    request: Some(Box::new(Request::DeleteArchivedSession {
                                         session,
                                         expected_run,
-                                    }),
+                                    })),
                                     target: format!(
                                         "Delete record {}? Provider history files will be kept.",
                                         title
@@ -3208,7 +3208,7 @@ impl Dashboard {
                     }
                 }
                 Page::Confirm { request, .. } => {
-                    if let Some(request) = request.clone() {
+                    if let Some(request) = request.as_deref().cloned() {
                         if let Request::Operator(ovrcr_protocol::OperatorRequest::Close {
                             conversation,
                             expected_run,
@@ -3737,7 +3737,7 @@ impl Dashboard {
             && !self.supports_initial_prompt_launch(launch)
         {
             palette.error = Some(
-                "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.".into(),
+                "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
             );
             return DashboardAction::Redraw;
         }
@@ -3823,7 +3823,7 @@ impl Dashboard {
             .session
             .label
             .as_deref()
-            .filter(|preset| matches!(*preset, "claude" | "pi"))
+            .filter(|preset| matches!(*preset, "claude" | "pi" | "codex"))
         else {
             return false;
         };
@@ -3861,12 +3861,12 @@ impl Dashboard {
             if let Some(mut form) = form {
                 form.pending = None;
                 form.error = Some(
-                    "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.".into(),
+                    "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.".into(),
                 );
                 self.palette = Some(*form);
             } else {
                 self.set_error(
-                    "Initial prompts require a current detected Claude Code or Pi launcher. Clear the prompt or choose one of those harnesses.",
+                    "Initial prompts require the current detected Claude Code, Pi, or Codex launcher. Clear the prompt or choose one of those detected launchers.",
                 );
             }
             return;
@@ -3916,11 +3916,11 @@ impl Dashboard {
                 form.error = Some("Could not prepare this agent start".into());
                 self.palette = Some(*form);
                 self.lifecycle_strip = None;
-            } else if let Some(palette) = self.palette.as_mut() {
-                if palette.pending == Some(request_id) {
-                    palette.pending = None;
-                    palette.error = Some("Could not prepare this agent start".into());
-                }
+            } else if let Some(palette) = self.palette.as_mut()
+                && palette.pending == Some(request_id)
+            {
+                palette.pending = None;
+                palette.error = Some("Could not prepare this agent start".into());
             } else {
                 self.set_error("Could not prepare this agent start");
             }
@@ -3932,11 +3932,11 @@ impl Dashboard {
                 form.error = Some(error);
                 self.palette = Some(*form);
                 self.lifecycle_strip = None;
-            } else if let Some(palette) = self.palette.as_mut() {
-                if palette.pending == Some(request_id) {
-                    palette.pending = None;
-                    palette.error = Some(error);
-                }
+            } else if let Some(palette) = self.palette.as_mut()
+                && palette.pending == Some(request_id)
+            {
+                palette.pending = None;
+                palette.error = Some(error);
             }
             return true;
         }
@@ -4504,15 +4504,11 @@ impl Dashboard {
                 palette.error = Some(self.plain_failure(&palette, &message));
                 // A refused removal asks again with what now stands in its way;
                 // only another explicit Confirm sends anything.
-                if let Page::Confirm {
-                    request:
-                        Some(Request::RemoveWorkspace {
-                            project,
-                            name,
-                            force,
-                        }),
-                    ..
-                } = &palette.page
+                if let Some(Request::RemoveWorkspace {
+                    project,
+                    name,
+                    force,
+                }) = confirmation_request(&palette.page)
                 {
                     let (project, name, force) = (project.clone(), name.clone(), *force);
                     let branch = find_workspace(self, &project, &name)
@@ -4522,7 +4518,7 @@ impl Dashboard {
                         && branch_name_problem(&branch).is_none()
                     {
                         Page::Confirm {
-                            request: Some(Request::SaveWorkspaceWip { project, name }),
+                            request: Some(Box::new(Request::SaveWorkspaceWip { project, name })),
                             target: format!("Save uncommitted work to origin/wip/{branch}?"),
                         }
                     } else {
@@ -4540,19 +4536,14 @@ impl Dashboard {
                         })
                     };
                 }
-                let retry = match &palette.page {
-                    Page::Confirm {
-                        request: Some(Request::ReopenSession { session, .. }),
-                        ..
-                    } => Some((*session, Command::ReopenTerminal(*session))),
-                    Page::Confirm {
-                        request:
-                            Some(Request::AcknowledgeSessionStopped {
-                                session,
-                                expected_run,
-                            }),
-                        ..
-                    } => Some((
+                let retry = match confirmation_request(&palette.page) {
+                    Some(Request::ReopenSession { session, .. }) => {
+                        Some((*session, Command::ReopenTerminal(*session)))
+                    }
+                    Some(Request::AcknowledgeSessionStopped {
+                        session,
+                        expected_run,
+                    }) => Some((
                         *session,
                         Command::AcknowledgeStopped(*session, *expected_run),
                     )),
@@ -4608,10 +4599,8 @@ impl Dashboard {
             _ => {
                 let mut palette = self.palette.take().unwrap();
                 if let Response::Ok = response
-                    && let Page::Confirm {
-                        request: Some(Request::SaveWorkspaceWip { project, name }),
-                        ..
-                    } = &palette.page
+                    && let Some(Request::SaveWorkspaceWip { project, name }) =
+                        confirmation_request(&palette.page)
                 {
                     let project = project.clone();
                     let name = name.clone();
@@ -4624,7 +4613,7 @@ impl Dashboard {
                         force: true,
                     };
                     palette.page = Page::Confirm {
-                        request: Some(request.clone()),
+                        request: Some(Box::new(request.clone())),
                         target: format!("Saved to origin/wip and removing workspace {display}."),
                     };
                     // A Lifecycle job like any removal, so its failure comes back here.
@@ -4633,14 +4622,8 @@ impl Dashboard {
                     return Some(Vec::new());
                 }
                 let answered_wip = matches!(
-                    (&palette.page, response),
-                    (
-                        Page::Confirm {
-                            request: Some(Request::AnswerWipSave { .. }),
-                            ..
-                        },
-                        Response::Ok,
-                    )
+                    (confirmation_request(&palette.page), response),
+                    (Some(Request::AnswerWipSave { .. }), Response::Ok)
                 );
                 if let Some(request_id) = palette.suggestions.inspect {
                     self.ignored_responses.insert(request_id);
@@ -5112,7 +5095,7 @@ impl Dashboard {
                 pending: palette.pending.is_some(),
             };
         };
-        let Some(Request::CloseTerminal { session, .. }) = request else {
+        let Some(Request::CloseTerminal { session, .. }) = request.as_deref() else {
             return CloseConfirmText {
                 warning: None,
                 identity: CLOSE_TITLE.to_string(),
@@ -5568,11 +5551,11 @@ impl Dashboard {
         self.mode = InputMode::Browse;
         self.palette = Some(Palette {
             page: Page::Confirm {
-                request: Some(Request::AnswerWipSave {
+                request: Some(Box::new(Request::AnswerWipSave {
                     project,
                     workspace,
                     save: true,
-                }),
+                })),
                 target: format!("Save uncommitted work to origin/wip/{branch}?"),
             },
             ..Palette::new()
@@ -5712,7 +5695,7 @@ impl Dashboard {
             _ => unreachable!("only workspace/project removal uses this confirmation"),
         };
         Page::Confirm {
-            request: Some(request),
+            request: Some(Box::new(request)),
             target,
         }
     }
@@ -5755,18 +5738,16 @@ impl Dashboard {
                 command: Command::RenameTerminal(_),
                 ..
             } => "Couldn't rename the session".to_owned(),
-            Page::Confirm {
-                request: Some(Request::RemoveWorkspace { project, name, .. }),
-                ..
-            } => format!("Couldn't remove {}", self.workspace_name(project, name)),
-            Page::Confirm {
-                request: Some(Request::RemoveProject { name }),
-                ..
-            } => format!("Couldn't unregister {name}"),
-            Page::Confirm {
-                request: Some(Request::CloseTerminal { session, .. }),
-                ..
-            } => format!("Couldn't close {}", self.session_name(*session)),
+            Page::Confirm { request, .. } => match request.as_deref() {
+                Some(Request::RemoveWorkspace { project, name, .. }) => {
+                    format!("Couldn't remove {}", self.workspace_name(project, name))
+                }
+                Some(Request::RemoveProject { name }) => format!("Couldn't unregister {name}"),
+                Some(Request::CloseTerminal { session, .. }) => {
+                    format!("Couldn't close {}", self.session_name(*session))
+                }
+                _ => String::new(),
+            },
             _ => String::new(),
         };
         // The workspace being created is not in the hierarchy yet.
@@ -5923,11 +5904,11 @@ impl Dashboard {
         }
         if let Some(palette) = self.palette.as_mut()
             && matches!(
-                palette.page,
+                &palette.page,
                 Page::Confirm {
-                    request: Some(Request::RemoveWorkspace { .. }),
+                    request: Some(request),
                     ..
-                }
+                } if matches!(request.as_ref(), Request::RemoveWorkspace { .. })
             )
             && stopped.is_some()
         {
@@ -6436,6 +6417,85 @@ mod mouse_tests {
 }
 
 #[cfg(test)]
+mod codex_adapter_tests {
+    use super::*;
+
+    fn detected_codex_entry() -> super::super::agents::AgentEntry {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "codex".into(),
+            "--".into(),
+            "/fixture/codex".into(),
+            "--approve-for-me".into(),
+        ];
+        super::super::agents::AgentEntry {
+            name: "codex".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }
+    }
+
+    #[test]
+    fn codex_model_and_initial_prompt_require_the_exact_detected_launcher() {
+        let entry = detected_codex_entry();
+        let fields = vec![
+            text_field("Start", "Agent".into(), false),
+            text_field("Agent", "codex".into(), false),
+            text_field("Workspace", "demo/root".into(), false),
+        ];
+        let target = model_query_target(
+            &Command::CreateTerminal,
+            &fields,
+            std::slice::from_ref(&entry),
+        )
+        .unwrap()
+        .expect("detected Codex has an explicit-model catalog target");
+        assert_eq!(target.preset, "codex");
+        assert_eq!(target.argv, entry.argv);
+        assert_eq!(
+            (target.project.as_str(), target.workspace.as_str()),
+            ("demo", "root")
+        );
+
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        dashboard.model_agent_entries = Some(vec![entry.clone()]);
+        let launch = ovrcr_protocol::CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "demo".into(),
+                workspace: "root".into(),
+                name: "codex-prompt".into(),
+                label: Some("codex".into()),
+                argv: entry.argv.clone(),
+                kind: SessionKind::Agent {
+                    name: "codex".into(),
+                },
+            },
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        assert!(dashboard.supports_initial_prompt_launch(&launch));
+
+        let mut changed = launch;
+        changed.session.argv.push("--profile".into());
+        assert!(!dashboard.supports_initial_prompt_launch(&changed));
+
+        let configured = super::super::agents::AgentEntry {
+            origin: AgentOrigin::Configured,
+            source: AgentSource::Detected,
+            ..entry
+        };
+        assert!(model_query_target(&Command::CreateTerminal, &fields, &[configured]).is_err());
+    }
+}
+
+#[cfg(test)]
 mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
@@ -6535,15 +6595,14 @@ mod launch_tests {
     fn submit(d: &mut Dashboard) -> DashboardAction {
         // The Submit control uses the explicit chord while a picker or the
         // multiline prompt has focus; plain Enter remains picker acceptance.
-        let modifiers = d
-            .palette
-            .as_ref()
-            .is_some_and(|palette| {
-                matches!(&palette.page, Page::Form { fields, active, .. }
+        let modifiers = if d.palette.as_ref().is_some_and(|palette| {
+            matches!(&palette.page, Page::Form { fields, active, .. }
                     if matches!(fields[*active].kind, FieldKind::Pick(_) | FieldKind::Multiline))
-            })
-            .then_some(KeyModifiers::ALT)
-            .unwrap_or(KeyModifiers::NONE);
+        }) {
+            KeyModifiers::ALT
+        } else {
+            KeyModifiers::NONE
+        };
         d.palette_key(KeyEvent::new(KeyCode::Enter, modifiers))
     }
     fn request(d: &mut Dashboard) -> ClientMessage {
@@ -7875,8 +7934,8 @@ mod launch_tests {
             "{target}"
         );
         assert_eq!(
-            request,
-            &Some(Request::ReopenSession {
+            request.as_deref(),
+            Some(&Request::ReopenSession {
                 session: SessionId(1),
                 expected_run: crate::protocol::SessionRunId(1),
                 acknowledge_stopped: true,
@@ -7894,8 +7953,8 @@ mod launch_tests {
         };
         assert!(target.contains("without launching"), "{target}");
         assert_eq!(
-            request,
-            &Some(Request::AcknowledgeSessionStopped {
+            request.as_deref(),
+            Some(&Request::AcknowledgeSessionStopped {
                 session: SessionId(1),
                 expected_run: crate::protocol::SessionRunId(1),
             })
@@ -7969,8 +8028,8 @@ mod launch_tests {
             };
             assert!(target.contains("resume picker"), "{target}");
             assert_eq!(
-                request,
-                Some(Request::ReopenSession {
+                request.as_deref(),
+                Some(&Request::ReopenSession {
                     session: SessionId(1),
                     expected_run: crate::protocol::SessionRunId(1),
                     acknowledge_stopped: requires_ack,
@@ -8401,12 +8460,12 @@ mod launch_tests {
         assert!(matches!(
             &d.palette.as_ref().unwrap().page,
             Page::Confirm {
-                request: Some(Request::CloseTerminal {
-                    session: SessionId(1),
-                    expected_run: crate::protocol::SessionRunId(1),
-                }),
+                request: Some(request),
                 ..
-            }
+            } if matches!(request.as_ref(), Request::CloseTerminal {
+                session,
+                expected_run,
+            } if *session == SessionId(1) && *expected_run == crate::protocol::SessionRunId(1))
         ));
         let mut advanced = d.hierarchy.clone();
         advanced.projects[0].workspaces[0].sessions[0].run = crate::protocol::SessionRunId(4);
@@ -8485,8 +8544,8 @@ mod launch_tests {
             panic!("acknowledge must confirm");
         };
         assert_eq!(
-            request,
-            Some(Request::AcknowledgeSessionStopped {
+            request.as_deref(),
+            Some(&Request::AcknowledgeSessionStopped {
                 session: SessionId(9),
                 expected_run: crate::protocol::SessionRunId(4),
             })

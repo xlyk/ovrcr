@@ -350,14 +350,19 @@ impl InitialPromptLaunchRequest {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
         if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi"))
-                || !matches!(self.launch.session.label.as_deref(), Some("claude" | "pi"))
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex"))
+                || !matches!(
+                    self.launch.session.label.as_deref(),
+                    Some("claude" | "pi" | "codex")
+                )
                 || !matches!(
                     (&self.launch.session.kind, self.launch.session.label.as_deref()),
                     (SessionKind::Agent { name }, Some(label)) if name == label
                 ))
         {
-            return Err("initial prompts require a supported detected agent harness".into());
+            return Err(
+                "initial prompts require a detected Claude Code, Pi, or Codex launcher".into(),
+            );
         }
         if self.launch.session.argv.len() > 128
             || self
@@ -773,7 +778,7 @@ pub enum ServerEvent {
         request_id: u64,
         capabilities: AgentModelCapabilities,
     },
-    InitialPromptIntentChanged(InitialPromptIntentSnapshot),
+    InitialPromptIntentChanged(Box<InitialPromptIntentSnapshot>),
 }
 
 #[cfg(test)]
@@ -998,6 +1003,41 @@ mod wire_snapshot {
         });
         assert!(!format!("{request:?}").contains(prompt));
         assert!(format!("{request:?}").contains("redacted"));
+    }
+
+    #[test]
+    fn initial_prompt_validation_accepts_only_matching_detected_harness_names() {
+        let mut request = InitialPromptLaunchRequest {
+            intent: InitialPromptIntentId {
+                server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                sequence: 1,
+            },
+            launch: CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "codex".into(),
+                    label: Some("codex".into()),
+                    argv: vec!["codex".into()],
+                    kind: SessionKind::Agent {
+                        name: "codex".into(),
+                    },
+                },
+                model_policy: crate::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            },
+            prompt: "a Codex startup prompt".into(),
+        };
+        assert!(request.validate().is_ok());
+
+        request.launch.session.label = Some("claude".into());
+        assert!(request.validate().is_err());
+        request.launch.session.label = Some("codex".into());
+        request.launch.session.kind = SessionKind::Agent {
+            name: "custom".into(),
+        };
+        assert!(request.validate().is_err());
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -1664,7 +1704,7 @@ mod wire_snapshot {
             ),
             (
                 "InitialPromptIntentChanged",
-                ServerEvent::InitialPromptIntentChanged(InitialPromptIntentSnapshot {
+                ServerEvent::InitialPromptIntentChanged(Box::new(InitialPromptIntentSnapshot {
                     id: InitialPromptIntentId {
                         server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
                         sequence: 1,
@@ -1680,7 +1720,7 @@ mod wire_snapshot {
                     recoverable_launch: None,
                     message: None,
                     delivery: Some(InitialPromptDelivery::Unknown),
-                }),
+                })),
             ),
         ]
     }

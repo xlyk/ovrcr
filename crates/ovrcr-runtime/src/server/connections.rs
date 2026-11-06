@@ -1155,7 +1155,7 @@ pub(super) fn handle_request_with_id(
                         "initial-prompt intent requires the current Dashboard",
                     )
                 },
-                |result| result.map_or_else(|response| response, Response::InitialPromptIntent),
+                |result| result.map_or_else(|response| *response, Response::InitialPromptIntent),
             ),
         Request::ReconcileInitialPromptIntents => owner
             .filter(|_| dashboard)
@@ -1171,7 +1171,7 @@ pub(super) fn handle_request_with_id(
                         "initial-prompt reconciliation requires the current Dashboard",
                     )
                 },
-                |snapshots| Response::InitialPromptIntents(snapshots),
+                Response::InitialPromptIntents,
             ),
         Request::CreateAgentSessionWithPrompt(request) => owner
             .filter(|_| dashboard)
