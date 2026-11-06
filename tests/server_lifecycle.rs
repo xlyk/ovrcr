@@ -9299,10 +9299,9 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .map(|y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n");
-    // The sidebar's last row is the one-line quota summary: Claude by its more constrained
-    // window, five-hour 58% under seven-day 82%.
+    // The quota bars preserve both Claude allowance windows.
     assert!(
-        sidebar.lines().nth(30).unwrap().starts_with(" Claude 58%"),
+        sidebar.contains("QUOTA LEFT") && sidebar.contains("58%") && sidebar.contains("82%"),
         "five-hour remaining allowance missing: {sidebar}"
     );
     dashboard.key(crossterm::event::KeyCode::Char('u'));

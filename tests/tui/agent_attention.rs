@@ -457,8 +457,8 @@ fn jump_key_visits_input_then_unread_in_sidebar_order_and_the_strip_counts_them(
     let mut dashboard = dashboard_fixture();
     dashboard.install_hierarchy(ranked_hierarchy());
     dashboard.install_focus(SessionId(4));
-    // The strip sits on the sidebar's second-to-last row, above the quota line.
-    let strip = rendered_rows(&dashboard, 120, 40)[37]
+    // The strip sits immediately above the quota section.
+    let strip = rendered_rows(&dashboard, 120, 40)[32]
         .chars()
         .take(39)
         .collect::<String>();

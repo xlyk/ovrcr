@@ -1656,16 +1656,16 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[37],
+        rendered[32],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
     assert_eq!(
-        rendered[38].trim_end(),
-        " Claude ?",
-        "the one-line quota summary"
+        rendered[33].trim_end(),
+        " QUOTA LEFT ───────────────────────────",
+        "the quota section"
     );
-    // The last tree row remains selectable; the quota line cannot select/close a session.
-    for (index, row) in [37, 38].into_iter().enumerate() {
+    // The last tree row remains selectable; the quota section cannot select/close a session.
+    for (index, row) in [32, 33].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1688,7 +1688,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         }
         assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     }
-    // The quota line opened its details; close them.
+    // The quota section opened its details; close them.
     dashboard.key(KeyCode::Esc);
 
     dashboard.install_focus(SessionId(1));

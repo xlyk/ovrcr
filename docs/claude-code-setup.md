@@ -38,7 +38,7 @@ sources, which can duplicate existing hooks.
 
 The generated status line carries `"refreshInterval": 60`. Claude Code re-runs
 the status line on that timer while the session is idle, so an idle managed
-session keeps its `rate_limits` (the sidebar's quota line) current. Setup keeps a
+session keeps its `rate_limits` (the sidebar's quota section) current. Setup keeps a
 `refreshInterval` you already set, and running setup on its own output changes
 nothing:
 

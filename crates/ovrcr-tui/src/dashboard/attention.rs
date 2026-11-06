@@ -470,15 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn strip_sits_above_the_quota_line_and_a_click_jumps_like_the_key() {
+    fn strip_sits_above_the_quota_section_and_a_click_jumps_like_the_key() {
         let mut dashboard = dashboard();
         let rows = screen(&dashboard);
-        // Title row 0, sidebar rows 1..=28, footer row 29: quota on 28, the strip on 27.
+        // The strip sits directly above the six-row quota section.
         assert!(rows[1].starts_with(" OPERATOR"), "{}", rows[1]);
-        assert_eq!(rows[27].trim_end(), " ? 2 need input · ✓ 2 ready");
-        assert!(rows[28].starts_with(" Claude"), "{}", rows[28]);
+        assert_eq!(rows[22].trim_end(), " ? 2 need input · ✓ 2 ready");
+        assert!(rows[23].contains("QUOTA LEFT"), "{}", rows[28]);
         assert_eq!(
-            dashboard.mouse_action(click(27), Rect::new(0, 0, 120, 30)),
+            dashboard.mouse_action(click(22), Rect::new(0, 0, 120, 30)),
             DashboardAction::Redraw
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(2)));

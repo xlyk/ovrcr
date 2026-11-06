@@ -207,13 +207,20 @@ fn codex_native_read_reaches_remaining_bars_through_real_server_and_socket() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    // Both windows arrive; the sidebar line names Codex by the more constrained one.
-    assert_eq!(remaining(&quota, "5h"), 3_300);
-    assert_eq!(remaining(&quota, "7d"), 6_900);
     assert!(
-        sidebar_bottom(&screen).contains("Codex 33%"),
+        screen
+            .lines()
+            .any(|line| line.contains("Codex") && line.contains("5h") && line.contains("33%")),
         "native five-hour quota missing: {screen}"
     );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("7d") && line.contains("69%")),
+        "native seven-day quota missing: {screen}"
+    );
+    assert_eq!(remaining(&quota, "5h"), 3_300);
+    assert_eq!(remaining(&quota, "7d"), 6_900);
     let methods = std::fs::read_to_string(log).unwrap();
     assert_eq!(
         methods
@@ -292,10 +299,24 @@ fn claude_oauth_usage_reaches_separate_five_hour_and_seven_day_rows() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    // Both windows arrived separately (the loop above waits for each); the sidebar's one
-    // line names Claude by the more constrained, five-hour 58% under seven-day 82%, and
-    // leaves Grok out while collection is off.
-    assert_eq!(sidebar_bottom(&screen), " Claude 58%", "{screen}");
+    assert!(screen.contains("QUOTA LEFT"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("5h") && line.contains("58%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("7d") && line.contains("82%")),
+        "{screen}"
+    );
+    assert!(
+        !screen
+            .lines()
+            .any(|line| line.contains("Grok") && (line.contains("5h") || line.contains("7d")))
+    );
     let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
     assert!(
         http.lines().any(|line| line.contains("/api/oauth/usage")
@@ -395,7 +416,9 @@ fn grok_native_billing_reaches_actual_monthly_remaining_bar() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        sidebar_bottom(&screen).contains("Grok 76%"),
+        screen
+            .lines()
+            .any(|line| line.contains("Grok") && line.contains("mo") && line.contains("76%")),
         "monthly quota missing: {screen}"
     );
     let http = std::fs::read_to_string(fixture.root.path().join("http-quota")).unwrap();
@@ -504,11 +527,23 @@ fn default_settings_publish_current_allowance_without_opt_in() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    // Each provider by its most constrained window: Codex 5h 33% (7d 69%), Grok's month
-    // 76%, Claude 5h 58% (7d 82%).
-    assert_eq!(
-        sidebar_bottom(&screen),
-        " Claude 58% · Codex 33% · Grok 76%",
+    assert!(screen.contains("QUOTA LEFT"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Codex") && line.contains("5h") && line.contains("33%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Grok") && line.contains("mo") && line.contains("76%")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("Claude") && line.contains("5h") && line.contains("58%")),
         "{screen}"
     );
     assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
@@ -821,27 +856,21 @@ fn providers_remain_visible_before_any_native_quota_source_reports() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
         .unwrap();
-    let screen = (0..32)
-        .map(|y| {
-            (0..120)
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    // Claude is named while it checks; Codex and Grok are off until the Server says otherwise.
-    assert_eq!(sidebar_bottom(&screen), " Claude ?", "{screen}");
-}
-
-/// The sidebar's last row of a rendered screen: the line above the footer, left of the border.
-fn sidebar_bottom(screen: &str) -> String {
-    let lines: Vec<_> = screen.lines().collect();
-    lines[lines.len() - 2]
-        .chars()
-        .take(39)
-        .collect::<String>()
-        .trim_end()
-        .to_owned()
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    for expected in [
+        "QUOTA LEFT",
+        "Claude · checking",
+        "Codex · usage off",
+        "Grok · usage off",
+    ] {
+        assert!(screen.contains(expected), "missing {expected}: {screen}");
+    }
 }
 
 #[test]
@@ -994,14 +1023,12 @@ fn model_specific_bucket_is_not_a_general_sidebar_allowance() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
+    assert!(screen.contains("Codex"));
     assert!(
         !screen.contains("58%"),
         "special-model bucket mislabeled as general allowance: {screen}"
     );
-    assert!(
-        screen.contains("Codex ?"),
-        "no general window, no sidebar value: {screen}"
-    );
+    assert!(screen.contains("not reported"));
     dashboard.handle_key(crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('u'),
         crossterm::event::KeyModifiers::NONE,
@@ -2160,7 +2187,10 @@ fn cursor_personal_read_reaches_real_dashboard_and_errors_retain_only_stale_valu
         .iter()
         .map(|c| c.symbol())
         .collect::<String>();
-    assert!(screen.contains("Cursor 70%"), "{screen}");
+    assert!(
+        screen.contains("Cursor") && screen.contains("70%"),
+        "{screen}"
+    );
     assert!(!screen.contains(CURSOR_TOKEN_A) && !screen.contains("fixture-a"));
     http.respond(503, FIXTURE_BODY, None);
     cursor_refresh(&fixture, 1);
