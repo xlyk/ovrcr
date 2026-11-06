@@ -754,7 +754,9 @@ Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately.
 
-With Start = Agent the form also shows **Task**, and opens on it. A task names
+This separate **Create terminal** action retains its existing Start = Agent
+choice and **Task** field; use `n` for the dedicated New agent session form
+above. The task names
 the session when Name is blank (one line, at most 60 characters) and, for agents
 whose CLI takes a first message, starts the agent with it: the launch arguments end
 with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
@@ -764,8 +766,9 @@ says which applies (`Names the session; claude gets it as its first message`,
 `Only names the session; hermes starts without it`). The task is one-off: it is
 never part of the remembered launch choice, and Retry, Reopen, resume and
 server-restart recovery never send it again (recovery keeps only provider launch
-options before `--`). `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
+options before `--`). In this Create terminal flow, a selected root workspace
+with a warning blocks submission; `n` still opens New agent session so you can
+choose an eligible checkout. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,
