@@ -13,7 +13,7 @@ use ovrcr::protocol::{
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -88,7 +88,7 @@ exit 0
     executable
 }
 
-fn start_server(live: &Live, codex: &PathBuf, codex_home: &PathBuf) {
+fn start_server(live: &Live, codex: &Path, codex_home: &Path) {
     std::fs::create_dir_all(codex_home).unwrap();
     let mut path = vec![codex.parent().unwrap().to_path_buf()];
     path.extend(std::env::split_paths(&live.path()));
@@ -128,7 +128,7 @@ fn open_dashboard(live: &Live) -> UnixStream {
     }
 }
 
-fn codex_argv(live: &Live, codex: &PathBuf) -> Vec<OsString> {
+fn codex_argv(live: &Live, codex: &Path) -> Vec<OsString> {
     let mut native = vec![codex.canonicalize().unwrap().into_os_string()];
     ovrcr::protocol::apply_default_auto_trust("codex", &mut native);
     let mut argv = vec![
@@ -146,7 +146,7 @@ fn query_models(
     dashboard: &mut UnixStream,
     request_id: u64,
     live: &Live,
-    codex: &PathBuf,
+    codex: &Path,
 ) -> ovrcr::protocol::AgentModelCapabilities {
     assert_eq!(
         client::request(
