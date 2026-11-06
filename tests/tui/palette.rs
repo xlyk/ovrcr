@@ -3370,7 +3370,9 @@ fn lifecycle_completed(
     let op = match request.request {
         Request::CloseTerminal { .. } => ovrcr::protocol::LifecycleOp::CloseTerminal,
         Request::RemoveWorkspace { .. } => ovrcr::protocol::LifecycleOp::RemoveWorkspace,
-        Request::CreateSession(_) => ovrcr::protocol::LifecycleOp::CreateSession,
+        Request::CreateSession(_) | Request::CreateAgentSession(_) => {
+            ovrcr::protocol::LifecycleOp::CreateSession
+        }
         _ => ovrcr::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
     };
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::LifecycleCompleted {
@@ -5344,9 +5346,14 @@ fn a_task_starts_the_agent_with_it_and_names_the_session() {
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
     let session = only_request(outgoing(&mut dashboard, answered));
-    let Request::CreateSession(request) = &session.request else {
+    let Request::CreateAgentSession(agent_request) = &session.request else {
         panic!("{:?}", session.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(request.workspace, id);
     assert_eq!(request.name, task);
     assert_eq!(
@@ -5375,7 +5382,10 @@ fn a_task_starts_the_agent_with_it_and_names_the_session() {
         remembered.request,
         Request::SetSetting {
             path: "launch_choices.consigint".into(),
-            value: Some("{ kind = \"Agent\", preset = \"claude\" }".into()),
+            value: Some(
+                "{ kind = \"Agent\", preset = \"claude\", model_policy = \"HarnessDefault\" }"
+                    .into(),
+            ),
         }
     );
     assert!(
@@ -5402,9 +5412,14 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateSession(request) = &message.request else {
+    let Request::CreateAgentSession(agent_request) = &message.request else {
         panic!("{:?}", message.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(request.name, "Write the release notes");
     assert_eq!(
         request.argv,
@@ -5442,9 +5457,14 @@ fn create_terminal_offers_task_only_for_an_agent_and_says_what_it_does() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let message = only_request(dashboard.drain_outbox());
-    let Request::CreateSession(request) = &message.request else {
+    let Request::CreateAgentSession(agent_request) = &message.request else {
         panic!("{:?}", message.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(request.name, "docs");
     assert_eq!(request.argv, vec![agent_path(&agents, "hermes")]);
 
@@ -5476,9 +5496,14 @@ fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
     publish_empty_workspace(&mut dashboard, &id);
     let answered = lifecycle_completed(&mut dashboard, &create, LifecycleOutcome::Succeeded);
     let first = only_request(outgoing(&mut dashboard, answered));
-    let Request::CreateSession(request) = &first.request else {
+    let Request::CreateAgentSession(agent_request) = &first.request else {
         panic!("{:?}", first.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(
         request.argv,
         vec![
@@ -5513,9 +5538,14 @@ fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
     // Retry preserves the session name and launch choice, but never replays Task.
     dashboard.key(KeyCode::Enter);
     let retry = only_request(dashboard.drain_outbox());
-    let Request::CreateSession(request) = &retry.request else {
+    let Request::CreateAgentSession(agent_request) = &retry.request else {
         panic!("{:?}", retry.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(request.name, "status check");
     assert_eq!(request.argv, vec![agent_path(&agents, "claude")]);
     accept(&mut dashboard, &retry);
@@ -5534,9 +5564,14 @@ fn a_task_session_retry_and_agent_change_never_replay_its_first_message() {
     dashboard.event_action(Event::Paste("codex".into()));
     dashboard.key(KeyCode::Enter);
     let other = only_request(dashboard.drain_outbox());
-    let Request::CreateSession(request) = &other.request else {
+    let Request::CreateAgentSession(agent_request) = &other.request else {
         panic!("{:?}", other.request);
     };
+    assert_eq!(
+        agent_request.model_policy,
+        ovrcr_protocol::AgentModelPolicy::HarnessDefault
+    );
+    let request = &agent_request.session;
     assert_eq!(request.name, "status check");
     assert_eq!(request.argv, vec![agent_path(&agents, "codex")]);
 }
