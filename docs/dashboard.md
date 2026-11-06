@@ -87,7 +87,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
-| `n` | Create a terminal (form) |
+| `n` | Open New agent session |
 | `w` | Create a workspace (form) |
 | `a` | Register a project (form) |
 | `X` | Archive the selected terminal; confirms before stopping live work |
@@ -639,7 +639,7 @@ dashboard has detached it reconnects first. Type to filter actions or to search 
 terminal by project, branch, and title. Arrows select a result, `Enter`
 continues, and `Esc` cancels.
 
-Entries are, in order: `Create terminal (n)`, `Create workspace (w)`,
+Entries are, in order: `New agent session (n)`, `Create terminal`, `Create workspace (w)`,
 `Register project (a)`, the selected session's actions (`Rename terminal`,
 resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
 Settings, Events, quota actions, `Archived sessions`, one row per session, and
@@ -655,6 +655,9 @@ Searching also finds every setting by its label or its `dashboard.toml` key, as
 appear only for a search, not in the unfiltered list.
 
 Within a form, `Enter` submits from any field, the same as the Submit control.
+In **New agent session**, `Enter` on a choice picker accepts that choice and
+keeps the form open; the multiline prompt uses `Enter` for a newline and
+`Alt-Enter` to submit.
 It first checks the whole form: a required field left empty, a choice that is
 not in its list, or a branch Git would refuse keeps the form open, moves the
 focus to the first such field and says what is wrong just below it
@@ -702,7 +705,38 @@ changes instead. Errors stay in the palette with the form values retained, in
 plain words: no error codes, branch names instead of internal workspace ids, and
 sessions by title.
 
-### Create terminal (`n`)
+### New agent session (`n`)
+
+Choose a registered checkout by its current branch in **Branch**, then choose an
+**Agent harness**, **Model**, and optional **Initial prompt**. Workspaces are
+grouped by project; the picker searches the displayed project and branch labels
+and excludes retained sessions without a registered checkout. It follows the
+same registered checkout when its branch label changes. Unavailable checkouts
+remain visible with their state; root and detached destinations are labeled.
+An eligible current feature checkout is preselected. If the current target is
+missing or cannot launch, the form keeps its identity when registered and asks
+you to choose deliberately; it never substitutes the first listed checkout.
+Start checks the selected checkout again, including its registration, path,
+Git identity and root protection. Register a project with `a` when no project
+is available.
+
+The picker opens even when the current workspace cannot launch. This does not
+change the separate **Create terminal** form or its existing root-workspace
+guard. The form shows a compact destination line and, when another agent is
+already using that checkout, a compact shared-files notice. Harness and model
+defaults can follow the selected project; explicit choices, the prompt and
+advanced name stay intact when changing destinations. **Advanced options** is
+collapsed and contains the optional session name.
+
+On a choice picker, `Enter` accepts the highlighted choice and keeps the form
+open. `Esc` clears the active filter first, then cancels the form when no filter
+remains. Use `Alt-Enter` or the visible Start control to launch. The Initial
+prompt is multiline: `Enter` adds a line and `Alt-Enter` submits. The prompt is
+sent through a supported harness mechanism and is not used as the session name
+or remembered launch setting. Harnesses without verified model or prompt
+support stay available with that limitation shown in the form.
+
+### Create terminal
 
 Choose **Agent** or **Terminal** in Start. Agent offers installed agents and named
 `[[agents]]` presets. Terminal opens your default shell; its optional Command
@@ -946,11 +980,11 @@ names comes from the same key table as the footer and the menu.
   none) and elapsed time. Then
   the next steps: `j open <session>` while the row below is that workspace's
   first session (`j` selects the next row), `Enter expand…` when the workspace
-  is collapsed, `n new agent or terminal here`, `w new workspace` and
-  `Space w more`. A key that is unavailable there is left out; a root warning
-  removes `n`, because new launches are blocked until the checkout is back on
-  the default branch. Existing sessions stay usable; OVRCR does not switch the
-  checkout. `n` prefills that workspace in the terminal form.
+  is collapsed, `n new agent session`, `w new workspace` and `Space w more`.
+  A key that is unavailable there is left out. `n` opens the branch-based form
+  even when a root warning blocks starting in this checkout; the warning
+  remains visible and Start is blocked until a valid destination is chosen.
+  Existing sessions stay usable; OVRCR does not switch the checkout.
 - **Project row selected:** the pane header names the project; the card shows
   its repository path, its workspace root (read from where its worktrees are,
   so it appears once the project has one), and each workspace with its session

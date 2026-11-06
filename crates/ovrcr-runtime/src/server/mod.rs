@@ -104,6 +104,7 @@ struct SessionSpawnOptions {
     prepared: bool,
     initial_prompt: Option<String>,
     initial_prompt_intent: Option<InitialPromptIntentId>,
+    verify_agent_workspace: bool,
 }
 
 fn lifecycle_error(code: ErrorCode, message: impl Into<String>) -> anyhow::Error {
@@ -865,7 +866,16 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let request = agent_models::prepare_session(self, request)
             .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
-        self.create_session(request)
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.create_session_locked(
+            request,
+            None,
+            SessionSpawnOptions {
+                verify_agent_workspace: true,
+                ..SessionSpawnOptions::default()
+            },
+        )
     }
 
     pub fn create_agent_session_with_prompt(
@@ -894,6 +904,7 @@ impl ServerState {
             SessionSpawnOptions {
                 initial_prompt: has_prompt.then_some(prompt),
                 initial_prompt_intent: Some(intent),
+                verify_agent_workspace: true,
                 ..SessionSpawnOptions::default()
             },
         )
@@ -979,6 +990,32 @@ impl ServerState {
                     ErrorCode::NotFound,
                     "working directory is unavailable",
                 ));
+            }
+            if spawn.verify_agent_workspace && matches!(request.kind, SessionKind::Agent { .. }) {
+                if workspace_record.setup_pending {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "workspace setup is still pending",
+                    ));
+                }
+                let Some(expected) = workspace_record.git_identity.as_deref() else {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree identity is missing; refresh the workspace",
+                    ));
+                };
+                let actual = git::worktree_identity(&cwd).map_err(|error| {
+                    lifecycle_error(
+                        ErrorCode::Conflict,
+                        format!("could not verify the registered Git worktree: {error:#}"),
+                    )
+                })?;
+                if actual != expected {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree changed; refresh the workspace",
+                    ));
+                }
             }
             let display =
                 git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
