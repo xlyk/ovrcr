@@ -6,6 +6,8 @@ mod dashboard_proxy;
 mod live;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
+#[path = "terminal_acceptance/session_jump_retained.rs"]
+mod session_jump_retained;
 
 use anyhow::{Context, Result, bail};
 use live::{Live, Stop, group_exists, wait_deadline};
