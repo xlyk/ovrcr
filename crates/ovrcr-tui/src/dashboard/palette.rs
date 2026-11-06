@@ -51,6 +51,7 @@ enum Command {
     AcknowledgeStopped(SessionId, crate::protocol::SessionRunId),
     AgentResumeUnavailable(SessionId),
     RecoverLaunch,
+    RecoverInitialPrompt,
     RegisterProject,
     CloseTerminal(SessionId),
     Archives,
@@ -79,6 +80,7 @@ struct Entry {
 
 enum FieldKind {
     Text,
+    Multiline,
     Toggle,
     Pick(PickList),
     Path(PathPicker),
@@ -184,6 +186,9 @@ pub(super) struct Palette {
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    recovered_prompt_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    initial_prompt_summary: Option<String>,
+    initial_prompt_intent: Option<ovrcr_protocol::InitialPromptIntentId>,
     model_capabilities: Option<crate::protocol::AgentModelCapabilities>,
     model_status: Option<String>,
     launch_project: Option<String>,
@@ -297,6 +302,7 @@ enum PaletteTarget {
     Search,
     Entry(usize),
     Field(usize, bool),
+    MultilineLine(usize, usize),
     Option(usize, usize),
 }
 
@@ -651,6 +657,9 @@ impl Palette {
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
+            recovered_prompt_launch: None,
+            initial_prompt_summary: None,
+            initial_prompt_intent: None,
             model_capabilities: None,
             model_status: None,
             launch_project: None,
@@ -668,7 +677,24 @@ impl Palette {
             return;
         }
         self.scroll = None;
-        let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
+        let multiline = matches!(
+            &self.page,
+            Page::Form { fields, active, .. }
+                if matches!(fields[*active].kind, FieldKind::Multiline)
+        );
+        let mut text: String = text
+            .chars()
+            .filter(|ch| {
+                if multiline {
+                    !ch.is_control() || matches!(ch, '\n' | '\r' | '\t')
+                } else {
+                    !ch.is_control()
+                }
+            })
+            .collect();
+        if multiline {
+            text = text.replace("\r\n", "\n").replace('\r', "\n");
+        }
         if text.is_empty() {
             return;
         }
@@ -695,6 +721,7 @@ impl Palette {
                         accept_pick(&mut fields[*active]);
                     }
                     FieldKind::Text => self.cursor.insert(&mut fields[*active].value, &text),
+                    FieldKind::Multiline => self.cursor.insert(&mut fields[*active].value, &text),
                     FieldKind::Path(picker) => {
                         picker.selected = 0;
                         self.cursor.insert(&mut fields[*active].value, &text);
@@ -1384,7 +1411,7 @@ impl Dashboard {
         self.palette = Some(palette);
         if submit {
             // Deferred submission was already queued before the writer scheduled History.
-            self.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false);
+            self.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), false);
             self.refresh_active_path_listing();
         }
         was_loading || submit || refused
@@ -2160,8 +2187,13 @@ impl Dashboard {
                 && palette.pending.is_none()
                 && !palette.submit_when_ready
             {
-                return self
-                    .palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+                let form = matches!(&palette.page, Page::Form { .. });
+                let key = if form {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+                } else {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+                };
+                return self.palette_key_inner(key, true);
             }
             return DashboardAction::Redraw;
         }
@@ -2254,6 +2286,18 @@ impl Dashboard {
                     _ => {}
                 }
             }
+            (Page::Form { fields, active, .. }, PaletteTarget::MultilineLine(index, line)) => {
+                *active = index;
+                palette.scroll = None;
+                if matches!(&fields[index].kind, FieldKind::Multiline) {
+                    palette.cursor.click_line(
+                        &fields[index].value,
+                        line,
+                        body.width.saturating_sub(2) as usize,
+                        mouse.column.saturating_sub(body.x + 2) as usize,
+                    );
+                }
+            }
             (Page::Form { fields, active, .. }, PaletteTarget::Option(index, selected)) => {
                 *active = index;
                 palette.cursor = Default::default();
@@ -2322,6 +2366,7 @@ impl Dashboard {
                 self.ignored_responses.insert(request_id);
             }
             self.present_wip_prompt();
+            self.restore_deferred_initial_prompt_recovery();
             return DashboardAction::Redraw;
         }
         // Other keys wait for the running request so a submit cannot repeat.
@@ -2331,10 +2376,23 @@ impl Dashboard {
         }
         self.refresh_workspace_form(&mut palette);
         palette.scroll = None;
+        let multiline_active = matches!(
+            &palette.page,
+            Page::Form { fields, active, .. }
+                if matches!(fields[*active].kind, FieldKind::Multiline)
+        );
+        let submit_chord = matches!(&palette.page, Page::Form { .. })
+            && key.code == KeyCode::Enter
+            && key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL);
         if matches!(
             key.code,
             KeyCode::Tab | KeyCode::BackTab | KeyCode::Enter | KeyCode::Up | KeyCode::Down
-        ) {
+        ) && !(multiline_active
+            && !submit_chord
+            && matches!(key.code, KeyCode::Enter | KeyCode::Up | KeyCode::Down))
+        {
             palette.cursor = Default::default();
             palette.scroll = None;
         }
@@ -2385,7 +2443,9 @@ impl Dashboard {
                                 picker.selected = 0;
                                 field.value.clear();
                             }
-                            FieldKind::Text | FieldKind::Toggle => field.value.clear(),
+                            FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {
+                                field.value.clear()
+                            }
                         }
                     }
                     _ => {}
@@ -2426,6 +2486,9 @@ impl Dashboard {
                 ) =>
             {
                 palette.insert(&ch.to_string());
+            }
+            KeyCode::Enter if multiline_active && !submit_chord => {
+                palette.insert("\n");
             }
             KeyCode::Backspace
             | KeyCode::Delete
@@ -2469,6 +2532,9 @@ impl Dashboard {
                                 }
                             }
                             FieldKind::Text => palette.cursor.key(&mut field.value, key.code),
+                            FieldKind::Multiline => {
+                                palette.cursor.line_key(&mut field.value, key.code)
+                            }
                             FieldKind::Path(picker) => {
                                 palette.cursor.key(&mut field.value, key.code);
                                 if editing {
@@ -2481,6 +2547,14 @@ impl Dashboard {
                 }
                 if editing {
                     palette.error = None;
+                }
+            }
+            KeyCode::Up | KeyCode::Down if multiline_active => {
+                if let Page::Form { fields, active, .. } = &mut palette.page {
+                    let field = &mut fields[*active];
+                    palette
+                        .cursor
+                        .vertical(&mut field.value, key.code == KeyCode::Down);
                 }
             }
             KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
@@ -2501,7 +2575,7 @@ impl Dashboard {
                                 picker.listing(&value, &self.settings.picker_roots).clone();
                             picker.move_selection(&listing, delta);
                         }
-                        FieldKind::Text | FieldKind::Toggle => {}
+                        FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {}
                     }
                 }
             }
@@ -2773,6 +2847,13 @@ impl Dashboard {
                     name_edited,
                     root_edited,
                 } => {
+                    if matches!(fields[*active].kind, FieldKind::Pick(_)) && !submit_chord {
+                        accept_pick(&mut fields[*active]);
+                        self.refresh_terminal_form(fields, *name_edited);
+                        self.refresh_project_form(fields, *name_edited, *root_edited);
+                        self.palette = Some(palette);
+                        return action;
+                    }
                     // A field that Start just hid is no longer part of the form.
                     if !fields[*active].hidden && !accept_pick(&mut fields[*active]) {
                         // A deferred submit must not wait on a pick that can
@@ -2845,6 +2926,21 @@ impl Dashboard {
                         self.palette = Some(palette);
                         return action;
                     }
+                    if matches!(command, Command::RecoverInitialPrompt) {
+                        let Some(launch) = palette.recovered_prompt_launch.clone() else {
+                            palette.error =
+                                Some("This launch can no longer be recovered safely".into());
+                            self.palette = Some(palette);
+                            return action;
+                        };
+                        action = self.palette_submit(
+                            &mut palette,
+                            Request::CreateAgentSession(launch),
+                            history_before_request,
+                        );
+                        self.palette = Some(palette);
+                        return action;
+                    }
                     self.refresh_terminal_form(fields, *name_edited);
                     self.refresh_project_form(fields, *name_edited, *root_edited);
                     // Enter submits from any field; the first field that would be
@@ -2878,6 +2974,11 @@ impl Dashboard {
                             form_task(fields)
                         };
                         let mut chained: Option<ovrcr_protocol::CreateAgentSessionRequest> = None;
+                        let launch_task = if matches!(command, Command::CreateWorkspace) {
+                            ""
+                        } else {
+                            &task
+                        };
                         let selected_launch = if matches!(
                             command,
                             Command::CreateTerminal
@@ -2886,7 +2987,7 @@ impl Dashboard {
                         ) {
                             match self.selected_launch(
                                 fields,
-                                &task,
+                                launch_task,
                                 palette.model_capabilities.as_ref(),
                             ) {
                                 Ok(launch) => launch,
@@ -2980,17 +3081,24 @@ impl Dashboard {
                                         }
                                     }
                                 };
-                                // The workspace request cannot name its session, so a
-                                // task's session follows as its own Lifecycle job.
-                                let launch = if task.is_empty() {
-                                    selected_launch.clone()
-                                } else {
+                                // Agent starts follow workspace registration as a separate
+                                // lifecycle step so blank and prompted starts share one-use
+                                // intent admission. The Task field names a branch; Prompt is
+                                // carried separately and never becomes an argv/name/branch.
+                                let agent_launch = selected_launch.as_ref().is_some_and(|launch| {
+                                    matches!(&launch.kind, SessionKind::Agent { .. })
+                                });
+                                let launch = if agent_launch || !task.is_empty() {
                                     chained = selected_launch.clone().map(|launch| {
                                         ovrcr_protocol::CreateAgentSessionRequest {
                                             session: CreateSessionRequest {
                                                 project: field("Project"),
                                                 workspace: id.clone(),
-                                                name: task_name(&task),
+                                                name: if agent_launch {
+                                                    String::new()
+                                                } else {
+                                                    task_name(&task)
+                                                },
                                                 argv: launch.argv,
                                                 label: launch.label,
                                                 kind: launch.kind,
@@ -3001,6 +3109,8 @@ impl Dashboard {
                                         }
                                     });
                                     None
+                                } else {
+                                    selected_launch.clone()
                                 };
                                 Request::CreateWorkspaceWithLaunch {
                                     project: field("Project"),
@@ -3190,6 +3300,9 @@ impl Dashboard {
         let creates_workspace = fields.iter().any(|f| f.label == "Project");
         for field in fields {
             if field.label == "Task" && !creates_workspace {
+                field.hidden = start != "Agent";
+            }
+            if field.label == "Initial prompt" {
                 field.hidden = start != "Agent";
             }
             if field.label == "Agent" {
@@ -3601,6 +3714,29 @@ impl Dashboard {
             palette.error = Some(message);
             return DashboardAction::Redraw;
         }
+        let initial_prompt = match &request {
+            Request::CreateAgentSession(launch) => {
+                let prompt = match &palette.page {
+                    Page::Form { fields, .. } => fields
+                        .iter()
+                        .find(|field| field.label == "Initial prompt")
+                        .map(|field| field.value.clone())
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                Some((launch.clone(), prompt))
+            }
+            _ => None,
+        };
+        if let Some((launch, prompt)) = &initial_prompt
+            && !prompt.trim().is_empty()
+            && !self.supports_initial_prompt_launch(launch)
+        {
+            palette.error = Some(
+                "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+            );
+            return DashboardAction::Redraw;
+        }
         let launch = match &request {
             Request::CreateWorkspaceWithLaunch {
                 project,
@@ -3640,6 +3776,27 @@ impl Dashboard {
             };
             remember_launch(palette, launch, &task);
         }
+        if let Some((launch, prompt)) = initial_prompt {
+            let request_id = self.next_request_id();
+            self.deferred_initial_prompt_recovery = None;
+            palette.pending = Some(request_id);
+            palette.error = None;
+            self.pending_initial_prompt_allocation = Some(super::InitialPromptAllocation {
+                request_id,
+                launch,
+                prompt,
+                form: None,
+                then: Vec::new(),
+            });
+            if history_before_request {
+                self.queue_history_request();
+            }
+            self.push_request(ClientMessage {
+                request_id,
+                request: Request::AllocateInitialPromptIntent,
+            });
+            return DashboardAction::Redraw;
+        }
         let request_id = self.next_request_id();
         palette.pending = Some(request_id);
         palette.error = None;
@@ -3652,6 +3809,379 @@ impl Dashboard {
             request,
         });
         DashboardAction::Redraw
+    }
+
+    fn supports_initial_prompt_launch(
+        &self,
+        launch: &ovrcr_protocol::CreateAgentSessionRequest,
+    ) -> bool {
+        if !matches!(
+            &launch.session.kind,
+            SessionKind::Agent { name } if name == "claude"
+        ) || launch.session.label.as_deref() != Some("claude")
+        {
+            return false;
+        }
+        self.detected_agents().into_iter().any(|entry| {
+            entry.name == "claude"
+                && entry.source == AgentSource::Detected
+                && entry.origin == AgentOrigin::Detected
+                && entry.argv == launch.session.argv
+        })
+    }
+
+    pub(super) fn queue_chained_initial_prompt_launch(
+        &mut self,
+        launch: ovrcr_protocol::CreateAgentSessionRequest,
+        form: Option<Box<Palette>>,
+        then: Vec<Request>,
+    ) {
+        let prompt = form
+            .as_ref()
+            .and_then(|form| match &form.page {
+                Page::Form { fields, .. } => fields
+                    .iter()
+                    .find(|field| field.label == "Initial prompt")
+                    .map(|field| field.value.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        if !prompt.trim().is_empty() && !self.supports_initial_prompt_launch(&launch) {
+            if let Some(mut form) = form {
+                form.pending = None;
+                form.error = Some(
+                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.".into(),
+                );
+                self.palette = Some(*form);
+            } else {
+                self.set_error(
+                    "Initial prompts require the current detected Claude launcher. Clear the prompt or choose detected Claude Code.",
+                );
+            }
+            return;
+        }
+        let request_id = self.next_request_id();
+        self.deferred_initial_prompt_recovery = None;
+        self.pending_initial_prompt_allocation = Some(super::InitialPromptAllocation {
+            request_id,
+            launch,
+            prompt,
+            form,
+            then,
+        });
+        self.lifecycle_strip = Some("Starting agent…".into());
+        self.push_request(ClientMessage {
+            request_id,
+            request: Request::AllocateInitialPromptIntent,
+        });
+    }
+
+    pub(super) fn initial_prompt_allocation_response(
+        &mut self,
+        request_id: u64,
+        response: &Response,
+    ) -> bool {
+        if !self
+            .pending_initial_prompt_allocation
+            .as_ref()
+            .is_some_and(|pending| pending.request_id == request_id)
+        {
+            return false;
+        }
+        let mut allocation = self.pending_initial_prompt_allocation.take().unwrap();
+        if let Response::Error { message, .. } = response {
+            if let Some(mut form) = allocation.form {
+                form.pending = None;
+                form.error = Some(self.plain_failure(&form, message));
+                self.palette = Some(*form);
+                self.lifecycle_strip = None;
+                return true;
+            }
+            return false;
+        }
+        let Response::InitialPromptIntent(intent) = response else {
+            if let Some(mut form) = allocation.form {
+                form.pending = None;
+                form.error = Some("Could not prepare this agent start".into());
+                self.palette = Some(*form);
+                self.lifecycle_strip = None;
+            } else if let Some(palette) = self.palette.as_mut() {
+                if palette.pending == Some(request_id) {
+                    palette.pending = None;
+                    palette.error = Some("Could not prepare this agent start".into());
+                }
+            } else {
+                self.set_error("Could not prepare this agent start");
+            }
+            return true;
+        };
+        if let Err(error) = intent.validate() {
+            if let Some(mut form) = allocation.form {
+                form.pending = None;
+                form.error = Some(error);
+                self.palette = Some(*form);
+                self.lifecycle_strip = None;
+            } else if let Some(palette) = self.palette.as_mut() {
+                if palette.pending == Some(request_id) {
+                    palette.pending = None;
+                    palette.error = Some(error);
+                }
+            }
+            return true;
+        }
+        let direct_palette = self
+            .palette
+            .as_ref()
+            .is_some_and(|palette| palette.pending == Some(request_id));
+        if !direct_palette && allocation.form.is_none() {
+            // Escape retires the allocation response before this path. A missing form
+            // here is another close path, so leave the issued intent unused.
+            return true;
+        }
+        if let Some(form) = allocation.form.as_mut() {
+            form.initial_prompt_intent = Some(intent.clone());
+        }
+        if direct_palette && let Some(palette) = self.palette.as_mut() {
+            palette.initial_prompt_intent = Some(intent.clone());
+        }
+        let launch =
+            Request::CreateAgentSessionWithPrompt(ovrcr_protocol::InitialPromptLaunchRequest {
+                intent: intent.clone(),
+                launch: allocation.launch,
+                prompt: allocation.prompt,
+            });
+        let launch_request_id = self.next_request_id();
+        if direct_palette && let Some(palette) = self.palette.as_mut() {
+            palette.pending = Some(launch_request_id);
+            palette.error = None;
+        }
+        self.initial_prompt_intent_id = Some(intent.clone());
+        self.initial_prompt_focus_pending = Some(intent.clone());
+        self.initial_prompt_intent = None;
+        self.begin_lifecycle_pending(launch_request_id, &launch);
+        if let Some(row) = self.lifecycle_pending.as_mut() {
+            row.form = allocation.form;
+            row.then = allocation.then;
+        }
+        self.lifecycle_strip = Some("Starting agent…".into());
+        self.push_request(ClientMessage {
+            request_id: launch_request_id,
+            request: launch,
+        });
+        true
+    }
+
+    pub(super) fn abandon_unbound_initial_prompt_allocation(&mut self) {
+        let Some(allocation) = self.pending_initial_prompt_allocation.take() else {
+            return;
+        };
+        if let Some(mut form) = allocation.form {
+            form.pending = None;
+            form.error = Some(
+                "Connection changed before the agent start was sent. Press Start to try again."
+                    .into(),
+            );
+            self.palette = Some(*form);
+        } else if let Some(palette) = self
+            .palette
+            .as_mut()
+            .filter(|palette| palette.pending == Some(allocation.request_id))
+        {
+            palette.pending = None;
+            palette.error = Some(
+                "Connection changed before the agent start was sent. Press Start to try again."
+                    .into(),
+            );
+        }
+    }
+
+    pub(super) fn initial_prompt_snapshot_updated(
+        &mut self,
+        snapshot: &ovrcr_protocol::InitialPromptIntentSnapshot,
+    ) {
+        use ovrcr_protocol::InitialPromptIntentState as State;
+
+        match snapshot.state {
+            State::Issued => {
+                self.abandon_unbound_initial_prompt_allocation();
+                self.lifecycle_strip = None;
+            }
+            State::Pending => {
+                self.lifecycle_strip = Some("Starting agent…".into());
+            }
+            State::LaunchAccepted => {
+                if self.attach_initial_prompt_session() {
+                    self.lifecycle_strip = None;
+                } else {
+                    self.lifecycle_strip = Some("Agent started".into());
+                }
+            }
+            State::Refused => {
+                let awaiting_accept = self
+                    .lifecycle_pending
+                    .as_ref()
+                    .is_some_and(|row| row.initial_prompt_intent.as_ref() == Some(&snapshot.id));
+                if awaiting_accept {
+                    self.lifecycle_strip = Some("Starting agent…".into());
+                } else {
+                    self.recover_initial_prompt_refusal(snapshot);
+                }
+            }
+            State::Unknown => self.finish_unknown_initial_prompt(snapshot),
+        }
+    }
+
+    fn recover_initial_prompt_refusal(
+        &mut self,
+        snapshot: &ovrcr_protocol::InitialPromptIntentSnapshot,
+    ) {
+        let matching_palette = self
+            .palette
+            .as_ref()
+            .is_some_and(|palette| palette.initial_prompt_intent.as_ref() == Some(&snapshot.id));
+        if self.palette.is_some() && !matching_palette {
+            self.deferred_initial_prompt_recovery = Some(snapshot.id.clone());
+            let reason = snapshot
+                .message
+                .as_deref()
+                .unwrap_or("The agent could not be started before a process began");
+            self.lifecycle_strip = Some(format!(
+                "{reason}. Close this form to recover the agent start."
+            ));
+            return;
+        }
+        let mut form = self
+            .provisional
+            .take_if(|row| row.initial_prompt_intent.as_ref() == Some(&snapshot.id))
+            .and_then(|mut row| row.form.take())
+            .map(|form| *form)
+            .or_else(|| matching_palette.then(|| self.palette.take()).flatten())
+            .unwrap_or_else(Palette::new);
+        self.deferred_initial_prompt_recovery
+            .take_if(|intent| intent == &snapshot.id);
+        self.lifecycle_pending
+            .take_if(|row| row.initial_prompt_intent.as_ref() == Some(&snapshot.id));
+        self.lifecycle_preference = None;
+        self.lifecycle_strip = None;
+        self.initial_prompt_focus_pending = None;
+
+        form.pending = None;
+        form.initial_prompt_intent = None;
+        form.error = snapshot
+            .message
+            .clone()
+            .or_else(|| Some("The agent could not be started before a process began".into()));
+        let Some(launch) = snapshot.recoverable_launch.clone() else {
+            if let Page::Form { fields, .. } = &mut form.page
+                && let Some(prompt) = fields
+                    .iter_mut()
+                    .find(|field| field.label == "Initial prompt")
+            {
+                prompt.value.clear();
+            }
+            self.palette = Some(form);
+            return;
+        };
+        let prompt = snapshot.recoverable_prompt.clone().unwrap_or_default();
+        let model = match &launch.model_policy {
+            ovrcr_protocol::AgentModelPolicy::HarnessDefault => "Harness default".to_owned(),
+            ovrcr_protocol::AgentModelPolicy::Explicit(model) => model.clone(),
+        };
+        let name = if launch.session.name.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", launch.session.name)
+        };
+        let summary = format!(
+            "{} · {} / {} · {model}{name}",
+            launch.session.label.as_deref().unwrap_or("Agent"),
+            launch.session.project,
+            launch.session.workspace
+        );
+        form.page = Page::Form {
+            command: Command::RecoverInitialPrompt,
+            fields: vec![Field {
+                label: "Initial prompt",
+                value: prompt,
+                required: false,
+                hidden: false,
+                edited: false,
+                kind: FieldKind::Multiline,
+            }],
+            active: 0,
+            name_edited: false,
+            root_edited: false,
+        };
+        form.recovered_prompt_launch = Some(launch);
+        form.initial_prompt_summary = Some(summary);
+        form.cursor = Default::default();
+        self.palette = Some(form);
+    }
+
+    fn finish_unknown_initial_prompt(
+        &mut self,
+        snapshot: &ovrcr_protocol::InitialPromptIntentSnapshot,
+    ) {
+        let message = snapshot.message.clone().unwrap_or_else(|| {
+            "Launch status is unknown. Check for the agent before trying again.".into()
+        });
+        let matching_palette = self
+            .palette
+            .as_ref()
+            .is_some_and(|palette| palette.initial_prompt_intent.as_ref() == Some(&snapshot.id));
+        if self.palette.is_some() && !matching_palette {
+            self.initial_prompt_focus_pending = None;
+            self.lifecycle_strip = Some(message);
+            return;
+        }
+        let mut form = self
+            .provisional
+            .take_if(|row| row.initial_prompt_intent.as_ref() == Some(&snapshot.id))
+            .and_then(|mut row| row.form.take())
+            .map(|form| *form);
+        if form.is_none() && matching_palette {
+            form = self.palette.take();
+        }
+        self.lifecycle_pending
+            .take_if(|row| row.initial_prompt_intent.as_ref() == Some(&snapshot.id));
+        self.lifecycle_preference = None;
+        self.initial_prompt_focus_pending = None;
+        if let Some(mut form) = form {
+            form.pending = None;
+            form.initial_prompt_intent = None;
+            form.error = Some(message.clone());
+            if let Page::Form { fields, .. } = &mut form.page
+                && let Some(prompt) = fields
+                    .iter_mut()
+                    .find(|field| field.label == "Initial prompt")
+            {
+                prompt.value.clear();
+            }
+            form.recovered_prompt_launch = None;
+            self.palette = Some(form);
+            self.lifecycle_strip = None;
+        } else {
+            self.lifecycle_strip = Some(message);
+        }
+    }
+
+    fn restore_deferred_initial_prompt_recovery(&mut self) {
+        if self.palette.is_some() {
+            return;
+        }
+        let Some(intent) = self.deferred_initial_prompt_recovery.take() else {
+            return;
+        };
+        let Some(snapshot) = self
+            .initial_prompt_intent
+            .clone()
+            .filter(|snapshot| snapshot.id == intent)
+        else {
+            return;
+        };
+        if snapshot.state == ovrcr_protocol::InitialPromptIntentState::Refused {
+            self.recover_initial_prompt_refusal(&snapshot);
+        }
     }
 
     /// Starts `session` once the workspace job just submitted succeeds. Until
@@ -3712,7 +4242,14 @@ impl Dashboard {
                 let agent = launch.pop().unwrap();
                 let start = launch.pop().unwrap();
                 vec![
-                    text("Task", String::new(), false),
+                    Field {
+                        label: "Initial prompt",
+                        value: String::new(),
+                        required: false,
+                        hidden: false,
+                        edited: false,
+                        kind: FieldKind::Multiline,
+                    },
                     start,
                     Field {
                         label: "Workspace",
@@ -3750,6 +4287,14 @@ impl Dashboard {
                 let project_name = project.value.clone();
                 let mut fields = vec![
                     text("Task", String::new(), false),
+                    Field {
+                        label: "Initial prompt",
+                        value: String::new(),
+                        required: false,
+                        hidden: true,
+                        edited: false,
+                        kind: FieldKind::Multiline,
+                    },
                     project,
                     text("Branch", self.settings.branch_prefix.clone(), true),
                     mode,
@@ -3800,10 +4345,16 @@ impl Dashboard {
         };
         let mut fields = fields;
         self.refresh_terminal_form(&mut fields, false);
-        // A new task starts at Task whenever the form shows it.
+        // New agent sessions start at the optional prompt; all other forms use
+        // their first visible field.
         let active = fields
             .iter()
-            .position(|field| field.label == "Task" && !field.hidden)
+            .position(|field| field.label == "Initial prompt" && !field.hidden)
+            .or_else(|| {
+                fields
+                    .iter()
+                    .position(|field| field.label == "Task" && !field.hidden)
+            })
             .or_else(|| fields.iter().position(|field| !field.hidden))
             .unwrap_or(0);
         Page::Form {
@@ -3850,6 +4401,7 @@ impl Dashboard {
             match response {
                 Response::Ok => {
                     self.accept_lifecycle_job(request_id);
+                    self.apply_initial_prompt_snapshot();
                     return Some(Vec::new());
                 }
                 // A later step's confirmation comes back with the refusal.
@@ -4123,6 +4675,13 @@ impl Dashboard {
         Some(Vec::new())
     }
 
+    pub(super) fn apply_initial_prompt_snapshot(&mut self) {
+        let Some(snapshot) = self.initial_prompt_intent.clone() else {
+            return;
+        };
+        self.install_initial_prompt_snapshot(snapshot);
+    }
+
     pub(super) fn attach_created_workspace(&mut self) -> Vec<ClientMessage> {
         let Some(palette) = &self.palette else {
             return Vec::new();
@@ -4350,7 +4909,23 @@ impl Dashboard {
                     }
                 }
             }
-            Page::Form { fields, active, .. } => {
+            Page::Form {
+                command,
+                fields,
+                active,
+                ..
+            } => {
+                if matches!(command, Command::RecoverInitialPrompt)
+                    && let Some(summary) = &palette.initial_prompt_summary
+                {
+                    lines.push(Line::styled(
+                        format!(
+                            "Launch: {}",
+                            clip_text(summary, body.width.saturating_sub(2) as usize)
+                        ),
+                        Style::default().fg(MUTED()),
+                    ));
+                }
                 for (index, field) in fields.iter().enumerate() {
                     if field.hidden {
                         continue;
@@ -4379,6 +4954,49 @@ impl Dashboard {
                     } else {
                         Default::default()
                     };
+                    if matches!(&field.kind, FieldKind::Multiline) {
+                        let focused_line = cursor.line(editing);
+                        let width = body.width.saturating_sub(2) as usize;
+                        for line in 0..=editing.bytes().filter(|byte| *byte == b'\n').count() {
+                            let mut text = cursor
+                                .display_line(editing, line, width)
+                                .unwrap_or_default();
+                            if index != *active || line != focused_line {
+                                text.pop();
+                            }
+                            if index == *active && line == focused_line {
+                                focus_line = lines.len();
+                            }
+                            targets.push((lines.len(), PaletteTarget::MultilineLine(index, line)));
+                            lines.push(Line::styled(
+                                format!(
+                                    "{} {text}",
+                                    if index == *active && line == focused_line {
+                                        "›"
+                                    } else {
+                                        " "
+                                    }
+                                ),
+                                Style::default().fg(if index == *active && line == focused_line {
+                                    MAUVE()
+                                } else {
+                                    TEXT()
+                                }),
+                            ));
+                        }
+                        if let Some((_, problem)) =
+                            palette.invalid.as_ref().filter(|(at, _)| *at == index)
+                        {
+                            lines.push(Line::styled(
+                                format!("  {problem}"),
+                                Style::default().fg(PEACH()),
+                            ));
+                            if index == *active {
+                                focus_line = lines.len() - 1;
+                            }
+                        }
+                        continue;
+                    }
                     let (mut text, _) =
                         cursor.display(editing, body.width.saturating_sub(2) as usize);
                     if index != *active {
@@ -4607,6 +5225,7 @@ impl Dashboard {
                 Command::CreateWorkspace => "Create workspace",
                 Command::RenameTerminal(_) => "Rename terminal · blank = original name",
                 Command::RecoverLaunch => "Workspace retained · recover launch",
+                Command::RecoverInitialPrompt => "Agent start refused · recover prompt",
                 Command::RegisterProject => "Register project",
                 Command::RemoveWorkspace => "Remove workspace",
                 _ => "Remove project",
@@ -4862,6 +5481,7 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
     match &field.kind {
         FieldKind::Text if !recovering => keys.push("Ctrl-u clear"),
         FieldKind::Text => {}
+        FieldKind::Multiline => keys.push("Enter newline"),
         FieldKind::Toggle => keys.push("Space/←/→ switch"),
         FieldKind::Pick(list) => {
             keys.push("↑/↓/←/→ choose · type to filter");
@@ -4891,11 +5511,21 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
             keys.push("Shift-Tab back");
         }
     }
-    keys.push(match command {
-        Command::CreateTerminal | Command::CreateWorkspace => "Enter create",
-        Command::RegisterProject => "Enter register",
-        Command::RenameTerminal(_) => "Enter save",
-        _ => "Enter continue",
+    keys.push(if matches!(&field.kind, FieldKind::Multiline) {
+        if matches!(command, Command::RecoverInitialPrompt) {
+            "Alt-Enter retry"
+        } else {
+            "Alt-Enter start"
+        }
+    } else if matches!(&field.kind, FieldKind::Pick(_)) {
+        "Alt-Enter submit"
+    } else {
+        match command {
+            Command::CreateTerminal | Command::CreateWorkspace => "Enter create",
+            Command::RegisterProject => "Enter register",
+            Command::RenameTerminal(_) => "Enter save",
+            _ => "Enter continue",
+        }
     });
     if !recovering {
         keys.push("Esc cancel");
@@ -4906,23 +5536,9 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
     }
 }
 
-/// What a Task does with this form's choices: an agent verified to take a
-/// first message gets it; otherwise it only names things.
-fn task_hint(fields: &[Field]) -> String {
-    let agent = field_value(fields, "Agent");
-    let named = if fields.iter().any(|field| field.label == "Project") {
-        "the branch and session"
-    } else {
-        "the session"
-    };
-    match field_value(fields, "Start").as_str() {
-        "Agent" if super::agents::takes_task(&agent) => {
-            format!("Names {named}; {agent} gets it as its first message")
-        }
-        "Agent" => format!("Only names {named}; {agent} starts without it"),
-        "Nothing yet" => "Only names the branch".into(),
-        _ => format!("Only names {named}"),
-    }
+/// The workspace Task chooses a branch. Startup text belongs in Initial prompt.
+fn task_hint(_fields: &[Field]) -> String {
+    "Names the branch; use Initial prompt for startup text".into()
 }
 
 impl Dashboard {
@@ -5547,7 +6163,14 @@ mod mouse_tests {
         let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
             panic!()
         };
-        assert_eq!(fields[3].value, "existing");
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Branch mode")
+                .unwrap()
+                .value,
+            "existing"
+        );
         assert!(
             fields
                 .iter()
@@ -5676,9 +6299,16 @@ mod mouse_tests {
             panic!()
         };
         // Type into Branch, not Task: the request stays a single workspace job.
-        *active = 2;
-        fields[1].value = "demo".into();
-        fields[1].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+        let project = fields
+            .iter()
+            .position(|field| field.label == "Project")
+            .unwrap();
+        *active = fields
+            .iter()
+            .position(|field| field.label == "Branch")
+            .unwrap();
+        fields[project].value = "demo".into();
+        fields[project].kind = FieldKind::Pick(PickList::new(vec![PickItem {
             label: "demo".into(),
             value: "demo".into(),
         }]));
@@ -5739,9 +6369,16 @@ mod mouse_tests {
             panic!()
         };
         // Type into Branch, not Task: the request stays a single workspace job.
-        *active = 2;
-        fields[1].value = "demo".into();
-        fields[1].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+        let project = fields
+            .iter()
+            .position(|field| field.label == "Project")
+            .unwrap();
+        *active = fields
+            .iter()
+            .position(|field| field.label == "Branch")
+            .unwrap();
+        fields[project].value = "demo".into();
+        fields[project].kind = FieldKind::Pick(PickList::new(vec![PickItem {
             label: "demo".into(),
             value: "demo".into(),
         }]));
@@ -5885,11 +6522,21 @@ mod launch_tests {
         }
     }
     fn submit(d: &mut Dashboard) -> DashboardAction {
-        // The visible Submit control and Enter share this production handler.
-        d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        // The Submit control uses the explicit chord while a picker or the
+        // multiline prompt has focus; plain Enter remains picker acceptance.
+        let modifiers = d
+            .palette
+            .as_ref()
+            .is_some_and(|palette| {
+                matches!(&palette.page, Page::Form { fields, active, .. }
+                    if matches!(fields[*active].kind, FieldKind::Pick(_) | FieldKind::Multiline))
+            })
+            .then_some(KeyModifiers::ALT)
+            .unwrap_or(KeyModifiers::NONE);
+        d.palette_key(KeyEvent::new(KeyCode::Enter, modifiers))
     }
     fn request(d: &mut Dashboard) -> ClientMessage {
-        let Some(message) = ({
+        let Some(mut message) = ({
             submit(d);
             d.drain_one_request()
         }) else {
@@ -5898,6 +6545,38 @@ mod launch_tests {
                 d.palette.as_ref().and_then(|p| p.error.as_ref())
             );
         };
+        if message.request == Request::AllocateInitialPromptIntent {
+            let sequence = d
+                .initial_prompt_intent_id
+                .as_ref()
+                .map_or(1, |intent| intent.sequence.saturating_add(1));
+            let response = d.handle_server_message(ServerMessage::Response {
+                request_id: message.request_id,
+                response: Response::InitialPromptIntent(crate::protocol::InitialPromptIntentId {
+                    server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+                    sequence,
+                }),
+            });
+            let Some(mut launch) = response.into_iter().find(|message| {
+                matches!(message.request, Request::CreateAgentSessionWithPrompt(_))
+            }) else {
+                panic!("intent allocation must continue as one agent launch");
+            };
+            let Request::CreateAgentSessionWithPrompt(request) = launch.request else {
+                unreachable!()
+            };
+            let legacy = Request::CreateAgentSession(request.launch.clone());
+            d.lifecycle_pending = None;
+            d.begin_lifecycle_pending(launch.request_id, &legacy);
+            d.initial_prompt_intent = None;
+            d.initial_prompt_intent_id = None;
+            d.initial_prompt_focus_pending = None;
+            if let Some(palette) = d.palette.as_mut() {
+                palette.initial_prompt_intent = None;
+            }
+            launch.request = legacy;
+            message = launch;
+        }
         message
     }
     fn summary(id: u64) -> SessionSummary {
@@ -6544,15 +7223,51 @@ mod launch_tests {
                 panic!()
             };
             assert_eq!((project.as_str(), name.as_str()), ("demo", "new-work"));
-            if start == "Nothing yet" {
-                assert!(launch.is_none());
-            } else {
+            if start == "Terminal" {
                 let launch = launch.unwrap();
                 assert!(!launch.argv.is_empty());
-                assert_eq!(
-                    launch.label.as_deref(),
-                    (start == "Agent").then_some("fixture-agent")
+                assert_eq!(launch.label, None);
+            } else {
+                assert!(launch.is_none());
+            }
+            if start == "Agent" {
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: m.request_id,
+                    response: Response::Ok,
+                });
+                assert!(
+                    d.provisional
+                        .as_ref()
+                        .is_some_and(|row| !row.then.is_empty())
                 );
+                let follow_up = d.handle_server_message(ServerMessage::Event(
+                    ServerEvent::LifecycleCompleted {
+                        client_token: m.request_id,
+                        op: crate::protocol::LifecycleOp::CreateWorkspaceWithLaunch,
+                        outcome: crate::protocol::LifecycleOutcome::Succeeded,
+                    },
+                ));
+                let allocation = follow_up
+                    .into_iter()
+                    .find(|message| message.request == Request::AllocateInitialPromptIntent)
+                    .unwrap();
+                assert_eq!(allocation.request, Request::AllocateInitialPromptIntent);
+                let launch = d.handle_server_message(ServerMessage::Response {
+                    request_id: allocation.request_id,
+                    response: Response::InitialPromptIntent(
+                        crate::protocol::InitialPromptIntentId {
+                            server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+                            sequence: 1,
+                        },
+                    ),
+                });
+                let Request::CreateAgentSessionWithPrompt(request) = &launch[0].request else {
+                    panic!("workspace agent follows registration through one-use intent");
+                };
+                assert_eq!(request.launch.session.project, "demo");
+                assert_eq!(request.launch.session.workspace, "new-work");
+                assert_eq!(request.launch.session.name, "");
+                assert_eq!(request.prompt, "");
             }
             assert!(
                 d.drain_outbox().is_empty(),
@@ -7656,7 +8371,9 @@ mod launch_tests {
 #[cfg(test)]
 mod form_tests {
     use super::*;
-    use crate::protocol::{AgentActivity, ProjectSummary, SessionPhase, WorkspaceSummary};
+    use crate::protocol::{
+        AgentActivity, ProjectSummary, Response, ServerMessage, SessionPhase, WorkspaceSummary,
+    };
 
     const ID: &str = "7833bc0a230c03372aecca12545fec60";
 
@@ -8009,7 +8726,7 @@ mod form_tests {
         );
         assert_eq!(
             keys(Command::RemoveWorkspace, "Workspace", false),
-            "↑/↓/←/→ choose · type to filter · Enter continue · Esc cancel"
+            "↑/↓/←/→ choose · type to filter · Alt-Enter submit · Esc cancel"
         );
         assert_eq!(
             keys(Command::CreateWorkspace, "Branch mode", false),
@@ -8095,75 +8812,75 @@ mod form_tests {
 
         let mut d = dashboard();
         d.palette = Some(palette);
-        d.key(KeyCode::Enter);
-        let retry = d
+        d.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        let allocation = d
             .drain_outbox()
             .into_iter()
-            .find_map(|message| match message.request {
-                Request::CreateAgentSession(launch) => Some(launch),
-                _ => None,
-            })
-            .expect("Retry must submit the remembered launch");
-        assert_eq!(retry.session.argv, request.argv);
+            .find(|message| message.request == Request::AllocateInitialPromptIntent)
+            .expect("Retry must allocate a fresh intent");
+        let launch = d.handle_server_message(ServerMessage::Response {
+            request_id: allocation.request_id,
+            response: Response::InitialPromptIntent(crate::protocol::InitialPromptIntentId {
+                server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+                sequence: 1,
+            }),
+        });
+        let Request::CreateAgentSessionWithPrompt(retry) = &launch[0].request else {
+            panic!("Retry must submit the remembered launch through the new intent");
+        };
+        assert_eq!(retry.launch.session.argv, request.argv);
         assert_eq!(
-            retry.model_policy,
+            retry.launch.model_policy,
             ovrcr_protocol::AgentModelPolicy::HarnessDefault
         );
     }
 
     #[test]
-    fn task_hint_says_whether_the_agent_gets_the_task() {
+    fn workspace_task_names_only_the_branch_and_prompt_is_separate() {
         let d = dashboard();
-        let hint = |command: Command, start: &str, agent: &str| {
-            let Page::Form { mut fields, .. } = d.palette_form(command) else {
-                panic!()
-            };
-            for field in fields.iter_mut() {
-                match field.label {
-                    "Start" => field.value = start.into(),
-                    "Agent" => field.value = agent.into(),
-                    _ => {}
-                }
-            }
-            task_hint(&fields)
+        let Page::Form { mut fields, .. } = d.palette_form(Command::CreateWorkspace) else {
+            panic!()
         };
         assert_eq!(
-            hint(Command::CreateTerminal, "Agent", "claude"),
-            "Names the session; claude gets it as its first message"
+            task_hint(&fields),
+            "Names the branch; use Initial prompt for startup text"
         );
-        assert_eq!(
-            hint(Command::CreateTerminal, "Agent", "hermes"),
-            "Only names the session; hermes starts without it"
-        );
-        assert_eq!(
-            hint(Command::CreateWorkspace, "Agent", "codex"),
-            "Names the branch and session; codex gets it as its first message"
-        );
-        assert_eq!(
-            hint(Command::CreateWorkspace, "Terminal", "claude"),
-            "Only names the branch and session"
-        );
-        assert_eq!(
-            hint(Command::CreateWorkspace, "Nothing yet", "claude"),
-            "Only names the branch"
-        );
-        // Create terminal shows Task only for an agent; Create workspace always.
-        let visible = |command: Command, start: &str| {
-            let Page::Form { mut fields, .. } = d.palette_form(command) else {
-                panic!()
-            };
+        assert!(matches!(
             fields
-                .iter_mut()
-                .find(|f| f.label == "Start")
+                .iter()
+                .find(|field| field.label == "Initial prompt")
                 .unwrap()
-                .value = start.into();
-            d.refresh_terminal_form(&mut fields, false);
-            !fields.iter().find(|f| f.label == "Task").unwrap().hidden
-        };
-        assert!(visible(Command::CreateTerminal, "Agent"));
-        assert!(!visible(Command::CreateTerminal, "Terminal"));
-        assert!(visible(Command::CreateWorkspace, "Terminal"));
-        assert!(visible(Command::CreateWorkspace, "Nothing yet"));
+                .kind,
+            FieldKind::Multiline
+        ));
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .hidden
+        );
+
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Start")
+            .unwrap()
+            .value = "Agent".into();
+        d.refresh_terminal_form(&mut fields, false);
+        assert!(
+            !fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .hidden
+        );
+        assert!(
+            !fields
+                .iter()
+                .find(|field| field.label == "Task")
+                .unwrap()
+                .hidden
+        );
     }
 }
 
@@ -8441,5 +9158,288 @@ mod close_confirm_tests {
         assert!(flat.contains("[Cancel]"));
         assert!(!flat.contains("[Enter Close]"));
         assert!(!flat.contains("Close terminal?"));
+    }
+}
+
+#[cfg(test)]
+mod initial_prompt_tests {
+    use super::*;
+    use crate::protocol::{
+        AgentLaunchOrigin, AgentModelPolicy, CreateAgentSessionRequest, InitialPromptIntentId,
+        InitialPromptIntentSnapshot, InitialPromptIntentState, InitialPromptLaunchRequest,
+        ProjectSummary, ServerMessage, WorkspaceSummary,
+    };
+    use std::ffi::OsString;
+
+    fn make_dashboard(preset: &str, origin: AgentLaunchOrigin) -> Dashboard {
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        let argv = vec![OsString::from(format!("/fixture/{preset}"))];
+        dashboard.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: preset.into(),
+            argv,
+            source: AgentSource::Detected,
+            origin,
+        }]);
+        dashboard.hierarchy.projects.push(ProjectSummary {
+            name: "demo".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "demo".into(),
+                name: "feature".into(),
+                id: "feature".into(),
+                root: false,
+                warning: None,
+                path: "/tmp/feature".into(),
+                sessions: Vec::new(),
+            }],
+        });
+        dashboard
+    }
+
+    fn start_palette(dashboard: &Dashboard, prompt: &str) -> Palette {
+        let mut palette = Palette::new();
+        palette.page = dashboard.palette_form(Command::CreateTerminal);
+        let Page::Form { fields, active, .. } = &mut palette.page else {
+            panic!("expected form")
+        };
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Start")
+            .unwrap()
+            .value = "Agent".into();
+        dashboard.refresh_terminal_form(fields, false);
+        let prompt_index = fields
+            .iter()
+            .position(|field| field.label == "Initial prompt")
+            .unwrap();
+        fields[prompt_index].value = prompt.into();
+        *active = prompt_index;
+        palette
+    }
+
+    fn prompt_launch(preset: &str, argv: Vec<OsString>) -> CreateAgentSessionRequest {
+        CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "demo".into(),
+                workspace: "feature".into(),
+                name: "fixed-session-name".into(),
+                label: Some(preset.into()),
+                argv,
+                kind: SessionKind::Agent {
+                    name: preset.into(),
+                },
+            },
+            model_policy: AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        }
+    }
+
+    fn intent(sequence: u64) -> InitialPromptIntentId {
+        InitialPromptIntentId {
+            server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+            sequence,
+        }
+    }
+
+    #[test]
+    fn multiline_enter_and_paste_preserve_draft_then_alt_enter_allocates_once() {
+        let mut dashboard = make_dashboard("claude", AgentLaunchOrigin::Detected);
+        dashboard.palette = Some(start_palette(&dashboard, ""));
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+        dashboard.palette_paste("  exact prompt\r\n界e\u{301}  ");
+        let palette = dashboard.palette.as_ref().unwrap();
+        let Page::Form { fields, active, .. } = &palette.page else {
+            panic!()
+        };
+        assert_eq!(fields[*active].value, "\n  exact prompt\n界e\u{301}  ");
+
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), true);
+        let messages = dashboard.drain_outbox();
+        let allocation_request = messages
+            .iter()
+            .find(|message| message.request == Request::AllocateInitialPromptIntent)
+            .expect("submit allocates one initial prompt intent");
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.request == Request::AllocateInitialPromptIntent)
+                .count(),
+            1
+        );
+        let allocation = dashboard
+            .pending_initial_prompt_allocation
+            .as_ref()
+            .unwrap();
+        assert_eq!(allocation.prompt, "\n  exact prompt\n界e\u{301}  ");
+        let launch = allocation.launch.clone();
+
+        let outbox = dashboard.handle_server_message(ServerMessage::Response {
+            request_id: allocation_request.request_id,
+            response: Response::InitialPromptIntent(intent(1)),
+        });
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(
+            outbox[0].request,
+            Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                intent: intent(1),
+                launch: launch.clone(),
+                prompt: "\n  exact prompt\n界e\u{301}  ".into(),
+            })
+        );
+        assert_eq!(launch.session.name, "");
+        assert!(!launch.session.argv.iter().any(|arg| arg == "exact prompt"));
+    }
+
+    #[test]
+    fn blank_configured_agent_uses_intent_but_nonblank_is_preserved_and_gated() {
+        let mut dashboard = make_dashboard("claude", AgentLaunchOrigin::Configured);
+        let palette = start_palette(&dashboard, "");
+        dashboard.palette = Some(palette);
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), true);
+        let blank = dashboard.drain_outbox();
+        assert_eq!(blank.len(), 1);
+        assert_eq!(blank[0].request, Request::AllocateInitialPromptIntent);
+
+        let mut dashboard = make_dashboard("claude", AgentLaunchOrigin::Configured);
+        let palette = start_palette(&dashboard, "keep this draft");
+        dashboard.palette = Some(palette);
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), true);
+        assert!(dashboard.drain_outbox().is_empty());
+        let palette = dashboard.palette.as_ref().unwrap();
+        assert!(
+            palette
+                .error
+                .as_deref()
+                .is_some_and(|text| !text.contains("keep this draft"))
+        );
+        let Page::Form { fields, .. } = &palette.page else {
+            panic!()
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "keep this draft"
+        );
+    }
+
+    #[test]
+    fn refused_recovery_keeps_frozen_model_and_prompt_until_explicit_retry() {
+        let mut dashboard = make_dashboard("claude", AgentLaunchOrigin::Detected);
+        let argv = dashboard.model_agent_entries.as_ref().unwrap()[0]
+            .argv
+            .clone();
+        let mut launch = prompt_launch("claude", argv);
+        launch.model_policy = AgentModelPolicy::Explicit("model-x".into());
+        let snapshot = InitialPromptIntentSnapshot {
+            id: intent(3),
+            state: InitialPromptIntentState::Refused,
+            project: "demo".into(),
+            workspace: "feature".into(),
+            name: launch.session.name.clone(),
+            label: launch.session.label.clone(),
+            session: None,
+            run: None,
+            recoverable_prompt: Some("exact \n prompt".into()),
+            recoverable_launch: Some(launch.clone()),
+            message: Some("Claude could not start".into()),
+            delivery: None,
+        };
+        dashboard.install_initial_prompt_snapshot(snapshot);
+        let palette = dashboard.palette.as_ref().unwrap();
+        assert!(
+            palette
+                .initial_prompt_summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("model-x"))
+        );
+        let Page::Form {
+            command, fields, ..
+        } = &palette.page
+        else {
+            panic!()
+        };
+        assert!(matches!(command, Command::RecoverInitialPrompt));
+        assert_eq!(fields[0].value, "exact \n prompt");
+        assert_eq!(palette.recovered_prompt_launch.as_ref(), Some(&launch));
+
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), true);
+        let allocation = dashboard.drain_outbox();
+        assert_eq!(allocation.len(), 1);
+        assert_eq!(allocation[0].request, Request::AllocateInitialPromptIntent);
+        let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+            request_id: allocation[0].request_id,
+            response: Response::InitialPromptIntent(intent(4)),
+        });
+        let Request::CreateAgentSessionWithPrompt(request) = &outgoing[0].request else {
+            panic!("expected a fresh one-use launch");
+        };
+        assert_eq!(request.intent, intent(4));
+        assert_eq!(request.launch, launch);
+        assert_eq!(request.prompt, "exact \n prompt");
+    }
+
+    #[test]
+    fn refusal_waits_for_unrelated_palette_to_close_before_restoring_prompt() {
+        let mut dashboard = make_dashboard("claude", AgentLaunchOrigin::Detected);
+        let argv = dashboard.model_agent_entries.as_ref().unwrap()[0]
+            .argv
+            .clone();
+        let launch = prompt_launch("claude", argv);
+        let mut palette = start_palette(&dashboard, "current form draft");
+        palette.pending = None;
+        dashboard.palette = Some(palette);
+        let snapshot = InitialPromptIntentSnapshot {
+            id: intent(5),
+            state: InitialPromptIntentState::Refused,
+            project: "demo".into(),
+            workspace: "feature".into(),
+            name: launch.session.name.clone(),
+            label: launch.session.label.clone(),
+            session: None,
+            run: None,
+            recoverable_prompt: Some("previous launch draft".into()),
+            recoverable_launch: Some(launch),
+            message: Some("Claude could not start".into()),
+            delivery: None,
+        };
+
+        dashboard.install_initial_prompt_snapshot(snapshot);
+        let palette = dashboard.palette.as_ref().unwrap();
+        let Page::Form {
+            fields, command, ..
+        } = &palette.page
+        else {
+            panic!()
+        };
+        assert!(matches!(command, Command::CreateTerminal));
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "current form draft"
+        );
+        assert_eq!(
+            dashboard.lifecycle_strip.as_deref(),
+            Some("Claude could not start. Close this form to recover the agent start.")
+        );
+
+        dashboard.palette_key_inner(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true);
+        let palette = dashboard.palette.as_ref().unwrap();
+        let Page::Form {
+            fields, command, ..
+        } = &palette.page
+        else {
+            panic!()
+        };
+        assert!(matches!(command, Command::RecoverInitialPrompt));
+        assert_eq!(fields[0].value, "previous launch draft");
     }
 }

@@ -101,6 +101,21 @@ event, so a job the Dashboard sends in reply to a completion is never refused as
 overlapping the finished one. CLI-only RemoveSession and DeleteArchived stay
 synchronous on the caller.
 
+Interactive Agent starts use the same Lifecycle worker with a Server-owned,
+one-use initial-prompt intent. Allocation, reconciliation, and consumption hold
+the current Dashboard slot before the intent book, so an evicted connection
+cannot consume an intent after its replacement has observed it as undelivered.
+The book is bounded to 16 recent snapshots per Server lifetime. Accepted starts
+complete through their stable intent ID and exact session/run; they do not use a
+connection-local lifecycle token that a replacement Dashboard could reuse.
+`LaunchAccepted` means the session was created and registered; prompt delivery
+remains `Unknown`. A known pre-spawn refusal retains the frozen launch options
+and prompt for an explicit retry with a new intent. Uncertain outcomes discard
+the retryable draft and never replay automatically. Prompt bytes stay in the
+transient launch path, are redacted from Debug/errors, and are not retained in
+ordinary session metadata, settings, or Events. Successful harness/model memory
+uses the existing settings owner.
+
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt
 intents atomically before effects. A tombstone gates new and resumed Accepted

@@ -15,6 +15,7 @@ pub(super) const BUSY: &str =
 pub(super) struct Provisional {
     pub token: u64,
     pub kind: ProvisionalKind,
+    pub initial_prompt_intent: Option<crate::protocol::InitialPromptIntentId>,
     pub failed: Option<(ErrorCode, String)>,
     /// The form or confirmation that submitted the job, out of view while it
     /// runs; a failure brings it back with the person's values.
@@ -118,14 +119,26 @@ impl Provisional {
                 label: request.session.label.clone(),
                 kind: request.session.kind.clone(),
             },
+            Request::CreateAgentSessionWithPrompt(request) => ProvisionalKind::CreatingSession {
+                project: request.launch.session.project.clone(),
+                workspace: request.launch.session.workspace.clone(),
+                name: request.launch.session.name.clone(),
+                label: request.launch.session.label.clone(),
+                kind: request.launch.session.kind.clone(),
+            },
             Request::CloseTerminal { session, .. } => {
                 ProvisionalKind::ClosingSession { session: *session }
             }
             _ => return None,
         };
+        let initial_prompt_intent = match request {
+            Request::CreateAgentSessionWithPrompt(request) => Some(request.intent.clone()),
+            _ => None,
+        };
         Some(Self {
             token,
             kind,
+            initial_prompt_intent,
             failed: None,
             form: None,
             then: Vec::new(),
@@ -342,6 +355,19 @@ impl Dashboard {
         op: LifecycleOp,
         outcome: LifecycleOutcome,
     ) -> DashboardAction {
+        if self
+            .provisional
+            .as_ref()
+            .is_some_and(|row| row.token == client_token && row.initial_prompt_intent.is_some())
+            || self
+                .lifecycle_pending
+                .as_ref()
+                .is_some_and(|row| row.token == client_token && row.initial_prompt_intent.is_some())
+        {
+            // Prompt launches complete by stable Server intent. A generic
+            // connection token may collide with work after Dashboard replacement.
+            return DashboardAction::None;
+        }
         // CreateWorkspaceWithLaunch shares the CreatingWorkspace provisional.
         let _ = op;
         match outcome {
@@ -404,6 +430,12 @@ impl Dashboard {
     fn next_lifecycle_step(&mut self, row: Provisional) -> DashboardAction {
         let Provisional { form, mut then, .. } = row;
         let request = then.remove(0);
+        if let Request::CreateAgentSession(launch) = request.clone()
+            && matches!(&launch.session.kind, SessionKind::Agent { .. })
+        {
+            self.queue_chained_initial_prompt_launch(launch, form, then);
+            return DashboardAction::Redraw;
+        }
         let request_id = self.next_request_id();
         self.begin_lifecycle_pending(request_id, &request);
         if let Some(next) = self.lifecycle_pending.as_mut() {
@@ -473,7 +505,7 @@ impl Dashboard {
         self.provisional = Some(row);
     }
 
-    fn select_created_session(&mut self, session: SessionSummary) -> DashboardAction {
+    pub(super) fn select_created_session(&mut self, session: SessionSummary) -> DashboardAction {
         self.select_session(session.id);
         self.mode = super::InputMode::Terminal;
         let request_id = self.next_request_id();

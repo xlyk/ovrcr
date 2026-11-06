@@ -1,7 +1,13 @@
 //! One-at-a-time Lifecycle jobs off the Dashboard connection reader (ADR 0010).
 
 use super::*;
-use ovrcr_protocol::{LifecycleOp, LifecycleOutcome, SessionLaunch};
+use ovrcr_protocol::{
+    InitialPromptDelivery, InitialPromptIntentId, InitialPromptIntentSnapshot,
+    InitialPromptIntentState, InitialPromptLaunchRequest, LifecycleOp, LifecycleOutcome,
+    SessionLaunch,
+};
+
+const MAX_PROMPT_INTENT_RECORDS: usize = 16;
 
 pub(super) enum JobKind {
     CreateWorkspace {
@@ -22,6 +28,7 @@ pub(super) enum JobKind {
     },
     CreateSession(ovrcr_protocol::CreateSessionRequest),
     CreateAgentSession(ovrcr_protocol::CreateAgentSessionRequest),
+    CreateAgentSessionWithPrompt(InitialPromptIntentId),
     CloseTerminal {
         session: SessionId,
         expected_run: SessionRunId,
@@ -34,7 +41,9 @@ impl JobKind {
             Self::CreateWorkspace { .. } => LifecycleOp::CreateWorkspace,
             Self::CreateWorkspaceWithLaunch { .. } => LifecycleOp::CreateWorkspaceWithLaunch,
             Self::RemoveWorkspace { .. } => LifecycleOp::RemoveWorkspace,
-            Self::CreateSession(_) | Self::CreateAgentSession(_) => LifecycleOp::CreateSession,
+            Self::CreateSession(_)
+            | Self::CreateAgentSession(_)
+            | Self::CreateAgentSessionWithPrompt(_) => LifecycleOp::CreateSession,
             Self::CloseTerminal { .. } => LifecycleOp::CloseTerminal,
         }
     }
@@ -49,6 +58,21 @@ pub(super) struct Job {
 pub(crate) struct Lifecycle {
     inflight: Mutex<Option<u64>>,
     tx: Mutex<Option<SyncSender<Job>>>,
+    prompt_intents: Mutex<PromptIntentBook>,
+}
+
+#[derive(Default)]
+struct PromptIntentBook {
+    next_sequence: u64,
+    latest_issued: u64,
+    consumed_through: u64,
+    records: HashMap<u64, PromptIntentRecord>,
+}
+
+struct PromptIntentRecord {
+    snapshot: InitialPromptIntentSnapshot,
+    launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    prompt: Option<String>,
 }
 
 impl Default for Lifecycle {
@@ -56,6 +80,7 @@ impl Default for Lifecycle {
         Self {
             inflight: Mutex::new(None),
             tx: Mutex::new(None),
+            prompt_intents: Mutex::new(PromptIntentBook::default()),
         }
     }
 }
@@ -78,6 +103,155 @@ impl Lifecycle {
     pub(super) fn async_ready(&self) -> bool {
         self.tx.lock().unwrap().is_some()
     }
+
+    pub(super) fn allocate_prompt_intent(
+        &self,
+        server_lifetime: &str,
+    ) -> Result<InitialPromptIntentId, Response> {
+        let mut book = self.prompt_intents.lock().unwrap();
+        retire_prompt_intents(&mut book);
+        if book.records.len() >= MAX_PROMPT_INTENT_RECORDS {
+            return Err(error_response(
+                ErrorCode::Conflict,
+                "too many initial-prompt launches are still pending reconciliation",
+            ));
+        }
+        let sequence = book.next_sequence.checked_add(1).ok_or_else(|| {
+            error_response(
+                ErrorCode::Internal,
+                "initial-prompt identity space is exhausted",
+            )
+        })?;
+        book.next_sequence = sequence;
+        book.latest_issued = sequence;
+        let id = InitialPromptIntentId {
+            server_lifetime: server_lifetime.to_owned(),
+            sequence,
+        };
+        book.records.insert(
+            sequence,
+            PromptIntentRecord {
+                snapshot: empty_prompt_intent(id.clone(), InitialPromptIntentState::Issued),
+                launch: None,
+                prompt: None,
+            },
+        );
+        Ok(id)
+    }
+
+    pub(super) fn prompt_intents(&self) -> Vec<InitialPromptIntentSnapshot> {
+        let book = self.prompt_intents.lock().unwrap();
+        let mut records: Vec<_> = book
+            .records
+            .values()
+            .map(|record| record.snapshot.clone())
+            .collect();
+        records.sort_by_key(|record| record.id.sequence);
+        records
+    }
+
+    fn prompt_launch(&self, id: &InitialPromptIntentId) -> Option<InitialPromptLaunchRequest> {
+        let book = self.prompt_intents.lock().unwrap();
+        let record = book.records.get(&id.sequence)?;
+        if record.snapshot.id != *id || record.snapshot.state != InitialPromptIntentState::Pending {
+            return None;
+        }
+        Some(InitialPromptLaunchRequest {
+            intent: id.clone(),
+            launch: record.launch.clone()?,
+            prompt: record.prompt.clone()?,
+        })
+    }
+
+    fn finish_prompt_intent(
+        &self,
+        id: &InitialPromptIntentId,
+        outcome: &Result<SessionSummary>,
+        prompt: &str,
+    ) -> Option<InitialPromptIntentSnapshot> {
+        let mut book = self.prompt_intents.lock().unwrap();
+        let record = book.records.get_mut(&id.sequence)?;
+        if record.snapshot.id != *id || record.snapshot.state != InitialPromptIntentState::Pending {
+            return None;
+        }
+        let launch = record.launch.take();
+        match outcome {
+            Ok(session) => {
+                record.prompt = None;
+                record.snapshot.name = session.name.clone();
+                record.snapshot.label = Some(session.label.clone());
+                record.snapshot.state = InitialPromptIntentState::LaunchAccepted;
+                record.snapshot.session = Some(session.id);
+                record.snapshot.run = Some(session.run);
+                record.snapshot.delivery = Some(InitialPromptDelivery::Unknown);
+                record.snapshot.recoverable_prompt = None;
+                record.snapshot.recoverable_launch = None;
+                record.snapshot.message = None;
+            }
+            Err(error) if error.is::<crate::session::NoProcessStarted>() => {
+                record.snapshot.state = InitialPromptIntentState::Refused;
+                record.snapshot.recoverable_prompt =
+                    (!prompt.trim().is_empty()).then(|| prompt.to_owned());
+                record.snapshot.recoverable_launch = launch;
+                record.snapshot.message = Some(redact_prompt(error_chain_string(error), prompt));
+                record.prompt = None;
+            }
+            Err(error) => {
+                record.prompt = None;
+                record.snapshot.state = InitialPromptIntentState::Unknown;
+                record.snapshot.recoverable_prompt = None;
+                record.snapshot.recoverable_launch = None;
+                record.snapshot.message = Some(redact_prompt(error_chain_string(error), prompt));
+            }
+        }
+        Some(record.snapshot.clone())
+    }
+}
+
+fn empty_prompt_intent(
+    id: InitialPromptIntentId,
+    state: InitialPromptIntentState,
+) -> InitialPromptIntentSnapshot {
+    InitialPromptIntentSnapshot {
+        id,
+        state,
+        project: String::new(),
+        workspace: String::new(),
+        name: String::new(),
+        label: None,
+        session: None,
+        run: None,
+        recoverable_prompt: None,
+        recoverable_launch: None,
+        message: None,
+        delivery: None,
+    }
+}
+
+fn retire_prompt_intents(book: &mut PromptIntentBook) {
+    while book.records.len() >= MAX_PROMPT_INTENT_RECORDS {
+        let retire = book
+            .records
+            .iter()
+            .filter(|(sequence, record)| {
+                record.snapshot.state != InitialPromptIntentState::Pending
+                    && !(record.snapshot.state == InitialPromptIntentState::Issued
+                        && **sequence == book.latest_issued)
+            })
+            .min_by_key(|(sequence, _)| **sequence)
+            .map(|(sequence, _)| *sequence);
+        let Some(sequence) = retire else {
+            break;
+        };
+        book.records.remove(&sequence);
+    }
+}
+
+fn redact_prompt(mut message: String, prompt: &str) -> String {
+    if !prompt.is_empty() {
+        message = message.replace(prompt, "[redacted]");
+    }
+    message
 }
 
 pub(super) fn try_accept(state: &ServerState, client_token: u64, kind: JobKind) -> Response {
@@ -101,6 +275,105 @@ pub(super) fn try_accept(state: &ServerState, client_token: u64, kind: JobKind) 
         Ok(()) => Response::Ok,
         Err(_) => {
             *state.lifecycle.inflight.lock().unwrap() = None;
+            error_response(ErrorCode::Internal, "lifecycle worker is unavailable")
+        }
+    }
+}
+
+pub(super) fn try_accept_prompt(
+    state: &ServerState,
+    client_token: u64,
+    request: InitialPromptLaunchRequest,
+) -> Response {
+    if let Err(message) = request.validate() {
+        return error_response(ErrorCode::InvalidRequest, message);
+    }
+    let mut book = state.lifecycle.prompt_intents.lock().unwrap();
+    if request.intent.server_lifetime != state.server_lifetime {
+        return Response::InitialPromptIntents(vec![empty_prompt_intent(
+            request.intent,
+            InitialPromptIntentState::Unknown,
+        )]);
+    }
+    if request.intent.sequence <= book.consumed_through {
+        let snapshot = book
+            .records
+            .get(&request.intent.sequence)
+            .filter(|record| record.snapshot.id == request.intent)
+            .map(|record| record.snapshot.clone())
+            .unwrap_or_else(|| {
+                empty_prompt_intent(request.intent, InitialPromptIntentState::Unknown)
+            });
+        return Response::InitialPromptIntents(vec![snapshot]);
+    }
+    if request.intent.sequence != book.latest_issued
+        || !book
+            .records
+            .get(&request.intent.sequence)
+            .is_some_and(|record| {
+                record.snapshot.id == request.intent
+                    && record.snapshot.state == InitialPromptIntentState::Issued
+            })
+    {
+        return Response::InitialPromptIntents(vec![empty_prompt_intent(
+            request.intent,
+            InitialPromptIntentState::Unknown,
+        )]);
+    }
+    let tx = {
+        let guard = state.lifecycle.tx.lock().unwrap();
+        match guard.as_ref() {
+            Some(tx) => tx.clone(),
+            None => {
+                return error_response(ErrorCode::Internal, "lifecycle worker is not attached");
+            }
+        }
+    };
+    let mut inflight = state.lifecycle.inflight.lock().unwrap();
+    if inflight.is_some() {
+        return error_response(ErrorCode::Conflict, "a lifecycle job is already running");
+    }
+
+    let previous_consumed = book.consumed_through;
+    let record = book.records.get_mut(&request.intent.sequence).unwrap();
+    record.snapshot.state = InitialPromptIntentState::Pending;
+    record
+        .snapshot
+        .project
+        .clone_from(&request.launch.session.project);
+    record
+        .snapshot
+        .workspace
+        .clone_from(&request.launch.session.workspace);
+    record
+        .snapshot
+        .name
+        .clone_from(&request.launch.session.name);
+    record
+        .snapshot
+        .label
+        .clone_from(&request.launch.session.label);
+    record.launch = Some(request.launch);
+    record.prompt = Some(request.prompt);
+    book.consumed_through = request.intent.sequence;
+    *inflight = Some(client_token);
+    match tx.try_send(Job {
+        client_token,
+        kind: JobKind::CreateAgentSessionWithPrompt(request.intent.clone()),
+    }) {
+        Ok(()) => Response::Ok,
+        Err(_) => {
+            *inflight = None;
+            book.consumed_through = previous_consumed;
+            if let Some(record) = book.records.get_mut(&request.intent.sequence) {
+                record.snapshot.state = InitialPromptIntentState::Issued;
+                record.snapshot.project.clear();
+                record.snapshot.workspace.clear();
+                record.snapshot.name.clear();
+                record.snapshot.label = None;
+                record.launch = None;
+                record.prompt = None;
+            }
             error_response(ErrorCode::Internal, "lifecycle worker is unavailable")
         }
     }
@@ -191,6 +464,56 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
                 Err(error) => outcome_from_error(error),
             },
+            JobKind::CreateAgentSessionWithPrompt(intent) => {
+                let request = state.lifecycle.prompt_launch(&intent);
+                let prompt = request.as_ref().map(|request| request.prompt.clone());
+                let launch = request.as_ref().map(|request| request.launch.clone());
+                let result = match request {
+                    Some(request) => state.create_agent_session_with_prompt(request),
+                    None => Err(crate::session::NoProcessStarted::context(anyhow::anyhow!(
+                        "accepted initial-prompt intent is unavailable"
+                    ))),
+                };
+                if result.is_ok()
+                    && let Some(launch) = launch.as_ref()
+                {
+                    state.remember_initial_prompt_launch(launch);
+                }
+                let snapshot = state.lifecycle.finish_prompt_intent(
+                    &intent,
+                    &result,
+                    prompt.as_deref().unwrap_or(""),
+                );
+                let (_outcome, publish_hierarchy) = match result {
+                    Ok(summary) => (LifecycleOutcome::CreatedSession(Box::new(summary)), true),
+                    Err(error) => {
+                        let (mut outcome, publish_hierarchy) = outcome_from_error(error);
+                        if let (LifecycleOutcome::Failed { message, .. }, Some(prompt)) =
+                            (&mut outcome, prompt.as_deref())
+                        {
+                            *message = redact_prompt(std::mem::take(message), prompt);
+                        }
+                        (outcome, publish_hierarchy)
+                    }
+                };
+                clear_inflight(&state, job.client_token);
+                if publish_hierarchy {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                }
+                if let Some(snapshot) = snapshot {
+                    state.dashboard.try_send(ServerMessage::Event(
+                        ServerEvent::InitialPromptIntentChanged(snapshot),
+                    ));
+                }
+                // The stable intent event owns completion for this launch. Do
+                // not publish the connection-local client token: a replacement
+                // Dashboard can reuse it for unrelated work.
+                continue;
+            }
             JobKind::CloseTerminal {
                 session,
                 expected_run,

@@ -129,11 +129,17 @@ For Rust changes, choose the owning package and add a focused test filter as app
 ```sh
 cargo test -p ovrcr-tui --lib
 cargo test -p ovrcr --test tui
+cargo test --test initial_prompt
 cargo check --workspace --all-targets --all-features
 cargo fmt --all -- --check
 git diff --check
 node --test tests/pi_reporting_extension.mjs
 ```
+
+`tests/initial_prompt.rs` uses a disposable live Server, Dashboard socket and PTY
+fixture to cover one-use launch intents, lost-response reconciliation, restart,
+known refusal, privacy and blank interactive starts. Its accepted-process marker
+does not prove that a provider consumed the prompt.
 
 Node 22; the Pi extension and its host run outside cargo.
 

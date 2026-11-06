@@ -763,6 +763,11 @@ fn initialize_dashboard(
         _ => bail!("unexpected dashboard geometry response"),
     }
     dashboard.handle_server_message(geometry_ack);
+    let request_id = dashboard.next_request_id();
+    dashboard.initial_prompt_reconcile_request = Some(request_id);
+    write_client(stream, request_id, Request::ReconcileInitialPromptIntents)?;
+    let reconciliation = read_initial_response(stream, dashboard, request_id)?;
+    dashboard.handle_server_message(reconciliation);
     Ok(())
 }
 
@@ -1130,6 +1135,20 @@ mod unread_review_tests {
                 &ServerMessage::Response {
                     request_id: 2,
                     response: Response::Ok,
+                },
+            )
+            .unwrap();
+            let reconcile: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+            assert_eq!(reconcile.request_id, 3);
+            assert!(matches!(
+                reconcile.request,
+                Request::ReconcileInitialPromptIntents
+            ));
+            crate::protocol::write_frame(
+                &mut peer,
+                &ServerMessage::Response {
+                    request_id: 3,
+                    response: Response::InitialPromptIntents(Vec::new()),
                 },
             )
             .unwrap();

@@ -230,6 +230,7 @@ impl ServerState {
                     None,
                     None,
                     true,
+                    None,
                 );
                 if let Err(error) = result {
                     let mut retained = self.retained.lock();

@@ -234,6 +234,145 @@ pub struct CreateAgentSessionRequest {
     pub expected_model: Option<String>,
 }
 
+pub const MAX_INITIAL_PROMPT_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct InitialPromptIntentId {
+    pub server_lifetime: String,
+    pub sequence: u64,
+}
+
+impl InitialPromptIntentId {
+    pub fn validate(&self) -> Result<(), String> {
+        if !crate::bridge::canonical_uuid(&self.server_lifetime) || self.sequence == 0 {
+            return Err("initial-prompt intent identity is invalid".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitialPromptIntentState {
+    Issued,
+    Pending,
+    LaunchAccepted,
+    Refused,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitialPromptDelivery {
+    Unknown,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptIntentSnapshot {
+    pub id: InitialPromptIntentId,
+    pub state: InitialPromptIntentState,
+    pub project: String,
+    pub workspace: String,
+    pub name: String,
+    pub label: Option<String>,
+    pub session: Option<SessionId>,
+    pub run: Option<SessionRunId>,
+    /// Present only when the Server knows the process was never started.
+    pub recoverable_prompt: Option<String>,
+    /// Frozen harness and model options, present only for a known pre-spawn refusal.
+    pub recoverable_launch: Option<CreateAgentSessionRequest>,
+    pub message: Option<String>,
+    /// Process launch and provider delivery are separate acceptance boundaries.
+    pub delivery: Option<InitialPromptDelivery>,
+}
+
+impl std::fmt::Debug for InitialPromptIntentSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InitialPromptIntentSnapshot")
+            .field("id", &self.id)
+            .field("state", &self.state)
+            .field("project", &self.project)
+            .field("workspace", &self.workspace)
+            .field("name", &self.name)
+            .field("label", &self.label)
+            .field("session", &self.session)
+            .field("run", &self.run)
+            .field(
+                "recoverable_prompt",
+                &self.recoverable_prompt.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "recoverable_launch",
+                &self.recoverable_launch.as_ref().map(|_| "[redacted]"),
+            )
+            .field("message", &self.message)
+            .field("delivery", &self.delivery)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptLaunchRequest {
+    pub intent: InitialPromptIntentId,
+    pub launch: CreateAgentSessionRequest,
+    pub prompt: String,
+}
+
+impl std::fmt::Debug for InitialPromptLaunchRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InitialPromptLaunchRequest")
+            .field("intent", &self.intent)
+            .field("project", &self.launch.session.project)
+            .field("workspace", &self.launch.session.workspace)
+            .field("name", &self.launch.session.name)
+            .field("label", &self.launch.session.label)
+            .field("kind", &self.launch.session.kind)
+            .field("model_policy", &self.launch.model_policy)
+            .field("prompt", &"[redacted]")
+            .finish()
+    }
+}
+
+impl InitialPromptLaunchRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        self.intent.validate()?;
+        if self.prompt.len() > MAX_INITIAL_PROMPT_BYTES || self.prompt.contains('\0') {
+            return Err("initial prompt is empty or invalid".into());
+        }
+        if !matches!(self.launch.session.kind, SessionKind::Agent { .. })
+            || self
+                .launch
+                .session
+                .label
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
+            return Err("initial-prompt launch requires a selected agent harness".into());
+        }
+        if !self.prompt.trim().is_empty()
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if name == "claude")
+                || self.launch.session.label.as_deref() != Some("claude"))
+        {
+            return Err(
+                "initial prompts are supported only for the detected Claude launcher".into(),
+            );
+        }
+        if self.launch.session.argv.len() > 128
+            || self
+                .launch
+                .session
+                .argv
+                .iter()
+                .map(|arg| arg.len())
+                .sum::<usize>()
+                > 64 * 1024
+        {
+            return Err("agent launch arguments exceed the supported size".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
     DashboardHello,
@@ -468,6 +607,11 @@ pub enum Request {
         workspace: String,
     },
     CreateAgentSession(CreateAgentSessionRequest),
+    /// Allocate a one-use, Server-lifetime-bound identity before submitting a prompt launch.
+    AllocateInitialPromptIntent,
+    /// Reconcile the bounded current-Server intent set after a Dashboard reconnect.
+    ReconcileInitialPromptIntents,
+    CreateAgentSessionWithPrompt(InitialPromptLaunchRequest),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -558,6 +702,8 @@ pub enum Response {
     OperatorExchange(crate::OperatorExchangeResult),
     OperatorWorker(crate::OperatorWorkerResult),
     Transcript(TranscriptPage),
+    InitialPromptIntent(InitialPromptIntentId),
+    InitialPromptIntents(Vec<InitialPromptIntentSnapshot>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -625,6 +771,7 @@ pub enum ServerEvent {
         request_id: u64,
         capabilities: AgentModelCapabilities,
     },
+    InitialPromptIntentChanged(InitialPromptIntentSnapshot),
 }
 
 #[cfg(test)]
@@ -820,6 +967,35 @@ mod wire_snapshot {
         assert_eq!(decoded, session);
         assert_eq!(decoded.manual_title, None);
         assert_eq!(decoded.title.as_deref(), Some("Conversation subject"));
+    }
+
+    #[test]
+    fn initial_prompt_wire_debug_redacts_prompt_text() {
+        let prompt = "  keep this\nexactly  ";
+        let request = Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+            intent: InitialPromptIntentId {
+                server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                sequence: 1,
+            },
+            launch: CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    argv: vec!["claude".into()],
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: crate::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            },
+            prompt: prompt.into(),
+        });
+        assert!(!format!("{request:?}").contains(prompt));
+        assert!(format!("{request:?}").contains("redacted"));
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -1193,6 +1369,39 @@ mod wire_snapshot {
                     expected_model: Some("claude-opus".into()),
                 }),
             ),
+            (
+                "AllocateInitialPromptIntent",
+                Request::AllocateInitialPromptIntent,
+            ),
+            (
+                "ReconcileInitialPromptIntents",
+                Request::ReconcileInitialPromptIntents,
+            ),
+            (
+                "CreateAgentSessionWithPrompt",
+                Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                    intent: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    launch: CreateAgentSessionRequest {
+                        session: CreateSessionRequest {
+                            project: "p".into(),
+                            workspace: "w".into(),
+                            name: "n".into(),
+                            label: Some("claude".into()),
+                            argv: vec!["claude".into()],
+                            kind: SessionKind::Agent {
+                                name: "claude".into(),
+                            },
+                        },
+                        model_policy: crate::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
+                    },
+                    prompt: "marker\ncontinued".into(),
+                }),
+            ),
         ]
     }
 
@@ -1330,6 +1539,33 @@ mod wire_snapshot {
                     }),
                 }),
             ),
+            (
+                "InitialPromptIntent",
+                Response::InitialPromptIntent(InitialPromptIntentId {
+                    server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                    sequence: 1,
+                }),
+            ),
+            (
+                "InitialPromptIntents",
+                Response::InitialPromptIntents(vec![InitialPromptIntentSnapshot {
+                    id: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    state: InitialPromptIntentState::Refused,
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    session: None,
+                    run: None,
+                    recoverable_prompt: Some("marker".into()),
+                    recoverable_launch: None,
+                    message: Some("not started".into()),
+                    delivery: None,
+                }]),
+            ),
         ]
     }
 
@@ -1423,6 +1659,26 @@ mod wire_snapshot {
                         reason: None,
                     },
                 },
+            ),
+            (
+                "InitialPromptIntentChanged",
+                ServerEvent::InitialPromptIntentChanged(InitialPromptIntentSnapshot {
+                    id: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    state: InitialPromptIntentState::LaunchAccepted,
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    session: Some(SessionId(1)),
+                    run: Some(SessionRunId(1)),
+                    recoverable_prompt: None,
+                    recoverable_launch: None,
+                    message: None,
+                    delivery: Some(InitialPromptDelivery::Unknown),
+                }),
             ),
         ]
     }
@@ -3545,13 +3801,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0448017301630168016c0104",
+            "2a0449017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0448017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0449017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3565,6 +3821,12 @@ mod wire_snapshot {
         (
             "Request::CreateAgentSession",
             "3e01700177016e0106636c617564650300056f7672637200056167656e74000372756e0106636c6175646501046f707573010762696e64696e67010b636c617564652d6f707573",
+        ),
+        ("Request::AllocateInitialPromptIntent", "3f"),
+        ("Request::ReconcileInitialPromptIntents", "40"),
+        (
+            "Request::CreateAgentSessionWithPrompt",
+            "412431323334353637382d313233342d343233342d383233342d3132333435363738396162630101700177016e0106636c61756465010006636c617564650106636c61756465000000106d61726b65720a636f6e74696e756564",
         ),
         (
             "Request::MarkReviewed",
@@ -3594,22 +3856,30 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04480000"),
+        ("Response::NotificationNavigation", "0d04490000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0448017301630168016c0104",
+            "0e01016e0449017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010448017301630168016c0164",
+            "0f0107080901016901010449017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004480107080901016901010448017301630168016c0164",
+            "1004490107080901016901010449017301630168016c0164",
         ),
         (
             "Response::Transcript",
             "1c0300017501016102016e016903000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "Response::InitialPromptIntent",
+            "1d2431323334353637382d313233342d343233342d383233342d31323334353637383961626301",
+        ),
+        (
+            "Response::InitialPromptIntents",
+            "1e012431323334353637382d313233342d343233342d383233342d313233343536373839616263010301700177016e0106636c61756465000001066d61726b657200010b6e6f74207374617274656400",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3633,7 +3903,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0448017301630168016c0104",
+            "08016e0449017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -3644,6 +3914,10 @@ mod wire_snapshot {
         (
             "ServerEvent::AgentModels",
             "0d0906636c61756465010762696e64696e6701046f7075730b636c617564652d6f70757300",
+        ),
+        (
+            "ServerEvent::InitialPromptIntentChanged",
+            "0e2431323334353637382d313233342d343233342d383233342d313233343536373839616263010201700177016e0106636c61756465010101010000000100",
         ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),

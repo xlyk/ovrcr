@@ -1139,6 +1139,53 @@ pub(super) fn handle_request_with_id(
                 workspace,
             },
         ),
+        Request::AllocateInitialPromptIntent => owner
+            .filter(|_| dashboard)
+            .and_then(|owner| {
+                state.dashboard.with_workflow_owner(owner, || {
+                    state
+                        .lifecycle
+                        .allocate_prompt_intent(&state.server_lifetime)
+                })
+            })
+            .map_or_else(
+                || {
+                    error_response(
+                        ErrorCode::InvalidRequest,
+                        "initial-prompt intent requires the current Dashboard",
+                    )
+                },
+                |result| result.map_or_else(|response| response, Response::InitialPromptIntent),
+            ),
+        Request::ReconcileInitialPromptIntents => owner
+            .filter(|_| dashboard)
+            .and_then(|owner| {
+                state
+                    .dashboard
+                    .with_workflow_owner(owner, || state.lifecycle.prompt_intents())
+            })
+            .map_or_else(
+                || {
+                    error_response(
+                        ErrorCode::InvalidRequest,
+                        "initial-prompt reconciliation requires the current Dashboard",
+                    )
+                },
+                |snapshots| Response::InitialPromptIntents(snapshots),
+            ),
+        Request::CreateAgentSessionWithPrompt(request) => owner
+            .filter(|_| dashboard)
+            .and_then(|owner| {
+                state.dashboard.with_workflow_owner(owner, || {
+                    lifecycle::try_accept_prompt(state, request_id, request)
+                })
+            })
+            .unwrap_or_else(|| {
+                error_response(
+                    ErrorCode::InvalidRequest,
+                    "initial-prompt launch requires the current Dashboard",
+                )
+            }),
         Request::CreateAgentSession(request)
             if owner.is_some_and(|owner| dashboard && state.dashboard.owns(owner))
                 && state.lifecycle.async_ready() =>
