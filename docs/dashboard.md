@@ -805,19 +805,22 @@ Observed reporting loss shows `status off` in the pane header, and the terminal'
 row keeps the published reason.
 
 The optional **Initial prompt** is a separate multiline field. Leave it blank to
-open the detected Claude Code or Pi launcher interactively. A nonblank prompt
-uses that harness's native positional-message support, and OVRCR does not add it
-to the remembered launch choice. Configured launcher overrides keep their
-stored arguments and cannot use this prompt path.
+open the detected Claude Code, Codex, Pi, or Oh My Pi launcher interactively. A
+nonblank prompt is passed to one of those exact detected launchers as a native
+positional argument after `--`. It is transient launch input, not a session name
+or branch: OVRCR does not retain it in the session's base argv or metadata, or
+add it to the remembered launch choice. Configured launcher overrides keep
+their stored arguments and cannot use this prompt path.
 
 The **Model** field starts at **Harness default**, which leaves model choice to
-the native launcher. Detected Claude Code and Pi launches can offer current
-catalog choices. Pi choices use exact `provider/model` IDs; OVRCR checks the
+the native launcher. Detected Claude Code, Codex, Pi, and Oh My Pi launches can
+offer current catalog choices for a registered workspace. OVRCR checks the
 launch binding and rereads the catalog before Start, refusing a changed or
-missing ID. Pi's native `--model` resolver can still fuzzy-match or synthesize
-a model if its catalog changes after that final check, and Pi has no exact-only
-CLI flag. A catalog listing or accepted process start does not prove that the
-provider used or accepted the chosen model.
+missing choice. Configured and cloud launchers keep their existing model policy.
+Pi choices use exact `provider/model` IDs; Pi's native `--model` resolver can
+still fuzzy-match or synthesize a model if its catalog changes after that final
+check, and Pi has no exact-only CLI flag. A catalog listing or accepted process
+start does not prove that the provider used or accepted the chosen model.
 
 Hermes uses the same process supervisor with native arguments unchanged. Its row
 shows unknown activity; reporting, Ready/Unread, Input requests, metrics, generated
@@ -1186,11 +1189,12 @@ that exist. An `[[agents]]` row whose name matches a detected agent replaces its
 argv; a new name becomes an Agent preset. The argv is used as configured; a preset
 name alone does not prove what program it launches or whether reporting is supported.
 
-For detected Claude Code and Codex launchers, the Agent form can offer verified
-model choices for an already registered workspace. The Server reads the
-launcher-specific catalog and checks the selected resolution again before
-launch. Configured and cloud launchers keep their existing model policy. Leaving
-Model at Harness default preserves the native launch arguments.
+For detected Claude Code, Codex, Pi, and Oh My Pi launchers, the Agent form can
+offer verified model choices for an already registered workspace. The Server
+reads the launcher's current catalog and checks the selected model and launch
+binding again before launch. Configured and cloud launchers keep their existing
+model policy. Leaving Model at Harness default preserves the native launch
+arguments.
 
 Successful launches update a per-project `launch_choices` table in this file.
 For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
@@ -1198,10 +1202,11 @@ terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
 Agent entries may include `model_policy = "HarnessDefault"` or
 `model_policy = { Explicit = "opus" }`. The default leaves model selection to
 the native launcher. A concrete model choice is offered only for a detected
-Claude Code or Pi launcher whose current native catalog is available; the
-Server checks the selected model and launch binding again before starting the
-session. Pi choices are exact provider/model IDs, although Pi's native resolver
-may fuzzy-match if the catalog changes after OVRCR's final check. If a choice
+Claude Code, Codex, Pi, or Oh My Pi launcher whose current native catalog is
+available; the Server checks the selected model and launch binding again before
+starting the session. Pi choices are exact provider/model IDs, although Pi's
+native resolver may fuzzy-match if the catalog changes after OVRCR's final
+check. If a choice
 or its launcher binding changes before Start, the launch is refused and the
 remembered choice is left unchanged. Older Agent entries without `model_policy`
 keep using the Harness default. These entries contain no one-off command text.

@@ -988,10 +988,8 @@ fn set_model_options(
     } else if query.is_empty() {
         list.query = selected.clone();
     }
-    field.value = list
-        .accepted()
-        .map(|item| item.value.clone())
-        .unwrap_or(selected);
+    // Refreshing options must never accept a different model on the user's behalf.
+    field.value = selected;
     field.kind = FieldKind::Pick(list);
 }
 
@@ -9404,10 +9402,28 @@ mod launch_tests {
     fn undersized_creation_forms_keep_drafts_and_block_input_until_resized() {
         for child in [false, true] {
             let mut d = dashboard();
+            let model_argv = vec![
+                "/fixture/ovrcr".into(),
+                "agent".into(),
+                "run".into(),
+                "claude".into(),
+                "--".into(),
+                "/fixture/claude".into(),
+            ];
+            d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+                name: "claude".into(),
+                argv: model_argv.clone(),
+                source: AgentSource::Detected,
+                origin: AgentOrigin::Detected,
+            }]);
             let area = if child {
                 open_branch_child(&mut d);
                 Rect::new(0, 0, 60, 17)
             } else {
+                d.selected_container = Some(super::super::TreeRow::Workspace {
+                    project: "demo".into(),
+                    id: "root".into(),
+                });
                 open_registered_agent_form(
                     &mut d,
                     registry(vec![workspace_record("root", "/tmp/unused", "trunk")]),
@@ -9422,6 +9438,26 @@ mod launch_tests {
                     .value = "retained prompt".into();
                 Rect::new(0, 0, 59, 18)
             };
+            let setup_requests = d.drain_outbox();
+            let [setup] = setup_requests.as_slice() else {
+                panic!("opening the form should issue one read-only model lookup");
+            };
+            let Request::QueryAgentModels {
+                preset,
+                origin,
+                argv,
+                project,
+                workspace,
+            } = &setup.request
+            else {
+                panic!("form setup should only query model capabilities");
+            };
+            assert_eq!(preset, "claude");
+            assert_eq!(origin, &AgentOrigin::Detected);
+            assert_eq!(argv, &model_argv);
+            assert_eq!(project, "demo");
+            assert_eq!(workspace, "root");
+
             d.install_area(area);
             let visible = visible_palette_dialog_text(&d, area.width, area.height);
             assert!(
@@ -10678,10 +10714,216 @@ mod launch_tests {
             panic!("Model must remain a picker");
         };
         assert_eq!(list.query, "opu");
-        assert_eq!(model.value, "opus");
+        assert_eq!(
+            model.value, HARNESS_DEFAULT_MODEL,
+            "catalog completion preserves the current policy until a choice is accepted"
+        );
         assert_eq!(
             list.accepted().map(|item| item.value.as_str()),
             Some("opus")
+        );
+
+        d.palette_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!("Agent creation should remain a form");
+        };
+        assert_eq!(
+            fields[model_index].value, "opus",
+            "the user can explicitly accept the filtered model"
+        );
+    }
+
+    #[test]
+    fn catalog_refresh_does_not_replace_a_valid_model_hidden_by_the_filter() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::Explicit("opus".into()),
+            },
+        );
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record("root", "/tmp/unused", "main")]),
+        );
+        let query = d
+            .drain_outbox()
+            .into_iter()
+            .find(|message| matches!(message.request, Request::QueryAgentModels { .. }))
+            .expect("the New agent form requests the current model catalog");
+
+        let model_index = new_agent_fields(&d)
+            .0
+            .iter()
+            .position(|field| field.label == "Model")
+            .unwrap();
+        for _ in 0..new_agent_fields(&d).0.len() {
+            if new_agent_fields(&d).1 == model_index {
+                break;
+            }
+            d.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        assert_eq!(new_agent_fields(&d).1, model_index);
+        d.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        for character in "opus4".chars() {
+            d.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        d.agent_models_event(
+            query.request_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("current-launch-binding".into()),
+                models: vec![
+                    crate::protocol::AgentModelOption {
+                        alias: "opus".into(),
+                        resolved: "claude-opus".into(),
+                    },
+                    crate::protocol::AgentModelOption {
+                        alias: "opus-4.2".into(),
+                        resolved: "claude-opus-4.2".into(),
+                    },
+                ],
+                reason: None,
+            },
+        );
+
+        let model = &new_agent_fields(&d).0[model_index];
+        let FieldKind::Pick(list) = &model.kind else {
+            panic!("Model must remain a picker");
+        };
+        assert_eq!(model.value, "opus");
+        assert_eq!(list.query, "opus4");
+        assert_eq!(
+            list.accepted().map(|item| item.value.as_str()),
+            Some("opus-4.2"),
+            "the filter can highlight another model without changing the current choice"
+        );
+    }
+
+    #[test]
+    fn removed_explicit_model_waits_for_a_user_choice_after_catalog_refresh() {
+        let argv = vec![
+            "/fixture/ovrcr".into(),
+            "agent".into(),
+            "run".into(),
+            "claude".into(),
+            "--".into(),
+            "/fixture/claude".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        let mut d = dashboard();
+        d.selected_container = Some(super::super::TreeRow::Workspace {
+            project: "demo".into(),
+            id: "root".into(),
+        });
+        d.model_agent_entries = Some(vec![super::super::agents::AgentEntry {
+            name: "claude".into(),
+            argv,
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }]);
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::Explicit("opus".into()),
+            },
+        );
+        open_registered_agent_form(
+            &mut d,
+            registry(vec![workspace_record("root", "/tmp/unused", "main")]),
+        );
+        let query = d
+            .drain_outbox()
+            .into_iter()
+            .find(|message| matches!(message.request, Request::QueryAgentModels { .. }))
+            .expect("the New agent form requests the current model catalog");
+        d.agent_models_event(
+            query.request_id,
+            crate::protocol::AgentModelCapabilities {
+                preset: "claude".into(),
+                binding: Some("current-launch-binding".into()),
+                models: vec![crate::protocol::AgentModelOption {
+                    alias: "opus-4.2".into(),
+                    resolved: "claude-opus-4.2".into(),
+                }],
+                reason: None,
+            },
+        );
+
+        let (fields, _) = new_agent_fields(&d);
+        let model = fields.iter().find(|field| field.label == "Model").unwrap();
+        assert_eq!(
+            model.value, "opus",
+            "a similar available model must not replace the remembered explicit choice"
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(fields[active].label, "Model");
+        assert_eq!(
+            d.drain_outbox(),
+            Vec::<ClientMessage>::new(),
+            "Start must wait for an explicit replacement choice"
+        );
+
+        d.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let (fields, active) = new_agent_fields(&d);
+        assert_eq!(fields[active].label, "Model");
+        assert_eq!(fields[active].value, "opus-4.2");
+        d.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        let requests = d.drain_outbox();
+        let [allocation] = requests.as_slice() else {
+            panic!("an accepted model should allocate one launch intent");
+        };
+        assert_eq!(allocation.request, Request::AllocateInitialPromptIntent);
+        let launch_messages = d.handle_server_message(ServerMessage::Response {
+            request_id: allocation.request_id,
+            response: Response::InitialPromptIntent(crate::protocol::InitialPromptIntentId {
+                server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+                sequence: 1,
+            }),
+        });
+        let Some(message) = launch_messages
+            .iter()
+            .find(|message| matches!(message.request, Request::CreateAgentSessionWithPrompt(_)))
+        else {
+            panic!("accepted intent should send the selected Agent launch");
+        };
+        let Request::CreateAgentSessionWithPrompt(launch) = &message.request else {
+            unreachable!();
+        };
+        assert_eq!(
+            launch.launch.model_policy,
+            AgentModelPolicy::Explicit("opus-4.2".into())
+        );
+        assert_eq!(
+            launch.launch.expected_model.as_deref(),
+            Some("claude-opus-4.2")
+        );
+        assert_eq!(
+            launch.launch.model_binding.as_deref(),
+            Some("current-launch-binding")
         );
     }
 
@@ -13623,10 +13865,14 @@ mod form_tests {
         );
         assert_eq!(
             keys(Command::RemoveWorkspace, "Workspace", false),
-            "↑/↓/←/→ choose · type to filter · Alt-Enter submit · Esc cancel"
+            "↑/↓/←/→ choose · type to filter · Enter continue · Esc cancel"
         );
         assert_eq!(
-            keys(Command::CreateWorkspace, "Branch mode", false),
+            keys(Command::CreateBranch, "Branch name", false),
+            "Ctrl-u clear · Tab/Shift-Tab fields · Enter create · Esc cancel"
+        );
+        assert_eq!(
+            keys(Command::CreateBranch, "Workspace options", false),
             "Space/←/→ switch · Tab/Shift-Tab fields · Enter create · Esc cancel"
         );
         assert_eq!(
@@ -13635,7 +13881,7 @@ mod form_tests {
         );
         // A refusal shows Esc and Ctrl-u on a line of its own.
         assert_eq!(
-            keys(Command::CreateWorkspace, "Branch", true),
+            keys(Command::CreateBranch, "Branch name", true),
             "Tab/Shift-Tab fields · Enter create"
         );
     }
