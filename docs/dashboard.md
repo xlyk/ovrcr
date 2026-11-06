@@ -728,9 +728,11 @@ defaults can follow the selected project; explicit choices, the prompt and
 advanced name stay intact when changing destinations. **Advanced options** is
 collapsed and contains the optional session name.
 
-On a choice picker, `Enter` accepts the highlighted choice and keeps the form
-open. `Esc` clears the active filter first, then cancels the form when no filter
-remains. Use `Alt-Enter` or the visible Start control to launch. The Initial
+Choice lists stay collapsed while you move through the form. Press `Enter` or
+click a choice field to open its list; while it is open, `Enter` accepts the
+highlighted choice and keeps the form open. `Tab` moves between fields without
+accepting or changing untouched defaults. `Esc` closes an open list first, then
+cancels the form. Use `Alt-Enter` or the visible Start control to launch. The Initial
 prompt is multiline: `Enter` adds a line and `Alt-Enter` submits. The prompt is
 sent through a supported harness mechanism and is not used as the session name
 or remembered launch setting. Harnesses without verified model or prompt
