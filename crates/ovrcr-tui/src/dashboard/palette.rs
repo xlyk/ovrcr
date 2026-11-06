@@ -366,7 +366,8 @@ enum PaletteTarget {
     Option(usize, usize),
 }
 
-fn palette_geometry_for(outer: Rect, page: Option<&Page>) -> (Rect, Rect, Rect, Rect) {
+fn palette_geometry_for(outer: Rect, palette: Option<&Palette>) -> (Rect, Rect, Rect, Rect) {
+    let page = palette.map(|palette| &palette.page);
     let creation_form = page.is_some_and(|page| {
         matches!(
             page,
@@ -377,18 +378,43 @@ fn palette_geometry_for(outer: Rect, page: Option<&Page>) -> (Rect, Rect, Rect, 
         )
     });
     let creation_under_minimum = page.is_some_and(|page| creation_form_below_minimum(page, outer));
+    let creation_picker_open = matches!(
+        page,
+        Some(Page::Form {
+            command: Command::NewAgentSession,
+            ..
+        })
+    ) && palette.is_some_and(|palette| palette.new_agent_picker_open);
+    let compact_picker_footer = creation_picker_open
+        && palette.is_some_and(|palette| {
+            palette.error.is_none()
+                && palette.suggestions.note.is_none()
+                && !palette.submit_when_ready
+                && matches!(
+                    &palette.page,
+                    Page::Form { fields, active, .. }
+                        if fields.get(*active).is_some_and(|field| match &field.kind {
+                            FieldKind::Pick(list) => list.query.is_empty(),
+                            _ => false,
+                        })
+                )
+        });
     let (width, height, footer_limit) = if creation_form && !creation_under_minimum {
         let height = match page.unwrap() {
             Page::Form {
                 command: Command::CreateBranch,
                 ..
             } => 14,
+            Page::Form {
+                command: Command::NewAgentSession,
+                ..
+            } if creation_picker_open => 20,
             _ => 17,
         };
         (
             outer.width.min(80).saturating_sub(8).min(72),
             outer.height.min(height),
-            3,
+            if compact_picker_footer { 2 } else { 3 },
         )
     } else {
         (outer.width.min(82), outer.height.min(19), 4)
@@ -423,8 +449,7 @@ fn palette_geometry_for(outer: Rect, page: Option<&Page>) -> (Rect, Rect, Rect, 
 
 #[cfg(test)]
 fn palette_geometry_for_dashboard(dashboard: &Dashboard, outer: Rect) -> (Rect, Rect, Rect, Rect) {
-    let page = dashboard.palette.as_ref().map(|palette| &palette.page);
-    palette_geometry_for(outer, page)
+    palette_geometry_for(outer, dashboard.palette.as_ref())
 }
 fn button_text(page: &Page, width: u16, refresh_branch: bool) -> &'static str {
     if width < 17 {
@@ -1215,6 +1240,33 @@ fn pair_columns(body: Rect) -> (u16, u16, u16, u16) {
     let right = columns.saturating_sub(left);
     let split = body.x.saturating_add(left).saturating_add(gap / 2);
     (left, gap, right, split)
+}
+
+fn creation_prompt_visible_rows(
+    value: &str,
+    width: u16,
+    picker_open: bool,
+    body_height: u16,
+) -> usize {
+    let total_rows = value.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let limit = if !picker_open && width >= 56 {
+        3
+    } else if picker_open && body_height >= 13 {
+        2
+    } else {
+        1
+    };
+    if !picker_open && width >= 56 {
+        limit
+    } else {
+        total_rows.min(limit)
+    }
+}
+
+fn creation_prompt_first_line(total_rows: usize, visible_rows: usize, cursor_line: usize) -> usize {
+    cursor_line
+        .saturating_sub(visible_rows.saturating_sub(1))
+        .min(total_rows.saturating_sub(visible_rows))
 }
 
 fn creation_label_style(active: bool) -> Style {
@@ -3207,7 +3259,7 @@ impl Dashboard {
         }
         let point = Position::new(mouse.column, mouse.row);
         let palette = self.palette.as_ref().unwrap();
-        let (_, _, body, buttons) = palette_geometry_for(area, Some(&palette.page));
+        let (_, _, body, buttons) = palette_geometry_for(area, Some(palette));
         if creation_form_below_minimum(&palette.page, area) {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) && buttons.contains(point) {
                 let refresh_branch = palette.pending.is_none()
@@ -7544,32 +7596,46 @@ impl Dashboard {
                     active == index,
                 ));
                 let text_lines = field.value.bytes().filter(|byte| *byte == b'\n').count() + 1;
-                let default_rows = if body.width >= 56 && !picker_open {
-                    3
+                let visible_rows = creation_prompt_visible_rows(
+                    &field.value,
+                    body.width,
+                    picker_open,
+                    body.height,
+                );
+                let cursor_line = if active == index {
+                    palette.cursor.line(&field.value)
                 } else {
-                    1
+                    0
                 };
-                let visible_rows = text_lines.max(default_rows);
-                let cursor_line = palette.cursor.line(&field.value);
+                let first_line = creation_prompt_first_line(text_lines, visible_rows, cursor_line);
                 let inner_width = body.width.saturating_sub(2) as usize;
-                for line_index in 0..visible_rows {
-                    let placeholder = field.value.is_empty() && line_index == 0 && active != index;
-                    let display = if placeholder {
+                for offset in 0..visible_rows {
+                    let visible_line = first_line + offset;
+                    let target_line = visible_line.min(text_lines.saturating_sub(1));
+                    let placeholder =
+                        field.value.is_empty() && visible_line == 0 && active != index;
+                    let mut display = if placeholder {
                         "What should the agent work on?".to_owned()
                     } else {
                         palette
                             .cursor
-                            .display_line(&field.value, line_index, inner_width)
+                            .display_line(&field.value, visible_line, inner_width)
                             .unwrap_or_default()
                     };
-                    targets.push((lines.len(), PaletteTarget::MultilineLine(index, line_index)));
+                    if !placeholder && (active != index || cursor_line != visible_line) {
+                        display.pop();
+                    }
+                    targets.push((
+                        lines.len(),
+                        PaletteTarget::MultilineLine(index, target_line),
+                    ));
                     lines.push(creation_surface_line(
                         &display,
                         body.width,
-                        active == index && cursor_line == line_index,
+                        active == index && cursor_line == visible_line,
                         placeholder,
                     ));
-                    if active == index && cursor_line == line_index {
+                    if active == index && cursor_line == visible_line {
                         focus_line = lines.len().saturating_sub(1);
                     }
                 }
@@ -7653,7 +7719,7 @@ impl Dashboard {
                     picker_open,
                     pair,
                     palette,
-                    body.width,
+                    body,
                 );
                 let room = usize::from(body.height)
                     .saturating_sub(lines.len())
@@ -7804,7 +7870,7 @@ impl Dashboard {
             self.draw_close_confirm(frame, palette);
             return;
         }
-        let (area, inner, body, buttons) = palette_geometry_for(frame.area(), Some(&palette.page));
+        let (area, inner, body, buttons) = palette_geometry_for(frame.area(), Some(palette));
         let undersized_creation_form = creation_form_below_minimum(&palette.page, frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
@@ -8071,7 +8137,7 @@ fn creation_rows_after(
     picker_open: bool,
     pair: Option<(usize, usize)>,
     palette: &Palette,
-    width: u16,
+    body: Rect,
 ) -> usize {
     let mut rows = 0;
     let mut index = start;
@@ -8112,10 +8178,13 @@ fn creation_rows_after(
         if matches!(field.kind, FieldKind::Notice | FieldKind::Toggle) {
             rows += 1;
         } else if matches!(field.kind, FieldKind::Multiline) {
-            let text_lines = field.value.bytes().filter(|byte| *byte == b'\n').count() + 1;
-            let default_rows = if width >= 56 && !picker_open { 3 } else { 1 };
-            rows += 1 + text_lines.max(default_rows);
-        } else if (picker_open || width < 56) && compact_picker_field(command, field) {
+            rows += 1 + creation_prompt_visible_rows(
+                &field.value,
+                body.width,
+                picker_open,
+                body.height,
+            );
+        } else if (picker_open || body.width < 56) && compact_picker_field(command, field) {
             rows += 1;
         } else {
             rows += 2;
@@ -8296,6 +8365,13 @@ fn form_keys(
                 "Esc cancel"
             },
         );
+    }
+    if matches!(command, Command::NewAgentSession)
+        && new_agent_picker_open
+        && matches!(&field.kind, FieldKind::Pick(list) if list.query.is_empty())
+    {
+        return "↑/↓ choose · type filter · Enter accept · Tab/Shift-Tab fields · Alt-Enter start · Esc close"
+            .into();
     }
     match field.label {
         "Task" => format!("{} · {}", task_hint(fields), keys.join(" · ")),
@@ -15577,6 +15653,95 @@ mod creation_form_visual_tests {
     }
 
     #[test]
+    fn open_picker_bounds_a_long_prompt_without_discarding_its_draft() {
+        let mut dashboard = new_agent_dashboard();
+        let prompt = (1..=10)
+            .map(|line| format!("draft line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Some(palette) = dashboard.palette.as_mut() else {
+            unreachable!()
+        };
+        let Page::Form { fields, .. } = &mut palette.page else {
+            unreachable!()
+        };
+        fields
+            .iter_mut()
+            .find(|field| field.label == "Initial prompt")
+            .unwrap()
+            .value = prompt.clone();
+        palette.new_agent_picker_open = true;
+
+        let buffer = render(&dashboard, 60, 18);
+        let visible = (0..buffer.area.height)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Page::Form { fields, .. } = &dashboard.palette.as_ref().unwrap().page else {
+            unreachable!()
+        };
+        let stored_prompt = &fields
+            .iter()
+            .find(|field| field.label == "Initial prompt")
+            .unwrap()
+            .value;
+
+        assert!(visible.contains("[Start agent]"), "{visible}");
+        assert!(visible.contains("Advanced options"), "{visible}");
+        assert!(visible.contains("draft line 1"), "{visible}");
+        assert!(
+            !visible.contains("draft line 10"),
+            "prompt rows should stay bounded:\n{visible}"
+        );
+        assert_eq!(
+            stored_prompt, &prompt,
+            "rendering must preserve the full draft"
+        );
+    }
+
+    #[test]
+    fn long_prompt_view_tracks_its_cursor_and_mouse_clicks_keep_logical_lines() {
+        let mut dashboard = new_agent_dashboard();
+        let prompt = (1..=10)
+            .map(|line| format!("draft line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Some(palette) = dashboard.palette.as_mut() else {
+            unreachable!()
+        };
+        let Page::Form { fields, active, .. } = &mut palette.page else {
+            unreachable!()
+        };
+        let prompt_index = fields
+            .iter()
+            .position(|field| field.label == "Initial prompt")
+            .unwrap();
+        fields[prompt_index].value = prompt.clone();
+        *active = prompt_index;
+        palette.cursor.click_line(&prompt, 9, 46, usize::MAX);
+
+        let buffer = render(&dashboard, 80, 24);
+        let visible = (0..buffer.area.height)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains("draft line 8"), "{visible}");
+        assert!(visible.contains("draft line 9"), "{visible}");
+        assert!(visible.contains("draft line 10"), "{visible}");
+        assert!(!visible.contains("draft line 1▏"), "{visible}");
+
+        let (x, y) = find_label(&buffer, "draft line 9");
+        click(&mut dashboard, x + "draft line 9".len() as u16, y, 80, 24);
+        dashboard.palette_paste("!");
+        let Page::Form { fields, .. } = &dashboard.palette.as_ref().unwrap().page else {
+            unreachable!()
+        };
+        let edited = &fields[prompt_index].value;
+        assert_eq!(edited.lines().nth(8), Some("draft line 9!"));
+        assert_eq!(edited.lines().count(), 10);
+    }
+
+    #[test]
     fn floor_picker_mouse_accepts_the_option_that_was_clicked() {
         let mut dashboard = new_agent_dashboard();
         dashboard.palette.as_mut().unwrap().new_agent_picker_open = true;
@@ -15645,6 +15810,23 @@ mod creation_form_visual_tests {
                 .unwrap()
                 .value,
             "draft from mouse"
+        );
+
+        let mut padded = new_agent_dashboard();
+        let buffer = render(&padded, 80, 24);
+        let (prompt_x, prompt_y) = find_label(&buffer, "Prompt (optional)");
+        click(&mut padded, prompt_x, prompt_y + 3, 80, 24);
+        padded.palette_paste("padded row click");
+        let Page::Form { fields, .. } = &padded.palette.as_ref().unwrap().page else {
+            panic!("a padded prompt row should remain editable");
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.label == "Initial prompt")
+                .unwrap()
+                .value,
+            "padded row click"
         );
     }
 }

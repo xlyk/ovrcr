@@ -1359,7 +1359,7 @@ fn new_agent_form_exposes_the_harness_and_model_controls() {
     dashboard.key(KeyCode::Char('n'));
     let text = palette_text(&dashboard);
     assert!(text.contains("New agent session"), "{text}");
-    for control in ["Branch", "Agent harness", "Model", "Initial prompt"] {
+    for control in ["Branch", "Agent harness", "Model", "Prompt (optional)"] {
         assert!(text.contains(control), "{control}: {text}");
     }
     for removed in ["Task", "Start:"] {
