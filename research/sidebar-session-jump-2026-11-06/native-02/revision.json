@@ -1,0 +1,6 @@
+{
+  "source_revision": "8575c5f6296df8be619f3e46e8b4845655855ff6",
+  "checkout": "/private/tmp/ovrcr-401-integration",
+  "launch": "CARGO_TARGET_DIR=/private/tmp/ovrcr-401-build just gui",
+  "automated_focus": "gui-focus-integrated-01.json; 1 passed, 12 filtered"
+}

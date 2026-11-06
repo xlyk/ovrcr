@@ -1,0 +1,9 @@
+{
+  "processes": [
+    "80443 /private/tmp/ovrcr-401-build/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  ],
+  "binaries": {
+    "ovrcr": "dcac8b1a55d888e7b3d4e4df4f3db716e1d2d1e45d48cb122bcf3880497c38ff",
+    "ovrcr-gui": "0e4c9ed36e42d8222cf6a6214d13554204f2d23b9ca75355cbb2d1d1c04b8f27"
+  }
+}
