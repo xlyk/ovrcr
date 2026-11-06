@@ -627,6 +627,10 @@ impl Dashboard {
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
             input_requests: HashSet::new(),
+            pending_initial_prompt_allocation: None,
+            initial_prompt_intent: None,
+            initial_prompt_intent_id: None,
+            initial_prompt_reconcile_request: None,
         }
     }
 
@@ -3408,6 +3412,71 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    fn initial_prompt_reconciliation_response(
+        &mut self,
+        request_id: u64,
+        response: &Response,
+    ) -> bool {
+        if self.initial_prompt_reconcile_request != Some(request_id) {
+            return false;
+        }
+        self.initial_prompt_reconcile_request = None;
+        match response {
+            Response::InitialPromptIntents(snapshots) => {
+                self.install_initial_prompt_snapshots(snapshots);
+            }
+            Response::Error { code, message } => self.set_server_error(code.clone(), message),
+            _ => self.set_error("Could not reconcile the previous agent start"),
+        }
+        true
+    }
+
+    fn install_initial_prompt_snapshots(
+        &mut self,
+        snapshots: &[crate::protocol::InitialPromptIntentSnapshot],
+    ) {
+        let Some(snapshot) = snapshots.iter().max_by_key(|snapshot| snapshot.id.sequence) else {
+            return;
+        };
+        self.install_initial_prompt_snapshot(snapshot.clone());
+    }
+
+    fn install_initial_prompt_snapshot(
+        &mut self,
+        snapshot: crate::protocol::InitialPromptIntentSnapshot,
+    ) {
+        if let Some(current) = &self.initial_prompt_intent
+            && current.id.server_lifetime == snapshot.id.server_lifetime
+            && current.id.sequence > snapshot.id.sequence
+        {
+            return;
+        }
+        self.initial_prompt_intent_id = Some(snapshot.id.clone());
+        self.lifecycle_strip = match snapshot.state {
+            crate::protocol::InitialPromptIntentState::Issued => None,
+            crate::protocol::InitialPromptIntentState::Pending => {
+                Some("Agent start is pending; the prompt will not be resent".into())
+            }
+            crate::protocol::InitialPromptIntentState::LaunchAccepted => {
+                if let Some(session) = snapshot.session {
+                    if let Some(summary) = find_session(self, session).cloned() {
+                        self.select_created_session(summary);
+                    }
+                }
+                Some("Agent session started; provider prompt receipt is unknown".into())
+            }
+            crate::protocol::InitialPromptIntentState::Refused => {
+                Some(snapshot.message.clone().unwrap_or_else(|| {
+                    "Agent start was refused before a process started".into()
+                }))
+            }
+            crate::protocol::InitialPromptIntentState::Unknown => {
+                Some("Agent start outcome is unknown; the prompt was not resent".into())
+            }
+        };
+        self.initial_prompt_intent = Some(snapshot);
+    }
+
     pub(super) fn pause_request(&mut self, paused: bool) -> DashboardAction {
         let Some(session) = self.action_session().and_then(|id| find_session(self, id)) else {
             self.set_limit("No session selected");
@@ -3470,6 +3539,14 @@ impl Dashboard {
         {
             return self.drain_outbox();
         }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.initial_prompt_reconciliation_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response { request_id, .. } = &message
             && self.ignored_responses.remove(request_id)
         {
@@ -3526,6 +3603,12 @@ impl Dashboard {
                 | Response::NotificationNavigationConfirmed(_)
                 | Response::ITermFocusPrepared(_)
                 | Response::BridgeOwner(_) => {}
+                Response::InitialPromptIntent(id) => {
+                    self.initial_prompt_intent_id = Some(id);
+                }
+                Response::InitialPromptIntents(snapshots) => {
+                    self.install_initial_prompt_snapshots(&snapshots);
+                }
                 Response::QuotaCooldown { remaining_ms } => self.set_limit(format!(
                     "Quota refresh cooling down: {}s left",
                     remaining_ms.div_ceil(1_000)
@@ -3767,6 +3850,9 @@ impl Dashboard {
                     outcome,
                 } => {
                     self.on_lifecycle_completed(client_token, op, outcome);
+                }
+                ServerEvent::InitialPromptIntentChanged(snapshot) => {
+                    self.install_initial_prompt_snapshot(snapshot);
                 }
                 ServerEvent::Output {
                     session,

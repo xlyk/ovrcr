@@ -51,6 +51,7 @@ enum Command {
     AcknowledgeStopped(SessionId, crate::protocol::SessionRunId),
     AgentResumeUnavailable(SessionId),
     RecoverLaunch,
+    RecoverInitialPrompt,
     RegisterProject,
     CloseTerminal(SessionId),
     Archives,
@@ -79,6 +80,7 @@ struct Entry {
 
 enum FieldKind {
     Text,
+    Multiline,
     Toggle,
     Pick(PickList),
     Path(PathPicker),
@@ -184,6 +186,8 @@ pub(super) struct Palette {
     workspace_id: Option<String>,
     pub(super) launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    recovered_prompt_launch: Option<ovrcr_protocol::CreateAgentSessionRequest>,
+    initial_prompt_summary: Option<String>,
     model_capabilities: Option<crate::protocol::AgentModelCapabilities>,
     model_status: Option<String>,
     launch_project: Option<String>,
@@ -297,6 +301,7 @@ enum PaletteTarget {
     Search,
     Entry(usize),
     Field(usize, bool),
+    MultilineLine(usize, usize),
     Option(usize, usize),
 }
 
@@ -651,6 +656,8 @@ impl Palette {
             workspace_id: None,
             launch_preference: None,
             failed_launch: None,
+            recovered_prompt_launch: None,
+            initial_prompt_summary: None,
             model_capabilities: None,
             model_status: None,
             launch_project: None,
@@ -668,7 +675,21 @@ impl Palette {
             return;
         }
         self.scroll = None;
-        let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
+        let multiline = matches!(
+            &self.page,
+            Page::Form { fields, active, .. }
+                if matches!(fields[*active].kind, FieldKind::Multiline)
+        );
+        let text: String = text
+            .chars()
+            .filter(|ch| {
+                if multiline {
+                    !ch.is_control() || matches!(ch, '\n' | '\r' | '\t')
+                } else {
+                    !ch.is_control()
+                }
+            })
+            .collect();
         if text.is_empty() {
             return;
         }
@@ -695,6 +716,9 @@ impl Palette {
                         accept_pick(&mut fields[*active]);
                     }
                     FieldKind::Text => self.cursor.insert(&mut fields[*active].value, &text),
+                    FieldKind::Multiline => {
+                        self.cursor.insert(&mut fields[*active].value, &text)
+                    }
                     FieldKind::Path(picker) => {
                         picker.selected = 0;
                         self.cursor.insert(&mut fields[*active].value, &text);
@@ -2160,8 +2184,17 @@ impl Dashboard {
                 && palette.pending.is_none()
                 && !palette.submit_when_ready
             {
-                return self
-                    .palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+                let multiline = matches!(
+                    &palette.page,
+                    Page::Form { fields, active, .. }
+                        if matches!(fields[*active].kind, FieldKind::Multiline)
+                );
+                let key = if multiline {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+                } else {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+                };
+                return self.palette_key_inner(key, true);
             }
             return DashboardAction::Redraw;
         }
@@ -2254,6 +2287,18 @@ impl Dashboard {
                     _ => {}
                 }
             }
+            (Page::Form { fields, active, .. }, PaletteTarget::MultilineLine(index, line)) => {
+                *active = index;
+                palette.scroll = None;
+                if matches!(&fields[index].kind, FieldKind::Multiline) {
+                    palette.cursor.click_line(
+                        &fields[index].value,
+                        line,
+                        body.width.saturating_sub(2) as usize,
+                        mouse.column.saturating_sub(body.x + 2) as usize,
+                    );
+                }
+            }
             (Page::Form { fields, active, .. }, PaletteTarget::Option(index, selected)) => {
                 *active = index;
                 palette.cursor = Default::default();
@@ -2331,10 +2376,23 @@ impl Dashboard {
         }
         self.refresh_workspace_form(&mut palette);
         palette.scroll = None;
+        let multiline_active = matches!(
+            &palette.page,
+            Page::Form { fields, active, .. }
+                if matches!(fields[*active].kind, FieldKind::Multiline)
+        );
+        let submit_chord = multiline_active
+            && key.code == KeyCode::Enter
+            && key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL);
         if matches!(
             key.code,
             KeyCode::Tab | KeyCode::BackTab | KeyCode::Enter | KeyCode::Up | KeyCode::Down
-        ) {
+        ) && !(multiline_active
+            && !submit_chord
+            && matches!(key.code, KeyCode::Enter | KeyCode::Up | KeyCode::Down))
+        {
             palette.cursor = Default::default();
             palette.scroll = None;
         }
@@ -2385,7 +2443,9 @@ impl Dashboard {
                                 picker.selected = 0;
                                 field.value.clear();
                             }
-                            FieldKind::Text | FieldKind::Toggle => field.value.clear(),
+                            FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {
+                                field.value.clear()
+                            }
                         }
                     }
                     _ => {}
@@ -2426,6 +2486,9 @@ impl Dashboard {
                 ) =>
             {
                 palette.insert(&ch.to_string());
+            }
+            KeyCode::Enter if multiline_active && !submit_chord => {
+                palette.insert("\n");
             }
             KeyCode::Backspace
             | KeyCode::Delete
@@ -2469,6 +2532,9 @@ impl Dashboard {
                                 }
                             }
                             FieldKind::Text => palette.cursor.key(&mut field.value, key.code),
+                            FieldKind::Multiline => {
+                                palette.cursor.line_key(&mut field.value, key.code)
+                            }
                             FieldKind::Path(picker) => {
                                 palette.cursor.key(&mut field.value, key.code);
                                 if editing {
@@ -2481,6 +2547,12 @@ impl Dashboard {
                 }
                 if editing {
                     palette.error = None;
+                }
+            }
+            KeyCode::Up | KeyCode::Down if multiline_active => {
+                if let Page::Form { fields, active, .. } = &mut palette.page {
+                    let field = &mut fields[*active];
+                    palette.cursor.vertical(&mut field.value, key.code == KeyCode::Down);
                 }
             }
             KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
@@ -2501,7 +2573,7 @@ impl Dashboard {
                                 picker.listing(&value, &self.settings.picker_roots).clone();
                             picker.move_selection(&listing, delta);
                         }
-                        FieldKind::Text | FieldKind::Toggle => {}
+                        FieldKind::Text | FieldKind::Multiline | FieldKind::Toggle => {}
                     }
                 }
             }
@@ -2773,6 +2845,13 @@ impl Dashboard {
                     name_edited,
                     root_edited,
                 } => {
+                    if matches!(fields[*active].kind, FieldKind::Pick(_)) {
+                        accept_pick(&mut fields[*active]);
+                        self.refresh_terminal_form(fields, *name_edited);
+                        self.refresh_project_form(fields, *name_edited, *root_edited);
+                        self.palette = Some(palette);
+                        return action;
+                    }
                     // A field that Start just hid is no longer part of the form.
                     if !fields[*active].hidden && !accept_pick(&mut fields[*active]) {
                         // A deferred submit must not wait on a pick that can
@@ -3190,6 +3269,9 @@ impl Dashboard {
         let creates_workspace = fields.iter().any(|f| f.label == "Project");
         for field in fields {
             if field.label == "Task" && !creates_workspace {
+                field.hidden = start != "Agent";
+            }
+            if field.label == "Initial prompt" {
                 field.hidden = start != "Agent";
             }
             if field.label == "Agent" {
@@ -3712,7 +3794,14 @@ impl Dashboard {
                 let agent = launch.pop().unwrap();
                 let start = launch.pop().unwrap();
                 vec![
-                    text("Task", String::new(), false),
+                    Field {
+                        label: "Initial prompt",
+                        value: String::new(),
+                        required: false,
+                        hidden: false,
+                        edited: false,
+                        kind: FieldKind::Multiline,
+                    },
                     start,
                     Field {
                         label: "Workspace",
@@ -3800,10 +3889,12 @@ impl Dashboard {
         };
         let mut fields = fields;
         self.refresh_terminal_form(&mut fields, false);
-        // A new task starts at Task whenever the form shows it.
+        // New agent sessions start at the optional prompt; all other forms use
+        // their first visible field.
         let active = fields
             .iter()
-            .position(|field| field.label == "Task" && !field.hidden)
+            .position(|field| field.label == "Initial prompt" && !field.hidden)
+            .or_else(|| fields.iter().position(|field| field.label == "Task" && !field.hidden))
             .or_else(|| fields.iter().position(|field| !field.hidden))
             .unwrap_or(0);
         Page::Form {
@@ -4862,6 +4953,7 @@ fn form_keys(command: &Command, fields: &[Field], active: usize, recovering: boo
     match &field.kind {
         FieldKind::Text if !recovering => keys.push("Ctrl-u clear"),
         FieldKind::Text => {}
+        FieldKind::Multiline => keys.push("Enter newline · Alt-Enter start"),
         FieldKind::Toggle => keys.push("Space/←/→ switch"),
         FieldKind::Pick(list) => {
             keys.push("↑/↓/←/→ choose · type to filter");

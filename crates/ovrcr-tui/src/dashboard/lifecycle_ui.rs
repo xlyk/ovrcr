@@ -15,6 +15,7 @@ pub(super) const BUSY: &str =
 pub(super) struct Provisional {
     pub token: u64,
     pub kind: ProvisionalKind,
+    pub initial_prompt_intent: Option<crate::protocol::InitialPromptIntentId>,
     pub failed: Option<(ErrorCode, String)>,
     /// The form or confirmation that submitted the job, out of view while it
     /// runs; a failure brings it back with the person's values.
@@ -118,14 +119,26 @@ impl Provisional {
                 label: request.session.label.clone(),
                 kind: request.session.kind.clone(),
             },
+            Request::CreateAgentSessionWithPrompt(request) => ProvisionalKind::CreatingSession {
+                project: request.launch.session.project.clone(),
+                workspace: request.launch.session.workspace.clone(),
+                name: request.launch.session.name.clone(),
+                label: request.launch.session.label.clone(),
+                kind: request.launch.session.kind.clone(),
+            },
             Request::CloseTerminal { session, .. } => {
                 ProvisionalKind::ClosingSession { session: *session }
             }
             _ => return None,
         };
+        let initial_prompt_intent = match request {
+            Request::CreateAgentSessionWithPrompt(request) => Some(request.intent.clone()),
+            _ => None,
+        };
         Some(Self {
             token,
             kind,
+            initial_prompt_intent,
             failed: None,
             form: None,
             then: Vec::new(),
@@ -473,7 +486,7 @@ impl Dashboard {
         self.provisional = Some(row);
     }
 
-    fn select_created_session(&mut self, session: SessionSummary) -> DashboardAction {
+    pub(super) fn select_created_session(&mut self, session: SessionSummary) -> DashboardAction {
         self.select_session(session.id);
         self.mode = super::InputMode::Terminal;
         let request_id = self.next_request_id();
