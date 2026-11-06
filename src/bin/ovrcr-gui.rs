@@ -592,12 +592,17 @@ impl App {
                                 event,
                                 egui::Event::PointerButton { .. }
                                     | egui::Event::MouseWheel { .. }
+                                    | egui::Event::WindowFocused(true)
                                     | egui::Event::WindowFocused(false)
                             )
                             && !self.keyboard.tracks_release(event)
                         {
                             continue;
                         }
+                        self.keyboard
+                            .set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+                        self.keyboard
+                            .set_focus_reporting_enabled(terminal.focus_reporting_enabled());
                         let bytes = encode_event_with_keyboard(
                             event,
                             &screen,
@@ -606,7 +611,6 @@ impl App {
                             pointer,
                             &mut self.mouse,
                             &mut self.keyboard,
-                            terminal.keyboard_enhancement_enabled(),
                         );
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
