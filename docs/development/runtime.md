@@ -108,6 +108,9 @@ cannot consume an intent after its replacement has observed it as undelivered.
 The book is bounded to 16 recent snapshots per Server lifetime. Accepted starts
 complete through their stable intent ID and exact session/run; they do not use a
 connection-local lifecycle token that a replacement Dashboard could reuse.
+The snapshot binds the exact session/run immediately after retained `begin_run`,
+so Pending and Unknown outcomes can identify an allocation without claiming that
+the native launch or prompt delivery succeeded.
 `LaunchAccepted` means the session was created and registered; prompt delivery
 remains `Unknown`. A known pre-spawn refusal retains the frozen launch options
 and prompt for an explicit retry with a new intent. Uncertain outcomes discard

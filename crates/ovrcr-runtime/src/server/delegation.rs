@@ -1614,9 +1614,8 @@ impl ServerState {
                                         name: contract.provider.clone(),
                                     },
                                 },
-                                None,
                                 Some(&handle),
-                                None,
+                                super::SessionSpawnOptions::default(),
                             )
                             .map(|_| ())
                         };

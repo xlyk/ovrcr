@@ -18,9 +18,9 @@ use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
-    PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage, SessionKind,
-    SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame, read_preamble, write_frame,
-    write_preamble,
+    InitialPromptIntentId, PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent,
+    ServerMessage, SessionKind, SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame,
+    read_preamble, write_frame, write_preamble,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
@@ -94,6 +94,17 @@ impl std::fmt::Display for LifecycleFailure {
 }
 
 impl std::error::Error for LifecycleFailure {}
+
+/// Transient options shared by the single managed-session spawn path.
+/// Prompt text and its one-use identity travel together only until spawn.
+#[derive(Default)]
+struct SessionSpawnOptions {
+    ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    restore_command: Option<String>,
+    prepared: bool,
+    initial_prompt: Option<String>,
+    initial_prompt_intent: Option<InitialPromptIntentId>,
+}
 
 fn lifecycle_error(code: ErrorCode, message: impl Into<String>) -> anyhow::Error {
     lifecycle_error_with_hierarchy(code, message, false)
@@ -845,7 +856,7 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, None, None, None)
+        self.create_session_locked(request, None, SessionSpawnOptions::default())
     }
 
     pub fn create_agent_session(
@@ -864,6 +875,7 @@ impl ServerState {
         request.validate().map_err(|message| {
             crate::session::NoProcessStarted::context(anyhow::anyhow!(message))
         })?;
+        let intent = request.intent.clone();
         let prompt = request.prompt;
         let has_prompt = !prompt.trim().is_empty();
         let session = if has_prompt {
@@ -876,7 +888,15 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()
             .map_err(crate::session::NoProcessStarted::context)?;
-        self.create_session_locked(session, None, None, has_prompt.then_some(prompt))
+        self.create_session_locked(
+            session,
+            None,
+            SessionSpawnOptions {
+                initial_prompt: has_prompt.then_some(prompt),
+                initial_prompt_intent: Some(intent),
+                ..SessionSpawnOptions::default()
+            },
+        )
     }
 
     /// Remember a Dashboard agent choice only after the launch succeeds. The
@@ -920,16 +940,22 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, Some(ready), None, None)
+        self.create_session_locked(
+            request,
+            None,
+            SessionSpawnOptions {
+                ready: Some(ready),
+                ..SessionSpawnOptions::default()
+            },
+        )
     }
 
     /// Admission stays locked from the live-slot check through durable intent and publication.
     fn create_session_locked(
         &self,
         request: ovrcr_protocol::CreateSessionRequest,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
         assignment: Option<&str>,
-        initial_prompt: Option<String>,
+        spawn: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
         let mut request = request;
         // Every error in this preflight precedes the sole native spawn call.
@@ -1013,14 +1039,7 @@ impl ServerState {
             Ok(record)
         })()
         .map_err(crate::session::NoProcessStarted::context)?;
-        let error = match self.spawn_record_locked(
-            record.id,
-            record.run,
-            request.argv,
-            ready,
-            None,
-            initial_prompt,
-        ) {
+        let error = match self.spawn_record_locked(record.id, record.run, request.argv, spawn) {
             Ok(summary) => return Ok(summary),
             Err(error) => error,
         };
@@ -1069,19 +1088,10 @@ impl ServerState {
         id: SessionId,
         expected_run: SessionRunId,
         argv: Vec<std::ffi::OsString>,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
-        restore_command: Option<String>,
-        initial_prompt: Option<String>,
+        mut options: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
-        self.spawn_prepared_record_locked(
-            id,
-            expected_run,
-            argv,
-            ready,
-            restore_command,
-            false,
-            initial_prompt,
-        )
+        options.prepared = false;
+        self.spawn_prepared_record_locked(id, expected_run, argv, options)
     }
 
     fn spawn_prepared_record_locked(
@@ -1089,10 +1099,7 @@ impl ServerState {
         id: SessionId,
         expected_run: SessionRunId,
         argv: Vec<std::ffi::OsString>,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
-        restore_command: Option<String>,
-        prepared: bool,
-        initial_prompt: Option<String>,
+        options: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
@@ -1115,7 +1122,7 @@ impl ServerState {
                 .as_ref()
                 .context("server event channel closed")?
                 .clone();
-            let record = if prepared {
+            let record = if options.prepared {
                 let retained = self.retained.lock();
                 let record = retained.get(id).context("prepared session missing")?;
                 if record.run != expected_run || record.stopped {
@@ -1125,6 +1132,15 @@ impl ServerState {
             } else {
                 self.retained.lock().begin_run(id, expected_run)?
             };
+            if let Some(intent) = options.initial_prompt_intent.as_ref() {
+                self.lifecycle.bind_prompt_intent(
+                    intent,
+                    id,
+                    record.run,
+                    &record.metadata.name,
+                    &record.metadata.label,
+                )?;
+            }
             if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
                 old.revoke_hook_capability();
             }
@@ -1136,7 +1152,7 @@ impl ServerState {
         let metadata = &record.metadata;
         let spec = SessionSpec {
             scope: metadata.scope,
-            restore_command,
+            restore_command: options.restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
             project: metadata.project.clone(),
@@ -1145,7 +1161,7 @@ impl ServerState {
             label: metadata.label.clone(),
             cwd: metadata.cwd.clone(),
             argv,
-            initial_prompt,
+            initial_prompt: options.initial_prompt,
             hook_env: Some(HookEnvironment {
                 socket,
                 session: id,
@@ -1168,7 +1184,7 @@ impl ServerState {
                 .lock()
                 .unwrap()
                 .insert(id, Arc::clone(session));
-            if let Some(ready) = ready.as_ref() {
+            if let Some(ready) = options.ready.as_ref() {
                 ready();
             }
         };
@@ -1588,8 +1604,15 @@ impl ServerState {
                 &self.server_lifetime,
             )?;
         }
-        let summary =
-            self.spawn_record_locked(id, expected_run, vec![shell], None, staged, None)?;
+        let summary = self.spawn_record_locked(
+            id,
+            expected_run,
+            vec![shell],
+            SessionSpawnOptions {
+                restore_command: staged,
+                ..SessionSpawnOptions::default()
+            },
+        )?;
         if let Some(command) = input {
             let session = self
                 .sessions
@@ -2433,9 +2456,8 @@ impl ServerState {
                 argv: launch.argv,
                 kind: launch.kind,
             },
-            None,
             assignment,
-            None,
+            SessionSpawnOptions::default(),
         )
         .map(Some)
         .map_err(|error| {
@@ -2902,8 +2924,7 @@ impl ServerState {
                 kind: SessionKind::Terminal,
             },
             None,
-            None,
-            None,
+            SessionSpawnOptions::default(),
         )
     }
 
