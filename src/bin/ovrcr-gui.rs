@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
 use ovrcr::gui::{
     Demo, Terminal,
-    input::{Mouse, encode_event, terminal_events},
+    input::{KeyboardState, Mouse, encode_event_with_keyboard, terminal_events},
 };
 use std::fs;
 use std::sync::Arc;
@@ -436,6 +436,8 @@ struct App {
     palette_pending: bool,
     // Wheel distance, held button and last motion outlive a single frame.
     mouse: Mouse,
+    // Modifier and shortcut edges must survive frame boundaries as well.
+    keyboard: KeyboardState,
 }
 
 impl App {
@@ -474,6 +476,7 @@ impl App {
                         ui.label(format!("Dashboard exited: {status}"));
                         if ui.button("Restart dashboard").clicked() || open_palette {
                             self.terminal.take();
+                            self.keyboard = KeyboardState::default();
                             match self.demo.dashboard(40, 120, ui.ctx().clone()) {
                                 Ok(terminal) => {
                                     self.terminal = Some(terminal);
@@ -587,13 +590,24 @@ impl App {
                         if !response.has_focus()
                             && !matches!(
                                 event,
-                                egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. }
+                                egui::Event::PointerButton { .. }
+                                    | egui::Event::MouseWheel { .. }
+                                    | egui::Event::WindowFocused(false)
                             )
+                            && !self.keyboard.tracks_release(event)
                         {
                             continue;
                         }
-                        let bytes =
-                            encode_event(event, &screen, rect, cell, pointer, &mut self.mouse);
+                        let bytes = encode_event_with_keyboard(
+                            event,
+                            &screen,
+                            rect,
+                            cell,
+                            pointer,
+                            &mut self.mouse,
+                            &mut self.keyboard,
+                            terminal.keyboard_enhancement_enabled(),
+                        );
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
                         {
@@ -642,6 +656,7 @@ fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyho
         closing: false,
         palette_pending: false,
         mouse: Mouse::default(),
+        keyboard: KeyboardState::default(),
     };
     wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     let mut input = egui::RawInput::default();
@@ -698,6 +713,7 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         closing: false,
         palette_pending: false,
         mouse: Mouse::default(),
+        keyboard: KeyboardState::default(),
     };
     wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     for detached in [false, true] {
@@ -1056,6 +1072,7 @@ fn main() -> eframe::Result {
                 closing: false,
                 palette_pending: false,
                 mouse: Mouse::default(),
+                keyboard: KeyboardState::default(),
             }))
         }),
     )

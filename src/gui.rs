@@ -18,6 +18,33 @@ use std::time::{Duration, Instant};
 /// from `OVRCR_GUI_QUOTA_CONFIG` when that variable is set.
 pub const DEMO_SETTINGS_ALLOWLIST: &[&str] = &["automatic_local_terminals", "quota"];
 
+const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>11u";
+const KITTY_KEYBOARD_POP: &[u8] = b"\x1b[<1u";
+
+#[derive(Default)]
+struct KeyboardEnhancementObserver {
+    enabled: bool,
+    tail: Vec<u8>,
+}
+
+impl KeyboardEnhancementObserver {
+    fn process(&mut self, bytes: &[u8]) -> bool {
+        let mut input = std::mem::take(&mut self.tail);
+        input.extend_from_slice(bytes);
+        for start in 0..input.len() {
+            let remaining = &input[start..];
+            if remaining.starts_with(KITTY_KEYBOARD_PUSH) {
+                self.enabled = true;
+            } else if remaining.starts_with(KITTY_KEYBOARD_POP) {
+                self.enabled = false;
+            }
+        }
+        let keep = input.len().saturating_sub(KITTY_KEYBOARD_PUSH.len() - 1);
+        self.tail.extend_from_slice(&input[keep..]);
+        self.enabled
+    }
+}
+
 /// The demo settings document: the allowlisted local-terminals line, then
 /// `quota_fragment` when the caller has one.
 pub fn demo_dashboard_document(quota_fragment: Option<&str>) -> String {
@@ -71,6 +98,9 @@ impl Demo {
         let workspaces = self.root.join("workspaces");
         fs::create_dir(&repositories)?;
         fs::create_dir(&workspaces)?;
+        // The disposable provider-name symlinks resolve to /bin/sh; putting only
+        // this demo's bin first lets local shells create Agent fixtures safely.
+        fs::create_dir(self.root.join("agent-bin"))?;
         crate::config::save_registry_atomic(&crate::config::Registry::default(), &self.root)?;
         // Demo workspaces intentionally keep automatic local shells on every
         // worktree so the GUI helper exercises a full sidebar of terminals.
@@ -233,6 +263,18 @@ impl Demo {
         task: &str,
     ) -> Result<()> {
         let script = fixture_shell(task, label);
+        let provider = label
+            .split_once(" / ")
+            .map_or(label, |(provider, _)| provider);
+        let agent_bin = self.root.join("agent-bin");
+        fs::create_dir_all(&agent_bin)?;
+        let executable = agent_bin.join(provider);
+        if !executable.exists() {
+            std::os::unix::fs::symlink("/bin/sh", &executable)?;
+        }
+        let executable = executable
+            .to_str()
+            .context("demo agent path is not UTF-8")?;
         self.cli(&[
             "new",
             "--project",
@@ -244,7 +286,7 @@ impl Demo {
             "--label",
             label,
             "--",
-            "/bin/sh",
+            executable,
             "-c",
             &script,
         ])?;
@@ -264,6 +306,7 @@ impl Demo {
             .env_remove("OVRCR_DASHBOARD_CONFIG")
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
+            .env("PATH", self.path_with_agent_fixtures())
             .env_remove("NO_COLOR");
         if std::env::var_os("SHELL").is_none() {
             command.env("SHELL", "/bin/sh");
@@ -273,6 +316,14 @@ impl Demo {
 
     fn cli(&self, args: &[&str]) -> Result<Output> {
         checked(self.command().args(args), Duration::from_secs(15))
+    }
+
+    fn path_with_agent_fixtures(&self) -> std::ffi::OsString {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(
+            std::iter::once(self.root.join("agent-bin")).chain(std::env::split_paths(&path)),
+        )
+        .expect("the task-owned fixture path must be joinable")
     }
 
     pub fn dashboard(&self, rows: u16, cols: u16, context: egui::Context) -> Result<Terminal> {
@@ -291,6 +342,7 @@ impl Demo {
         command.env_remove("OVRCR_DASHBOARD_CONFIG");
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        command.env("PATH", self.path_with_agent_fixtures());
         command.env_remove("NO_COLOR");
         Terminal::start(command, rows, cols, context)
     }
@@ -388,6 +440,7 @@ pub struct Terminal {
     reader: Option<JoinHandle<()>>,
     stopping: Arc<AtomicBool>,
     read_error: Arc<Mutex<Option<String>>>,
+    keyboard_enhancement_enabled: Arc<AtomicBool>,
     context: egui::Context,
 }
 
@@ -410,6 +463,7 @@ impl Terminal {
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows.max(1), cols.max(1), 0)));
         let stopping = Arc::new(AtomicBool::new(false));
         let read_error = Arc::new(Mutex::new(None));
+        let keyboard_enhancement_enabled = Arc::new(AtomicBool::new(false));
         let mut terminal = Self {
             master: pair.master,
             writer,
@@ -418,11 +472,13 @@ impl Terminal {
             reader: None,
             stopping,
             read_error,
+            keyboard_enhancement_enabled,
             context,
         };
         let parser = Arc::clone(&terminal.parser);
         let stopping = Arc::clone(&terminal.stopping);
         let read_error = Arc::clone(&terminal.read_error);
+        let keyboard_enhancement_enabled = Arc::clone(&terminal.keyboard_enhancement_enabled);
         let context = terminal.context.clone();
         terminal.reader = Some(
             thread::Builder::new()
@@ -430,6 +486,7 @@ impl Terminal {
                 .spawn(move || {
                     let mut reader = reader;
                     let mut buffer = [0; 8192];
+                    let mut keyboard_mode = KeyboardEnhancementObserver::default();
                     while !stopping.load(Ordering::Relaxed) {
                         let mut poll = libc::pollfd {
                             fd,
@@ -451,6 +508,8 @@ impl Terminal {
                         match reader.read(&mut buffer) {
                             Ok(0) => break,
                             Ok(count) => {
+                                let enabled = keyboard_mode.process(&buffer[..count]);
+                                keyboard_enhancement_enabled.store(enabled, Ordering::Release);
                                 parser.lock().unwrap().process(&buffer[..count]);
                                 if !stopping.load(Ordering::Relaxed) {
                                     context.request_repaint();
@@ -476,6 +535,12 @@ impl Terminal {
 
     pub fn screen(&self) -> vt100::Screen {
         self.parser.lock().unwrap().screen().clone()
+    }
+
+    /// Whether this Dashboard has actually enabled enhanced keyboard reporting
+    /// on the outer PTY. The GUI never infers modifier support from platform alone.
+    pub fn keyboard_enhancement_enabled(&self) -> bool {
+        self.keyboard_enhancement_enabled.load(Ordering::Acquire)
     }
 
     pub fn send(&mut self, bytes: &[u8]) -> Result<()> {
@@ -543,5 +608,25 @@ fn size(rows: u16, cols: u16) -> PtySize {
         cols: cols.max(1),
         pixel_width: 0,
         pixel_height: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_mode_observer_tracks_split_push_and_pop_sequences() {
+        let mut observer = KeyboardEnhancementObserver::default();
+        assert!(!observer.process(b"dashboard output\x1b[>11"));
+        assert!(observer.process(b"uordinary output\x1b[<"));
+        assert!(!observer.process(b"1u"));
+    }
+
+    #[test]
+    fn keyboard_mode_observer_ignores_different_flags() {
+        let mut observer = KeyboardEnhancementObserver::default();
+        assert!(!observer.process(b"\x1b[>1u"));
+        assert!(!observer.process(b"\x1b[<1u"));
     }
 }
