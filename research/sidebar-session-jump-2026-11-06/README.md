@@ -1,6 +1,6 @@
 # Sidebar session-jump acceptance
 
-Status: implementation in progress; native GUI acceptance is red at the first checkpoint. No production-terminal compatibility claim.
+Status: implementation in progress. Kyle tried the GUI and requested single-digit jumps only. The adaptive version is being replaced with labels1–9 on the first nine eligible visible Agents, with immediate one-press selection. Historical attempts below retain their tested revisions. No general production-terminal compatibility claim.
 
 - Baseline: `8f9569729574b0f0dedb56bd8b9ff1a1384b08fa`.
 - [Native GUI first attempt](native-01/review.md): reviewed integration `2ae54eee`, failing Cmd+1 alongside working existing Cmd+K. Original captures and cleanup inventories retained.
@@ -20,3 +20,11 @@ The [focused reports](automated/) distinguish tested branch revisions from final
 The freshness correction has 27/27 input unit cases and 1/1 real GUI-encoder/Dashboard PTY case green; GUI-only Clippy passes with `--no-deps`. Full Clippy still stops at the inherited #404 predicate lint, whose fix is on #405. Final combined workspace tests, lint, independent reviews, adaptive/Operator native checks and current hosted CI remain open; no final acceptance claim. The bounded recorded-frame lookup found no matching GUI frame and did not fill the held-visual gap.
 
 Original raw capture files named in this report are preserved byte for byte in the [artifact index](raw-artifacts.md).
+
+## Approved integration and single-digit revision
+
+Kyle explicitly approved local feature-branch merges and remaining checks for #406, while forbidding main merge. All four slices and review corrections were integrated and pushed as `5916f78c`. Independent [Standards](automated/review-standards-followup.md) and [Spec](automated/review-spec-followup.md) follow-ups resolved the reported issues. Full all-target/all-feature Clippy and formatting passed on that source.
+
+[Native combined-build attempt](native-03/review.md) confirmed single-digit selection in a short list, a separate destination acknowledgement, Operator cancellation/draft retention, and hidden-sidebar refusal. The GUI suite passed13/13 sequentially; a default-parallel workspace run had earlier stopped at GUI startup waits. A later full run encountered explicit disk exhaustion; six affected suites passed139/139 on retry after space recovered, with two helper entrypoints ignored. Those failed attempts remain distinct from passing checks. Final workspace/hosted outcomes are still being collected.
+
+After trying the ten-Agent adaptive interaction, Kyle said, “we should only use single digits”. The [parent specification](https://github.com/xlyk/ovrcr/issues/401) and [long-list ticket](https://github.com/xlyk/ovrcr/issues/403) now record the replacement: Cmd+1 through Cmd+9 for the first nine eligible drawn Agent rows, regardless of list length. Further rows stay visible and reachable by scrolling or Agents search. There is no zero-padded code, partial prefix, or prefix editor. All other readiness, cancellation, identity, retained, Operator, layout, and support-gate contracts remain in force. This source change and its final checks are in progress; no ready-PR or main-merge claim.
