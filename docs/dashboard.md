@@ -97,6 +97,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
+| `Cmd+1`–`Cmd+9` | Hold Command to show temporary labels on visible running Agent rows, then choose that exact row by its digit |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -111,6 +112,15 @@ change when the Server republishes. The Claude probe is a separate consent,
 that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
 with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
 history request that has not opened yet.
+
+On macOS, the session jump needs a terminal that delivers Command as a standalone
+Super press and release through Kitty's keyboard protocol. The Dashboard enables
+enhanced keyboard reporting for its session and restores the previous keyboard
+mode when it leaves. A protocol capability response alone does not prove that
+Command and modified digits reach the application. Verify the exact terminal
+version and keyboard configuration with Command-down, a labeled digit, and
+Command-up before listing that setup as supported. If no modifier event arrives,
+the Dashboard leaves input alone and `s` Agents search remains available.
 
 ## Search other running agents
 
@@ -543,6 +553,14 @@ forwarded as the CSI-u sequence `ESC [ 13 ; 2 u`, so agents that support it
 insert a newline instead of submitting. Terminals without the kitty keyboard
 protocol report `Shift+Enter` as plain `Enter`, so the dashboard cannot tell them
 apart there.
+
+The Command session jump uses Kitty's enhanced key events only while the user
+holds Command. It labels the running Agents visible in the sidebar, including the
+current session, and freezes those row numbers to their session and run for the
+hold. Releasing Command without choosing a number cancels. After a choice, the
+destination stays in Browse until Command is released and the exact view is
+acknowledged; loading input is discarded. The feature does not infer support from
+a terminal name or a capability reply.
 
 ## Pause and resume
 

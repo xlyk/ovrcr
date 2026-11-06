@@ -157,6 +157,7 @@ where
         cleanup.mouse = true;
         cleanup.cursor_hidden = true;
         cleanup.bracketed_paste = true;
+        cleanup.mark_kitty_keyboard(true);
         cleanup.restore_before(|| {
             PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
             if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
@@ -857,7 +858,8 @@ mod outbox_dispatch_tests {
     use crate::dashboard::{HeldMouse, state::HistoryView};
     use crate::protocol::{HistoryOpened, HistorySnapshotId, SessionId, SessionRunId};
     use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode, MouseButton, MouseEvent,
+        MouseEventKind,
     };
     use ratatui::{TerminalOptions, Viewport};
 
@@ -888,6 +890,35 @@ mod outbox_dispatch_tests {
         peer.set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         (stream, peer)
+    }
+
+    #[test]
+    fn production_view_geometry_change_cancels_the_current_jump_hold() {
+        let (mut dashboard, current) = super::unread_review_tests::fixture();
+        dashboard.install_area(Rect::new(0, 0, 120, 20));
+        let mut target = current;
+        target.id = SessionId(2);
+        target.run = SessionRunId(2);
+        target.kind = crate::protocol::SessionKind::Agent {
+            name: "fixture-agent".into(),
+        };
+        target.title = Some("target-title".into());
+        dashboard.hierarchy.projects[0].workspaces[0]
+            .sessions
+            .push(target);
+        dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )));
+        assert_eq!(dashboard.sidebar_jump_label(SessionId(2)), Some(1));
+
+        // The real loop updates geometry through view_request after a PTY
+        // resize event, so cancellation belongs at this shared boundary too.
+        let _ = dashboard
+            .view_request(Rect::new(0, 0, 100, 20), 100)
+            .unwrap();
+        assert_eq!(dashboard.sidebar_jump_label(SessionId(2)), None);
     }
 
     fn assert_empty(peer: &mut UnixStream) {
@@ -1008,6 +1039,148 @@ mod outbox_dispatch_tests {
         ));
         flush(&mut stream, &mut dashboard).unwrap();
         assert_empty(&mut peer);
+    }
+
+    #[test]
+    fn command_jump_release_before_ack_discards_queued_input_at_the_real_boundary() {
+        use std::collections::VecDeque;
+
+        let (mut dashboard, current) = super::unread_review_tests::fixture();
+        dashboard.install_area(Rect::new(0, 0, 120, 20));
+        let mut target = current.clone();
+        target.id = SessionId(2);
+        target.run = SessionRunId(2);
+        target.kind = crate::protocol::SessionKind::Agent {
+            name: "fixture-agent".into(),
+        };
+        target.name = "target-agent".into();
+        target.label = "target-agent".into();
+        target.title = Some("target-title".into());
+        target.unread = None;
+        target.phase = crate::protocol::SessionPhase::Running;
+        dashboard.hierarchy.projects[0].workspaces[0]
+            .sessions
+            .push(target);
+
+        dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )));
+        assert_eq!(
+            dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('1'),
+                KeyModifiers::SUPER,
+                KeyEventKind::Press,
+            ))),
+            DashboardAction::Redraw
+        );
+        let request = dashboard.drain_one_request().expect("jump requests a view");
+        let Request::SetView { view } = &request.request else {
+            panic!("jump must use the existing SetView request");
+        };
+        assert_eq!(view.focused, Some(SessionId(2)));
+
+        // Cmd-up precedes the view response. The acknowledged snapshot must
+        // still wait for the event loop's bounded input-drain boundary.
+        dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        )));
+        assert_eq!(dashboard.mode, super::super::InputMode::Browse);
+
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+            },
+        )
+        .unwrap();
+        let (mut stream, mut peer) = socket_pair();
+        let (sender, messages) = dashboard_message_channel();
+        for pane in &view.panes {
+            sender
+                .send(ServerMessage::Response {
+                    request_id: request.request_id,
+                    response: Response::Screen {
+                        session: pane.session,
+                        run: pane.run,
+                        revision: view.revision,
+                        size: pane.size,
+                        bytes: Vec::new(),
+                    },
+                })
+                .unwrap();
+        }
+        sender
+            .send(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            })
+            .unwrap();
+        assert!(next_dashboard_messages(&messages, &mut dashboard, &mut stream).unwrap());
+        assert_eq!(dashboard.mode, super::super::InputMode::Browse);
+
+        let events = std::cell::RefCell::new(
+            (0..DASHBOARD_INPUT_BATCH_LIMIT + 3)
+                .map(|index| match index % 4 {
+                    0 => Event::Paste("JUMP_CUTOVER_PASTE".into()),
+                    1 => Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+                    2 => Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char('x'),
+                        KeyModifiers::NONE,
+                        KeyEventKind::Repeat,
+                    )),
+                    _ => Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char('x'),
+                        KeyModifiers::NONE,
+                        KeyEventKind::Release,
+                    )),
+                })
+                .collect::<VecDeque<_>>(),
+        );
+        let mut mouse_enabled = false;
+        loop {
+            let boundary = drain_dashboard_input_then_emit_with(
+                &mut terminal,
+                &mut stream,
+                &mut dashboard,
+                &mut mouse_enabled,
+                || Ok(!events.borrow().is_empty()),
+                |terminal, stream, dashboard, mouse_enabled| {
+                    let event = events.borrow_mut().pop_front().unwrap();
+                    let action = dashboard.event_action(event);
+                    send_dashboard_action(terminal, stream, dashboard, mouse_enabled, action)
+                },
+            )
+            .unwrap();
+            if boundary == DashboardBoundary::InputPending {
+                assert_eq!(dashboard.mode, super::super::InputMode::Browse);
+                continue;
+            }
+            assert_eq!(boundary, DashboardBoundary::Work);
+            break;
+        }
+        assert_eq!(dashboard.mode, super::super::InputMode::Terminal);
+        assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+        assert_empty(&mut peer);
+
+        let action = dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char('z'),
+            KeyModifiers::NONE,
+        )));
+        send_dashboard_action(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            &mut mouse_enabled,
+            action,
+        )
+        .unwrap();
+        let sent: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert!(matches!(sent.request, Request::Input { .. }));
     }
 }
 

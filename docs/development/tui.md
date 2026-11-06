@@ -24,6 +24,23 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
+Sidebar session-jump labels are derived from the drawn tree order, viewport,
+row heights, and exact Agent session/run identities. Draw them inside the existing
+indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
+Only an observed standalone Super press starts a hold; freeze its mapping until
+release, hide labels on selection, and keep the normal Agents search available
+when the host does not deliver modifier events. A selected destination remains
+in Browse until both the held modifier is released and the existing view/input
+boundary is drained. Shortcut events, release events, and queued loading input
+must never become child bytes. Opening an overlay, losing focus, scrolling, or
+resizing cancels the hold.
+
+Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.
+Request its modes at Dashboard entry, restore the owned mode on normal exit,
+interrupt, error, and panic, and preserve the user's prior mode by popping only
+the push this Dashboard owns. A reply to a capability query is not proof that a
+host delivers the required Command/Super press, modified digit, and release.
+
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph, the plain-words state (with its narrow form, a bare `Unread` when there is one), the reporting words (`starting…`, `status off`) and elapsed clauses the pane headers read, and the activity, Unread and health clauses the Agents picker reads — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers, the picker and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width (`render::pane_header` gives up the pid, model, elapsed time and label before the state), and readiness itself is still decided in `dashboard::ready`. Quality words and reporter reasons never reach the headers. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the header still says Ready. The sidebar agent label appends the current model after a colon when one is known; on a shared line the title keeps its room first, so the model goes, then the agent, before the title clips. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
 Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard. The palette applies the popup's `shown_in_group` rule: it drops bindings the target cannot use and keeps waiting or protected rows with their reason, so the list never shifts under the cursor when a screen is acknowledged. The title bar's `[Commands]` control opens the palette. Split (`v`) reuses the palette's Search page as the new pane's session chooser (`Palette::split`), and palette setting rows open the editor through `Editor::select`.
 

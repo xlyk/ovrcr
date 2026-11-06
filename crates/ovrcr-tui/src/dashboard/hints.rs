@@ -3,6 +3,9 @@ use super::{Dashboard, InputMode};
 
 pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     use unicode_width::UnicodeWidthStr;
+    if let Some(hint) = dashboard.sidebar_jump_footer_hint() {
+        return hint.chars().take(usize::from(width)).collect();
+    }
     if let Some(intent) = &dashboard.agent_typing {
         let rejected = intent
             .rejected

@@ -7,6 +7,9 @@ use crossterm::event::{
 use crossterm::{cursor, execute, terminal as crossterm_terminal};
 use std::io::{self, Write};
 
+const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>11u";
+const KITTY_KEYBOARD_POP: &[u8] = b"\x1b[<1u";
+
 pub struct TerminalGuard<W: Write = io::Stdout> {
     writer: W,
     pub(super) raw: bool,
@@ -14,6 +17,7 @@ pub struct TerminalGuard<W: Write = io::Stdout> {
     pub(super) mouse: bool,
     pub(super) cursor_hidden: bool,
     pub(super) bracketed_paste: bool,
+    kitty_keyboard: bool,
 }
 
 impl TerminalGuard<io::Stdout> {
@@ -25,6 +29,7 @@ impl TerminalGuard<io::Stdout> {
             mouse: false,
             cursor_hidden: false,
             bracketed_paste: false,
+            kitty_keyboard: false,
         };
         crossterm_terminal::enable_raw_mode().context("enable raw terminal mode")?;
         guard.raw = true;
@@ -49,6 +54,7 @@ impl<W: Write> TerminalGuard<W> {
             mouse: false,
             cursor_hidden: false,
             bracketed_paste: false,
+            kitty_keyboard: false,
         }
     }
 
@@ -60,6 +66,13 @@ impl<W: Write> TerminalGuard<W> {
         execute!(self.writer, crossterm_terminal::EnterAlternateScreen)
             .context("enter alternate screen")?;
         self.alternate = true;
+        self.writer
+            .write_all(KITTY_KEYBOARD_PUSH)
+            .context("enable dashboard Kitty keyboard reporting")?;
+        self.kitty_keyboard = true;
+        self.writer
+            .flush()
+            .context("flush dashboard Kitty keyboard reporting")?;
         execute!(self.writer, EnableBracketedPaste).context("enable bracketed paste")?;
         self.bracketed_paste = true;
         execute!(self.writer, EnableMouseCapture).context("enable dashboard mouse")?;
@@ -79,12 +92,26 @@ impl<W: Write> TerminalGuard<W> {
         self.mouse = enabled;
     }
 
+    /// Records an existing push owned by a guard reconstructed for panic cleanup.
+    ///
+    /// Call this only after the original guard completed `enter_modes`; the
+    /// panic hook is installed after that boundary, so its replacement guard
+    /// must pop the original guard's protocol stack entry.
+    pub(super) fn mark_kitty_keyboard(&mut self, enabled: bool) {
+        self.kitty_keyboard = enabled;
+    }
+
     fn restore(&mut self) {
         // The dashboard loop toggles capture on its own, so do not trust the
         // flag: disabling capture is idempotent and cheap.
         let _ = execute!(self.writer, DisableMouseCapture);
         self.mouse = false;
         let _ = execute!(self.writer, DisableFocusChange);
+        if self.kitty_keyboard {
+            let _ = self.writer.write_all(KITTY_KEYBOARD_POP);
+            let _ = self.writer.flush();
+            self.kitty_keyboard = false;
+        }
         if self.bracketed_paste {
             let _ = execute!(self.writer, DisableBracketedPaste);
             self.bracketed_paste = false;
@@ -178,6 +205,24 @@ mod tests {
         assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
+        assert!(
+            bytes
+                .windows(KITTY_KEYBOARD_PUSH.len())
+                .position(|w| w == KITTY_KEYBOARD_PUSH)
+                < bytes
+                    .windows(KITTY_KEYBOARD_POP.len())
+                    .position(|w| w == KITTY_KEYBOARD_POP)
+        );
+        assert!(
+            bytes
+                .windows(KITTY_KEYBOARD_POP.len())
+                .position(|w| w == KITTY_KEYBOARD_POP)
+                < bytes
+                    .windows(b"\x1b[?1049l".len())
+                    .position(|w| w == b"\x1b[?1049l")
+        );
 
         let (writer, output) = InjectedWriter::new(usize::MAX);
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -190,6 +235,8 @@ mod tests {
         assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
     }
 
     #[test]
@@ -203,10 +250,13 @@ mod tests {
             assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
             assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
             assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+            assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+            assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
         });
         drop(guard);
         let bytes = output.lock().unwrap().clone();
         assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
     }
 
     #[test]
@@ -215,5 +265,37 @@ mod tests {
         assert!(TerminalGuard::enter_with_writer(writer).is_err());
         let bytes = output.lock().unwrap().clone();
         assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+    }
+
+    #[test]
+    fn restores_keyboard_reporting_when_a_later_enter_write_fails() {
+        let (writer, output) = InjectedWriter::new(3);
+        assert!(TerminalGuard::enter_with_writer(writer).is_err());
+        let bytes = output.lock().unwrap().clone();
+        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
+    }
+
+    #[test]
+    fn does_not_pop_keyboard_reporting_when_its_push_write_fails() {
+        let (writer, output) = InjectedWriter::new(1);
+        assert!(TerminalGuard::enter_with_writer(writer).is_err());
+        let bytes = output.lock().unwrap().clone();
+        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 0);
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 0);
+    }
+
+    #[test]
+    fn restores_a_marked_push_for_reconstructed_panic_cleanup() {
+        let (writer, output) = InjectedWriter::new(usize::MAX);
+        let mut cleanup = TerminalGuard::with_writer(writer);
+        cleanup.mark_kitty_keyboard(true);
+        cleanup.restore_before(|| {
+            let bytes = output.lock().unwrap().clone();
+            assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
+        });
+        drop(cleanup);
+        let bytes = output.lock().unwrap().clone();
+        assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
     }
 }

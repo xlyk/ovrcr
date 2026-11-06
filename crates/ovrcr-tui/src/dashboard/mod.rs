@@ -285,6 +285,8 @@ pub struct Dashboard {
     handshake: view_handshake::ViewHandshake,
     navigation: navigation::Navigation,
     agent_typing: Option<state::AgentTyping>,
+    /// Session targets frozen for one observed Command hold.
+    sidebar_jump: Option<state::SidebarJump>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:
         std::collections::HashMap<(SessionId, crate::protocol::SessionRunId), Option<u64>>,

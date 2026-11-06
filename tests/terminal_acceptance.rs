@@ -911,6 +911,69 @@ fn agent_search_selects_and_types_through_real_dashboard() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn command_digit_jumps_to_the_frozen_visible_agent_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let first = create_search_agent(&mut fixture, "agent-a")?;
+    let second = create_search_agent(&mut fixture, "agent-b")?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+
+    // Land in a real Agent first, then drive Kitty's negotiated Super and
+    // modified digit events through crossterm's production input reader.
+    dashboard.send(b"sagent-a\r")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("READY_agent-a") && screen.contains("Terminal mode"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b[57444;1:1u")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("[1]") && screen.contains("[2]"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b[50;9:1u")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("READY_agent-b") && screen.contains("Session selected"),
+        wait_deadline(),
+    )?;
+
+    // A plain key while Cmd is still held is rejected and cannot reach either
+    // child. Only the physical modifier release opens the existing input gate.
+    dashboard.send(b"CUTOVER_REJECT\r")?;
+    dashboard.send(b"\x1b[57444;1:3u")?;
+    dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(b"JUMP_DESTINATION_OK\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-b_JUMP_DESTINATION_OK", wait_deadline())?;
+
+    for session in [first.id, second.id] {
+        let text = fixture.read_terminal(session)?;
+        assert!(
+            !text.contains("CUTOVER_REJECT"),
+            "input before Cmd release reached a child: {text}"
+        );
+        assert!(
+            !text.contains("RECEIVED_agent-a_JUMP_DESTINATION_OK"),
+            "jump payload reached the previous Agent: {text}"
+        );
+    }
+    assert!(
+        fixture
+            .read_terminal(second.id)?
+            .contains("RECEIVED_agent-b_JUMP_DESTINATION_OK")
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
 type AgentViewGate = (Receiver<()>, Sender<()>, JoinHandle<Result<()>>);
 
 /// Hold one real SetView's final Ok, without a production testing endpoint.

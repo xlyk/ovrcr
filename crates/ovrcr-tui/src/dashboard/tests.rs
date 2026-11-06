@@ -1606,7 +1606,11 @@ fn panic_hook_ignores_non_main_threads() {
         panic!("installing thread panic must restore the terminal");
     }));
     let restored = bytes.lock().unwrap().clone();
-    for sequence in [b"\x1b[?1049l".as_slice(), b"\x1b[?25h".as_slice()] {
+    for sequence in [
+        b"\x1b[?1049l".as_slice(),
+        b"\x1b[?25h".as_slice(),
+        b"\x1b[<1u".as_slice(),
+    ] {
         assert!(
             restored
                 .windows(sequence.len())
