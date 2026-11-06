@@ -227,10 +227,10 @@ impl ServerState {
                     turn.identity.session,
                     turn.identity.run,
                     operator_worker_argv(&self.operator.executable, turn.identity),
-                    None,
-                    None,
-                    true,
-                    None,
+                    SessionSpawnOptions {
+                        prepared: true,
+                        ..SessionSpawnOptions::default()
+                    },
                 );
                 if let Err(error) = result {
                     let mut retained = self.retained.lock();
