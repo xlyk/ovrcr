@@ -1,0 +1,14 @@
+{
+  "revision": "6095a236f6b1e92e699abec8208f0af58bfb45c2",
+  "source": "/private/tmp/ovrcr-401-integration",
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-401-native-home-me9r3opn",
+  "temp_root": "/private/tmp/o401-gui-3disc2y4",
+  "command": [
+    "just",
+    "gui"
+  ],
+  "working_tree_status": "?? target\n",
+  "started": "2026-11-06T20:55:48.482382+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-06T21:08:09.544512+00:00"
+}

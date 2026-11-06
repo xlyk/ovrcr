@@ -1,0 +1,19 @@
+{
+  "revision": "bde84aab514b10d592b6f4466c2d12db0c2e5623",
+  "command": [
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "local_build_profile": {
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false
+  },
+  "home": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-401-check-8wrmlasp",
+  "started": "2026-11-06T21:12:50.730268+00:00",
+  "exit_code": 0,
+  "finished": "2026-11-06T21:12:52.386336+00:00"
+}

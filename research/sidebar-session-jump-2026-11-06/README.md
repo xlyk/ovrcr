@@ -1,6 +1,6 @@
 # Sidebar session-jump acceptance
 
-Status: implementation in progress. Kyle tried the GUI and requested single-digit jumps only. The adaptive version is being replaced with labels1–9 on the first nine eligible visible Agents, with immediate one-press selection. Historical attempts below retain their tested revisions. No general production-terminal compatibility claim.
+Status: Control+1–9 is implemented for the first nine eligible visible Agents, with immediate one-press selection. Kyle tested the revised native GUI and reported “it works great”. Independent follow-up reviews found no behavior issue; final workspace/hosted checks are tracked in PR #406. Historical attempts below retain their tested revisions. No general production-terminal compatibility claim.
 
 - Baseline: `8f9569729574b0f0dedb56bd8b9ff1a1384b08fa`.
 - [Native GUI first attempt](native-01/review.md): reviewed integration `2ae54eee`, failing Cmd+1 alongside working existing Cmd+K. Original captures and cleanup inventories retained.
@@ -36,3 +36,7 @@ Kyle subsequently chose holding Control instead of Cmd and asked to test the upd
 The old source `5916f78c` completed [hosted run42278110709](https://github.com/xlyk/ovrcr/actions/runs/42278110709) successfully: macOS acceptance, offline Cursor and aggregate checks all passed. Rust reported2660passed, including two recovered flaky tests, with33skipped. The retry names and exact job metadata are preserved in the automated archives. Manual-only Linux jobs were skipped.
 
 The complete local serial attempt remains a failed run: fixture disk exhaustion caused several failures and aborted two test harness outputs; a later quota HTTP fixture hit WouldBlock. The six previously named suites passed139/139 on retry. The two aborted suites subsequently passed21/21 and47/47 (two ignored helper entrypoints), and the single quota case passed1/1 separately. Assertions were retained. The existing hosted-filtered partial-resize case passed in the local Cargo run; it is not counted as a Nextest pass.
+
+## Control and single-digit user acceptance
+
+The [updated native GUI trial](native-04/review.md) ran exact source `6095a236` with ten Agent shell stand-ins. Kyle physically tested the revised Control gesture and accepted it: “it works great”. Final accessibility state showed Control test 08 selected in Terminal mode. Screenshots were omitted as requested. The GUI closed normally, launcher exited 0, fixture root/socket were removed and all 16 owned session groups were absent. Full revised-source checks remain distinct from the old baseline results above.
