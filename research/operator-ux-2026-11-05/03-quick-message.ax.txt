@@ -1,0 +1,18 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! Show which sessions need my attent… │❯ You                                                                                                                         
+ CONSIGINT
+~		31 text (settable) 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+~		29 text (settable)                                        │   ┌ Quick message · Ctrl-o ──────────────────────────────────────────────────────┐                                           
+~		30 text (settable)                                        │   │chat_gpt / gpt-6.1-sol · consigint / main / #1 run 1                          │                                           
+~		39 text (settable)                                        │   │                                                                              │                                           
+~		40 text (settable)                                        │   │Review the selected workspace.                                                │                                           
+~		41 text (settable)                                        │   │Keep this as a separate conversation.▏                                        │                                           
+~		42 text (settable)                                        │   │Enter Send  Shift-Enter Newline  Ctrl-c Clear  Esc Dismiss                    │                                           
+~		43 text (settable)                                        │   └──────────────────────────────────────────────────────────────────────────────┘                                           
+~		65 text (settable) Claude · unavailable · retry 44m       │ Managing consigint / main / #1 run 1                                                                                         
+The focused UI element is 9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                              [Actions] [Menu]
+ OPERATOR ───────────────────────── [+]│Operator · chat_gpt / gpt-6.1-sol · error                                                                                     
+▌! Show which sessions need my attent… │❯ You                                                                                                                         
+ CONSIGINT

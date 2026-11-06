@@ -1,0 +1,73 @@
+120 x 28
+ OVRCR / Operator                                                                             [New chat ^O] [Dashboard] 
+                            |                                                                                           
+ OPERATOR       [All chats] | ChatGPT / gpt-6.1-sol  [Conversation]                                                     
+                            |                                                                                           
+ > [Auth review]            | You                                                                                       
+ * [Pipeline]               |  Which sessions need my attention?                                                        
+   [Cleanup]                |                                                                                           
+                            | [Tool call] List agent sessions                                                           
+                            | [Tool output] 4 sessions found                                                            
+                            |                                                                                           
+                            | Operator                                                                                  
+                            |  Auth review needs your input. Pipeline checks failed.                                    
+ PROJECTS                   |                                                                                           
+                            | [Copy reply]  [Open auth session]                                                         
+ consigint                  |                                                                                           
+   main                     |                                                                                           
+   auth-handoff             |                                                                                           
+                            |                                                                                           
+ spacelift-agent            |                                                                                           
+   pipeline                 |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            | [Context] consigint / auth-handoff                                                        
+                            | ----------------------------------------------------------------------------------------- 
+                            | >                                                                                         
+                            |                                                                                           
+ [Send request] Shift-Enter Newline  Ctrl-l Chats                                                                       
+
+80 x 24
+ OVRCR / Operator                             [New chat ^O] [Chats] [Dashboard] 
+                                                                                
+ first new request [Conversation]                                               
+                                                                                
+ You                                                                            
+  Which sessions need my attention?                                             
+                                                                                
+ [Tool call] List agent sessions                                                
+ [Tool output] 4 sessions found                                                 
+                                                                                
+ Operator                                                                       
+  Auth review needs your input. Pipeline checks failed.                         
+                                                                                
+ [Copy reply]  [Open auth session]                                              
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ [Context] consigint / auth-handoff                                             
+ ------------------------------------------------------------------------------ 
+ >                                                                              
+                                                                                
+ [Send request] Shift-Enter Newline  Ctrl-l Chats                               
+
+60 x 16
+ OVRCR / Operator         [New chat ^O] [Chats] [Dashboard] 
+                                                            
+ first new request [Conversation]                           
+                                                            
+ You: Which sessions need attention?                        
+                                                            
+ [Tool call] List agent sessions                            
+  Auth review needs your input. Pipeline checks failed.     
+                                                            
+                                                            
+                                                            
+ [Context] consigint / auth-handoff                         
+ ---------------------------------------------------------- 
+ >                                                          
+                                                            
+ [Send request] Shift-Enter Newline  Ctrl-l Chats           

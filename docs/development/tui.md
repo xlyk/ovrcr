@@ -99,10 +99,10 @@ resume picker. Unknown providers and invalidated references remain unavailable.
 Operator conversations occupy one-line rows above Projects in the existing sidebar.
 `SidebarRects` supplies the Operator, project-tree, attention strip and quota rectangles
 to rendering, mouse input and viewport calculations. Operator and the tree start at the
-top; the strip sits directly above the quota line at the bottom, so its coming and going
+top; the strip sits directly above the quota section at the bottom, so its coming and going
 never moves a row under the pointer. The Operator heading and three project-tree lines
-are reserved first; the strip, then the one-line quota summary, take a line each only
-while that reservation still fits, and neither depends on the clock. Up to five conversation rows use the remaining space and shrink first.
+are reserved first; the strip takes one line, and the quota section uses its full provider bars,
+compact provider rows, a one-line details pointer, or hides as space shrinks, and neither depends on the clock. Up to five conversation rows use the remaining space and shrink first.
 A server update that brings the strip in or out keeps the selection in view. Collapsing keeps the heading and active-conversation count.
 Rows share the session activity glyphs, selected background/bar and hover close mark,
 and omit provider/model metadata. Archived chats remain cached as authority tombstones

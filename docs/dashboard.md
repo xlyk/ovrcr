@@ -402,8 +402,12 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
+The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
+Short windows drop the trailing blank, then use compact provider summaries,
+then a `Quota: u` pointer. Press `u` or click the section for details.
+
 While any session needs you, a line at the bottom of the sidebar, directly above
-the quota line, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
 for more than one), or `? 1 · ✓ 2` when the words do not fit. It sits at the
 bottom so that, as it comes and goes, Operator and the tree never move under the
 pointer; only the tree's last visible line gives way. It counts every project,
@@ -416,7 +420,7 @@ that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
 session that is both counts once, as needs input. Operator conversations stay
 out; the Operator heading counts their unread replies. The line disappears when
-nothing is left, and gives way before the quota line when the sidebar is short.
+nothing is left, and stays visible while the quota section compacts when the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
 click on that line selects the next session that needs you and shows it in the
@@ -494,8 +498,8 @@ In Browse and Terminal modes:
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
-- Clicking the attention line above the quota line does what `i` does;
-  clicking the quota line at the bottom opens the quota details, as `u` does.
+- Clicking the attention line above the quota section does what `i` does;
+  clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane
@@ -728,9 +732,11 @@ defaults can follow the selected project; explicit choices, the prompt and
 advanced name stay intact when changing destinations. **Advanced options** is
 collapsed and contains the optional session name.
 
-On a choice picker, `Enter` accepts the highlighted choice and keeps the form
-open. `Esc` clears the active filter first, then cancels the form when no filter
-remains. Use `Alt-Enter` or the visible Start control to launch. The Initial
+Choice lists stay collapsed while you move through the form. Press `Enter` or
+click a choice field to open its list; while it is open, `Enter` accepts the
+highlighted choice and keeps the form open. `Tab` moves between fields without
+accepting or changing untouched defaults. `Esc` closes an open list first, then
+cancels the form. Use `Alt-Enter` or the visible Start control to launch. The Initial
 prompt is multiline: `Enter` adds a line and `Alt-Enter` submits. The prompt is
 sent through a supported harness mechanism and is not used as the session name
 or remembered launch setting. Harnesses without verified model or prompt
@@ -748,7 +754,9 @@ Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately.
 
-With Start = Agent the form also shows **Task**, and opens on it. A task names
+This separate **Create terminal** action retains its existing Start = Agent
+choice and **Task** field; use `n` for the dedicated New agent session form
+above. The task names
 the session when Name is blank (one line, at most 60 characters) and, for agents
 whose CLI takes a first message, starts the agent with it: the launch arguments end
 with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
@@ -758,8 +766,9 @@ says which applies (`Names the session; claude gets it as its first message`,
 `Only names the session; hermes starts without it`). The task is one-off: it is
 never part of the remembered launch choice, and Retry, Reopen, resume and
 server-restart recovery never send it again (recovery keeps only provider launch
-options before `--`). `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
+options before `--`). In this Create terminal flow, a selected root workspace
+with a warning blocks submission; `n` still opens New agent session so you can
+choose an eligible checkout. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,

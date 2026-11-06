@@ -1,0 +1,39 @@
+{
+  "launcher_exit": 0,
+  "root_exists": false,
+  "pids": {
+    "64262": "absent",
+    "65130": "absent",
+    "87458": "absent",
+    "66858": "absent",
+    "69756": "absent",
+    "67475": "absent",
+    "68045": "absent",
+    "68584": "absent",
+    "69137": "absent",
+    "70287": "absent",
+    "72459": "absent",
+    "70787": "absent",
+    "71306": "absent",
+    "71945": "absent",
+    "73051": "absent",
+    "73307": "absent"
+  },
+  "groups": {
+    "87458": "absent",
+    "70787": "absent",
+    "68584": "absent",
+    "71945": "absent",
+    "66858": "absent",
+    "63691": "absent",
+    "72459": "absent",
+    "68045": "absent",
+    "71306": "absent",
+    "70287": "absent",
+    "69137": "absent",
+    "67475": "absent",
+    "73307": "absent",
+    "73051": "absent",
+    "69756": "absent"
+  }
+}

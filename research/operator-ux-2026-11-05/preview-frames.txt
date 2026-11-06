@@ -1,0 +1,103 @@
+120 x 32
+ OVRCR / Operator                                                                          [New chat] [Chats] [Browse]  
+                            |                                                                                           
+ OPERATOR                   | Review auth handoff                                                                       
+ [New chat]                 | ChatGPT / gpt-6.1-sol                                                                     
+                            |                                                                                           
+ > Review auth handoff      | You                                                                                       
+ * Explain failed pipeline  |  Which sessions need my attention?                                                        
+   Check workspace cleanup  |                                                                                           
+                            | [Command details]  List agent sessions                                                    
+ [All chats]                |                                                                                           
+                            |  Two sessions need your attention: auth review needs input; pipeline checks failed.       
+                            |                                                                                           
+ PROJECTS                   | [Copy reply]  [Archive]                                                                   
+                            |                                                                                           
+ consigint                  |                                                                                           
+   main                     |                                                                                           
+   auth-handoff             |                                                                                           
+                            |                                                                                           
+ spacelift-agent            |                                                                                           
+   pipeline                 |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            |                                                                                           
+                            | Target: consigint / main                                                                  
+                            | [Change target]                                                                           
+                            | ----------------------------------------------------------------------------------------- 
+                            | >                                                                                         
+                            | [Send]                                                                                    
+ Enter Send  Ctrl-l Chats  Ctrl-n New  Ctrl-g Browse                                                                    
+
+80 x 24
+ OVRCR / Operator                                  [New chat] [Chats] [Browse]  
+                                                                                
+ Review auth handoff                                                            
+ ChatGPT / gpt-6.1-sol                                                          
+                                                                                
+ You                                                                            
+  Which sessions need my attention?                                             
+                                                                                
+ [Command details]  List agent sessions                                         
+                                                                                
+  Two sessions need your attention: auth review needs input; pipeline checks    
+  failed.                                                                       
+                                                                                
+ [Copy reply]  [Archive]                                                        
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Target: consigint / main                                                       
+ [Change target]                                                                
+ ------------------------------------------------------------------------------ 
+ >                                                                              
+ [Send]                                                                         
+ Enter Send  Ctrl-l Chats  Ctrl-n New  Ctrl-g Browse                            
+
+60 x 24
+ OVRCR / Operator              [New chat] [Chats] [Browse]  
+                                                            
+ Review auth handoff                                        
+ ChatGPT / gpt-6.1-sol                                      
+                                                            
+ You                                                        
+  Which sessions need my attention?                         
+                                                            
+ [Command details]  List agent sessions                     
+                                                            
+  Two sessions need your attention: auth review needs       
+  input; pipeline checks failed.                            
+                                                            
+ [Copy reply]  [Archive]                                    
+                                                            
+                                                            
+                                                            
+                                                            
+ Target: consigint / main                                   
+ [Change target]                                            
+ ---------------------------------------------------------- 
+ >                                                          
+ [Send]                                                     
+ Enter Send  Ctrl-l Chats  Ctrl-n New  Ctrl-g Browse        
+
+60 x 16
+ OVRCR / Operator              [New chat] [Chats] [Browse]  
+                                                            
+ Review auth handoff                                        
+ ChatGPT / gpt-6.1-sol                                      
+                                                            
+  You: Which sessions need my attention?                    
+                                                            
+                                                            
+ Two sessions need attention. [Details]                     
+                                                            
+ Target: consigint / main                                   
+ [Change target]                                            
+ ---------------------------------------------------------- 
+ >                                                          
+ [Send]                                                     
+ Enter Send  Ctrl-l Chats  Ctrl-n New  Ctrl-g Browse        
