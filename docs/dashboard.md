@@ -97,7 +97,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| `Cmd+1`–`Cmd+9` | Hold Command to show temporary labels on visible running Agent rows, then choose that exact row by its digit |
+| `Cmd+0`–`Cmd+9` | Hold Command to label visible running or retained Agent rows; choose the full one-digit code (`1`–`9`) or zero-padded two-digit code (`01`–`50`) shown beside the row. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Command never reveals it |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -121,6 +121,8 @@ Command and modified digits reach the application. Verify the exact terminal
 version and keyboard configuration with Command-down, a labeled digit, and
 Command-up before listing that setup as supported. If no modifier event arrives,
 the Dashboard leaves input alone and `s` Agents search remains available.
+The same gesture works from an unobscured Operator view when the shared sidebar is
+already visible; Operator conversation rows do not receive Agent labels.
 
 ## Search other running agents
 
@@ -555,12 +557,17 @@ protocol report `Shift+Enter` as plain `Enter`, so the dashboard cannot tell the
 apart there.
 
 The Command session jump uses Kitty's enhanced key events only while the user
-holds Command. It labels the running Agents visible in the sidebar, including the
-current session, and freezes those row numbers to their session and run for the
-hold. Releasing Command without choosing a number cancels. After a choice, the
-destination stays in Browse until Command is released and the exact view is
-acknowledged; loading input is discarded. The feature does not infer support from
-a terminal name or a capability reply.
+holds Command. It labels visible running or retained Agent rows, including the
+current session, in sidebar order and freezes the code width and each target's
+session and run for that hold. Lists of one to nine use `1`–`9`; lists of ten to
+fifty use zero-padded `01`–`50`. For a two-digit code, the footer shows the first
+digit while you finish the code; Command+Backspace clears that prefix. Releasing
+Command with an incomplete code cancels. After choosing a running Agent, it stays
+in Browse until Command is released and the exact view is acknowledged; queued
+loading input is discarded. A retained Agent stays in Browse for inspection and
+is never resumed or reopened by navigation; use its explicit Resume/Reopen action
+when needed. The feature does not infer support from a terminal name or a
+capability reply.
 
 ## Pause and resume
 
