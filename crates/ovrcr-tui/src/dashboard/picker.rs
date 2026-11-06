@@ -177,7 +177,13 @@ impl PickList {
     pub fn filtered(&self) -> Vec<&PickItem> {
         self.items
             .iter()
-            .filter(|item| subsequence(&self.query, &item.label))
+            .filter(|item| {
+                subsequence(&self.query, &item.label)
+                    || self
+                        .sections
+                        .get(&item.value)
+                        .is_some_and(|section| subsequence(&self.query, section))
+            })
             .collect()
     }
 
@@ -461,6 +467,34 @@ mod tests {
             ["  Light", "  › dawn"]
         );
         assert_eq!(selected, 1);
+    }
+
+    #[test]
+    fn picker_search_matches_section_labels_without_selecting_headers() {
+        let mut picker = PickList::new(vec![
+            PickItem {
+                label: "feature/cleanup".into(),
+                value: "repo/one".into(),
+            },
+            PickItem {
+                label: "feature/status".into(),
+                value: "other/two".into(),
+            },
+        ])
+        .with_sections([
+            ("repo/one".into(), "ovrcr".into()),
+            ("other/two".into(), "another".into()),
+        ]);
+        picker.query = "ovrcr".into();
+        assert_eq!(
+            picker
+                .filtered()
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            ["repo/one"]
+        );
+        assert_eq!(picker.accepted().unwrap().value, "repo/one");
     }
 
     #[test]

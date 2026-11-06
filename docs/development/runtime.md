@@ -108,6 +108,9 @@ cannot consume an intent after its replacement has observed it as undelivered.
 The book is bounded to 16 recent snapshots per Server lifetime. Accepted starts
 complete through their stable intent ID and exact session/run; they do not use a
 connection-local lifecycle token that a replacement Dashboard could reuse.
+The snapshot binds the exact session/run immediately after retained `begin_run`,
+so Pending and Unknown outcomes can identify an allocation without claiming that
+the native launch or prompt delivery succeeded.
 `LaunchAccepted` means the session was created and registered; prompt delivery
 remains `Unknown`. A known pre-spawn refusal retains the frozen launch options
 and prompt for an explicit retry with a new intent. Uncertain outcomes discard
@@ -116,12 +119,30 @@ transient launch path, are redacted from Debug/errors, and are not retained in
 ordinary session metadata, settings, or Events. Successful harness/model memory
 uses the existing settings owner.
 
+Verified explicit model choices support detected Claude Code, Pi, Codex, and Oh
+My Pi launches. The Dashboard queries through the current Server-owned
+catalog worker against the registered workspace and the Server-resolved native
+argv. It does not trust a client model list or infer a provider. A Codex catalog
+read first uses the pinned app-server one-shot startup-config path to read
+effective managed feature requirements; if requirements are missing, malformed,
+or require plugins, discovery stops before regular app-server startup. When the
+`features.plugins=false` override is compatible, the query initializes with
+`explicitGatewayOauth`, successfully reads `account/gatewayOAuth/read`, then
+calls `model/list`. A required gateway credential must be locally ready; missing
+or unsupported auth state refuses the catalog without initiating browser login.
+This catalog path starts no thread or turn. At launch, the Server repeats the
+query, verifies the registered Git identity, exact detected argv and fresh model
+resolution, then inserts Codex's native `--model` argument. Harness default
+keeps the native launch argv unchanged.
+
 Detected Oh My Pi model choices come from its native `omp models --json`
 catalog for the selected workspace. The bounded adapter keeps the effective OMP
 profile and configured provider extensions, rejects diagnostics or malformed
 JSON, and verifies the exact provider/model selector again before Start. OMP's
 own `--model` resolver can fuzzy-match after its exact lookup, so this fresh
-preflight does not prove the model that a later native process will apply.
+preflight does not prove the model that a later native process will apply. Pi
+has a related native fuzzy and custom-model fallback after OVRCR's catalog
+check; see the Dashboard guide for the exact limitation.
 
 Workflow cancellation lives in that same durable WorkflowRecord. Commit the
 bounded complete capture, fixed member identities/gaps and child interrupt

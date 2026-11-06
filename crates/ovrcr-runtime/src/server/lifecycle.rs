@@ -107,20 +107,20 @@ impl Lifecycle {
     pub(super) fn allocate_prompt_intent(
         &self,
         server_lifetime: &str,
-    ) -> Result<InitialPromptIntentId, Response> {
+    ) -> Result<InitialPromptIntentId, Box<Response>> {
         let mut book = self.prompt_intents.lock().unwrap();
         retire_prompt_intents(&mut book);
         if book.records.len() >= MAX_PROMPT_INTENT_RECORDS {
-            return Err(error_response(
+            return Err(Box::new(error_response(
                 ErrorCode::Conflict,
                 "too many initial-prompt launches are still pending reconciliation",
-            ));
+            )));
         }
         let sequence = book.next_sequence.checked_add(1).ok_or_else(|| {
-            error_response(
+            Box::new(error_response(
                 ErrorCode::Internal,
                 "initial-prompt identity space is exhausted",
-            )
+            ))
         })?;
         book.next_sequence = sequence;
         book.latest_issued = sequence;
@@ -161,6 +161,45 @@ impl Lifecycle {
             launch: record.launch.clone()?,
             prompt: record.prompt.clone()?,
         })
+    }
+
+    /// Bind the intent as soon as `begin_run` allocates its exact generation.
+    /// This is deliberately before the native spawn can become uncertain.
+    pub(super) fn bind_prompt_intent(
+        &self,
+        id: &InitialPromptIntentId,
+        session: SessionId,
+        run: ovrcr_protocol::SessionRunId,
+        name: &str,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let mut book = self.prompt_intents.lock().unwrap();
+        let record = book
+            .records
+            .get_mut(&id.sequence)
+            .context("initial-prompt intent disappeared before session allocation")?;
+        anyhow::ensure!(
+            record.snapshot.id == *id && record.snapshot.state == InitialPromptIntentState::Pending,
+            "initial-prompt intent changed before session allocation"
+        );
+        if let (Some(existing_session), Some(existing_run)) =
+            (record.snapshot.session, record.snapshot.run)
+        {
+            anyhow::ensure!(
+                existing_session == session && existing_run == run,
+                "initial-prompt intent is already bound to another session run"
+            );
+        } else {
+            anyhow::ensure!(
+                record.snapshot.session.is_none() && record.snapshot.run.is_none(),
+                "initial-prompt intent has a partial session binding"
+            );
+        }
+        record.snapshot.session = Some(session);
+        record.snapshot.run = Some(run);
+        record.snapshot.name = name.to_owned();
+        record.snapshot.label = Some(label.to_owned());
+        Ok(())
     }
 
     fn finish_prompt_intent(
@@ -506,7 +545,7 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
                 }
                 if let Some(snapshot) = snapshot {
                     state.dashboard.try_send(ServerMessage::Event(
-                        ServerEvent::InitialPromptIntentChanged(snapshot),
+                        ServerEvent::InitialPromptIntentChanged(Box::new(snapshot)),
                     ));
                 }
                 // The stable intent event owns completion for this launch. Do
@@ -533,7 +572,10 @@ pub(super) fn run(state: Arc<ServerState>, rx: std::sync::mpsc::Receiver<Job>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ovrcr_protocol::{CreateSessionRequest, SessionKind};
+    use ovrcr_protocol::{
+        AgentModelPolicy, CreateAgentSessionRequest, CreateSessionRequest,
+        InitialPromptLaunchRequest, ProjectRecord, SessionKind, WorkspaceRecord,
+    };
     use std::ffi::OsString;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -543,6 +585,187 @@ mod tests {
         state.lifecycle.attach(tx);
         let worker_state = Arc::clone(state);
         std::thread::spawn(move || run(worker_state, rx))
+    }
+
+    #[test]
+    fn initial_prompt_run_binding_survives_unknown_and_duplicate_reconciles_without_spawn() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let socket = root.path().join("server.sock");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let registry = Registry {
+            projects: vec![ProjectRecord {
+                name: "p".into(),
+                repo: root.path().to_path_buf(),
+                workspace_root: root.path().to_path_buf(),
+                workspaces: vec![WorkspaceRecord {
+                    id: "w".into(),
+                    path: workspace,
+                    branch: "main".into(),
+                    git_identity: None,
+                    setup_pending: false,
+                }],
+            }],
+        };
+        let (state, _dispatch_receiver, _event_receiver) =
+            crate::server::tests::test_state_with_socket(socket, registry);
+        let dashboard_owner = Arc::new(());
+        let (dashboard_server, _dashboard_client) = UnixStream::pair().unwrap();
+        state.dashboard.claim_with_identity(
+            DashboardSink::new(),
+            Arc::clone(&dashboard_owner),
+            dashboard_server,
+        );
+        let launched = root.path().join("launch-count");
+        let prompt = "T392_BOUND_PROMPT_MUST_NOT_REPLAY";
+        let launch = CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "bound-agent".into(),
+                label: Some("claude".into()),
+                argv: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!("printf x >> '{}'", launched.display()).into(),
+                ],
+                kind: SessionKind::Agent {
+                    name: "claude".into(),
+                },
+            },
+            model_policy: AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        let intent = state
+            .lifecycle
+            .allocate_prompt_intent(&state.server_lifetime)
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        state.lifecycle.attach(tx);
+        let request = InitialPromptLaunchRequest {
+            intent: intent.clone(),
+            launch,
+            prompt: prompt.into(),
+        };
+        assert_eq!(try_accept_prompt(&state, 90, request.clone()), Response::Ok);
+        let queued = rx.try_recv().unwrap();
+        assert!(
+            matches!(queued.kind, JobKind::CreateAgentSessionWithPrompt(ref id) if id == &intent)
+        );
+        let accepted = state.lifecycle.prompt_launch(&intent).unwrap();
+
+        let (slot_held_tx, slot_held_rx) = mpsc::sync_channel(1);
+        let (release_slot_tx, release_slot_rx) = mpsc::sync_channel(1);
+        let slot_state = Arc::clone(&state);
+        let slot_owner = Arc::clone(&dashboard_owner);
+        let slot_thread = std::thread::spawn(move || {
+            slot_state
+                .dashboard
+                .with_owned(&slot_owner, |_| {
+                    slot_held_tx.send(()).unwrap();
+                    release_slot_rx.recv().unwrap();
+                })
+                .expect("test Dashboard still owns its slot");
+        });
+        slot_held_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (spawn_result_tx, spawn_result_rx) = mpsc::sync_channel(1);
+        let spawn_state = Arc::clone(&state);
+        let spawn_intent = intent.clone();
+        let spawn_prompt = accepted.prompt.clone();
+        let spawn_launch = accepted.launch.session.clone();
+        let spawn_thread = std::thread::spawn(move || {
+            let result = spawn_state
+                .create_session_locked(
+                    spawn_launch,
+                    None,
+                    SessionSpawnOptions {
+                        initial_prompt: Some(spawn_prompt),
+                        initial_prompt_intent: Some(spawn_intent),
+                        ..SessionSpawnOptions::default()
+                    },
+                )
+                .map(|summary| (summary.id, summary.run, summary.name, summary.label));
+            spawn_result_tx.send(result).unwrap();
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let pending = loop {
+            let pending = state
+                .lifecycle
+                .prompt_intents()
+                .into_iter()
+                .find(|snapshot| snapshot.id == intent)
+                .unwrap();
+            if pending.session.is_some() {
+                break pending;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "intent was not bound after run allocation"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(pending.state, InitialPromptIntentState::Pending);
+        let session = pending.session.unwrap();
+        let run = pending.run.unwrap();
+        assert!(
+            matches!(spawn_result_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "spawn must remain blocked before native launch while the slot is held"
+        );
+        assert!(
+            !launched.exists(),
+            "the native child must not start until after the bound snapshot"
+        );
+        release_slot_tx.send(()).unwrap();
+        let (summary_session, summary_run, summary_name, summary_label) = spawn_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        slot_thread.join().unwrap();
+        spawn_thread.join().unwrap();
+        assert_eq!(summary_session, session);
+        assert_eq!(summary_run, run);
+        assert_eq!(pending.name, summary_name);
+        assert_eq!(pending.label.as_deref(), Some(summary_label.as_str()));
+
+        // A generic error represents an outcome that can no longer prove
+        // whether the native process started. The exact allocation survives.
+        let unknown = state
+            .lifecycle
+            .finish_prompt_intent(
+                &intent,
+                &Err(anyhow::anyhow!("spawn completion became uncertain")),
+                prompt,
+            )
+            .unwrap();
+        clear_inflight(&state, 90);
+        assert_eq!(unknown.state, InitialPromptIntentState::Unknown);
+        assert_eq!(unknown.session, Some(session));
+        assert_eq!(unknown.run, Some(run));
+        assert_eq!(unknown.recoverable_prompt, None);
+        assert_eq!(unknown.recoverable_launch, None);
+
+        let repeated = try_accept_prompt(&state, 91, request);
+        assert_eq!(repeated, Response::InitialPromptIntents(vec![unknown]));
+        assert_eq!(
+            state.sessions.lock().unwrap().len(),
+            1,
+            "repeating an uncertain intent does not create another session"
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(output) = std::fs::read_to_string(&launched) {
+                assert_eq!(output, "x");
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the single accepted native launch did not create its marker"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

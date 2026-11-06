@@ -3943,7 +3943,7 @@ impl Dashboard {
                     self.on_lifecycle_completed(client_token, op, outcome);
                 }
                 ServerEvent::InitialPromptIntentChanged(snapshot) => {
-                    self.install_initial_prompt_snapshot(snapshot);
+                    self.install_initial_prompt_snapshot(*snapshot);
                 }
                 ServerEvent::Output {
                     session,
@@ -4858,6 +4858,34 @@ mod tests {
             dashboard.focused_session(),
             Some(crate::session::SessionId(8))
         );
+    }
+
+    #[test]
+    fn pending_or_unknown_bound_prompt_intents_never_focus_the_session() {
+        for intent_state in [
+            crate::protocol::InitialPromptIntentState::Pending,
+            crate::protocol::InitialPromptIntentState::Unknown,
+        ] {
+            let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+            let intent = intent_id(1);
+            dashboard.initial_prompt_intent_id = Some(intent.clone());
+            dashboard.initial_prompt_focus_pending = Some(intent.clone());
+            let mut hierarchy = hierarchy_with_run(7, 2);
+            let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+            session.kind = SessionKind::Agent {
+                name: "claude".into(),
+            };
+            session.label = "claude".into();
+            dashboard.hierarchy = hierarchy;
+
+            let mut snapshot = prompt_snapshot(intent, 7, 2);
+            snapshot.state = intent_state;
+            snapshot.delivery = None;
+            dashboard.install_initial_prompt_snapshot(snapshot);
+
+            assert!(!dashboard.attach_initial_prompt_session());
+            assert_eq!(dashboard.focused_session(), None);
+        }
     }
 
     #[test]

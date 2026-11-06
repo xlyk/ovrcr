@@ -1,0 +1,83 @@
+{
+  "1": {
+    "ticket": 1,
+    "number": 391,
+    "title": "Choose and launch a verified Claude Code model",
+    "url": "https://github.com/xlyk/ovrcr/issues/391",
+    "blocked_by": [],
+    "native_edges_added": true
+  },
+  "2": {
+    "ticket": 2,
+    "number": 392,
+    "title": "Run a Claude Code Initial prompt safely through reconnects",
+    "url": "https://github.com/xlyk/ovrcr/issues/392",
+    "blocked_by": [
+      391
+    ],
+    "native_edges_added": true
+  },
+  "3": {
+    "ticket": 3,
+    "number": 393,
+    "title": "Choose Codex models and run Initial prompts from session setup",
+    "url": "https://github.com/xlyk/ovrcr/issues/393",
+    "blocked_by": [
+      392
+    ],
+    "native_edges_added": true
+  },
+  "4": {
+    "ticket": 4,
+    "number": 394,
+    "title": "Choose Pi models and run Initial prompts from session setup",
+    "url": "https://github.com/xlyk/ovrcr/issues/394",
+    "blocked_by": [
+      392
+    ],
+    "native_edges_added": true
+  },
+  "5": {
+    "ticket": 5,
+    "number": 395,
+    "title": "Choose Oh My Pi models and run Initial prompts from session setup",
+    "url": "https://github.com/xlyk/ovrcr/issues/395",
+    "blocked_by": [
+      392
+    ],
+    "native_edges_added": true
+  },
+  "6": {
+    "ticket": 6,
+    "number": 396,
+    "title": "Start agents from a branch-based registered-workspace dialog",
+    "url": "https://github.com/xlyk/ovrcr/issues/396",
+    "blocked_by": [
+      392
+    ],
+    "native_edges_added": true
+  },
+  "7": {
+    "ticket": 7,
+    "number": 397,
+    "title": "Create a branch in a child dialog and return to the intact session draft",
+    "url": "https://github.com/xlyk/ovrcr/issues/397",
+    "blocked_by": [
+      396
+    ],
+    "native_edges_added": true
+  },
+  "8": {
+    "ticket": 8,
+    "number": 398,
+    "title": "Verify the complete four-harness branch-to-agent creation flow",
+    "url": "https://github.com/xlyk/ovrcr/issues/398",
+    "blocked_by": [
+      393,
+      394,
+      395,
+      397
+    ],
+    "native_edges_added": true
+  }
+}

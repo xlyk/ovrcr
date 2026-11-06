@@ -1,0 +1,8 @@
+{
+  "role": "acceptance",
+  "model": "ollama-cloud/deepseek-v4.1-flash",
+  "exit_code": 1,
+  "elapsed_seconds": 510.26,
+  "events": "/Users/xlyk/Code/ovrcr/research/workspace-session-ux-2026-11-05/plan-validation-omp/acceptance-1793903280576049000-events.jsonl",
+  "stderr": "/Users/xlyk/Code/ovrcr/research/workspace-session-ux-2026-11-05/plan-validation-omp/acceptance-1793903280576049000-stderr.log"
+}

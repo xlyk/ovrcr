@@ -6,13 +6,16 @@
 #[path = "support/live.rs"]
 mod live;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use live::{Live, PROJECT, WORKSPACE};
 use ovrcr::protocol::{
-    AgentModelPolicy, ClientMessage, CreateAgentSessionRequest, CreateSessionRequest, ErrorCode,
-    InitialPromptIntentId, InitialPromptIntentSnapshot, InitialPromptIntentState,
-    InitialPromptLaunchRequest, LaunchChoice, Request, Response, ServerEvent, ServerMessage,
-    SessionKind, SettingsReport, client, connect_server, read_frame, write_frame,
+    AgentModelPolicy, BranchRequest, ClientMessage, CreateAgentSessionRequest,
+    CreateSessionRequest, ErrorCode, InitialPromptIntentId, InitialPromptIntentSnapshot,
+    InitialPromptIntentState, InitialPromptLaunchRequest, LaunchChoice, Request, Response,
+    ServerEvent, ServerMessage, SessionKind, SessionPhase, SettingsReport, client, connect_server,
+    read_frame, write_frame,
 };
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -294,6 +297,240 @@ fn dashboard(live: &Live) -> UnixStream {
             "current Dashboard did not attach"
         );
     }
+}
+
+fn drive_dashboard_requests(
+    connection: &mut UnixStream,
+    dashboard: &mut ovrcr::tui::Dashboard,
+    initial: Vec<ClientMessage>,
+) -> Vec<ServerMessage> {
+    let mut awaiting = BTreeSet::new();
+    for request in initial {
+        assert!(awaiting.insert(request.request_id));
+        write_frame(connection, &request).expect("send Dashboard request");
+    }
+    let mut observed = Vec::new();
+    while !awaiting.is_empty() {
+        let message = read_frame::<ServerMessage>(connection).expect("read Dashboard response");
+        let response_id = match &message {
+            ServerMessage::Response { request_id, .. } => Some(*request_id),
+            ServerMessage::Event(_) => None,
+        };
+        for followup in dashboard.handle_server_message(message.clone()) {
+            assert!(awaiting.insert(followup.request_id));
+            write_frame(connection, &followup).expect("send Dashboard follow-up");
+        }
+        if let Some(request_id) = response_id {
+            awaiting.remove(&request_id);
+        }
+        observed.push(message);
+    }
+    observed
+}
+
+fn dashboard_round_trip(
+    connection: &mut UnixStream,
+    dashboard: &mut ovrcr::tui::Dashboard,
+    request_id: u64,
+    request: Request,
+) -> Vec<ServerMessage> {
+    drive_dashboard_requests(
+        connection,
+        dashboard,
+        vec![ClientMessage {
+            request_id,
+            request,
+        }],
+    )
+}
+
+fn wait_for_dashboard_settings(connection: &mut UnixStream, dashboard: &mut ovrcr::tui::Dashboard) {
+    loop {
+        let message = read_frame::<ServerMessage>(connection).expect("read initial settings event");
+        let settings = matches!(
+            &message,
+            ServerMessage::Event(ServerEvent::SettingsChanged(_))
+        );
+        let followups = dashboard.handle_server_message(message);
+        if !followups.is_empty() {
+            drive_dashboard_requests(connection, dashboard, followups);
+        }
+        if settings {
+            return;
+        }
+    }
+}
+
+#[test]
+fn dashboard_new_agent_session_starts_on_the_selected_registered_checkout() {
+    let live = Live::idle();
+    write_settings(
+        &live,
+        "agents = [{ name = \"fixture-agent\", argv = [\"/bin/sh\", \"-c\", \"printf FIXTURE_AGENT_READY; exec sleep 60\"] }]\nlaunch_choices.fixture = { kind = \"Agent\", preset = \"fixture-agent\", model_policy = \"HarnessDefault\" }\n[quota]\nenabled = false\n",
+    );
+    live.start();
+    assert_eq!(
+        live.request(Request::AddProject {
+            name: PROJECT.into(),
+            repo: live.repo.clone(),
+            workspace_root: live.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    live.clear_root_shell();
+    assert_eq!(
+        live.request(Request::CreateWorkspace {
+            project: PROJECT.into(),
+            id: WORKSPACE.into(),
+            branch: BranchRequest::New {
+                branch: "feature/dashboard-agent".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+
+    let mut dashboard =
+        ovrcr::tui::Dashboard::new(ovrcr::session::TerminalSize { rows: 24, cols: 80 });
+    dashboard.install_config_dir(live.config.clone());
+    let mut connection = connect_server(&live.socket).expect("connect Dashboard socket");
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    connection
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+
+    let mut startup = dashboard_round_trip(
+        &mut connection,
+        &mut dashboard,
+        90_001,
+        Request::DashboardHello,
+    );
+    assert!(startup.iter().any(|message| matches!(
+        message,
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    )));
+    startup.extend(dashboard_round_trip(
+        &mut connection,
+        &mut dashboard,
+        90_002,
+        Request::DashboardGeometry {
+            size: ovrcr::protocol::TerminalSize { rows: 24, cols: 80 },
+        },
+    ));
+    startup.extend(dashboard_round_trip(
+        &mut connection,
+        &mut dashboard,
+        90_003,
+        Request::ReconcileInitialPromptIntents,
+    ));
+    if !startup.iter().any(|message| {
+        matches!(
+            message,
+            ServerMessage::Event(ServerEvent::SettingsChanged(_))
+        )
+    }) {
+        wait_for_dashboard_settings(&mut connection, &mut dashboard);
+    }
+
+    dashboard.key(KeyCode::Char('n'));
+    let opening = dashboard.drain_outbox();
+    assert_eq!(
+        opening.len(),
+        2,
+        "new agent form refreshes registry before labels"
+    );
+    assert_eq!(opening[0].request, Request::Inspect);
+    assert_eq!(opening[1].request, Request::List);
+    drive_dashboard_requests(&mut connection, &mut dashboard, opening);
+
+    for character in "feature/dashboard-agent".chars() {
+        dashboard.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+    dashboard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    dashboard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    for character in "fixture-agent".chars() {
+        dashboard.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+    dashboard.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    let launch = dashboard.drain_outbox();
+    assert!(
+        launch
+            .iter()
+            .any(|message| message.request == Request::AllocateInitialPromptIntent),
+        "expected the launch intent allocation: {launch:?}"
+    );
+    let launch_responses = drive_dashboard_requests(&mut connection, &mut dashboard, launch);
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let (hierarchy, session) = loop {
+        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+            panic!("server list must return current hierarchy");
+        };
+        let session = hierarchy
+            .projects
+            .iter()
+            .find(|project| project.name == PROJECT)
+            .and_then(|project| {
+                project
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.id == WORKSPACE)
+            })
+            .and_then(|workspace| {
+                workspace.sessions.iter().find(|session| {
+                    matches!(&session.kind, SessionKind::Agent { name } if name == "fixture-agent")
+                        && session.phase == SessionPhase::Running
+                })
+            })
+            .cloned();
+        if let Some(session) = session {
+            break (hierarchy, session);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Dashboard did not start fixture agent on {WORKSPACE}; responses={launch_responses:?}, hierarchy={hierarchy:?}"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+    };
+    let workspace = hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == PROJECT)
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == WORKSPACE)
+        })
+        .expect("the selected registered workspace remains present");
+    assert_eq!(workspace.name, "feature/dashboard-agent");
+    assert_eq!(session.workspace, WORKSPACE);
+    assert_eq!(session.cwd, live.workspace_path(WORKSPACE));
+    for group in live.session_groups() {
+        live.own_group(group);
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let terminal = loop {
+        if let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
+            session: session.id,
+            max_lines: Some(20),
+        }) && text.contains("FIXTURE_AGENT_READY")
+        {
+            break text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "agent PTY did not show its startup output"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+    };
+    assert!(terminal.contains("FIXTURE_AGENT_READY"));
 }
 
 fn query_pi_models(

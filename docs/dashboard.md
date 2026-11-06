@@ -87,7 +87,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
-| `n` | Create a terminal (form) |
+| `n` | Open New agent session |
 | `w` | Create a workspace (form) |
 | `a` | Register a project (form) |
 | `X` | Archive the selected terminal; confirms before stopping live work |
@@ -402,8 +402,12 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
+The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
+Short windows drop the trailing blank, then use compact provider summaries,
+then a `Quota: u` pointer. Press `u` or click the section for details.
+
 While any session needs you, a line at the bottom of the sidebar, directly above
-the quota line, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
 for more than one), or `? 1 · ✓ 2` when the words do not fit. It sits at the
 bottom so that, as it comes and goes, Operator and the tree never move under the
 pointer; only the tree's last visible line gives way. It counts every project,
@@ -416,7 +420,7 @@ that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
 session that is both counts once, as needs input. Operator conversations stay
 out; the Operator heading counts their unread replies. The line disappears when
-nothing is left, and gives way before the quota line when the sidebar is short.
+nothing is left, and stays visible while the quota section compacts when the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
 click on that line selects the next session that needs you and shows it in the
@@ -494,8 +498,8 @@ In Browse and Terminal modes:
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
-- Clicking the attention line above the quota line does what `i` does;
-  clicking the quota line at the bottom opens the quota details, as `u` does.
+- Clicking the attention line above the quota section does what `i` does;
+  clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane
@@ -639,7 +643,7 @@ dashboard has detached it reconnects first. Type to filter actions or to search 
 terminal by project, branch, and title. Arrows select a result, `Enter`
 continues, and `Esc` cancels.
 
-Entries are, in order: `Create terminal (n)`, `Create workspace (w)`,
+Entries are, in order: `New agent session (n)`, `Create terminal`, `Create workspace (w)`,
 `Register project (a)`, the selected session's actions (`Rename terminal`,
 resume or reopen, `Close terminal`), `Remove workspace`, `Remove project`,
 Settings, Events, quota actions, `Archived sessions`, one row per session, and
@@ -655,6 +659,9 @@ Searching also finds every setting by its label or its `dashboard.toml` key, as
 appear only for a search, not in the unfiltered list.
 
 Within a form, `Enter` submits from any field, the same as the Submit control.
+In **New agent session**, `Enter` on a choice picker accepts that choice and
+keeps the form open; the multiline prompt uses `Enter` for a newline and
+`Alt-Enter` to submit.
 It first checks the whole form: a required field left empty, a choice that is
 not in its list, or a branch Git would refuse keeps the form open, moves the
 focus to the first such field and says what is wrong just below it
@@ -702,7 +709,40 @@ changes instead. Errors stay in the palette with the form values retained, in
 plain words: no error codes, branch names instead of internal workspace ids, and
 sessions by title.
 
-### Create terminal (`n`)
+### New agent session (`n`)
+
+Choose a registered checkout by its current branch in **Branch**, then choose an
+**Agent harness**, **Model**, and optional **Initial prompt**. Workspaces are
+grouped by project; the picker searches the displayed project and branch labels
+and excludes retained sessions without a registered checkout. It follows the
+same registered checkout when its branch label changes. Unavailable checkouts
+remain visible with their state; root and detached destinations are labeled.
+An eligible current feature checkout is preselected. If the current target is
+missing or cannot launch, the form keeps its identity when registered and asks
+you to choose deliberately; it never substitutes the first listed checkout.
+Start checks the selected checkout again, including its registration, path,
+Git identity and root protection. Register a project with `a` when no project
+is available.
+
+The picker opens even when the current workspace cannot launch. This does not
+change the separate **Create terminal** form or its existing root-workspace
+guard. The form shows a compact destination line and, when another agent is
+already using that checkout, a compact shared-files notice. Harness and model
+defaults can follow the selected project; explicit choices, the prompt and
+advanced name stay intact when changing destinations. **Advanced options** is
+collapsed and contains the optional session name.
+
+Choice lists stay collapsed while you move through the form. Press `Enter` or
+click a choice field to open its list; while it is open, `Enter` accepts the
+highlighted choice and keeps the form open. `Tab` moves between fields without
+accepting or changing untouched defaults. `Esc` closes an open list first, then
+cancels the form. Use `Alt-Enter` or the visible Start control to launch. The Initial
+prompt is multiline: `Enter` adds a line and `Alt-Enter` submits. The prompt is
+sent through a supported harness mechanism and is not used as the session name
+or remembered launch setting. Harnesses without verified model or prompt
+support stay available with that limitation shown in the form.
+
+### Create terminal
 
 Choose **Agent** or **Terminal** in Start. Agent offers installed agents and named
 `[[agents]]` presets. Terminal opens your default shell; its optional Command
@@ -714,7 +754,9 @@ Workspace defaults to the selected workspace. Name is optional: leave it blank
 for a stable workspace-based name, or enter your own name. After creation, typing goes to the new
 session immediately.
 
-With Start = Agent the form also shows **Task**, and opens on it. A task names
+This separate **Create terminal** action retains its existing Start = Agent
+choice and **Task** field; use `n` for the dedicated New agent session form
+above. The task names
 the session when Name is blank (one line, at most 60 characters) and, for agents
 whose CLI takes a first message, starts the agent with it: the launch arguments end
 with `-- <task>`. Verified against each installed CLI's `--help`: `claude`,
@@ -724,8 +766,9 @@ says which applies (`Names the session; claude gets it as its first message`,
 `Only names the session; hermes starts without it`). The task is one-off: it is
 never part of the remembered launch choice, and Retry, Reopen, resume and
 server-restart recovery never send it again (recovery keeps only provider launch
-options before `--`). `n` and other new launches are unavailable when the selected
-root workspace shows a warning. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
+options before `--`). In this Create terminal flow, a selected root workspace
+with a warning blocks submission; `n` still opens New agent session so you can
+choose an eligible checkout. Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,
@@ -946,11 +989,11 @@ names comes from the same key table as the footer and the menu.
   none) and elapsed time. Then
   the next steps: `j open <session>` while the row below is that workspace's
   first session (`j` selects the next row), `Enter expand…` when the workspace
-  is collapsed, `n new agent or terminal here`, `w new workspace` and
-  `Space w more`. A key that is unavailable there is left out; a root warning
-  removes `n`, because new launches are blocked until the checkout is back on
-  the default branch. Existing sessions stay usable; OVRCR does not switch the
-  checkout. `n` prefills that workspace in the terminal form.
+  is collapsed, `n new agent session`, `w new workspace` and `Space w more`.
+  A key that is unavailable there is left out. `n` opens the branch-based form
+  even when a root warning blocks starting in this checkout; the warning
+  remains visible and Start is blocked until a valid destination is chosen.
+  Existing sessions stay usable; OVRCR does not switch the checkout.
 - **Project row selected:** the pane header names the project; the card shows
   its repository path, its workspace root (read from where its worktrees are,
   so it appears once the project has one), and each workspace with its session
@@ -1141,6 +1184,12 @@ read picks up the saved value.
 that exist. An `[[agents]]` row whose name matches a detected agent replaces its
 argv; a new name becomes an Agent preset. The argv is used as configured; a preset
 name alone does not prove what program it launches or whether reporting is supported.
+
+For detected Claude Code and Codex launchers, the Agent form can offer verified
+model choices for an already registered workspace. The Server reads the
+launcher-specific catalog and checks the selected resolution again before
+launch. Configured and cloud launchers keep their existing model policy. Leaving
+Model at Harness default preserves the native launch arguments.
 
 Successful launches update a per-project `launch_choices` table in this file.
 For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a

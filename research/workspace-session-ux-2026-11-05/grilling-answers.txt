@@ -1,0 +1,27 @@
+Round 1
+Q1. a (Preselect the current branch) [recommended]
+Q2. a (Repository default branch) [recommended]
+Q3. a (Run the prompt) [recommended]
+Q4. a (Remember harness and model per project) [recommended]
+
+Round 2
+Q5. b (Registered workspaces only)
+Q6. a (Create when the child dialog completes) [recommended]
+Q7. a (Show a clear inline notice; allow Start) [recommended]
+Q8. a (Keep harnesses, gate unsupported controls) [recommended]
+Q9. a (Preserve explicit edits) [recommended]
+
+Round 3
+Q10. a (Include them with explicit labels) [recommended]
+Q11. b (Follow the checkout automatically)
+Q12. b (Keep the creation dialog open until completion)
+Q13. a (Keep pending text in memory for this launch) [recommended]
+
+Round 4
+Q14. a (Claude Code, Codex and Pi) [recommended] — option a, but include omp
+Q15. a (Preserve named configurations in the Harness picker) [recommended]
+Q16. a (Allow an explicitly labeled Harness default) [recommended]
+Q17. a (n opens New agent session; keep New terminal separate) [recommended]
+
+Round 5
+Q18. a (Yes — this is the shared design) [recommended]

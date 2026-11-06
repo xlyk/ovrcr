@@ -1,0 +1,16 @@
+56024 pgid=56024: gone
+56486 pgid=56486: gone
+56875 pgid=56875: gone
+57316 pgid=57316: gone
+57862 pgid=57862: gone
+58445 pgid=58445: gone
+58972 pgid=58972: gone
+59461 pgid=59461: gone
+59901 pgid=59901: gone
+60334 pgid=60334: gone
+60777 pgid=60777: gone
+61203 pgid=61203: gone
+25268 pgid=25268: gone
+39409 pgid=39409: gone
+fixture exists: False
+socket exists: False

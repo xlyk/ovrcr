@@ -1,4 +1,4 @@
-//! Current-Dashboard model discovery and validation for managed agent launch.
+//! Current-Dashboard model discovery and validation for managed agent launches.
 use super::*;
 use anyhow::Context;
 use ovrcr_protocol::{
@@ -227,7 +227,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
             "Only detected launchers can expose verified model choices.",
         );
     }
-    if !matches!(input.preset.as_str(), "claude" | "pi" | "omp") {
+    if !matches!(input.preset.as_str(), "claude" | "pi" | "codex" | "omp") {
         return unsupported(
             input.preset.clone(),
             "Verified explicit model selection is not available for this harness yet.",
@@ -272,7 +272,7 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
         )?;
         let models = catalog
             .into_iter()
-            .filter(|(alias, _)| alias != "default")
+            .filter(|(alias, _)| input.preset == "codex" || alias != "default")
             .map(|(alias, resolved)| AgentModelOption { alias, resolved })
             .collect::<Vec<_>>();
         Ok((binding, models))
@@ -286,11 +286,18 @@ fn discover_capabilities(input: &QueryInput, cancelled: &AtomicBool) -> AgentMod
         },
         Ok(_) => unsupported(
             input.preset.clone(),
-            format!("{} returned no selectable models.", input.preset),
+            format!(
+                "{} returned no selectable models.",
+                harness_label(&input.preset)
+            ),
         ),
         Err(error) => unsupported(
             input.preset.clone(),
-            format!("{} model discovery is unavailable: {}", input.preset, error),
+            format!(
+                "{} model discovery is unavailable: {}",
+                harness_label(&input.preset),
+                error
+            ),
         ),
     }
 }
@@ -317,9 +324,19 @@ fn find_executable(path: &std::ffi::OsStr, name: &str) -> anyhow::Result<PathBuf
     anyhow::bail!("native {name} executable is unavailable")
 }
 
+fn harness_label(preset: &str) -> &'static str {
+    match preset {
+        "claude" => "Claude Code",
+        "pi" => "Pi",
+        "codex" => "Codex",
+        "omp" => "Oh My Pi",
+        _ => "Agent",
+    }
+}
+
 fn native_argv(preset: &str, executable: &Path) -> anyhow::Result<Vec<std::ffi::OsString>> {
     anyhow::ensure!(
-        matches!(preset, "claude" | "pi" | "omp"),
+        matches!(preset, "claude" | "pi" | "codex" | "omp"),
         "detected model selection is not supported for this harness"
     );
     let mut argv = vec![executable.as_os_str().to_owned()];
@@ -353,6 +370,9 @@ fn dashboard_catalog(
     match preset {
         "claude" => {
             crate::claude_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
+        }
+        "codex" => {
+            crate::codex_delegation::dashboard_catalog(executable, native_argv, cwd, cancelled)
         }
         "pi" => crate::pi_model_catalog::dashboard_catalog(executable, native_argv, cwd, cancelled),
         "omp" => {
@@ -420,7 +440,7 @@ pub(super) fn prepare_initial_prompt_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi" | "omp"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
         .context("Initial prompts require a supported detected harness")?;
     anyhow::ensure!(
         !state
@@ -434,13 +454,16 @@ pub(super) fn prepare_initial_prompt_session(
             .any(|agent| agent.name == preset),
         "configured launchers do not support Initial prompts"
     );
+    anyhow::ensure!(
+        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
+        "Initial prompts require a matching detected agent harness"
+    );
     let executable = find_executable(&std::env::var_os("PATH").unwrap_or_default(), preset)?;
-    let native = native_argv(preset, &executable)?;
     let launcher = std::env::current_exe()?;
+    let native = native_argv(preset, &executable)?;
     let expected = detected_launch_argv(preset, &launcher, &native);
     anyhow::ensure!(
-        matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset)
-            && request.session.label.as_deref() == Some(preset)
+        request.session.label.as_deref() == Some(preset)
             && launch_matches(&request.session.argv, &expected, false),
         "Initial prompts require the current detected launcher and arguments"
     );
@@ -510,11 +533,11 @@ pub(super) fn prepare_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi" | "omp"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
         .context("explicit model selection is not supported for this harness")?;
     anyhow::ensure!(
         matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
-        "explicit model selection requires a matching managed agent launcher"
+        "explicit model selection requires the matching detected harness label"
     );
     anyhow::ensure!(
         !state
@@ -880,11 +903,19 @@ mod tests {
             .agent_model_catalog
             .enqueue(request)
             .expect("catalog queue is attached before the worker starts");
-        while !pid_file.exists() {
-            assert!(Instant::now() < deadline, "fake catalog did not start");
+        let script_pid: i32 = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.parse().ok())
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fake catalog did not publish its PID"
+            );
             thread::sleep(Duration::from_millis(5));
-        }
-        let script_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        };
         assert_eq!(unsafe { libc::getpgid(script_pid) }, script_pid);
         state.shutdown.store(true, Ordering::Release);
         state.agent_model_catalog.stop();
