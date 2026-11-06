@@ -402,8 +402,12 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
+The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
+Short windows drop the trailing blank, then use compact provider summaries,
+then a `Quota: u` pointer. Press `u` or click the section for details.
+
 While any session needs you, a line at the bottom of the sidebar, directly above
-the quota line, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
 for more than one), or `? 1 · ✓ 2` when the words do not fit. It sits at the
 bottom so that, as it comes and goes, Operator and the tree never move under the
 pointer; only the tree's last visible line gives way. It counts every project,
@@ -416,7 +420,7 @@ that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
 session that is both counts once, as needs input. Operator conversations stay
 out; the Operator heading counts their unread replies. The line disappears when
-nothing is left, and gives way before the quota line when the sidebar is short.
+nothing is left, and stays visible while the quota section compacts when the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
 click on that line selects the next session that needs you and shows it in the
@@ -494,8 +498,8 @@ In Browse and Terminal modes:
   project header, or the branch glyph of a workspace, folds or unfolds it. The
   blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
-- Clicking the attention line above the quota line does what `i` does;
-  clicking the quota line at the bottom opens the quota details, as `u` does.
+- Clicking the attention line above the quota section does what `i` does;
+  clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane

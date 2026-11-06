@@ -457,9 +457,9 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
     let rows = rendered_rows(&dashboard, 120, 40);
     let quota = rows
         .iter()
-        .rposition(|row| row.starts_with(" Claude ?"))
-        .unwrap_or_else(|| panic!("missing the quota line: {rows:?}"));
-    assert_eq!(quota, 38, "the quota line is the sidebar's last row");
+        .rposition(|row| row.contains("QUOTA LEFT"))
+        .unwrap_or_else(|| panic!("missing the quota section: {rows:?}"));
+    assert_eq!(quota, 33, "quota heading follows the tree");
     assert_eq!(rows[quota].chars().nth(49), Some('│'), "{}", rows[quota]);
     let resized = request_view(&mut dashboard, area, 0);
     assert_eq!(
