@@ -112,6 +112,12 @@ function screenLine(row) {
   if (index === 34) return line("$ git status --short", { Indexed: 6 }, 1);
   if (index === 33) return line("test result: ok. 101 passed; 0 failed", { Indexed: 2 }, 1);
   if (index === 32) return line("");
+  if (index === 29) {
+    return line("ligatures: -> => != === <= >= |> <|", "Default", 0);
+  }
+  if (index === 30) {
+    return line("italic reasoning: the spec is fine -> ship it", "Default", 4);
+  }
   if (index === 31) {
     return line(" \uE0B0 \uE0B2 \uF121  \uE702  \uF17C  ┌─┐ └─┘ ▁▂▃ █", {
       Indexed: 5,

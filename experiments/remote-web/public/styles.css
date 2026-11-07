@@ -14,6 +14,22 @@
   font-display: block;
 }
 
+@font-face {
+  font-family: "OVRCR Mono";
+  src: url("/fonts/jetbrains-mono-nerd-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "OVRCR Mono";
+  src: url("/fonts/jetbrains-mono-nerd-bold-italic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}
+
 :root {
   color-scheme: dark;
   --bg: #0f1115;
@@ -323,11 +339,13 @@ main {
 .term-row {
   position: absolute;
   left: 12px;
-  height: 18px;
   font-family: var(--mono);
   font-size: 12px;
-  line-height: 18px;
   white-space: pre;
+  /* The grid assumes one advance per cell: no ligatures, no synthetic faces. */
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0, "clig" 0;
+  font-synthesis: none;
 }
 
 .term-note {
@@ -343,7 +361,6 @@ main {
 .cursor {
   position: absolute;
   width: 1ch;
-  height: 18px;
   background: var(--accent);
   opacity: 0.55;
   pointer-events: none;

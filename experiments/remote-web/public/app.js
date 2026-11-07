@@ -1,7 +1,9 @@
 const LIST_POLL_MS = 5000;
 const SCREEN_POLL_MS = 1500;
 const STALE_AFTER_MS = 12000;
-const ROW_PX = 18;
+// JetBrains Mono Nerd Font cell height is (1020 + 300) / 1000 = 1.32em;
+// at 12px that is 15.84px. 16px keeps block and Powerline cells tiled.
+const ROW_PX = 16;
 const TAIL_ROWS = 40;
 const PAGE_ROWS = 40;
 
@@ -354,6 +356,8 @@ function styleFor(cell) {
 function buildTermRow(row, absoluteRow) {
   const node = el("div", "term-row");
   node.style.top = `${absoluteRow * ROW_PX}px`;
+  node.style.height = `${ROW_PX}px`;
+  node.style.lineHeight = `${ROW_PX}px`;
   let span = null;
   let style = null;
   for (const cell of row.cells) {
@@ -427,6 +431,7 @@ function renderTerminal() {
     if (absolute >= first && absolute < last) {
       const cursor = el("div", "cursor");
       cursor.style.top = `${absolute * ROW_PX}px`;
+      cursor.style.height = `${ROW_PX}px`;
       cursor.style.left = `calc(12px + ${window_.cursor.col}ch)`;
       rows.append(cursor);
     }

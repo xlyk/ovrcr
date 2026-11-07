@@ -67,9 +67,15 @@ Environment:
 ## Fonts
 
 The terminal uses **JetBrains Mono Nerd Font Mono**, bundled as WOFF2
-(`public/fonts/`, regular and bold) so a phone does not need the font installed.
-It covers Nerd Font private-use glyphs, Powerline separators, box drawing and
-block elements; without it those cells render as tofu.
+(`public/fonts/`, regular, bold, italic and bold italic) so a phone does not
+need the font installed. It covers Nerd Font private-use glyphs, Powerline
+separators, box drawing and block elements; without it those cells render as
+tofu.
+
+Rows are 16px for a 12px face. That is the font's own cell height: JetBrains
+Mono's ascent plus descent is 1.32em, so 12 × 1.32 = 15.84. Matching it keeps
+block and Powerline glyphs tiled vertically. Ligatures and font synthesis are
+disabled on the terminal grid because the layout assumes one advance per cell.
 
 The files are WOFF2 conversions of `JetBrainsMonoNerdFontMono` from
 [Nerd Fonts](https://github.com/ryanoasis/nerd-fonts), a patched build of
@@ -77,9 +83,10 @@ The files are WOFF2 conversions of `JetBrainsMonoNerdFontMono` from
 JetBrains Mono Project Authors, SIL Open Font License 1.1. The full license is
 in `public/fonts/OFL.txt`.
 
-The page preloads both weights, `font-display: block` avoids a tofu flash, and
-the server marks the fonts immutable for a day. Glyphs the font does not contain
-(emoji, CJK) fall back to the system font, where column widths can differ.
+The page preloads the upright and italic faces, `font-display: block` avoids a
+tofu flash, and the server marks the fonts immutable for a day. Glyphs the font
+does not contain (emoji, CJK) fall back to the system font, where column widths
+can differ.
 
 ## Limits
 

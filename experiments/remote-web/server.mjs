@@ -34,6 +34,8 @@ const STATIC_FILES = new Map([
   ["/styles.css", "styles.css"],
   ["/fonts/jetbrains-mono-nerd-regular.woff2", "fonts/jetbrains-mono-nerd-regular.woff2"],
   ["/fonts/jetbrains-mono-nerd-bold.woff2", "fonts/jetbrains-mono-nerd-bold.woff2"],
+  ["/fonts/jetbrains-mono-nerd-italic.woff2", "fonts/jetbrains-mono-nerd-italic.woff2"],
+  ["/fonts/jetbrains-mono-nerd-bold-italic.woff2", "fonts/jetbrains-mono-nerd-bold-italic.woff2"],
   ["/fonts/OFL.txt", "fonts/OFL.txt"],
 ]);
 
