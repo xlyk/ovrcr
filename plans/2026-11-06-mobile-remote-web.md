@@ -568,6 +568,14 @@ Residual risk: an owner device compromised at the account level still passes;
 there is no per-device token or read-only unlock yet. The tailnet ACL and device
 removal are the outer boundary.
 
+Deployment notes from the first live setup: enabling Serve is a one-time tailnet
+toggle, and it does not always provision the TLS certificate, so
+`tailscale cert <name>` may be needed once. A restrictive ACL silently drops the
+phone's packets (`Drop: TCP{...} no rules matched` in
+`tailscale debug daemon-logs`) even though the node is visible and
+`tailscale ping` works. The grant must be merged into the existing policy;
+replacing the file removes the other rules.
+
 ## Open questions
 
 1. **Simultaneous use or handoff?** If the desktop and phone must both work at
