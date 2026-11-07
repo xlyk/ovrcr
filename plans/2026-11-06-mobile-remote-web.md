@@ -3,7 +3,9 @@
 Date: 2026-11-06
 Status: proposal, not approved. Slice 0 is implemented in
 [`experiments/remote-web`](../experiments/remote-web/) — loopback only, no
-Tailscale, no authentication.
+Tailscale, no authentication. It now includes colored cells, retained
+scrollback, and the agent transcript through two read-only requests
+(`ReadScreen`, and `Transcript` opened to Control), protocol 72.
 
 ## Problem
 
@@ -126,10 +128,11 @@ The same product as A, with the Rust bridge replaced by the installed CLI:
 | Action | Command |
 | --- | --- |
 | Inbox | `ovrcr terminal list --json` |
-| Screen | `ovrcr terminal read <id> --json --max-lines 40` |
+| Screen | `ovrcr terminal screen <id> --start-row=… --rows=… --cols=… --json` |
 | Prose | `ovrcr terminal send <id> --text <text>` (`--no-submit` to stage) |
 | Key | `ovrcr terminal keystroke <id> :escape:` |
 | Review | `ovrcr terminal mark-reviewed <id> --expected '<unread json>'` |
+| Transcript | `ovrcr terminal transcript <id> [--before=…] [--identity=…] --json` |
 | Pause / resume / kill | `ovrcr pause <id>` / `resume <id>` / `kill <id>` |
 
 Why it is genuinely a better first step than A:
@@ -138,8 +141,9 @@ Why it is genuinely a better first step than A:
   `workspace`, `title`, `phase`, `activity` (including `waiting_input`),
   `unread`, `agent` (including `input_requests`), `context_usage`
   (`src/cli/output.rs:70-130`).
-- `terminal read --json` returns `{id, rows, cols, text}` — the visible grid,
-  already trimmed to `--max-lines`.
+- `terminal screen --json` returns a styled window: per-cell text, width,
+  `Default | Indexed(u8) | Rgb` colors, attribute bits, cursor, and the retained
+  scrollback row range. That is the same `HistoryCell` data the TUI draws.
 - The web app can be written in any language and thrown away. No Rust crate, no
   bincode, no protocol version, no Server change.
 - It runs beside the desktop: `send` has no seat check, and `keystroke` is
@@ -151,10 +155,10 @@ Where it costs more than A:
   `git rev-parse` once or twice per workspace
   (`crates/ovrcr-runtime/src/server/mod.rs:410-413`,
   `crates/ovrcr-runtime/src/git.rs:30-48`), so cache it for 5-10 s. `terminal
-  read` does no Git or registry walk and can poll at 1-2 s for the open session
-  alone.
-- `terminal read --json` has no `run` field, so a stale screen is detectable
-  only through the list's `run`/`phase`.
+  screen` does no Git or registry walk and can poll at 1-2 s for the open
+  session alone; each window is one process spawn plus a PTY-parser read.
+- `terminal screen --json` carries `run`, `history_rows`, and `total_rows`, so a
+  replaced run and an evicted scrollback ring are both detectable.
 - `send` has no run fence. Refresh the list before sending, and never retry a
   failed send automatically — a duplicate prompt is worse than a lost one.
 - Errors are exit codes plus stderr, not typed responses.
@@ -241,7 +245,7 @@ iPhone / Android browser (PWA)
    │  HTTPS, tailnet only
    ▼
 tailscaled ── tailscale serve ──► 127.0.0.1:8787   [ovrcr remote]
-                                         │ AF_UNIX, preamble v71
+                                         │ AF_UNIX, preamble v72
                                          ▼
                                    server.sock     [the one Server]
                                          │ PTYs
@@ -283,7 +287,8 @@ its own decision — do not start there.
 ```
 POST /api/pair                   {code, label}        -> sets HttpOnly cookie
 GET  /api/state                                       -> sessions, device, capabilities
-GET  /api/session/:id/screen                          -> {text, size, run}
+GET  /api/session/:id/screen?start_row=&rows=&cols=   -> ScreenWindow (cells, cursor)
+POST /api/session/:id/transcript {before, identity}   -> TranscriptPage
 GET  /api/events?last=<seq>                           -> text/event-stream
 POST /api/session/:id/send       {text, submit}
 POST /api/session/:id/key        {key: ":escape:"}
@@ -440,8 +445,10 @@ Work:
 
 - One small HTTP server in Node (no dependencies, no Rust). Bind `127.0.0.1`.
 - `GET /api/state` shells `ovrcr terminal list --json` behind a 5-10 s cache.
-- `GET /api/session/:id/screen` shells `ovrcr terminal read <id> --json
-  --max-lines 40` at 1-2 s, open session only.
+- `GET /api/session/:id/screen` shells `ovrcr terminal screen <id> --json` with a
+  row window; the view loads the tail and fetches on scroll.
+- `POST /api/session/:id/transcript` shells `ovrcr terminal transcript <id>
+  --json` and pages backwards with `before` and `identity`.
 - `POST` routes spawn with argv arrays; ids parsed as `u64`; key names passed
   through unchanged; no retry on send.
 - If the server runs under launchd/systemd, start the web app with the same
@@ -449,9 +456,15 @@ Work:
 - Log method, path, status, duration — never the text.
 - Expected outcome: throw the server away when slice 1 lands; keep the PWA.
 
-The prototype's tests cover HTTP, caching, argv construction, and error mapping
-with a stub CLI, plus the inventory path against a disposable real server. A
+The prototype's tests cover HTTP, caching, argv construction, paging arguments,
+and error mapping with a stub CLI, plus the inventory path against a disposable
+real server. The cell pager has unit tests against the real `vt100` parser. A
 full PTY round trip remains manual on a machine with PTY devices.
+
+Protocol 72 adds the read-only `ReadScreen` request and opens `Transcript` to
+Control. Neither can write, resize, focus, or take the Dashboard seat. Sessions
+on the alternate screen report no scrollback, which is the same refusal History
+already makes; their agent history is the transcript page.
 
 ### Slice 1 — control-plane companion (6-8 days)
 
@@ -528,6 +541,11 @@ harness in the repo; browser behavior is a stated gap until one exists.
 - Input request content-free: `crates/ovrcr-protocol/src/agent.rs:161-171`
 - Auto-trust flags: `crates/ovrcr-protocol/src/auto_trust.rs:13-15`
 - Key grammar: `crates/ovrcr-terminal/src/key.rs:75-130`
+- Cell paging: `crates/ovrcr-terminal/src/history.rs:56-140` (`page_rows`),
+  `crates/ovrcr-runtime/src/session/mod.rs:995-1055` (`screen_window`)
+- Read-only wire types: `crates/ovrcr-protocol/src/wire.rs:60-90,465-470,561`
+- Transcript gate and pages: `crates/ovrcr-runtime/src/server/connections.rs:1193-1200`,
+  `crates/ovrcr-runtime/src/server/transcript.rs:1-90`
 - CLI JSON the prototype shells: `src/cli/output.rs:70-130` (`terminal_value`),
   `src/cli/args.rs:355-395` (read/send/keystroke), `src/cli/mod.rs:129-141`
   (`list`), `src/cli/mod.rs:377-397` (`inspect`, with offline fallback)

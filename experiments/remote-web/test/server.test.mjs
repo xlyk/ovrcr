@@ -73,19 +73,68 @@ test("a zero TTL refetches the inventory", async (t) => {
   assert.equal(calls().filter((args) => args.includes("list")).length, 2);
 });
 
-test("screen reads the requested line count and reports the run from the list", async (t) => {
+test("screen returns a styled window and forwards the row range", async (t) => {
   const { base, calls } = await harness(t);
 
-  const response = await get(base, "/api/session/12/screen?lines=7");
+  const response = await get(base, "/api/session/12/screen?start_row=118&rows=7&cols=100");
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.id, 12);
-  assert.equal(body.rows, 24);
-  assert.equal(body.text, "screen for 12\n");
-  assert.equal(body.run, 3);
+  assert.equal(body.start_row, 118);
+  assert.equal(body.history_rows, 120);
+  assert.equal(body.total_rows, 160);
+  assert.equal(body.rows.length, 7);
+  assert.deepEqual(body.cursor, { row: 39, col: 2, hidden: false });
+  assert.equal(body.rows[0].cells[0].fg, "Default");
+  assert.equal(body.rows[2].cells[0].fg.Indexed, 6);
 
-  const read = calls().find((args) => args.includes("read"));
-  assert.deepEqual(read, ["--json", "terminal", "read", "12", "--max-lines=7"]);
+  const read = calls().find((args) => args.includes("screen"));
+  assert.deepEqual(read, [
+    "--json",
+    "terminal",
+    "screen",
+    "12",
+    "--start-row=118",
+    "--rows=7",
+    "--cols=100",
+  ]);
+});
+
+test("an older CLI falls back to the plain-text screen", async (t) => {
+  const { base, calls } = await harness(t, { env: { STUB_OLD: "1" } });
+
+  const response = await get(base, "/api/session/12/screen?start_row=0&rows=40&cols=80");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.history_rows, 0);
+  assert.equal(body.cursor, null);
+  assert.equal(body.total_rows, 1);
+  assert.equal(body.rows[0].cells[0].text, "s");
+
+  assert.ok(calls().some((args) => args.includes("read")));
+});
+
+test("transcript pages forward the identity fence", async (t) => {
+  const { base, calls } = await harness(t);
+  const identity = {
+    Claude: {
+      conversation: "fixture-12",
+      executable: "/claude",
+      history: "/history.jsonl",
+      config_dir: "/config",
+      options: [],
+    },
+  };
+
+  const response = await post(base, "/api/session/12/transcript", { before: 42, identity });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.entries.length, 4);
+  assert.equal(body.start, 42);
+
+  const call = calls().find((args) => args.includes("transcript"));
+  assert.deepEqual(call.slice(0, 4), ["--json", "terminal", "transcript", "12"]);
+  assert.equal(call[4], "--before=42");
+  assert.equal(call[5], `--identity=${JSON.stringify(identity)}`);
 });
 
 test("send submits by default and omits Enter on request", async (t) => {
@@ -135,6 +184,9 @@ test("bad identifiers, methods, and paths are refused", async (t) => {
   assert.equal((await get(base, "/api/session/0/screen")).status, 400);
   assert.equal((await get(base, "/api/session/abc/screen")).status, 400);
   assert.equal((await get(base, "/api/session/12/send")).status, 405);
+  assert.equal((await get(base, "/api/session/12/screen?rows=129")).status, 400);
+  assert.equal((await get(base, "/api/session/12/screen?start_row=-1")).status, 400);
+  assert.equal((await post(base, "/api/session/12/transcript", { identity: [] })).status, 400);
   assert.equal((await get(base, "/nope")).status, 404);
   assert.equal((await post(base, "/api/session/12/nope", {})).status, 404);
   assert.equal(calls().length, 0);

@@ -15,8 +15,10 @@ const PUBLIC_DIR = path.join(HERE, "public");
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TEXT_CHARS = 32_000;
-const DEFAULT_SCREEN_LINES = 40;
-const MAX_SCREEN_LINES = 200;
+const DEFAULT_SCREEN_ROWS = 40;
+const MAX_SCREEN_ROWS = 128;
+const DEFAULT_SCREEN_COLS = 200;
+const MAX_SCREEN_COLS = 256;
 const CLI_TIMEOUT_MS = 20_000;
 const KILL_TIMEOUT_MS = 25_000;
 
@@ -75,16 +77,16 @@ function parseSessionId(raw) {
   return raw;
 }
 
-function parseLines(raw) {
-  if (raw === null || raw === "") return DEFAULT_SCREEN_LINES;
-  if (!/^[0-9]{1,3}$/.test(raw)) {
-    throw new HttpError(400, "lines must be a positive integer");
+function parseBounded(raw, fallback, min, max, name) {
+  if (raw === null || raw === "") return fallback;
+  if (!/^[0-9]{1,6}$/.test(raw)) {
+    throw new HttpError(400, `${name} must be an integer`);
   }
-  const lines = Number(raw);
-  if (lines < 1 || lines > MAX_SCREEN_LINES) {
-    throw new HttpError(400, `lines must be between 1 and ${MAX_SCREEN_LINES}`);
+  const value = Number(raw);
+  if (value < min || value > max) {
+    throw new HttpError(400, `${name} must be between ${min} and ${max}`);
   }
-  return lines;
+  return value;
 }
 
 function parseKey(raw) {
@@ -214,6 +216,33 @@ async function readJsonBody(request) {
   }
 }
 
+function legacyWindow(id, screen) {
+  const lines = String(screen.text ?? "").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const rows = lines.map((line) => ({
+    width: line.length,
+    cells: Array.from(line, (character) => ({
+      text: character,
+      width: 1,
+      fg: "Default",
+      bg: "Default",
+      attributes: 0,
+    })),
+    wrapped: false,
+  }));
+  return {
+    session: Number(screen.id ?? id),
+    run: null,
+    size: { rows: screen.rows, cols: screen.cols },
+    history_rows: 0,
+    total_rows: rows.length,
+    start_row: 0,
+    alternate_screen: false,
+    cursor: null,
+    rows,
+  };
+}
+
 function sendJson(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
@@ -309,24 +338,49 @@ export function createApp({
         response.setHeader("Allow", "GET");
         throw new HttpError(405, "use GET");
       }
-      const lines = parseLines(url.searchParams.get("lines"));
-      const stdout = await cli(
-        bin,
-        ["--json", "terminal", "read", id, `--max-lines=${lines}`],
-        CLI_TIMEOUT_MS,
-        env,
+      const startRow = parseBounded(url.searchParams.get("start_row"), 0, 0, 1_000_000, "start_row");
+      const rows = parseBounded(
+        url.searchParams.get("rows"),
+        DEFAULT_SCREEN_ROWS,
+        1,
+        MAX_SCREEN_ROWS,
+        "rows",
       );
-      const screen = JSON.parse(stdout);
-      const sessions = await listSessions().catch(() => []);
-      const summary = sessions.find((session) => Number(session.id) === Number(id));
-      sendJson(response, 200, {
-        id: Number(screen.id ?? id),
-        rows: screen.rows,
-        cols: screen.cols,
-        text: String(screen.text ?? ""),
-        run: summary?.run ?? null,
-        fetched_at: new Date().toISOString(),
-      });
+      const cols = parseBounded(
+        url.searchParams.get("cols"),
+        DEFAULT_SCREEN_COLS,
+        1,
+        MAX_SCREEN_COLS,
+        "cols",
+      );
+      try {
+        const stdout = await cli(
+          bin,
+          [
+            "--json",
+            "terminal",
+            "screen",
+            id,
+            `--start-row=${startRow}`,
+            `--rows=${rows}`,
+            `--cols=${cols}`,
+          ],
+          CLI_TIMEOUT_MS,
+          env,
+        );
+        sendJson(response, 200, JSON.parse(stdout));
+      } catch (error) {
+        // An older CLI has no `terminal screen`; keep the plain-text view working
+        // until the CLI and Server are rebuilt together.
+        if (!/unrecognized subcommand|unexpected argument/i.test(error.message)) throw error;
+        const legacy = await cli(
+          bin,
+          ["--json", "terminal", "read", id, `--max-lines=${Math.min(cols, 200)}`],
+          CLI_TIMEOUT_MS,
+          env,
+        );
+        sendJson(response, 200, legacyWindow(id, JSON.parse(legacy)));
+      }
       return;
     }
 
@@ -351,6 +405,24 @@ export function createApp({
         const key = parseKey(body.key);
         await cli(bin, ["--json", "terminal", "keystroke", id, key], CLI_TIMEOUT_MS, env);
         sendJson(response, 200, { ok: true });
+        return;
+      }
+      case "transcript": {
+        const args = ["--json", "terminal", "transcript", id];
+        if (body.before !== undefined && body.before !== null) {
+          if (!Number.isInteger(body.before) || body.before < 0) {
+            throw new HttpError(400, "before must be a non-negative integer");
+          }
+          args.push(`--before=${body.before}`);
+        }
+        if (body.identity !== undefined && body.identity !== null) {
+          if (typeof body.identity !== "object" || Array.isArray(body.identity)) {
+            throw new HttpError(400, "identity must be the object from a previous page");
+          }
+          args.push(`--identity=${JSON.stringify(body.identity)}`);
+        }
+        const stdout = await cli(bin, args, CLI_TIMEOUT_MS, env);
+        sendJson(response, 200, JSON.parse(stdout));
         return;
       }
       case "review": {

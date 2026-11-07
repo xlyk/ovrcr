@@ -31,7 +31,13 @@
       <section id="session-view" class="view" hidden>
         <div id="meta" class="meta"></div>
         <div class="screen-wrap">
-          <pre id="screen" class="screen" tabindex="0" aria-label="terminal screen"></pre>
+          <div id="screen" class="screen" tabindex="0" aria-label="terminal screen">
+            <div id="screen-rows" class="screen-rows"></div>
+          </div>
+          <div id="transcript-view" class="transcript" hidden>
+            <div id="transcript-entries" class="transcript-entries"></div>
+            <button id="load-older" type="button" class="secondary" hidden>Load older</button>
+          </div>
         </div>
         <div id="keybar" class="keybar" aria-label="terminal keys"></div>
         <form id="composer" class="composer">
