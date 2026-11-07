@@ -15,9 +15,10 @@ Tailscale is optional. Without it the app is a loopback-only UI; with it,
 Tailscale, and no tailnet values are hard-coded.
 
 Status: working locally, over a private tailnet, and as a settings-driven child
-of the Server. Slice 0 of
+of the Server. It can watch, reply to, and start sessions. Slice 0 of
 [`plans/2026-11-06-mobile-remote-web.md`](../../plans/2026-11-06-mobile-remote-web.md),
-extended with read-only screen-window and transcript requests (protocol 73).
+extended with read-only screen-window and transcript requests, session creation,
+and the `[remote]` settings (protocol 73).
 
 ## Architecture
 
@@ -25,14 +26,19 @@ extended with read-only screen-window and transcript requests (protocol 73).
 phone browser (PWA)
    │ HTTPS, tailnet only
    ▼
-tailscaled ── tailscale serve ──► 127.0.0.1:8787   [this app, Node]
-                                         │ argv, one CLI process per request
+tailscaled ── tailscale serve ──► 127.0.0.1:8787  (ovrcr remote serve)
+                                         │ protocol, Control connections
                                          ▼
-                                   ovrcr CLI ──► server.sock ──► sessions
+                                   server.sock ──► sessions
 ```
 
-The app owns no session state. It spawns the installed `ovrcr` CLI and returns
-JSON to the page. The Server remains the one owner of the PTYs.
+The gateway is part of the `ovrcr` binary. It opens short Control connections to
+`server.sock` and returns JSON to the page; the Server remains the one owner of
+the PTYs, the Dashboard seat, and geometry. It embeds the page and fonts, so an
+installed binary does not need this checkout.
+
+`server.mjs` is the original Node prototype. It spawns the installed CLI for
+each request and is only for iterating on the page without rebuilding the CLI.
 
 ## Server-managed mode
 
@@ -68,56 +74,72 @@ to create the session; arbitrary commands are not accepted.
 
 ## Requirements
 
-- Node 22 (no npm dependencies).
-- **Protocol 72** on both sides: the CLI this app spawns and the running Server.
-  Building this branch gives you both, but the Server must restart before the
-  new commands exist, and a restart stops live sessions.
+- The rebuilt `ovrcr` CLI and a running Server on **protocol 73**. Build and
+  install this branch, then restart the Server; a restart stops live sessions.
+- Node 22 only for the original prototype. The product is in the `ovrcr` binary.
 
 ```sh
-cargo build -p ovrcr --bin ovrcr
+just install-release
+ovrcr --version
 # stop the old Server, then start it from the rebuilt CLI
 ```
 
-If the CLI predates `terminal screen`, the gateway falls back to
-`terminal read`: plain text, no scrollback, no cursor.
+## Run
 
-## Run the prototype
+The product is built in. Start it manually:
+
+```sh
+ovrcr remote serve --port 8787 --login you@example.com
+```
+
+or enable `[remote]` in `dashboard.toml` and let the Server start and supervise
+it (see Server-managed mode above). The login can also come from
+`OVRCR_REMOTE_LOGIN`; without one, requests whose `Host` is not loopback are
+refused.
+
+Open <http://127.0.0.1:8787>. It talks to the instance the Server resolves
+(`OVRCR_HOME`, or the default config directory), so it **reads and writes your
+live sessions**. `Ctrl-C` stops a manually started gateway; the settings-managed
+child stops with the Server.
+
+### Run the prototype
+
+The Node app is only for iterating on the page without rebuilding the CLI:
 
 ```sh
 cd experiments/remote-web
 OVRCR_REMOTE_LOGIN=you@example.com node server.mjs
 ```
 
-For the product, build the CLI and use `ovrcr remote serve --port 8787 --login
-you@example.com`, or enable `[remote] enabled` and let the Server start it.
-
-Open <http://127.0.0.1:8787>. It talks to the instance the CLI resolves
-(`OVRCR_HOME`, or the default config directory), so it **reads and writes your
-live sessions**. `Ctrl-C` stops it.
-
-No Tailscale, no environment file, no config: this is the whole local setup.
-`OVRCR_REMOTE_LOGIN` is only needed when a proxy is in front (below); without
-it, any request that does not carry a loopback `Host` is refused.
-
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | Listen port |
-| `HOST` | `127.0.0.1` | Refused unless loopback, or `ALLOW_REMOTE=1` |
+| `HOST` | `127.0.0.1` | Prototype only; refused unless loopback, or `ALLOW_REMOTE=1` |
 | `OVRCR_BIN` | `ovrcr` | CLI to spawn |
 | `LIST_TTL_MS` | `5000` | Inventory cache; `terminal list` runs Git per workspace |
 | `OVRCR_REMOTE_LOGIN` | unset | Optional. Tailscale login allowed through Serve; unset refuses all non-loopback requests |
 
 ## Optional: reaching it from a phone (Tailscale)
 
-The app binds loopback; `tailscale serve` terminates TLS on the tailnet and
+The gateway binds loopback; `tailscale serve` terminates TLS on the tailnet and
 proxies to it. Substitute your own node name and login.
 
+```toml
+[remote]
+enabled = true
+port = 8787
+login = "you@example.com"
+```
+
 ```sh
-OVRCR_REMOTE_LOGIN=you@example.com PORT=8787 node server.mjs
 tailscale serve --bg --yes --https=443 http://127.0.0.1:8787
 tailscale cert <machine>.<tailnet>.ts.net   # once, see below
 open https://<machine>.<tailnet>.ts.net
 ```
+
+For a manual run, use `ovrcr remote serve --port 8787 --login you@example.com`
+before the Serve command. The Node prototype uses
+`OVRCR_REMOTE_LOGIN=you@example.com PORT=8787 node server.mjs`.
 
 ### One-time tailnet setup
 
@@ -148,10 +170,11 @@ data traffic is allowed; a working grant appears as one rule for the node on
 ### How the gate works
 
 `tailscale serve` injects `Tailscale-User-Login` from WhoIs and strips a
-client-supplied copy. With `OVRCR_REMOTE_LOGIN` set, any request whose `Host` is
-not loopback must carry that exact login; local requests still work. Mutating
-requests must also carry a matching `Origin`. Without the variable, every
-non-loopback request is refused with 403.
+client-supplied copy. With `--login`, `[remote] login`, or
+`OVRCR_REMOTE_LOGIN` set, any request whose `Host` is not loopback must carry
+that exact login; local requests still work. Mutating requests must also carry a
+matching `Origin`. Without a login, every non-loopback request is refused with
+403.
 
 Never use `tailscale funnel`; it is public and drops identity headers. Remove
 the mapping with `tailscale serve reset`.
@@ -163,8 +186,8 @@ the mapping with `tailscale serve reset`.
 | Phone times out; `tailscale ping` works | ACL has no grant; tailscaled logs `Drop: TCP{...} 60 no rules matched` | Add the grant above |
 | `Serve is not enabled on your tailnet` | Account toggle off | Open the printed admin link |
 | TLS `internal error` / cert warning | Cert not issued | `tailscale cert <name>` |
-| HTTP 403 from the app | Wrong/missing login, or bad `Origin` | Check `OVRCR_REMOTE_LOGIN`; use the ts.net host |
-| HTTP 502 | CLI missing or protocol mismatch | Rebuild/install the CLI; restart the Server |
+| HTTP 403 from the app | Wrong/missing login, or bad `Origin` | Check `[remote] login` / `--login`; use the ts.net host |
+| HTTP 502 | Server not running, or CLI/Server protocol mismatch | Restart both on the same build |
 | Screen shows "no live terminal" | Retained row, not running | Reopen the session on the desktop |
 | Tofu glyphs | Font not served | Check `/fonts/*.woff2` return 200 |
 
@@ -183,18 +206,21 @@ it a proper PWA.
 
 ## What works
 
-- Inbox grouped Needs you / Working / Idle / Ended, from
-  `ovrcr terminal list --json`: activity, unread, run, agent label, elapsed.
-- **Colored screen** from `ovrcr terminal screen --json`: per-cell text, width,
+- Inbox grouped Needs you / Working / Idle / Ended from the Server's session
+  inventory: activity, unread, run, agent label, elapsed.
+- **Colored screen** from a read-only screen window: per-cell text, width,
   `Default | Indexed(u8) | Rgb` foreground and background, and the
   bold/dim/italic/underline/inverse attribute bits. This includes the 256-color
   palette and truecolor.
 - **Scrollback**: the Server retains 512 rows; the view loads the tail first and
   fetches a window when you scroll into unloaded rows. The cursor is drawn when
   the window includes the live screen.
-- **Transcript** from `ovrcr terminal transcript --json`: user, assistant and
-  tool entries with a "Load older" page button. Claude and Codex only, because
-  that is what the Server can read.
+- **Transcript** from the Server's transcript request: user, assistant and tool
+  entries with a "Load older" page button. Claude and Codex only, because that is
+  what the Server can read.
+- **New session**: pick a registered workspace, a detected agent (or Shell), an
+  optional name and initial prompt. The gateway builds argv; the page never
+  sends a command.
 - Key bar: Esc, Tab, Shift-Tab, arrows, Enter, Ctrl-C, 1, 2, y, n.
 - Reply box: `Send` pastes and presses Enter; `Type only` pastes without Enter.
 - Mark reviewed, pause, resume, kill; deep link `#/s/12`.
@@ -241,20 +267,22 @@ can differ.
 - Transcript text is the provider's, verbatim; the UI renders it with
   `textContent`, never as HTML.
 - `send` has no run fence; the UI never retries a failed send.
-- The web process is session-owned right now: if it dies, Serve returns 502.
-  There is no launchd unit yet.
-- No notifications, settings, workspace creation, or per-device pairing tokens.
+- In settings-managed mode the gateway is a supervised child of the Server; a
+  manually started one is not supervised. There is no launchd unit for the
+  Server itself.
+- No notifications, workspace creation, diff review, or per-device pairing
+  tokens. Remote settings live in `dashboard.toml`.
 
 ## Security boundary
 
-- Binds `127.0.0.1` only; refuses any other host unless `ALLOW_REMOTE=1`.
+- Binds `127.0.0.1` only; there is no remote-bind switch. The Node prototype
+  refuses non-loopback hosts unless `ALLOW_REMOTE=1`.
 - Behind Serve, requires the configured Tailscale login on every non-loopback
   request and a matching `Origin` on mutations.
-- Spawns with an argv array, never a shell. Session ids must be positive u64;
-  keys must look like `:escape:`; text is capped at 32k characters; bodies at
-  64 KiB.
-- Logs method, path, status, and duration. Never request bodies, terminal text,
-  keys, or transcript content.
+- Creates sessions from a server-side agent catalog, never from a
+  request-supplied command. Session ids must be positive u64; keys must look
+  like `:escape:`; text is capped at 32k characters; bodies at 64 KiB.
+- Never logs request bodies, terminal text, keys, or transcript content.
 - CSP `default-src 'self'`, `no-store`, `no-referrer`, `nosniff`, `font-src
   'self'`; server text is written with `textContent`.
 - Residual risk: any device signed in as the configured login passes the gate,
