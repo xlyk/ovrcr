@@ -43,6 +43,7 @@ Environment:
 | `HOST` | `127.0.0.1` | Refused unless loopback, or `ALLOW_REMOTE=1` |
 | `OVRCR_BIN` | `ovrcr` | CLI to spawn |
 | `LIST_TTL_MS` | `5000` | Inventory cache; `terminal list` runs Git per workspace |
+| `OVRCR_REMOTE_LOGIN` | unset | Tailscale login allowed through Serve; unset refuses all non-loopback requests |
 
 ## What works
 
@@ -104,9 +105,41 @@ can differ.
 - `send` has no run fence; the UI never retries a failed send.
 - No Tailscale, no auth, no notifications, no settings or workspace creation.
 
+## Reaching it from a phone (Tailscale)
+
+The app binds loopback. `tailscale serve` terminates TLS on the tailnet and
+proxies to it:
+
+```sh
+OVRCR_REMOTE_LOGIN=kylehanks@pm.me PORT=8787 node server.mjs
+tailscale serve --bg --https=443 http://127.0.0.1:8787
+open https://spacelift.taild03053.ts.net
+```
+
+Serve injects `Tailscale-User-Login` from WhoIs. With `OVRCR_REMOTE_LOGIN` set,
+a request whose `Host` is not loopback must carry that exact login; local
+requests still work. Mutating requests must also carry a matching `Origin`.
+Without the variable, every non-loopback request is refused with 403.
+
+Never use `tailscale funnel`; it is public and drops identity headers. Remove
+the mapping with `tailscale serve reset`.
+
+An ACL grant for one user and one host:
+
+```json
+{ "grants": [{ "src": ["kylehanks@pm.me"], "dst": ["spacelift"], "ip": ["tcp:443"] }] }
+```
+
+Residual risk: any device signed in as that login passes the gate, and there is
+no per-device token or read-only unlock yet. Removing the phone from the tailnet
+is the kill switch. Serve is independent of this process, so it keeps returning
+502 when the web server is down.
+
 ## Security boundary
 
 - Binds `127.0.0.1` only; refuses any other host unless `ALLOW_REMOTE=1`.
+- Behind Serve, requires the configured Tailscale login on every non-loopback
+  request and a matching `Origin` on mutations.
 - Spawns with an argv array, never a shell. Session ids must be positive u64;
   keys must look like `:escape:`; text is capped at 32k characters; bodies at
   64 KiB.
@@ -120,7 +153,7 @@ can differ.
 ## Tests
 
 ```sh
-npm test           # 13 tests: HTTP, paging args, caching, validation, error mapping
+npm test           # 17 tests: HTTP, paging args, caching, validation, error mapping
 npm run test:live  # real ovrcr server against a disposable empty instance
 ```
 
@@ -153,5 +186,5 @@ Screenshots use Chrome DevTools device emulation at 390×844 with a 2× scale.
 - `server.mjs` — loopback HTTP server, CLI runner, routes, validation.
 - `public/` — `index.html`, `styles.css`, `app.js`, `fonts/`; no external assets.
 - `test/stub-ovrcr.mjs` — argv-recording CLI stub.
-- `test/server.test.mjs` — the 13 tests.
+- `test/server.test.mjs` — the 17 tests.
 - `test/live-instance.mjs` — real server, empty instance.

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,13 +10,14 @@ import { createApp } from "../server.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STUB = join(HERE, "stub-ovrcr.mjs");
 
-async function harness(t, { ttlMs = 5000, env = {} } = {}) {
+async function harness(t, { ttlMs = 5000, env = {}, remoteLogin = "" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-web-"));
   const log = join(dir, "calls.log");
   const app = createApp({
     bin: STUB,
     ttlMs,
     env: { ...process.env, STUB_LOG: log, ...env },
+    remoteLogin,
     log: () => {},
   });
   const address = await app.listen(0);
@@ -37,6 +39,33 @@ async function harness(t, { ttlMs = 5000, env = {} } = {}) {
 }
 
 const get = (base, path) => fetch(`${base}${path}`);
+
+function rawRequest(base, path, { method = "GET", headers = {}, body = null } = {}) {
+  const target = new URL(`${base}${path}`);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname + target.search,
+        method,
+        headers,
+      },
+      (response) => {
+        let data = "";
+        response.on("data", (chunk) => {
+          data += chunk;
+        });
+        response.on("end", () =>
+          resolve({ status: response.statusCode, body: data, headers: response.headers }),
+        );
+      },
+    );
+    request.on("error", reject);
+    if (body) request.write(body);
+    request.end();
+  });
+}
 const post = (base, path, body) =>
   fetch(`${base}${path}`, {
     method: "POST",
@@ -215,6 +244,61 @@ test("serves the bundled Nerd Font and its license", async (t) => {
   const license = await get(base, "/fonts/OFL.txt");
   assert.equal(license.status, 200);
   assert.match(await license.text(), /SIL OPEN FONT LICENSE/);
+});
+
+test("tailnet requests require the configured login", async (t) => {
+  const { base } = await harness(t, { remoteLogin: "owner@example.com" });
+  const host = "spacelift.example.ts.net";
+
+  const anonymous = await rawRequest(base, "/api/state", { headers: { Host: host } });
+  assert.equal(anonymous.status, 403);
+
+  const intruder = await rawRequest(base, "/api/state", {
+    headers: { Host: host, "Tailscale-User-Login": "someone@else.example" },
+  });
+  assert.equal(intruder.status, 403);
+
+  const owner = await rawRequest(base, "/api/state", {
+    headers: { Host: host, "Tailscale-User-Login": "owner@example.com" },
+  });
+  assert.equal(owner.status, 200);
+});
+
+test("local requests bypass the login gate", async (t) => {
+  const { base } = await harness(t, { remoteLogin: "owner@example.com" });
+  assert.equal((await get(base, "/api/state")).status, 200);
+});
+
+test("mutations over the tailnet need a matching Origin", async (t) => {
+  const { base } = await harness(t, { remoteLogin: "owner@example.com" });
+  const host = "spacelift.example.ts.net";
+  const headers = {
+    Host: host,
+    "Tailscale-User-Login": "owner@example.com",
+    "Content-Type": "application/json",
+  };
+
+  const evil = await rawRequest(base, "/api/session/12/key", {
+    method: "POST",
+    headers: { ...headers, Origin: "https://evil.example" },
+    body: JSON.stringify({ key: ":escape:" }),
+  });
+  assert.equal(evil.status, 403);
+
+  const sameOrigin = await rawRequest(base, "/api/session/12/key", {
+    method: "POST",
+    headers: { ...headers, Origin: `https://${host}` },
+    body: JSON.stringify({ key: ":escape:" }),
+  });
+  assert.equal(sameOrigin.status, 200);
+});
+
+test("tailnet requests are refused when no login is configured", async (t) => {
+  const { base } = await harness(t);
+  const response = await rawRequest(base, "/api/state", {
+    headers: { Host: "spacelift.example.ts.net", "Tailscale-User-Login": "owner@example.com" },
+  });
+  assert.equal(response.status, 403);
 });
 
 test("CLI failures map to HTTP status and message", async (t) => {

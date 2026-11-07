@@ -310,6 +310,27 @@ a gateway crash must not touch PTYs. For persistence, reuse the existing
 launchd/systemd installer in `src/service.rs` rather than inventing a second
 supervision model.
 
+## Running it
+
+Three placements, in order of commitment:
+
+1. **The Node prototype (now).** Zero dependencies, fast to change, and it
+   already works. Costs: one process spawn per request, `terminal list` still
+   runs Git per workspace, polling instead of a stream, the installed CLI and
+   Server must match versions, and nothing supervises it.
+2. **`ovrcr remote`, a subcommand of the same binary (recommended end state).**
+   A separate process that speaks the protocol directly: no spawns, one version
+   with the binary, `Events { follow }` for push, the settings and service
+   installers to reuse, and one artifact to ship. The PWA and HTTP shape stay.
+3. **Inside the Server process (rejected).** The Server is the PTY owner; an
+   HTTP listener there couples remote availability to session lifetime, widens
+   the attack surface of the process that can type into agents, and makes a
+   Server restart (which stops sessions) also drop the UI.
+
+Move to (2) when the prototype is used daily, when push replaces polling, or
+when it needs a supervised service. Until then the Node app is the cheaper
+tool. Either way, `tailscale serve` runs in tailscaled, not in this process.
+
 ## Security
 
 Slice 0 deliberately has none of the controls below: it binds loopback, has no
@@ -530,6 +551,22 @@ Two paths, not built:
 
 Resize is a shared-PTY write, so scrollback can be disturbed and two clients
 cannot hold independent geometry.
+
+## Tailnet access
+
+`tailscale serve --bg --https=443 http://127.0.0.1:8787` publishes the app on
+the node's MagicDNS name over tailnet-only HTTPS; tailscaled owns the
+certificate. Serve injects `Tailscale-User-Login` from WhoIs and strips a
+client-supplied value, so a loopback-bound server can trust the header.
+
+The prototype checks it only when `OVRCR_REMOTE_LOGIN` is set: non-loopback
+requests must carry that login, local requests bypass it, and mutations must
+carry a matching `Origin` (`experiments/remote-web/server.mjs`). Without it,
+non-loopback requests are refused. Never use Funnel.
+
+Residual risk: an owner device compromised at the account level still passes;
+there is no per-device token or read-only unlock yet. The tailnet ACL and device
+removal are the outer boundary.
 
 ## Open questions
 

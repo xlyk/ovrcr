@@ -23,6 +23,7 @@ const CLI_TIMEOUT_MS = 20_000;
 const KILL_TIMEOUT_MS = 25_000;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i;
 const SESSION_ID = /^[1-9][0-9]{0,19}$/;
 const KEY = /^:[a-z0-9]+(?:-[a-z0-9]+)*:$/;
 const U64_MAX = 2n ** 64n - 1n;
@@ -250,6 +251,29 @@ function legacyWindow(id, screen) {
   };
 }
 
+function originAllowed(request, host) {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  return origin === `https://${host}` || origin === `http://${host}`;
+}
+
+// A Tailscale Serve request carries the caller's login from WhoIs and a ts.net
+// Host. Loopback requests are the person at the machine and bypass the login
+// check; everything else must name the configured login.
+function authorized(request, remoteLogin) {
+  const host = String(request.headers.host || "");
+  const local = LOOPBACK_HOST.test(host);
+  if (!local) {
+    if (!remoteLogin) return false;
+    const login = String(request.headers["tailscale-user-login"] || "").toLowerCase();
+    if (login !== remoteLogin) return false;
+  }
+  if (request.method !== "GET" && request.method !== "HEAD" && !originAllowed(request, host)) {
+    return false;
+  }
+  return true;
+}
+
 function sendJson(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
@@ -294,7 +318,9 @@ export function createApp({
   log = console.log,
   cli = runCli,
   env = process.env,
+  remoteLogin = process.env.OVRCR_REMOTE_LOGIN || "",
 } = {}) {
+  const login = remoteLogin.trim().toLowerCase();
   let cache = { at: 0, sessions: null };
   let inflight = null;
 
@@ -474,6 +500,18 @@ export function createApp({
       log(`${request.method} ${url.pathname} ${status} ${Date.now() - started}ms`);
     };
 
+    if (!authorized(request, login)) {
+      sendError(
+        response,
+        403,
+        login
+          ? "this tailnet request is not from the configured OVRCR login"
+          : "set OVRCR_REMOTE_LOGIN to accept tailnet requests",
+      );
+      finish(403);
+      return;
+    }
+
     Promise.resolve()
       .then(async () => {
         if (parts[0] === "api") {
@@ -550,7 +588,9 @@ async function main() {
   const shown = host.includes(":") ? `[${host}]` : host;
   console.log(`ovrcr remote web (mvp) listening on http://${shown}:${address.port}`);
   console.log(`  cli: ${process.env.OVRCR_BIN || "ovrcr"}`);
-  console.log("  loopback only, no auth; do not expose this port");
+  const login = (process.env.OVRCR_REMOTE_LOGIN || "").trim();
+  console.log(`  tailnet login: ${login || "unset (loopback only)"}`);
+  if (!login) console.log("  set OVRCR_REMOTE_LOGIN to accept Tailscale Serve requests");
 
   const stop = () => {
     app.close().then(() => process.exit(0));
