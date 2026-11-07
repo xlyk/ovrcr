@@ -112,6 +112,9 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::Service(args) => {
             ovrcr::service::run(args.command, json_output).map_err(RuntimeError::internal)
         }
+        Command::Remote(args) => {
+            ovrcr::remote::run(args, json_output).map_err(RuntimeError::internal)
+        }
         Command::TaskRunner {
             run_dir,
             pi_executable,

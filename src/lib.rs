@@ -7,6 +7,7 @@ pub use ovrcr_protocol::freshness;
 pub mod gui;
 pub use ovrcr_protocol as protocol;
 pub use ovrcr_runtime::{config, git, grok_recovery, retained, session, settings};
+pub mod remote;
 pub mod report;
 pub mod server {
     pub use crate::client::{

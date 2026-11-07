@@ -90,6 +90,8 @@ pub(super) enum Command {
     Run(ovrcr::task_cli::RunArgs),
     /// Install, start, stop, or remove the background service.
     Service(ovrcr::service::ServiceArgs),
+    /// Serve the remote web UI on loopback, or check whether it is listening.
+    Remote(ovrcr::remote::RemoteArgs),
     #[command(name = "__task-runner", hide = true)]
     TaskRunner {
         run_dir: PathBuf,
