@@ -257,9 +257,11 @@ function originAllowed(request, host) {
   return origin === `https://${host}` || origin === `http://${host}`;
 }
 
-// A Tailscale Serve request carries the caller's login from WhoIs and a ts.net
-// Host. Loopback requests are the person at the machine and bypass the login
-// check; everything else must name the configured login.
+// Optional Tailscale gate. A Serve request carries the caller's login from
+// WhoIs and a ts.net Host. Loopback requests are the person at the machine and
+// bypass the login check; everything else must name the configured login.
+// Nothing here runs unless OVRCR_REMOTE_LOGIN is set; the app never requires
+// Tailscale.
 function authorized(request, remoteLogin) {
   const host = String(request.headers.host || "");
   const local = LOOPBACK_HOST.test(host);

@@ -248,7 +248,7 @@ test("serves the bundled Nerd Font and its license", async (t) => {
 
 test("tailnet requests require the configured login", async (t) => {
   const { base } = await harness(t, { remoteLogin: "owner@example.com" });
-  const host = "spacelift.example.ts.net";
+  const host = "node.example.ts.net";
 
   const anonymous = await rawRequest(base, "/api/state", { headers: { Host: host } });
   assert.equal(anonymous.status, 403);
@@ -271,7 +271,7 @@ test("local requests bypass the login gate", async (t) => {
 
 test("mutations over the tailnet need a matching Origin", async (t) => {
   const { base } = await harness(t, { remoteLogin: "owner@example.com" });
-  const host = "spacelift.example.ts.net";
+  const host = "node.example.ts.net";
   const headers = {
     Host: host,
     "Tailscale-User-Login": "owner@example.com",
@@ -296,7 +296,7 @@ test("mutations over the tailnet need a matching Origin", async (t) => {
 test("tailnet requests are refused when no login is configured", async (t) => {
   const { base } = await harness(t);
   const response = await rawRequest(base, "/api/state", {
-    headers: { Host: "spacelift.example.ts.net", "Tailscale-User-Login": "owner@example.com" },
+    headers: { Host: "node.example.ts.net", "Tailscale-User-Login": "owner@example.com" },
   });
   assert.equal(response.status, 403);
 });

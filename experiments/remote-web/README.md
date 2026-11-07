@@ -5,7 +5,11 @@ scrollback, key bar, reply box, and the agent transcript. It is a Control client
 — it never takes the Dashboard seat, resizes a PTY, or changes focus, so the
 desktop TUI can stay attached.
 
-Status: working over a private tailnet via `tailscale serve`. Slice 0 of
+Tailscale is optional. Without it the app is a loopback-only UI; with it,
+`tailscale serve` adds private HTTPS for a phone. Nothing in the code requires
+Tailscale, and no tailnet values are hard-coded.
+
+Status: working locally and over a private tailnet via `tailscale serve`. Slice 0 of
 [`plans/2026-11-06-mobile-remote-web.md`](../../plans/2026-11-06-mobile-remote-web.md),
 extended with read-only screen-window and transcript requests (protocol 72).
 
@@ -50,15 +54,19 @@ Open <http://127.0.0.1:8787>. It talks to the instance the CLI resolves
 (`OVRCR_HOME`, or the default config directory), so it **reads and writes your
 live sessions**. `Ctrl-C` stops it.
 
+No Tailscale, no environment file, no config: this is the whole local setup.
+`OVRCR_REMOTE_LOGIN` is only needed when a proxy is in front (below); without
+it, any request that does not carry a loopback `Host` is refused.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | Listen port |
 | `HOST` | `127.0.0.1` | Refused unless loopback, or `ALLOW_REMOTE=1` |
 | `OVRCR_BIN` | `ovrcr` | CLI to spawn |
 | `LIST_TTL_MS` | `5000` | Inventory cache; `terminal list` runs Git per workspace |
-| `OVRCR_REMOTE_LOGIN` | unset | Tailscale login allowed through Serve; unset refuses all non-loopback requests |
+| `OVRCR_REMOTE_LOGIN` | unset | Optional. Tailscale login allowed through Serve; unset refuses all non-loopback requests |
 
-## Reaching it from a phone (Tailscale)
+## Optional: reaching it from a phone (Tailscale)
 
 The app binds loopback; `tailscale serve` terminates TLS on the tailnet and
 proxies to it. Substitute your own node name and login.
@@ -121,6 +129,10 @@ the mapping with `tailscale serve reset`.
 
 Diagnose with `tailscale debug daemon-logs` on the Mac: it prints the dropped
 5-tuple and the reason.
+
+None of this is required to use the app. The login gate is inert until
+`OVRCR_REMOTE_LOGIN` is set; the Serve mapping and ACL live outside this repo
+and can be removed with `tailscale serve reset` without touching the app.
 
 ### Phone
 
