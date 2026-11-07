@@ -1074,7 +1074,8 @@ turning it off stops the child. `remote.port` and `remote.login` are passed to
 the child; changing either restarts it. The child runs outside the Server's
 threads, writes `remote.log` in the instance directory, and reports start,
 stop and failure lines as `remote` Events. It never takes the Dashboard seat or
-resizes a PTY.
+resizes a PTY. The page's **+** starts a session from a registered workspace and
+a detected agent; that is a Control `CreateSession`, not a Dashboard action.
 
 Enter edits with the palette's field kinds: a boolean saves the other value at
 once; `automatic_local_terminals` and a remembered launch open a pick list

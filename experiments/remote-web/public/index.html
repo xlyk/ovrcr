@@ -35,6 +35,7 @@
         <h1 id="title">OVRCR</h1>
         <p id="subtitle" class="subtitle"></p>
       </div>
+      <button id="new-session" class="icon" aria-label="New session" title="New session">+</button>
       <span id="conn" class="conn" aria-label="connection" title="connection">…</span>
     </header>
 
@@ -79,6 +80,41 @@
         <div id="actions" class="actions"></div>
       </section>
     </main>
+
+    <div id="new-sheet" class="sheet" hidden>
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="new-title">
+        <div class="sheet-head">
+          <h2 id="new-title">New session</h2>
+          <button id="new-close" class="icon" type="button" aria-label="Close">×</button>
+        </div>
+        <form id="new-form">
+          <label class="field">Project
+            <select id="new-project"></select>
+          </label>
+          <label class="field">Workspace
+            <select id="new-workspace"></select>
+          </label>
+          <p id="new-workspace-note" class="hint" hidden></p>
+          <label class="field">Agent
+            <select id="new-agent"></select>
+          </label>
+          <p id="new-agent-note" class="hint"></p>
+          <label class="field">Initial prompt <span class="optional">optional</span>
+            <textarea id="new-prompt" rows="3" maxlength="8000" placeholder="What should it do?"
+              autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false"></textarea>
+          </label>
+          <label class="field">Name <span class="optional">optional</span>
+            <input id="new-name" maxlength="200" placeholder="Generated from the workspace"
+              autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <p id="new-error" class="form-error" hidden></p>
+          <div class="sheet-actions">
+            <button type="button" id="new-cancel" class="secondary">Cancel</button>
+            <button type="submit" id="new-create" class="primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div id="toast" class="toast" hidden role="status"></div>
     <script type="module" src="/app.js"></script>

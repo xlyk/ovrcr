@@ -366,7 +366,9 @@ gateway that serves the phone UI. The PWA and fonts are embedded in the binary,
 and the gateway speaks the socket protocol directly: it owns no sessions and
 starts no Server. `--login`, or `OVRCR_REMOTE_LOGIN`, names the Tailscale login
 accepted when the request `Host` is not loopback; without it only loopback
-requests are served. `ovrcr remote status [--port PORT]` probes the port.
+requests are served. `ovrcr remote status [--port PORT]` probes the port. The
+page can start a session in any registered workspace with any detected agent;
+the gateway resolves the agent and initial prompt, so the page never sends argv.
 
 `[remote]` in `dashboard.toml` holds `enabled` (consent, default false), `port`
 (1024 to 65535, default 8787) and `login` (a Tailscale login; empty keeps the

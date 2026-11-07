@@ -54,6 +54,18 @@ failure lines are Events under the `remote` component; the child writes
 
 `ovrcr remote status --port 8787` probes whether it is listening.
 
+## Starting a session
+
+Tap **+** on the session list. Pick a registered project and workspace, then one
+of the agents detected on the Server's `PATH` (or Shell). The optional initial
+prompt is passed at launch for Claude, Codex, Pi, Oh My Pi and Grok; other agents
+open without it and the sheet says so. The optional name is the session name;
+leave it empty to generate one from the workspace.
+
+The page sends only `{project, workspace, agent, prompt, name}` to
+`POST /api/session`. The gateway resolves the agent to argv and asks the Server
+to create the session; arbitrary commands are not accepted.
+
 ## Requirements
 
 - Node 22 (no npm dependencies).

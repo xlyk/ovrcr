@@ -34,7 +34,7 @@ mod unread;
 mod view_handshake;
 mod whichkey;
 
-pub use agents::detect_agents;
+pub use agents::{AgentEntry, AgentSource, apply_overrides, detect_agents, takes_task, with_task};
 pub(crate) use copy::CopySelection;
 pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard, run_dashboard_with_input_profile};

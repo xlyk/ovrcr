@@ -9,9 +9,11 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use ovrcr_protocol::client as protocol_client;
 use ovrcr_protocol::{
-    AgentActivity, ConversationReference, ErrorCode, ReadyObservation, Request, Response,
-    SessionId, SessionPhase, SessionRunId, SessionSummary,
+    AgentActivity, AgentOverride, ConversationReference, CreateSessionRequest, ErrorCode,
+    ReadyObservation, Registry, Request, Response, SessionId, SessionKind, SessionPhase,
+    SessionRunId, SessionSummary,
 };
+use ovrcr_tui::{AgentEntry, AgentSource};
 use serde_json::{Value, json};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -100,10 +102,16 @@ pub fn status(port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct Snapshot {
+    registry: Registry,
+    sessions: Vec<SessionSummary>,
+}
+
 struct Gateway {
     login: Option<String>,
     next_id: AtomicU64,
-    cache: Mutex<Option<(Instant, Vec<SessionSummary>)>>,
+    cache: Mutex<Option<(Instant, Snapshot)>>,
 }
 
 impl Gateway {
@@ -210,6 +218,9 @@ impl Gateway {
 
     fn post(&self, request: &http::Request) -> http::Response {
         let parts = segments(request.path());
+        if parts.len() == 2 && parts[0] == "api" && parts[1] == "session" {
+            return self.create_session(request);
+        }
         if parts.len() != 4 || parts[0] != "api" || parts[1] != "session" {
             return http::Response::error(404, "not found");
         }
@@ -325,32 +336,48 @@ impl Gateway {
     }
 
     fn api_state(&self) -> http::Response {
-        match self.sessions() {
-            Ok(sessions) => {
-                let values: Vec<Value> = sessions.iter().map(session_value).collect();
-                http::Response::json(200, &json!({ "sessions": values }))
+        match self.inventory(false) {
+            Ok(snapshot) => {
+                let values: Vec<Value> = snapshot.sessions.iter().map(session_value).collect();
+                http::Response::json(
+                    200,
+                    &json!({
+                        "sessions": values,
+                        "projects": projects_value(&snapshot.registry),
+                        "agents": self.agents_value(),
+                    }),
+                )
             }
             Err(response) => response,
         }
     }
 
-    fn sessions(&self) -> Result<Vec<SessionSummary>, http::Response> {
-        if let Some((at, sessions)) = &*self.cache.lock().unwrap() {
-            if at.elapsed() < CACHE_TTL {
-                return Ok(sessions.clone());
+    fn inventory(&self, fresh: bool) -> Result<Snapshot, http::Response> {
+        if !fresh {
+            if let Some((at, snapshot)) = &*self.cache.lock().unwrap() {
+                if at.elapsed() < CACHE_TTL {
+                    return Ok(snapshot.clone());
+                }
             }
         }
         match self.call(Request::Inspect)? {
-            Response::Inventory { sessions, .. } => {
-                let mut sessions = sessions;
+            Response::Inventory {
+                registry,
+                mut sessions,
+            } => {
                 // `terminal list` hides archived rows by default; match it.
                 sessions.retain(|session| !session.archived);
-                *self.cache.lock().unwrap() = Some((Instant::now(), sessions.clone()));
-                Ok(sessions)
+                let snapshot = Snapshot { registry, sessions };
+                *self.cache.lock().unwrap() = Some((Instant::now(), snapshot.clone()));
+                Ok(snapshot)
             }
             Response::Error { code, message } => Err(error_response(code, message)),
             _ => Err(http::Response::error(502, "unexpected inventory response")),
         }
+    }
+
+    fn sessions(&self) -> Result<Vec<SessionSummary>, http::Response> {
+        self.inventory(false).map(|snapshot| snapshot.sessions)
     }
 
     fn session_run(&self, id: SessionId) -> Result<SessionRunId, http::Response> {
@@ -359,6 +386,121 @@ impl Gateway {
             .find(|session| session.id == id)
             .map(|session| session.run)
             .ok_or_else(|| http::Response::error(404, "session not found"))
+    }
+
+    fn agents_value(&self) -> Vec<Value> {
+        self.agent_entries()
+            .into_iter()
+            .filter(|entry| entry.source != AgentSource::Custom)
+            .map(|entry| {
+                let shell = entry.source == AgentSource::Shell;
+                json!({
+                    "name": entry.name,
+                    "label": agent_label(&entry.name),
+                    "takes_task": !shell && ovrcr_tui::takes_task(&entry.name),
+                    "kind": if shell { "terminal" } else { "agent" },
+                })
+            })
+            .collect()
+    }
+
+    fn agent_entries(&self) -> Vec<AgentEntry> {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let shell = std::env::var_os("SHELL");
+        let launcher = std::env::current_exe().ok();
+        let entries = ovrcr_tui::detect_agents(&path, shell.as_deref(), launcher.as_deref());
+        ovrcr_tui::apply_overrides(entries, &self.agent_overrides())
+    }
+
+    fn agent_overrides(&self) -> Vec<AgentOverride> {
+        let Ok(paths) = ServerPaths::resolve() else {
+            return Vec::new();
+        };
+        let Some(home) = paths.socket.parent() else {
+            return Vec::new();
+        };
+        ovrcr_runtime::settings::load(home).settings.agents
+    }
+
+    fn create_session(&self, request: &http::Request) -> http::Response {
+        let body = match json_object(&request.body) {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+        let project = match required_string(&body, "project", 200) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        let workspace = match required_string(&body, "workspace", 200) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        let agent = match required_string(&body, "agent", 200) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        let prompt = match optional_string(&body, "prompt", MAX_PROMPT) {
+            Ok(value) => value.unwrap_or_default(),
+            Err(response) => return response,
+        };
+        let name = match optional_string(&body, "name", 200) {
+            Ok(value) => value.unwrap_or_default(),
+            Err(response) => return response,
+        };
+
+        // Creation reads the registry fresh so a just-created workspace is visible.
+        let snapshot = match self.inventory(true) {
+            Ok(snapshot) => snapshot,
+            Err(response) => return response,
+        };
+        let Some(project_record) = snapshot
+            .registry
+            .projects
+            .iter()
+            .find(|candidate| candidate.name == project)
+        else {
+            return http::Response::error(404, "project not found");
+        };
+        let Some(workspace_record) = project_record
+            .workspaces
+            .iter()
+            .find(|candidate| candidate.id == workspace)
+        else {
+            return http::Response::error(404, "workspace not found");
+        };
+        if workspace_record.setup_pending {
+            return http::Response::error(409, "workspace is still setting up");
+        }
+
+        let entries = self.agent_entries();
+        let Some(entry) = entries.into_iter().find(|entry| entry.name == agent) else {
+            return http::Response::error(400, "agent is not available");
+        };
+        if entry.source == AgentSource::Custom || entry.argv.is_empty() {
+            return http::Response::error(400, "agent is not available");
+        }
+        let (kind, argv, label) = launch_for(entry, &prompt);
+
+        let request = CreateSessionRequest {
+            project: project_record.name.clone(),
+            workspace: workspace_record.id.clone(),
+            name: name.trim().to_owned(),
+            label,
+            argv,
+            kind,
+        };
+        match self.call(Request::CreateSession(request)) {
+            Ok(Response::CreatedSession(session)) => {
+                *self.cache.lock().unwrap() = None;
+                http::Response::json(
+                    200,
+                    &json!({ "ok": true, "session": session_value(&session) }),
+                )
+            }
+            Ok(Response::Error { code, message }) => error_response(code, message),
+            Ok(_) => http::Response::error(502, "unexpected create-session response"),
+            Err(response) => response,
+        }
     }
 
     fn call(&self, request: Request) -> Result<Response, http::Response> {
@@ -372,6 +514,117 @@ impl Gateway {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         protocol_client::request(&mut stream, id, request)
             .map_err(|error| http::Response::error(502, &format!("{error:#}")))
+    }
+}
+
+const MAX_PROMPT: usize = 8_000;
+
+fn json_object(body: &[u8]) -> Result<serde_json::Map<String, Value>, http::Response> {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err(http::Response::error(
+            400,
+            "request body must be a JSON object",
+        )),
+        Err(_) => Err(http::Response::error(400, "request body is not valid JSON")),
+    }
+}
+
+fn required_string(
+    body: &serde_json::Map<String, Value>,
+    field: &str,
+    max: usize,
+) -> Result<String, http::Response> {
+    match body.get(field) {
+        Some(Value::String(value)) if !value.trim().is_empty() && value.len() <= max => {
+            Ok(value.trim().to_owned())
+        }
+        Some(Value::String(_)) => Err(http::Response::error(
+            400,
+            &format!("{field} is empty or too long"),
+        )),
+        Some(_) => Err(http::Response::error(
+            400,
+            &format!("{field} must be a string"),
+        )),
+        None => Err(http::Response::error(400, &format!("{field} is required"))),
+    }
+}
+
+fn optional_string(
+    body: &serde_json::Map<String, Value>,
+    field: &str,
+    max: usize,
+) -> Result<Option<String>, http::Response> {
+    match body.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if value.len() <= max => Ok(Some(value.clone())),
+        Some(Value::String(_)) => Err(http::Response::error(400, &format!("{field} is too long"))),
+        Some(_) => Err(http::Response::error(
+            400,
+            &format!("{field} must be a string"),
+        )),
+    }
+}
+
+fn projects_value(registry: &Registry) -> Vec<Value> {
+    registry
+        .projects
+        .iter()
+        .map(|project| {
+            let workspaces: Vec<Value> = project
+                .workspaces
+                .iter()
+                .map(|workspace| {
+                    json!({
+                        "id": workspace.id,
+                        "branch": workspace.branch,
+                        "path": workspace.path,
+                        "root": workspace.path == project.repo,
+                        "setup_pending": workspace.setup_pending,
+                    })
+                })
+                .collect();
+            json!({
+                "name": project.name,
+                "repo": project.repo,
+                "workspace_root": project.workspace_root,
+                "workspaces": workspaces,
+            })
+        })
+        .collect()
+}
+
+fn launch_for(
+    entry: AgentEntry,
+    prompt: &str,
+) -> (SessionKind, Vec<std::ffi::OsString>, Option<String>) {
+    let shell = entry.source == AgentSource::Shell;
+    let kind = if shell {
+        SessionKind::Terminal
+    } else {
+        SessionKind::Agent {
+            name: entry.name.clone(),
+        }
+    };
+    let label = (!shell).then(|| agent_label(&entry.name));
+    let argv = ovrcr_tui::with_task(&entry.name, entry.argv, prompt.trim());
+    (kind, argv, label)
+}
+
+fn agent_label(name: &str) -> String {
+    match name {
+        "omp" => "Oh My Pi".into(),
+        "pi" => "Pi".into(),
+        "cursor-agent" => "Cursor Agent".into(),
+        "shell" => "Shell".into(),
+        other => {
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        }
     }
 }
 
@@ -554,6 +807,77 @@ mod tests {
             "node.example.ts.net",
             Some("owner@example.com")
         )));
+    }
+
+    fn agent_entry(name: &str, argv: &[&str], source: AgentSource) -> AgentEntry {
+        AgentEntry {
+            name: name.into(),
+            argv: argv.iter().map(std::ffi::OsString::from).collect(),
+            source,
+        }
+    }
+
+    #[test]
+    fn launch_kind_and_prompt_follow_the_agent() {
+        let (kind, argv, label) = launch_for(
+            agent_entry("shell", &["/bin/zsh"], AgentSource::Shell),
+            "echo hi",
+        );
+        assert_eq!(kind, SessionKind::Terminal);
+        assert_eq!(label, None);
+        assert_eq!(argv, vec![std::ffi::OsString::from("/bin/zsh")]);
+
+        let (kind, argv, label) = launch_for(
+            agent_entry("omp", &["omp"], AgentSource::Detected),
+            " fix the test ",
+        );
+        assert_eq!(kind, SessionKind::Agent { name: "omp".into() });
+        assert_eq!(label.as_deref(), Some("Oh My Pi"));
+        assert_eq!(
+            argv,
+            vec![
+                std::ffi::OsString::from("omp"),
+                std::ffi::OsString::from("--"),
+                std::ffi::OsString::from("fix the test")
+            ]
+        );
+
+        let (kind, argv, _) = launch_for(
+            agent_entry("hermes", &["hermes"], AgentSource::Detected),
+            "hello",
+        );
+        assert_eq!(
+            kind,
+            SessionKind::Agent {
+                name: "hermes".into()
+            }
+        );
+        assert_eq!(argv, vec![std::ffi::OsString::from("hermes")]);
+    }
+
+    #[test]
+    fn agent_labels_are_readable() {
+        assert_eq!(agent_label("omp"), "Oh My Pi");
+        assert_eq!(agent_label("cursor-agent"), "Cursor Agent");
+        assert_eq!(agent_label("claude"), "Claude");
+        assert_eq!(agent_label("shell"), "Shell");
+    }
+
+    #[test]
+    fn create_fields_are_bounded_and_typed() {
+        let mut body = serde_json::Map::new();
+        body.insert("project".into(), Value::String(" p ".into()));
+        assert_eq!(
+            required_string(&body, "project", 10).ok().as_deref(),
+            Some("p")
+        );
+        assert!(required_string(&body, "missing", 10).is_err());
+        body.insert("agent".into(), Value::String("x".repeat(11)));
+        assert!(required_string(&body, "agent", 10).is_err());
+        body.insert("name".into(), Value::Null);
+        assert!(optional_string(&body, "name", 10).ok().flatten().is_none());
+        body.insert("prompt".into(), Value::String("x".repeat(11)));
+        assert!(optional_string(&body, "prompt", 10).is_err());
     }
 
     #[test]

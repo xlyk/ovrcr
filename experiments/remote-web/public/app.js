@@ -40,6 +40,9 @@ const DEFAULT_BG = "#0b0d11";
 
 const state = {
   sessions: [],
+  projects: [],
+  agents: [],
+  newBusy: false,
   selectedId: null,
   view: "screen",
   window: null,
@@ -48,11 +51,13 @@ const state = {
   loadingOlder: false,
   lastOkAt: 0,
   listBusy: false,
+  listPromise: null,
   screenBusy: false,
   listTimer: null,
   screenTimer: null,
   toastTimer: null,
   pinned: true,
+  programmaticTop: null,
   scrollFrame: null,
 };
 
@@ -149,9 +154,17 @@ function titleOf(session) {
   return session.title || session.display_name || session.name || `session ${session.id}`;
 }
 
+function workspaceName(projectName, workspaceId) {
+  const workspace = projectRecord(projectName)?.workspaces?.find((item) => item.id === workspaceId);
+  return workspace?.branch || workspace?.path?.split("/").filter(Boolean).pop() || workspaceId;
+}
+
 function placeOf(session) {
-  const parts = [session.project, session.workspace].filter(Boolean);
-  if (parts.length) return parts.join(" / ");
+  if (session.project) {
+    const workspace = session.workspace ? workspaceName(session.project, session.workspace) : "";
+    return [session.project, workspace].filter(Boolean).join(" / ");
+  }
+  if (session.workspace) return workspaceName("", session.workspace);
   if (session.scope && session.scope.OperatorConversation) return "operator";
   return session.cwd || "";
 }
@@ -175,7 +188,8 @@ function detailLine(session) {
 }
 
 function providerLabel(session) {
-  return session.label || session.agent?.binding?.provider || "";
+  const kindAgent = session.kind?.Agent?.name;
+  return session.label || kindAgent || session.agent?.binding?.provider || "";
 }
 
 function hasTerminal(session) {
@@ -415,10 +429,14 @@ function renderTerminal() {
   }
 
   rows.style.height = `${window_.total_rows * ROW_PX}px`;
+  if (state.pinned) scrollToCursor();
   const top = screen.scrollTop;
   const height = screen.clientHeight || 640;
-  const first = Math.max(0, Math.floor(top / ROW_PX) - 2);
-  const last = Math.min(window_.total_rows, Math.ceil((top + height) / ROW_PX) + 2);
+  const all = window_.total_rows <= 128;
+  const first = all ? 0 : Math.max(0, Math.floor(top / ROW_PX) - 2);
+  const last = all
+    ? window_.total_rows
+    : Math.min(window_.total_rows, Math.ceil((top + height) / ROW_PX) + 2);
 
   rows.replaceChildren();
   for (let row = first; row < last; row += 1) {
@@ -482,6 +500,35 @@ function renderSession() {
   else renderTranscript();
 }
 
+function scrollToCursor() {
+  const screen = $("screen");
+  const window_ = state.window;
+  if (!window_) return;
+  const cursorRow =
+    window_.cursor && !window_.cursor.hidden
+      ? window_.history_rows + window_.cursor.row
+      : window_.total_rows - 1;
+  const visible = screen.clientHeight || 640;
+  const bottom = cursorRow * ROW_PX + ROW_PX;
+  const maxTop = Math.max(0, screen.scrollHeight - visible);
+  screen.scrollTop = Math.min(maxTop, Math.max(0, bottom - visible + ROW_PX * 3));
+  state.programmaticTop = screen.scrollTop;
+}
+
+function atCursor() {
+  const window_ = state.window;
+  if (!window_) return true;
+  const screen = $("screen");
+  const cursorRow =
+    window_.cursor && !window_.cursor.hidden
+      ? window_.history_rows + window_.cursor.row
+      : window_.total_rows - 1;
+  const top = screen.scrollTop;
+  const visible = screen.clientHeight || 640;
+  const y = cursorRow * ROW_PX;
+  return y + ROW_PX > top && y < top + visible;
+}
+
 function tailCount(total) {
   const screen = $("screen");
   const visible = Math.ceil((screen.clientHeight || 640) / ROW_PX) + 4;
@@ -521,9 +568,16 @@ async function openScreen() {
     await fetchWindow(start, Math.min(count, total - start));
   }
   renderTerminal();
-  const screen = $("screen");
-  screen.scrollTop = screen.scrollHeight;
+  scrollToCursor();
   state.pinned = true;
+  // A fresh shell can paint its prompt after the first read; settle once.
+  const opened = state.selectedId;
+  setTimeout(() => {
+    if (state.selectedId !== opened) return;
+    state.pinned = true;
+    scrollToCursor();
+    renderTerminal();
+  }, 600);
 }
 
 async function refreshScreen() {
@@ -542,10 +596,7 @@ async function refreshScreen() {
   if (count <= 0) return;
   await fetchWindow(start, count);
   renderTerminal();
-  if (state.pinned) {
-    const screen = $("screen");
-    screen.scrollTop = screen.scrollHeight;
-  }
+  if (state.pinned) scrollToCursor();
 }
 
 async function ensureVisible() {
@@ -609,26 +660,33 @@ async function toggleView() {
     $("transcript-view").hidden = true;
     $("screen").hidden = false;
     renderTerminal();
-    if (state.pinned) {
-      const screen = $("screen");
-      screen.scrollTop = screen.scrollHeight;
-    }
+    if (state.pinned) scrollToCursor();
   }
   renderActions();
 }
 
-async function refreshList() {
-  if (state.listBusy) return;
+function refreshList() {
+  if (state.listPromise) return state.listPromise;
+  state.listPromise = refreshListOnce().finally(() => {
+    state.listPromise = null;
+  });
+  return state.listPromise;
+}
+
+async function refreshListOnce() {
   state.listBusy = true;
   try {
     const data = await api("/api/state");
     state.sessions = data.sessions || [];
+    state.projects = data.projects || [];
+    state.agents = data.agents || [];
     state.lastOkAt = Date.now();
     hideBanner();
     $("subtitle").textContent = `${state.sessions.length} session${
       state.sessions.length === 1 ? "" : "s"
     }`;
     renderList();
+    if (!$("new-sheet").hidden && !state.newBusy) syncNewForm();
     if (state.selectedId) {
       renderSessionHeader();
       renderMeta();
@@ -657,7 +715,9 @@ function syncPolling() {
 
   state.listTimer = setInterval(refreshList, LIST_POLL_MS);
   if (state.selectedId) {
-    state.screenTimer = setInterval(refreshScreen, SCREEN_POLL_MS);
+    state.screenTimer = setInterval(() => {
+    refreshScreen().catch((error) => showBanner(error.message));
+  }, SCREEN_POLL_MS);
   }
 }
 
@@ -681,11 +741,12 @@ async function select(id, { push = true } = {}) {
   $("list-view").hidden = true;
   $("session-view").hidden = false;
   $("back").hidden = false;
+  $("new-session").hidden = true;
   renderSession();
   syncPolling();
   await refreshList();
   if (hasTerminal(currentSession())) {
-    await openScreen();
+    await openScreen().catch((error) => showBanner(error.message));
   }
   renderSession();
 }
@@ -699,6 +760,7 @@ function back({ push = true } = {}) {
   $("session-view").hidden = true;
   $("list-view").hidden = false;
   $("back").hidden = true;
+  $("new-session").hidden = false;
   $("title").textContent = "OVRCR";
   $("subtitle").textContent = `${state.sessions.length} sessions`;
   syncPolling();
@@ -713,7 +775,7 @@ async function sendText(submit) {
     await post(`/api/session/${state.selectedId}/send`, { text, submit });
     toast(submit ? "sent" : "typed");
     if (submit) box.value = "";
-    setTimeout(refreshScreen, 250);
+    setTimeout(() => refreshScreen().catch((error) => showBanner(error.message)), 250);
   } catch (error) {
     showBanner(error.message);
   }
@@ -723,7 +785,7 @@ async function sendKey(key) {
   if (!state.selectedId) return;
   try {
     await post(`/api/session/${state.selectedId}/key`, { key });
-    setTimeout(refreshScreen, 200);
+    setTimeout(() => refreshScreen().catch((error) => showBanner(error.message)), 200);
   } catch (error) {
     showBanner(error.message);
   }
@@ -748,8 +810,209 @@ function route() {
   }
 }
 
+const NEW_PROJECT_KEY = "ovrcr.new.project";
+const NEW_WORKSPACE_KEY = "ovrcr.new.workspace";
+const NEW_AGENT_KEY = "ovrcr.new.agent";
+
+function remembered(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function remember(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable in private mode; the choice is only a default.
+  }
+}
+
+function projectRecord(name) {
+  return state.projects.find((item) => item.name === name) || null;
+}
+
+function workspaceRecord(projectName, id) {
+  return projectRecord(projectName)?.workspaces?.find((item) => item.id === id) || null;
+}
+
+function newOption(value, label, { disabled = false } = {}) {
+  const node = document.createElement("option");
+  node.value = value;
+  node.textContent = label;
+  node.disabled = disabled;
+  return node;
+}
+
+function chooseProject(preferred) {
+  const names = state.projects.map((item) => item.name);
+  if (preferred && names.includes(preferred)) return preferred;
+  const stored = remembered(NEW_PROJECT_KEY);
+  if (stored && names.includes(stored)) return stored;
+  return names[0] || "";
+}
+
+function chooseWorkspace(projectName, preferred) {
+  const project = projectRecord(projectName);
+  const rows = (project?.workspaces || []).filter((item) => !item.setup_pending);
+  if (preferred && rows.some((item) => item.id === preferred)) return preferred;
+  const stored = remembered(`${NEW_WORKSPACE_KEY}.${projectName}`);
+  if (stored && rows.some((item) => item.id === stored)) return stored;
+  return rows[0]?.id || "";
+}
+
+function chooseAgent(preferred) {
+  const names = state.agents.map((item) => item.name);
+  if (preferred && names.includes(preferred)) return preferred;
+  const stored = remembered(NEW_AGENT_KEY);
+  if (stored && names.includes(stored)) return stored;
+  for (const name of ["omp", "claude", "codex", "pi", "shell"]) {
+    if (names.includes(name)) return name;
+  }
+  return names[0] || "";
+}
+
+function fillWorkspaces(projectName, preferred) {
+  const select = $("new-workspace");
+  const note = $("new-workspace-note");
+  const rows = projectRecord(projectName)?.workspaces || [];
+  select.replaceChildren();
+  if (rows.length === 0) {
+    select.append(newOption("", "No workspaces", { disabled: true }));
+    note.textContent = "Create a workspace in OVRCR first.";
+    note.hidden = false;
+    return;
+  }
+  for (const workspace of rows) {
+    const label = workspace.branch || workspace.id;
+    const suffix = workspace.root ? " (root)" : workspace.setup_pending ? " · setting up…" : "";
+    select.append(newOption(workspace.id, `${label}${suffix}`, { disabled: workspace.setup_pending }));
+  }
+  select.value = chooseWorkspace(projectName, preferred);
+  const selected = workspaceRecord(projectName, select.value);
+  note.textContent = selected?.setup_pending ? "This workspace is still setting up." : "";
+  note.hidden = !selected?.setup_pending;
+}
+
+function syncAgentNote() {
+  const agent = state.agents.find((item) => item.name === $("new-agent").value);
+  const note = $("new-agent-note");
+  if (!agent) {
+    note.textContent = "";
+  } else if (agent.name === "shell") {
+    note.textContent = "Starts an empty shell; type commands after it opens.";
+  } else if (agent.takes_task) {
+    note.textContent = "The initial prompt is passed to the agent at launch.";
+  } else {
+    note.textContent = "This agent starts without the prompt; type it after it opens.";
+  }
+}
+
+function syncNewForm() {
+  const project = $("new-project");
+  const currentProject = project.value;
+  project.replaceChildren();
+  for (const item of state.projects) project.append(newOption(item.name, item.name));
+  project.value = chooseProject(currentProject);
+
+  fillWorkspaces(project.value, $("new-workspace").value);
+
+  const agent = $("new-agent");
+  const currentAgent = agent.value;
+  agent.replaceChildren();
+  for (const item of state.agents) agent.append(newOption(item.name, item.label || item.name));
+  agent.value = chooseAgent(currentAgent);
+  syncAgentNote();
+  $("new-create").disabled = !state.projects.length || !state.agents.length;
+}
+
+async function openNew() {
+  if (!state.projects.length || !state.agents.length) {
+    try {
+      await refreshList();
+    } catch (error) {
+      showBanner(error.message);
+      return;
+    }
+  }
+  if (!state.projects.length) {
+    toast("No projects registered. Add one with ovrcr project add.");
+    return;
+  }
+  $("new-error").hidden = true;
+  $("new-prompt").value = "";
+  $("new-name").value = "";
+  syncNewForm();
+  $("new-sheet").hidden = false;
+  $("new-close").focus();
+}
+
+function closeNew() {
+  $("new-sheet").hidden = true;
+  $("new-error").hidden = true;
+  state.newBusy = false;
+  $("new-create").disabled = false;
+  $("new-session").focus();
+}
+
+async function createNew(event) {
+  event.preventDefault();
+  if (state.newBusy) return;
+  const project = $("new-project").value;
+  const workspace = $("new-workspace").value;
+  const agent = $("new-agent").value;
+  if (!project || !workspace || !agent) return;
+
+  state.newBusy = true;
+  $("new-create").disabled = true;
+  $("new-error").hidden = true;
+  try {
+    const data = await post("/api/session", {
+      project,
+      workspace,
+      agent,
+      prompt: $("new-prompt").value,
+      name: $("new-name").value.trim(),
+    });
+    remember(NEW_PROJECT_KEY, project);
+    remember(`${NEW_WORKSPACE_KEY}.${project}`, workspace);
+    remember(NEW_AGENT_KEY, agent);
+    closeNew();
+    await refreshList();
+    toast("session started");
+    if (data?.session?.id) await select(data.session.id);
+  } catch (error) {
+    $("new-error").textContent = error.message;
+    $("new-error").hidden = false;
+  } finally {
+    state.newBusy = false;
+    $("new-create").disabled = false;
+  }
+}
+
 function wire() {
   $("back").addEventListener("click", () => back());
+  $("new-session").addEventListener("click", () => {
+    openNew().catch((error) => showBanner(error.message));
+  });
+  $("new-close").addEventListener("click", closeNew);
+  $("new-cancel").addEventListener("click", closeNew);
+  $("new-form").addEventListener("submit", createNew);
+  $("new-project").addEventListener("change", () => {
+    fillWorkspaces($("new-project").value, "");
+  });
+  $("new-agent").addEventListener("change", syncAgentNote);
+  $("new-sheet").addEventListener("click", (event) => {
+    if (event.target === $("new-sheet")) closeNew();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("new-sheet").hidden) {
+      event.preventDefault();
+      closeNew();
+    }
+  });
   $("banner-dismiss").addEventListener("click", hideBanner);
   $("composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -772,7 +1035,14 @@ function wire() {
   });
   $("screen").addEventListener("scroll", () => {
     const screen = $("screen");
-    state.pinned = screen.scrollHeight - screen.scrollTop - screen.clientHeight < ROW_PX * 2;
+    if (
+      state.programmaticTop !== null &&
+      Math.abs(screen.scrollTop - state.programmaticTop) < 2
+    ) {
+      state.programmaticTop = null;
+      return;
+    }
+    state.pinned = atCursor();
     if (state.scrollFrame) return;
     state.scrollFrame = requestAnimationFrame(() => {
       state.scrollFrame = null;
