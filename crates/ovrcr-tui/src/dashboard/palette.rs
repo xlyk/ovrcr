@@ -8877,6 +8877,10 @@ impl Dashboard {
             && let Some(end) = text[start..].find("): ")
         {
             text.replace_range(start..start + end + 3, "");
+            // Git progress can otherwise push the actual refusal out of the form.
+            if let Some(fatal) = text[start..].find("\nfatal: ") {
+                text.replace_range(start..start + fatal + 1, "");
+            }
         }
         text = text.replace("fatal: ", "");
         // The Server advises CLI commands and --force; the Dashboard has neither.
@@ -16182,6 +16186,43 @@ mod creation_form_visual_tests {
         for hint in ["Enter accept", "Esc close picker", "Tab fields"] {
             assert!(visible.contains(hint), "missing {hint}:\n{visible}");
         }
+    }
+
+    #[test]
+    fn branch_refusal_shows_git_cause_instead_of_worktree_progress() {
+        let mut dashboard = branch_dashboard();
+        dashboard.install_area(Rect::new(0, 0, 60, 18));
+        dashboard
+            .palette
+            .as_mut()
+            .unwrap()
+            .suggestions
+            .cache
+            .insert(
+                "consigint".into(),
+                Ok(super::super::git_hints::Hints {
+                    branches: vec!["main".into()],
+                    base: "main".into(),
+                }),
+            );
+        dashboard.palette_paste("feature/child-kept");
+        dashboard.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let request_id = dashboard.palette.as_ref().unwrap().pending.unwrap();
+        dashboard.palette_response(
+            request_id,
+            &Response::Error {
+                code: crate::protocol::ErrorCode::Conflict,
+                message: "git command failed (exit status: 255): Preparing worktree (new branch 'feature/child-kept')\nfatal: a branch named 'feature/child-kept' already exists".into(),
+            },
+        );
+        let buffer = render(&dashboard, 60, 18);
+        let visible = (0..18)
+            .map(|y| row(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains("already exists"), "{visible}");
+        assert!(!visible.contains("Preparing worktree"), "{visible}");
+        assert!(visible.contains("Esc cancel"), "{visible}");
     }
 
     #[test]
