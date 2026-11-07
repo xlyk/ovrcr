@@ -38,10 +38,18 @@ Blocked by macOS TCC: System Events automation failed/hung and
 - `cargo test -p ovrcr-tui --lib` (409) covers the settings editor's group order
   and consent-row wording.
 
+## TUI toggle
+
+A second disposable instance started with `[remote] port = 8795, enabled = false`.
+From Browse: `:`, `remote`, Return opened Settings on `remote.enabled`; Return
+toggled it. The screen text shows `off → on → off`; the document changed
+`enabled = false → true → false`; a loopback `GET /api/state` on 8795 answered
+200 while on and refused once off. Evidence: `toggle-on.txt`/`.raw` and
+`toggle-off.txt`/`.raw`; the selecting frame is `settings-selected.txt`.
+
 ## Gap
 
-The TUI toggle's effect was not driven through this capture; the TUI navigation
-reached the rows but repeated toggle attempts were unstable. The effect is
-proven through the same `SetSetting` request in `tests/remote_web.rs`, not by
-this screen capture. Pixel/contrast/clipping evidence remains unavailable until
-the TCC permissions are granted.
+Pixel, contrast, clipping and accessibility-tree evidence remains unavailable
+because of the TCC block in `blocked.md`; the terminal captures prove the rows
+and the state changes but cannot judge rendering. Native CUA should be rerun
+after Accessibility and Screen Recording are granted.
