@@ -153,8 +153,10 @@ view closes at once, the terminal panes return and the footer reads
 and press `Ctrl-g` again. Click another application, then click a running
 terminal pane once: the footer must stay BROWSE; a second click focuses the pane
 for typing.
-Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
-On Start, choose Terminal. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
+Press Space then `w` then `t`; confirm the key popup closes and the terminal form opens
+with `Start: Terminal`. Confirm Workspace shows the selected `consigint / gui-consigint-auth-handoff`,
+Name is optional and blank, and Command is optional. Submit with both blank.
+Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
 printf 'CUA_%s\n' N_SHELL_OK
@@ -162,17 +164,20 @@ printf 'CUA_%s\n' N_SHELL_OK
 
 Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
 
-Return to browse with `Ctrl-g`, press `w`. Confirm there is no Name field and
-the form opens on an empty Task above Project. Branch starts as `feature/`. Press
-Enter before typing: nothing is created, the focus moves to Branch, `Add a name
-after feature/` shows under it, and the footer lists only keys that work there (`Ctrl-u clear · Tab/Shift-Tab fields
-· Enter create · Esc cancel`). Type
-`cua-workspace` so Branch reads `feature/cua-workspace`. Base shows the
-repository's default branch once suggestions finish loading. Tab to Start and
-press Up or Down until the title reads `Start: Terminal`; the value changes
-without Tab or Enter. Press Enter there: Enter submits from any field. Confirm a
-single new terminal is selected
-in terminal mode under `feature/cua-workspace`. Paste and execute:
+Return to browse with `Ctrl-g`, press `w`. Confirm the Create branch form shows
+Project, an empty Branch name, and collapsed Workspace options. Expand Workspace
+options and confirm Base appears. Type `feature/cua-workspace` as the Branch
+name and wait for Base detection to finish. Submit; confirm the branch is created
+without starting an Agent from this form and the workspace is selected in Browse.
+Then press `n`, confirm the registered branch is selected in New agent session,
+and press Enter to open the Branch choices. Verify the dialog and field rows
+stay in the same positions at 80×24 and the supported 60×18 floor; the bounded
+menu is anchored to Branch and may temporarily cover nearby fields. Check that
+its highlighted option is visible and clickable, and that the form's Start and
+Cancel controls stay in the footer. Click another visible picker field once to
+switch the anchored menu, then click outside the menu and confirm it closes
+without sending input to the terminal. Reopen Branch, press Escape once to
+close only the menu, and again to cancel without starting a provider session.
 
 ```sh
 printf 'CUA_%s\n' W_SHELL_OK
@@ -188,8 +193,8 @@ Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_root
 
 For the first run, start a second Dashboard with its own empty `OVRCR_HOME` and
 `OVRCR_SOCKET` in a fixture shell, as `nested-ladder.sh` does. Confirm the
-welcome card shows `1  a  Register a repository`, `2  w  Start an agent in a new
-workspace` and `Space actions · : commands · ? keys`, and no Home or Socket
+welcome card shows `1  a  Register a repository`, `2  w  Create a branch` and
+`Space actions · : commands · ? keys`, and no Home or Socket
 path. Press `Space v e` and confirm `Home:` and `Socket:` head the Events list
 and name that fixture's directories. Escape, register a disposable repository
 with `a`, and confirm the pane then shows its project card leading with
@@ -199,10 +204,13 @@ with `a`, and confirm the pane then shows its project card leading with
 
 In the disposable fixture, also verify:
 
-1. Create a workspace with Nothing yet from Branch only (no Name field); confirm it is selected and has no sessions,
-   and that its card says `No sessions yet` and offers `n new agent or terminal here`.
-2. Create a workspace with Terminal and a custom command that prints a unique
-   marker and waits for input. Confirm exactly one session and its actual output.
+1. Create a branch from the standalone Branch form; confirm the new checkout is
+   selected and has no sessions, and that its card says `No sessions yet` and
+   offers `n new agent session here`; use `Space w t` for a terminal.
+2. Open **New terminal** with `Space w t`, choose a custom command that prints
+   a unique marker and waits for input, then confirm exactly one terminal and
+   its actual output. Confirm the named action starts at Terminal without an
+   Agent choice.
 3. In that session emit `printf '\033]2;CUA title 界\007'` followed by a unique
    output marker; confirm the output appears but sidebar and pane titles keep
    the original session name. Repeat with OSC 0 and a different title.
@@ -231,33 +239,33 @@ In the disposable fixture, also verify:
 10. Select consigint's root workspace (`main` with the root marker). From there,
     `w` then `X` must be unavailable (`repository-root workspace cannot be
     removed`). In its `local` shell, run `git checkout -b cua-root-drift`.
-    Confirm the root warning, that `n` is unavailable (`root workspace is not on
-    the default branch`), and that the existing shell still accepts a unique
-    printf. Repeat the removal check while drifted. Restore with
-    `git checkout main`, confirm `n` is available again, and leave
+    Confirm the root warning and that `Space`, `w`, `t` leaves the New terminal
+    action disabled with `root workspace is not on the default branch`; the
+    existing shell must still accept a unique printf. Press `n`: New agent
+    session remains available so another registered branch can be chosen. Repeat
+    the removal check while drifted. Restore with `git checkout main` and leave
     the root on `main`.
-11. Press `w`, keep Branch mode `new` and name an existing branch (for example
-    `feature/cua-workspace` again). Confirm the form returns with the typed values
-    and `Couldn't create the workspace: a branch named … already exists`, with no
-    error code, internal id, or failed sidebar row. Escape.
+11. Press `w`, enter an existing branch name (for example
+    `feature/cua-workspace` again), and submit. Confirm the branch-only form
+    keeps the values and shows `That branch already exists in this repository`,
+    with no error code, internal id, or failed sidebar row. Escape.
 12. Remove a disposable workspace that has a running shell. Confirm the
     confirmation names the session by title and offers to stop it; confirm, then
     verify the shell's process group is gone and the workspace row disappears.
     No Force dialog appears at any point.
-13. New task in one step, without a paid agent: add a disposable preset named
-    `claude` whose argv prints its arguments and then waits, for example
-    `["/bin/sh", "-c", "printf 'CUA_ARGS[%s]' \"$@\"; echo; exec /bin/sh", "fake"]`,
-    and select it as the project's agent. Press `w` and type
-    `CUA task one` into Task. Confirm Branch follows as `feature/cua-task-one`
-    and the footer reads `Names the branch and session; claude gets it as its
-    first message`. Edit Branch, then edit Task again: Branch keeps your edit.
-    Press Enter. Confirm one new session titled `CUA task one` and the output
-    line `CUA_ARGS[--]CUA_ARGS[CUA task one]`. Do not Reopen it: Reopen of an
-    Agent named `claude` types the installed `claude --resume` (that the task is
-    never resent is covered by `retained_sessions`). Confirm the settings file's
-    `launch_choices` entry names only `claude`, never the task. Repeat with
-    `n` and a preset named `hermes`: the footer reads `Only names the session;
-    hermes starts without it` and the output shows no task.
+13. Verify the branch-to-agent prompt path without a paid provider. Use an
+    isolated Dashboard fixture whose PATH contains an owned `claude` stand-in;
+    it must answer only `claude auth status --json` with fixture data, print each
+    launch argument, then run a shell. Do not use an installed account or a
+    configured `agents` override. Press `n`, open **Branch**, choose **Create
+    new branch…**, and create `feature/cua-agent-prompt` with detected Base.
+    Confirm the parent form returns with that registered branch selected and
+    focus on Agent harness. Tab to Initial prompt and enter
+    `--help me fix the build`; submit with Alt-Enter. Confirm the stand-in
+    receives exactly one native argument `--help me fix the build`, immediately
+    after `--`, and that the prompt is not the session name or remembered launch
+    choice. Reopen/recovery must not replay the prompt; retained-session tests
+    cover that behavior.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm

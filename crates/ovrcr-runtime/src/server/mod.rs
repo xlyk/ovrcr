@@ -1,3 +1,4 @@
+mod agent_models;
 pub(crate) mod delegation;
 mod delegation_coding;
 mod delegation_fallback;
@@ -17,9 +18,9 @@ use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
-    PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage, SessionKind,
-    SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame, read_preamble, write_frame,
-    write_preamble,
+    InitialPromptIntentId, PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent,
+    ServerMessage, SessionKind, SessionRunId, WorkspaceCreation, WorkspaceSummary, read_frame,
+    read_preamble, write_frame, write_preamble,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
@@ -93,6 +94,18 @@ impl std::fmt::Display for LifecycleFailure {
 }
 
 impl std::error::Error for LifecycleFailure {}
+
+/// Transient options shared by the single managed-session spawn path.
+/// Prompt text and its one-use identity travel together only until spawn.
+#[derive(Default)]
+struct SessionSpawnOptions {
+    ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    restore_command: Option<String>,
+    prepared: bool,
+    initial_prompt: Option<String>,
+    initial_prompt_intent: Option<InitialPromptIntentId>,
+    verify_agent_workspace: bool,
+}
 
 fn lifecycle_error(code: ErrorCode, message: impl Into<String>) -> anyhow::Error {
     lifecycle_error_with_hierarchy(code, message, false)
@@ -256,6 +269,7 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
+    pub(super) agent_model_catalog: agent_models::CatalogQueue,
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
     quota_refresh: Mutex<quota::Refresh>,
     settings: Mutex<watch::Watched>,
@@ -843,7 +857,90 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, None, None)
+        self.create_session_locked(request, None, SessionSpawnOptions::default())
+    }
+
+    pub fn create_agent_session(
+        &self,
+        request: ovrcr_protocol::CreateAgentSessionRequest,
+    ) -> Result<SessionSummary> {
+        let request = agent_models::prepare_session(self, request)
+            .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.create_session_locked(
+            request,
+            None,
+            SessionSpawnOptions {
+                verify_agent_workspace: true,
+                ..SessionSpawnOptions::default()
+            },
+        )
+    }
+
+    pub fn create_agent_session_with_prompt(
+        &self,
+        request: ovrcr_protocol::InitialPromptLaunchRequest,
+    ) -> Result<SessionSummary> {
+        request.validate().map_err(|message| {
+            crate::session::NoProcessStarted::context(anyhow::anyhow!(message))
+        })?;
+        let intent = request.intent.clone();
+        let prompt = request.prompt;
+        let has_prompt = !prompt.trim().is_empty();
+        let session = if has_prompt {
+            agent_models::prepare_initial_prompt_session(self, request.launch)
+        } else {
+            agent_models::prepare_session(self, request.launch)
+                .map_err(|error| anyhow::anyhow!(error))
+        }
+        .map_err(crate::session::NoProcessStarted::context)?;
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()
+            .map_err(crate::session::NoProcessStarted::context)?;
+        self.create_session_locked(
+            session,
+            None,
+            SessionSpawnOptions {
+                initial_prompt: has_prompt.then_some(prompt),
+                initial_prompt_intent: Some(intent),
+                verify_agent_workspace: true,
+                ..SessionSpawnOptions::default()
+            },
+        )
+    }
+
+    /// Remember a Dashboard agent choice only after the launch succeeds. The
+    /// existing settings writer remains the sole persistence owner.
+    pub(super) fn remember_initial_prompt_launch(
+        &self,
+        launch: &ovrcr_protocol::CreateAgentSessionRequest,
+    ) {
+        let Some(preset) = launch.session.label.as_deref() else {
+            return;
+        };
+        let mut entry = toml_edit::InlineTable::new();
+        entry.insert("kind", "Agent".into());
+        entry.insert("preset", preset.into());
+        match &launch.model_policy {
+            ovrcr_protocol::AgentModelPolicy::HarnessDefault => {
+                entry.insert("model_policy", "HarnessDefault".into());
+            }
+            ovrcr_protocol::AgentModelPolicy::Explicit(model) => {
+                let mut explicit = toml_edit::InlineTable::new();
+                explicit.insert("Explicit", model.as_str().into());
+                entry.insert("model_policy", toml_edit::Value::InlineTable(explicit));
+            }
+        }
+        let path = format!(
+            "launch_choices.{}",
+            toml_edit::Key::new(&launch.session.project)
+        );
+        let value = entry.to_string();
+        if self.set_setting(&path, Some(&value)).is_err() {
+            // Settings failure does not change the already accepted launch.
+            eprintln!("could not remember launch choice after accepted Agent start");
+        }
     }
 
     #[cfg(test)]
@@ -854,16 +951,24 @@ impl ServerState {
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.create_session_locked(request, Some(ready), None)
+        self.create_session_locked(
+            request,
+            None,
+            SessionSpawnOptions {
+                ready: Some(ready),
+                ..SessionSpawnOptions::default()
+            },
+        )
     }
 
     /// Admission stays locked from the live-slot check through durable intent and publication.
     fn create_session_locked(
         &self,
-        mut request: ovrcr_protocol::CreateSessionRequest,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        request: ovrcr_protocol::CreateSessionRequest,
         assignment: Option<&str>,
+        spawn: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
+        let mut request = request;
         // Every error in this preflight precedes the sole native spawn call.
         let record = (|| -> Result<_> {
             if request.argv.is_empty() {
@@ -885,6 +990,32 @@ impl ServerState {
                     ErrorCode::NotFound,
                     "working directory is unavailable",
                 ));
+            }
+            if spawn.verify_agent_workspace && matches!(request.kind, SessionKind::Agent { .. }) {
+                if workspace_record.setup_pending {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "workspace setup is still pending",
+                    ));
+                }
+                let Some(expected) = workspace_record.git_identity.as_deref() else {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree identity is missing; refresh the workspace",
+                    ));
+                };
+                let actual = git::worktree_identity(&cwd).map_err(|error| {
+                    lifecycle_error(
+                        ErrorCode::Conflict,
+                        format!("could not verify the registered Git worktree: {error:#}"),
+                    )
+                })?;
+                if actual != expected {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "registered Git worktree changed; refresh the workspace",
+                    ));
+                }
             }
             let display =
                 git::checkout_name(&cwd).unwrap_or_else(|_| git::UNAVAILABLE_CHECKOUT.to_owned());
@@ -945,8 +1076,7 @@ impl ServerState {
             Ok(record)
         })()
         .map_err(crate::session::NoProcessStarted::context)?;
-        let error = match self.spawn_record_locked(record.id, record.run, request.argv, ready, None)
-        {
+        let error = match self.spawn_record_locked(record.id, record.run, request.argv, spawn) {
             Ok(summary) => return Ok(summary),
             Err(error) => error,
         };
@@ -995,10 +1125,10 @@ impl ServerState {
         id: SessionId,
         expected_run: SessionRunId,
         argv: Vec<std::ffi::OsString>,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
-        restore_command: Option<String>,
+        mut options: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
-        self.spawn_prepared_record_locked(id, expected_run, argv, ready, restore_command, false)
+        options.prepared = false;
+        self.spawn_prepared_record_locked(id, expected_run, argv, options)
     }
 
     fn spawn_prepared_record_locked(
@@ -1006,9 +1136,7 @@ impl ServerState {
         id: SessionId,
         expected_run: SessionRunId,
         argv: Vec<std::ffi::OsString>,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
-        restore_command: Option<String>,
-        prepared: bool,
+        options: SessionSpawnOptions,
     ) -> Result<SessionSummary> {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
@@ -1031,7 +1159,7 @@ impl ServerState {
                 .as_ref()
                 .context("server event channel closed")?
                 .clone();
-            let record = if prepared {
+            let record = if options.prepared {
                 let retained = self.retained.lock();
                 let record = retained.get(id).context("prepared session missing")?;
                 if record.run != expected_run || record.stopped {
@@ -1041,6 +1169,15 @@ impl ServerState {
             } else {
                 self.retained.lock().begin_run(id, expected_run)?
             };
+            if let Some(intent) = options.initial_prompt_intent.as_ref() {
+                self.lifecycle.bind_prompt_intent(
+                    intent,
+                    id,
+                    record.run,
+                    &record.metadata.name,
+                    &record.metadata.label,
+                )?;
+            }
             if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
                 old.revoke_hook_capability();
             }
@@ -1052,7 +1189,7 @@ impl ServerState {
         let metadata = &record.metadata;
         let spec = SessionSpec {
             scope: metadata.scope,
-            restore_command,
+            restore_command: options.restore_command,
             run: record.run,
             kind: metadata.kind.clone(),
             project: metadata.project.clone(),
@@ -1061,6 +1198,7 @@ impl ServerState {
             label: metadata.label.clone(),
             cwd: metadata.cwd.clone(),
             argv,
+            initial_prompt: options.initial_prompt,
             hook_env: Some(HookEnvironment {
                 socket,
                 session: id,
@@ -1083,7 +1221,7 @@ impl ServerState {
                 .lock()
                 .unwrap()
                 .insert(id, Arc::clone(session));
-            if let Some(ready) = ready.as_ref() {
+            if let Some(ready) = options.ready.as_ref() {
                 ready();
             }
         };
@@ -1503,7 +1641,15 @@ impl ServerState {
                 &self.server_lifetime,
             )?;
         }
-        let summary = self.spawn_record_locked(id, expected_run, vec![shell], None, staged)?;
+        let summary = self.spawn_record_locked(
+            id,
+            expected_run,
+            vec![shell],
+            SessionSpawnOptions {
+                restore_command: staged,
+                ..SessionSpawnOptions::default()
+            },
+        )?;
         if let Some(command) = input {
             let session = self
                 .sessions
@@ -1622,6 +1768,7 @@ impl ServerState {
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             retained: parking_lot::Mutex::new(retained),
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
@@ -1807,6 +1954,15 @@ impl ServerState {
     }
 
     pub fn request_shutdown(&self, kill: bool) -> Response {
+        let mut catalog_shutdown = match self.agent_model_catalog.try_shutdown() {
+            Ok(permit) => permit,
+            Err(error) => {
+                return error_response(
+                    ErrorCode::Conflict,
+                    format!("native model catalog cleanup is unresolved: {error}"),
+                );
+            }
+        };
         let admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
         if let Some(tasks) = &self.tasks
             && !kill
@@ -1905,6 +2061,7 @@ impl ServerState {
             }
         }
         self.stopping.store(true, Ordering::Release);
+        catalog_shutdown.close();
         if let Some(tasks) = &self.tasks {
             tasks.quiesce();
         }
@@ -2178,6 +2335,18 @@ impl ServerState {
         branch: BranchRequest,
         launch: Option<ovrcr_protocol::SessionLaunch>,
     ) -> Result<Option<SessionSummary>> {
+        if launch.as_ref().is_some_and(|launch| {
+            !matches!(
+                &launch.model_policy,
+                ovrcr_protocol::AgentModelPolicy::HarnessDefault
+            ) || launch.model_binding.is_some()
+                || launch.expected_model.is_some()
+        }) {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                "explicit model selection requires an already registered workspace",
+            ));
+        }
         self.create_workspace_inner(
             project,
             name,
@@ -2313,6 +2482,9 @@ impl ServerState {
                         argv: vec![shell],
                         label: None,
                         kind: SessionKind::Terminal,
+                        model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
                     },
                     "local".into(),
                 )
@@ -2331,8 +2503,8 @@ impl ServerState {
                 argv: launch.argv,
                 kind: launch.kind,
             },
-            None,
             assignment,
+            SessionSpawnOptions::default(),
         )
         .map(Some)
         .map_err(|error| {
@@ -2799,7 +2971,7 @@ impl ServerState {
                 kind: SessionKind::Terminal,
             },
             None,
-            None,
+            SessionSpawnOptions::default(),
         )
     }
 

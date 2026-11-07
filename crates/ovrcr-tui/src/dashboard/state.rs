@@ -28,6 +28,25 @@ use std::time::{Duration, Instant};
 
 const HISTORY_WHEEL_ROWS: i32 = 3;
 
+fn unknown_prompt_snapshot(
+    id: crate::protocol::InitialPromptIntentId,
+) -> crate::protocol::InitialPromptIntentSnapshot {
+    crate::protocol::InitialPromptIntentSnapshot {
+        id,
+        state: crate::protocol::InitialPromptIntentState::Unknown,
+        project: String::new(),
+        workspace: String::new(),
+        name: String::new(),
+        label: None,
+        session: None,
+        run: None,
+        recoverable_prompt: None,
+        recoverable_launch: None,
+        message: Some("Launch status is unknown. Check for the agent before trying again.".into()),
+        delivery: None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryBegin {
     pub request_id: u64,
@@ -684,6 +703,9 @@ impl Dashboard {
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
+            model_query: None,
+            #[cfg(test)]
+            model_agent_entries: None,
             whichkey: None,
             selected_container: None,
             configuration_paths: None,
@@ -701,6 +723,12 @@ impl Dashboard {
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
             input_requests: HashSet::new(),
+            pending_initial_prompt_allocation: None,
+            initial_prompt_intent: None,
+            initial_prompt_intent_id: None,
+            initial_prompt_focus_pending: None,
+            deferred_initial_prompt_recovery: None,
+            initial_prompt_reconcile_request: None,
         }
     }
 
@@ -1698,7 +1726,7 @@ impl Dashboard {
                 if owns_error {
                     self.error_owning_requests.insert(request_id);
                 }
-                Ok(Some(request))
+                Ok(Some(*request))
             }
             // Coalesced into the pending view, unchanged, or waiting out a refusal: readiness
             // and pane errors are the handshake's to keep.
@@ -1891,6 +1919,17 @@ impl Dashboard {
     }
 
     pub(crate) fn select_session(&mut self, id: SessionId) {
+        if self.initial_prompt_focus_pending.is_some() {
+            let matches_target = self.initial_prompt_intent.as_ref().is_some_and(|snapshot| {
+                snapshot.session == Some(id)
+                    && snapshot.run.is_some_and(|run| {
+                        find_session(self, id).is_some_and(|session| session.run == run)
+                    })
+            });
+            if !matches_target {
+                self.initial_prompt_focus_pending = None;
+            }
+        }
         self.operator.visible = false;
         self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
@@ -3831,6 +3870,118 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    fn initial_prompt_reconciliation_response(
+        &mut self,
+        request_id: u64,
+        response: &Response,
+    ) -> bool {
+        if self.initial_prompt_reconcile_request != Some(request_id) {
+            return false;
+        }
+        self.initial_prompt_reconcile_request = None;
+        match response {
+            Response::InitialPromptIntents(snapshots) => {
+                if let Some(current) = self.initial_prompt_intent_id.clone() {
+                    if let Some(snapshot) = snapshots.iter().find(|s| s.id == current) {
+                        self.install_initial_prompt_snapshot(snapshot.clone());
+                    } else {
+                        self.install_initial_prompt_snapshot(unknown_prompt_snapshot(current));
+                    }
+                } else {
+                    self.install_initial_prompt_snapshots(snapshots);
+                }
+                self.abandon_unbound_initial_prompt_allocation();
+            }
+            Response::Error { code, message } => self.set_server_error(code.clone(), message),
+            _ => self.set_error("Could not reconcile the previous agent start"),
+        }
+        true
+    }
+
+    pub(super) fn install_initial_prompt_snapshots(
+        &mut self,
+        snapshots: &[crate::protocol::InitialPromptIntentSnapshot],
+    ) {
+        let Some(snapshot) = snapshots.iter().max_by_key(|snapshot| snapshot.id.sequence) else {
+            return;
+        };
+        self.install_initial_prompt_snapshot(snapshot.clone());
+    }
+
+    pub(super) fn install_initial_prompt_snapshot(
+        &mut self,
+        snapshot: crate::protocol::InitialPromptIntentSnapshot,
+    ) {
+        if self
+            .initial_prompt_intent_id
+            .as_ref()
+            .is_some_and(|current| {
+                current.server_lifetime == snapshot.id.server_lifetime
+                    && current.sequence > snapshot.id.sequence
+            })
+            || self.initial_prompt_intent.as_ref().is_some_and(|current| {
+                current.id.server_lifetime == snapshot.id.server_lifetime
+                    && current.id.sequence > snapshot.id.sequence
+            })
+        {
+            return;
+        }
+        if self
+            .initial_prompt_focus_pending
+            .as_ref()
+            .is_some_and(|id| id.server_lifetime != snapshot.id.server_lifetime)
+        {
+            self.initial_prompt_focus_pending = None;
+        }
+        self.initial_prompt_intent_id = Some(snapshot.id.clone());
+        self.initial_prompt_intent = Some(snapshot.clone());
+        self.initial_prompt_snapshot_updated(&snapshot);
+    }
+
+    pub(super) fn attach_initial_prompt_session(&mut self) -> bool {
+        let Some(snapshot) = self.initial_prompt_intent.as_ref() else {
+            return false;
+        };
+        if snapshot.state != crate::protocol::InitialPromptIntentState::LaunchAccepted {
+            return false;
+        }
+        let (Some(session), Some(run)) = (snapshot.session, snapshot.run) else {
+            return false;
+        };
+        let id = snapshot.id.clone();
+        let focused = self.initial_prompt_focus_pending.as_ref() == Some(&id);
+        let Some(summary) = find_session(self, session)
+            .filter(|summary| summary.run == run)
+            .cloned()
+        else {
+            return false;
+        };
+
+        if let Some(token) = self
+            .lifecycle_pending
+            .as_ref()
+            .filter(|row| row.initial_prompt_intent.as_ref() == Some(&id))
+            .map(|row| row.token)
+        {
+            self.accept_lifecycle_job(token);
+        }
+        if self
+            .provisional
+            .as_ref()
+            .is_some_and(|row| row.initial_prompt_intent.as_ref() == Some(&id))
+        {
+            self.provisional = None;
+        }
+        self.lifecycle_strip = None;
+        if focused {
+            self.initial_prompt_focus_pending = None;
+            self.select_created_session(summary);
+        } else {
+            self.lifecycle_preference = None;
+        }
+        true
+    }
+
     pub(super) fn pause_request(&mut self, paused: bool) -> DashboardAction {
         let Some(session) = self.action_session().and_then(|id| find_session(self, id)) else {
             self.set_limit("No session selected");
@@ -3894,10 +4045,28 @@ impl Dashboard {
         {
             return self.drain_outbox();
         }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.initial_prompt_reconciliation_response(*request_id, response)
+        {
+            return self.drain_outbox();
+        }
         if let ServerMessage::Response { request_id, .. } = &message
             && self.ignored_responses.remove(request_id)
         {
+            self.pending_initial_prompt_allocation
+                .take_if(|pending| pending.request_id == *request_id);
             return Vec::new();
+        }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && self.initial_prompt_allocation_response(*request_id, response)
+        {
+            return self.drain_outbox();
         }
         if let ServerMessage::Response {
             request_id,
@@ -3950,6 +4119,12 @@ impl Dashboard {
                 | Response::NotificationNavigationConfirmed(_)
                 | Response::ITermFocusPrepared(_)
                 | Response::BridgeOwner(_) => {}
+                Response::InitialPromptIntent(id) => {
+                    self.initial_prompt_intent_id = Some(id);
+                }
+                Response::InitialPromptIntents(snapshots) => {
+                    self.install_initial_prompt_snapshots(&snapshots);
+                }
                 Response::QuotaCooldown { remaining_ms } => self.set_limit(format!(
                     "Quota refresh cooling down: {}s left",
                     remaining_ms.div_ceil(1_000)
@@ -3960,6 +4135,7 @@ impl Dashboard {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
                     }
+                    self.attach_initial_prompt_session();
                 }
                 Response::Screen {
                     session,
@@ -4175,18 +4351,32 @@ impl Dashboard {
                 | ServerEvent::NotificationNavigation(_)
                 | ServerEvent::ITermFocus(_) => {}
                 ServerEvent::OperatorChanged(id) => self.operator_changed(id),
+                ServerEvent::AgentModels {
+                    request_id,
+                    capabilities,
+                } => self.agent_models_event(request_id, capabilities),
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     for request in self.update_hierarchy(hierarchy) {
                         self.push_request(request);
                     }
                     self.try_attach_lifecycle_workspace_from_hierarchy();
+                    self.attach_initial_prompt_session();
                 }
                 ServerEvent::LifecycleCompleted {
                     client_token,
                     op,
                     outcome,
+                    target_workspace,
                 } => {
-                    self.on_lifecycle_completed(client_token, op, outcome);
+                    self.on_lifecycle_completed_with_target(
+                        client_token,
+                        op,
+                        outcome,
+                        target_workspace,
+                    );
+                }
+                ServerEvent::InitialPromptIntentChanged(snapshot) => {
+                    self.install_initial_prompt_snapshot(*snapshot);
                 }
                 ServerEvent::Output {
                     session,
@@ -4288,6 +4478,7 @@ impl Dashboard {
                         let _ = self.request_view_at(self.outer_area);
                     }
                     self.update_mode_for_selected_phase();
+                    self.attach_initial_prompt_session();
                 }
             },
         }
@@ -4420,7 +4611,10 @@ impl Dashboard {
         }
     }
 
-    fn update_hierarchy(&mut self, mut hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
+    pub(super) fn update_hierarchy(
+        &mut self,
+        mut hierarchy: HierarchySnapshot,
+    ) -> Vec<ClientMessage> {
         let focused_before = self.focused_session();
         let previous_live: Vec<_> = self
             .panes
@@ -5037,6 +5231,151 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    fn prompt_snapshot(
+        id: crate::protocol::InitialPromptIntentId,
+        session: u64,
+        run: u64,
+    ) -> crate::protocol::InitialPromptIntentSnapshot {
+        crate::protocol::InitialPromptIntentSnapshot {
+            id,
+            state: crate::protocol::InitialPromptIntentState::LaunchAccepted,
+            project: "demo".into(),
+            workspace: "root".into(),
+            name: "agent".into(),
+            label: Some("claude".into()),
+            session: Some(crate::session::SessionId(session)),
+            run: Some(SessionRunId(run)),
+            recoverable_prompt: None,
+            recoverable_launch: None,
+            message: None,
+            delivery: Some(crate::protocol::InitialPromptDelivery::Unknown),
+        }
+    }
+
+    fn intent_id(sequence: u64) -> crate::protocol::InitialPromptIntentId {
+        crate::protocol::InitialPromptIntentId {
+            server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+            sequence,
+        }
+    }
+
+    #[test]
+    fn prompt_focus_waits_for_exact_run_and_reconciliation_is_idempotent() {
+        let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+        let intent = intent_id(1);
+        dashboard.initial_prompt_intent_id = Some(intent.clone());
+        dashboard.initial_prompt_focus_pending = Some(intent.clone());
+        let mut mismatched = hierarchy_with_run(8, 1);
+        let mut stale_same_id = hierarchy_with_run(7, 3);
+        let other = mismatched.projects[0].workspaces[0].sessions.remove(0);
+        stale_same_id.projects[0].workspaces[0].sessions.push(other);
+        dashboard.hierarchy = stale_same_id;
+
+        let snapshot = prompt_snapshot(intent.clone(), 7, 2);
+        dashboard.install_initial_prompt_snapshot(snapshot.clone());
+        assert!(dashboard.initial_prompt_focus_pending.is_some());
+        assert_eq!(dashboard.focused_session(), None);
+
+        dashboard.hierarchy = hierarchy_with_run(7, 2);
+        let mut matching = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+        matching.kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        matching.label = "claude".into();
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0] = matching;
+        assert!(dashboard.attach_initial_prompt_session());
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(crate::session::SessionId(7))
+        );
+        assert!(dashboard.initial_prompt_focus_pending.is_none());
+
+        let second = hierarchy_with_run(8, 1).projects[0].workspaces[0].sessions[0].clone();
+        dashboard.hierarchy.projects[0].workspaces[0]
+            .sessions
+            .push(second);
+        dashboard.select_session(crate::session::SessionId(8));
+        dashboard.install_initial_prompt_snapshot(snapshot);
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(crate::session::SessionId(8))
+        );
+    }
+
+    #[test]
+    fn pending_or_unknown_bound_prompt_intents_never_focus_the_session() {
+        for intent_state in [
+            crate::protocol::InitialPromptIntentState::Pending,
+            crate::protocol::InitialPromptIntentState::Unknown,
+        ] {
+            let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+            let intent = intent_id(1);
+            dashboard.initial_prompt_intent_id = Some(intent.clone());
+            dashboard.initial_prompt_focus_pending = Some(intent.clone());
+            let mut hierarchy = hierarchy_with_run(7, 2);
+            let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+            session.kind = SessionKind::Agent {
+                name: "claude".into(),
+            };
+            session.label = "claude".into();
+            dashboard.hierarchy = hierarchy;
+
+            let mut snapshot = prompt_snapshot(intent, 7, 2);
+            snapshot.state = intent_state;
+            snapshot.delivery = None;
+            dashboard.install_initial_prompt_snapshot(snapshot);
+
+            assert!(!dashboard.attach_initial_prompt_session());
+            assert_eq!(dashboard.focused_session(), None);
+        }
+    }
+
+    #[test]
+    fn delayed_older_prompt_receipt_cannot_replace_newer_allocated_intent() {
+        let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+        let newer = intent_id(2);
+        dashboard.initial_prompt_intent_id = Some(newer.clone());
+
+        dashboard.install_initial_prompt_snapshot(prompt_snapshot(intent_id(1), 7, 2));
+
+        assert_eq!(dashboard.initial_prompt_intent_id.as_ref(), Some(&newer));
+        assert!(dashboard.initial_prompt_intent.is_none());
+    }
+
+    #[test]
+    fn old_generic_lifecycle_token_cannot_complete_prompt_row() {
+        let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+        let intent = intent_id(2);
+        let request =
+            Request::CreateAgentSessionWithPrompt(crate::protocol::InitialPromptLaunchRequest {
+                intent,
+                launch: crate::protocol::CreateAgentSessionRequest {
+                    session: crate::protocol::CreateSessionRequest {
+                        project: "demo".into(),
+                        workspace: "root".into(),
+                        name: "agent".into(),
+                        label: Some("claude".into()),
+                        argv: vec!["claude".into()],
+                        kind: SessionKind::Agent {
+                            name: "claude".into(),
+                        },
+                    },
+                    model_policy: crate::protocol::AgentModelPolicy::HarnessDefault,
+                    model_binding: None,
+                    expected_model: None,
+                },
+                prompt: String::new(),
+            });
+        dashboard.begin_lifecycle_pending(3, &request);
+        dashboard.accept_lifecycle_job(3);
+        dashboard.on_lifecycle_completed(
+            3,
+            crate::protocol::LifecycleOp::CreateSession,
+            crate::protocol::LifecycleOutcome::Succeeded,
+        );
+        assert!(dashboard.provisional.is_some());
     }
 
     #[test]

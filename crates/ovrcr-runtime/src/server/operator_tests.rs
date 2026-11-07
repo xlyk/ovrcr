@@ -671,8 +671,7 @@ fn operator_capacity_refuses_without_consuming_prompt_or_run() {
                     "-c".into(),
                     "while :; do sleep 60; done".into(),
                 ],
-                None,
-                None,
+                SessionSpawnOptions::default(),
             )
             .unwrap();
     }
@@ -815,8 +814,7 @@ fn operator_slow_dashboard_does_not_block_other_chats_stop_or_terminal_input() {
                     "-c".into(),
                     "while IFS= read -r line; do printf 'accepted:%s\\n' \"$line\"; done".into(),
                 ],
-                None,
-                None,
+                SessionSpawnOptions::default(),
             )
             .unwrap();
     }

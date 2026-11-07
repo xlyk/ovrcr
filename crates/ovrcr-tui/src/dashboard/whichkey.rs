@@ -274,6 +274,7 @@ impl Dashboard {
     /// Open the popup's group `group`, leaving the popup itself open.
     pub(super) fn open_group(&mut self, group: char) -> DashboardAction {
         if let Some(popup) = &mut self.whichkey {
+            popup.pending_leader = false;
             popup.group = Some(group);
             popup.browsing = Some(0);
         }

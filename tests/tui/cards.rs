@@ -61,8 +61,8 @@ fn moving_through_the_tree_shows_a_card_instead_of_a_blank_pane() {
     assert!(card[4].contains("claude"), "{card:#?}");
     for hint in [
         "  j        open local",
-        "  n        new agent or terminal here",
-        "  w        new workspace",
+        "  n        new agent session",
+        "  w        create branch",
         "  Space w  more",
     ] {
         assert!(has(&card, hint), "{hint:?} in {card:#?}");
@@ -72,7 +72,7 @@ fn moving_through_the_tree_shows_a_card_instead_of_a_blank_pane() {
     let action = dashboard.key(KeyCode::Char('j'));
     pump_view(&mut dashboard, action);
     assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
-    assert!(!has(&pane_text(&dashboard, 0), "  w        new workspace"));
+    assert!(!has(&pane_text(&dashboard, 0), "  w        create branch"));
 
     // On up to the project row.
     dashboard.key(KeyCode::Char('k'));
@@ -80,17 +80,18 @@ fn moving_through_the_tree_shows_a_card_instead_of_a_blank_pane() {
     assert_eq!(pane_rows(&dashboard, 0, area(), true), ["consigint"]);
     let card = pane_text(&dashboard, 0);
     assert_eq!(
-        card[..9],
+        card[..10],
         [
             // The fixture's sessions are all terminals: no agent yet.
-            "Next: press w to start your first agent",
+            "Next: press n to start your first agent",
             "Workspace root  /tmp",
             "",
             "Workspaces",
             "  auth       2 sessions",
             "  lifecycle  2 sessions",
             "",
-            "  w  new workspace",
+            "  n  new agent session",
+            "  w  create branch",
             "  a  register another project",
         ]
     );
@@ -147,9 +148,9 @@ fn clicking_a_project_row_shows_its_card() {
     );
     assert_eq!(pane_rows(&dashboard, 0, area(), true), ["spacelift-agent"]);
     let card = pane_text(&dashboard, 0);
-    assert_eq!(card[0], "Next: press w to start your first agent");
+    assert_eq!(card[0], "Next: press n to start your first agent");
     assert!(has(&card, "  progress  1 session"), "{card:#?}");
-    assert!(has(&card, "  w  new workspace"), "{card:#?}");
+    assert!(has(&card, "  w  create branch"), "{card:#?}");
 }
 
 #[test]
@@ -181,7 +182,7 @@ fn registering_a_first_project_suggests_the_first_agent() {
         card[..7],
         [
             "myapp",
-            "Next: press w to start your first agent",
+            "Next: press n to start your first agent",
             "Repository      /srv/myapp",
             "",
             "Workspaces",
@@ -192,7 +193,7 @@ fn registering_a_first_project_suggests_the_first_agent() {
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
     let form = palette_text(&dashboard);
-    assert!(form.contains("Create workspace"), "{form}");
+    assert!(form.contains("Create branch"), "{form}");
     assert!(form.contains("myapp"), "{form}");
 }
 
@@ -228,7 +229,7 @@ fn a_split_shows_the_card_in_the_pane_the_selection_emptied() {
     let card = pane_text(&dashboard, 1);
     assert_eq!(card[..2], ["consigint / lifecycle", "/tmp/lifecycle"]);
     assert!(has(&card, "  j        open local"), "{card:#?}");
-    assert!(!has(&pane_text(&dashboard, 0), "  w        new workspace"));
+    assert!(!has(&pane_text(&dashboard, 0), "  w        create branch"));
 
     // `j` opens the session in the focused pane; the emptied pane keeps a card (the
     // projects, since nothing is selected now) instead of going blank.
@@ -237,7 +238,7 @@ fn a_split_shows_the_card_in_the_pane_the_selection_emptied() {
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
     let card = pane_text(&dashboard, 1);
     assert_eq!(card[0], "consigint", "{card:#?}");
-    assert!(has(&card, "  w  new workspace"), "{card:#?}");
+    assert!(has(&card, "  w  create branch"), "{card:#?}");
 }
 
 #[test]

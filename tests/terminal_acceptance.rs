@@ -1514,7 +1514,7 @@ fn agent_search_navigates_fifty_live_sessions_through_real_dashboard() -> Result
 }
 
 #[test]
-fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()> {
+fn standalone_branch_shortcut_creates_and_returns_to_browse() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     eprintln!(
@@ -1544,7 +1544,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     git(&fixture.repo, &["branch", "-D", "trunk"])?;
     std::fs::write(
         fixture.config.join("dashboard.toml"),
-        "branch_prefix = \"task/\"\n",
+        "automatic_local_terminals = \"on\"\n",
     )?;
     let mut dashboard = OuterDashboard::start(
         &fixture,
@@ -1555,15 +1555,43 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
             pixel_height: 0,
         },
     )?;
-    // One input burst also exercises submission while Inspect/Git are pending.
-    // The form opens on Task; two Tabs reach Branch.
-    dashboard.send(b"\x07w\t\twizard\r")?;
+    // The branch-only form starts on Branch name. Submitting while Inspect/Git
+    // are pending exercises the form's existing deferred-submit path.
+    dashboard.send(b"\x07wfeature/wizard\r")?;
     dashboard.wait_until(
         |screen| {
-            screen.contains("wizard")
-                && screen.contains("Terminal mode")
-                && !screen.contains("┌ Create workspace")
+            screen.contains("feature/wizard")
+                && screen.contains("BROWSE")
+                && !screen.contains("Terminal mode")
+                && !screen.contains("┌ Create branch")
+                && screen
+                    .lines()
+                    .any(|line| line.starts_with("▌") && line.contains("feature/wizard"))
+                && screen.lines().any(|line| {
+                    line.split_once('│').is_some_and(|(_, right)| {
+                        let hint = right.trim_start();
+                        hint.starts_with('j') && hint.contains("open local")
+                    })
+                })
         },
+        Duration::from_secs(5),
+    )?;
+    // Creation leaves the new workspace selected in Browse. Follow its card's
+    // advertised row navigation explicitly before attaching to the local shell.
+    dashboard.send(b"j")?;
+    dashboard.wait_until(
+        |screen| {
+            screen
+                .lines()
+                .any(|line| line.starts_with("▌") && line.contains("$ local"))
+                && screen.contains("BROWSE")
+                && !screen.contains("Terminal mode")
+        },
+        Duration::from_secs(5),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode"),
         Duration::from_secs(5),
     )?;
     fixture.managed_pgids = fixture.session_pgids()?;
@@ -1577,7 +1605,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
             project
                 .workspaces
                 .iter()
-                .find(|workspace| workspace.name == "task/wizard")
+                .find(|workspace| workspace.name == "feature/wizard")
         })
         .context("new workspace missing")?;
     assert_eq!(
@@ -1590,8 +1618,12 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         .first()
         .context("first terminal missing")?;
     assert_eq!(
-        terminal.name, workspace.name,
-        "an automatic first terminal uses the workspace's stable fallback name"
+        terminal.name, "local",
+        "an automatic first terminal keeps its standard workspace-local name"
+    );
+    assert!(
+        matches!(&terminal.kind, ovrcr::protocol::SessionKind::Terminal),
+        "automatic workspace creation must not start an agent session"
     );
     let branch = Command::new("git")
         .arg("-C")
@@ -1599,7 +1631,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         .args(["branch", "--show-current"])
         .output()?;
     assert!(branch.status.success());
-    assert_eq!(String::from_utf8(branch.stdout)?.trim(), "task/wizard");
+    assert_eq!(String::from_utf8(branch.stdout)?.trim(), "feature/wizard");
     let tip = Command::new("git")
         .arg("-C")
         .arg(&workspace.path)
@@ -1630,85 +1662,30 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     Ok(())
 }
 
-/// `w`, a task, Enter: the Server creates the branch from the task, then the
-/// first session named after it, and the Dashboard attaches to that session.
+/// A disposable detected Claude stand-in proves New agent's initial prompt
+/// stays one literal argv item through the branch child, compiled CLI, Server,
+/// and PTY launch without starting a real provider.
 #[test]
-fn workspace_task_names_branch_and_first_session_through_real_dashboard() -> Result<()> {
-    let mut fixture = AcceptanceFixture::new()?;
-    fixture.setup()?;
-    std::fs::write(
-        fixture.config.join("dashboard.toml"),
-        "branch_prefix = \"task/\"\n",
-    )?;
-    let mut dashboard = OuterDashboard::start(
-        &fixture,
-        PtySize {
-            rows: 40,
-            cols: 120,
-            pixel_width: 0,
-            pixel_height: 0,
-        },
-    )?;
-    dashboard.send(b"\x07wFix the login bug\r")?;
-    dashboard.wait_until(
-        |screen| screen.contains("Terminal mode") && !screen.contains("┌ Create workspace"),
-        Duration::from_secs(5),
-    )?;
-    fixture.managed_pgids = fixture.session_pgids()?;
-    let hierarchy = fixture.list()?;
-    let workspace = hierarchy
-        .projects
-        .iter()
-        .find(|project| project.name == "fixture")
-        .and_then(|project| {
-            project
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.name == "task/fix-the-login-bug")
-        })
-        .context("workspace named after the task missing")?;
-    assert_eq!(workspace.sessions.len(), 1, "{:?}", workspace.sessions);
-    let terminal = &workspace.sessions[0];
-    assert_eq!(terminal.name, "Fix the login bug");
-    // The Terminal start only names the session: the shell got no argument.
-    dashboard.send(b"printf 'TASK_%s\\n' SHELL_OK\r")?;
-    dashboard.wait_until(|screen| screen.contains("TASK_SHELL_OK"), wait_deadline())?;
-    assert!(
-        fixture
-            .read_terminal(terminal.id)?
-            .contains("TASK_SHELL_OK"),
-        "the Dashboard attached to the task's session"
-    );
-    dashboard.detach()?;
-    fixture.shutdown()?;
-    Ok(())
-}
-
-/// A disposable agent proves the task remains one literal argv item from the
-/// Dashboard form through the compiled CLI, Server, and PTY launch.
-#[test]
-fn workspace_task_reaches_the_fake_agent_as_one_literal_argument() -> Result<()> {
+fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
-    let fake_agent = fixture.root.path().join("fake-claude");
+    fixture.claude.set(true, "claude.ai", Some("max"));
     std::fs::write(
-        &fake_agent,
-        "#!/bin/sh\nprintf 'TASK_ARG_COUNT=%s TASK_ARG1=<%s> TASK_ARG2=<%s>\\n' \"$#\" \"$1\" \"$2\"\nexec /bin/sh\n",
-    )?;
-    std::fs::set_permissions(&fake_agent, std::fs::Permissions::from_mode(0o700))?;
-    std::fs::write(
-        fixture.config.join("dashboard.toml"),
+        &fixture.claude.command,
         format!(
-            r#"branch_prefix = "task/"
-agents = [{{ name = "claude", argv = [{}] }}]
-[launch_choices.fixture]
-kind = "Agent"
-preset = "claude"
-"#,
-            toml::Value::String(fake_agent.to_string_lossy().into_owned())
+            "#!/bin/sh\nif [ \"$*\" = 'auth status --json' ]; then exec cat '{}'; fi\nprintf 'AGENT_ARGS_BEGIN\\n'\nfor argument do printf 'AGENT_ARG=<%s>\\n' \"$argument\"; done\nprintf 'AGENT_ARGS_END\\n'\nexec /bin/sh\n",
+            fixture
+                .claude
+                .command
+                .with_file_name("claude-auth-status.json")
+                .display()
         ),
+    )?;
+    std::fs::set_permissions(
+        &fixture.claude.command,
+        std::fs::Permissions::from_mode(0o700),
     )?;
 
     let mut dashboard = OuterDashboard::start(
@@ -1720,12 +1697,41 @@ preset = "claude"
             pixel_height: 0,
         },
     )?;
-    // The leading dashes must stay inside the prompt argument.
-    dashboard.send(b"\x07w--help me fix the build\r")?;
+    // The new-agent Branch picker can open the branch-only child. The child
+    // returns to the parent with its new registered destination selected.
+    dashboard.send(b"\x07n")?;
     dashboard.wait_until(
-        |screen| screen.contains("TASK_ARG_COUNT=2") && !screen.contains("┌ Create workspace"),
-        Duration::from_secs(10),
+        |screen| screen.contains("New agent session") && screen.contains("feature/acceptance"),
+        wait_deadline(),
     )?;
+    dashboard.send(b"\rCreate new branch")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Create new branch"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Branch name"), wait_deadline())?;
+    let base = live::git(&fixture.repo, &["symbolic-ref", "--short", "HEAD"]);
+    let base = base.trim();
+    // Expand Workspace options, focus Base, clear its placeholder, and choose
+    // the fixture repository's actual default branch before creating the child.
+    dashboard.send(format!("feature/cua-agent-prompt\t \t\x15{base}").as_bytes())?;
+    dashboard.wait_until(
+        |screen| screen.contains("Base") && screen.contains(base),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("New agent session") && screen.contains("Agent harness"),
+        Duration::from_secs(30),
+    )?;
+    // Agent harness has focus after child success; the next fields are Model,
+    // then the multiline Initial prompt.
+    let prompt = "--help me fix the build\nand keep this exact second line";
+    let prompt_input = prompt.replace('\n', "\r");
+    // Enter inserts the newline; Escape + Enter is the form's actual Start action.
+    dashboard.send(format!("\t\t{prompt_input}\x1b\r").as_bytes())?;
+    dashboard.wait_until(|screen| screen.contains("AGENT_ARGS_END"), wait_deadline())?;
     fixture.managed_pgids = fixture.session_pgids()?;
     let hierarchy = fixture.list()?;
     let workspace = hierarchy
@@ -1736,16 +1742,26 @@ preset = "claude"
             project
                 .workspaces
                 .iter()
-                .find(|workspace| workspace.name == "task/help-me-fix-the-build")
+                .find(|workspace| workspace.name == "feature/cua-agent-prompt")
         })
-        .context("workspace named after the task missing")?;
-    assert_eq!(workspace.sessions.len(), 1);
-    let session = &workspace.sessions[0];
-    assert_eq!(session.name, "--help me fix the build");
+        .context("branch child workspace missing")?;
+    let session = workspace
+        .sessions
+        .iter()
+        .find(|session| matches!(&session.kind, ovrcr::protocol::SessionKind::Agent { name } if name == "claude"))
+        .context("New agent session missing from the selected branch")?;
+    assert_ne!(session.name, prompt);
     let output = fixture.read_terminal(session.id)?;
+    let prompt_argument = format!("AGENT_ARG=<{prompt}>\n");
+    assert_eq!(
+        output.matches(&prompt_argument).count(),
+        1,
+        "the complete multiline prompt must arrive as exactly one native argument: {output}"
+    );
+    let separator_and_prompt = format!("AGENT_ARG=<-->\n{prompt_argument}");
     assert!(
-        output.contains("TASK_ARG_COUNT=2 TASK_ARG1=<--> TASK_ARG2=<--help me fix the build>"),
-        "the fake agent did not receive the task as one argument: {output}"
+        output.contains(&separator_and_prompt),
+        "the exact prompt must follow its explicit native argument separator: {output}"
     );
     dashboard.detach()?;
     fixture.shutdown()?;
@@ -2650,11 +2666,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         },
         wait_deadline(),
     )?;
-    dashboard.send(b" wn")?;
+    // Space w t opens the named Terminal form.
+    dashboard.send(b" wt")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Create terminal")
-                && screen.contains("Agent")
+                && screen.contains("Start")
+                && screen.contains("Workspace")
                 && !screen.contains("Which key")
         },
         wait_deadline(),

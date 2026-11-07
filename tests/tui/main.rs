@@ -9,10 +9,6 @@ mod live;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-#[cfg(not(target_os = "macos"))]
-use deadline::wait_deadline;
-#[cfg(target_os = "macos")]
-use live::wait_deadline;
 use ovrcr::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
 use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, HistoryCell, HistoryColor, HistoryOpened,
@@ -27,7 +23,7 @@ use ovrcr::tui::{
 };
 use ovrcr_terminal::vt100;
 use ratatui::backend::{CrosstermBackend, TestBackend};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::path::PathBuf;
@@ -178,6 +174,42 @@ fn dashboard_fixture() -> Dashboard {
     dashboard.install_focus(SessionId(1));
     dashboard.install_screen(SessionId(1), &[]);
     dashboard
+}
+
+fn registry_from_hierarchy(hierarchy: &HierarchySnapshot) -> ovrcr::config::Registry {
+    use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
+    let projects = hierarchy
+        .projects
+        .iter()
+        .map(|project| {
+            let repo = if project.name == "consigint" {
+                std::env::current_dir().unwrap()
+            } else {
+                PathBuf::from(format!("/tmp/{}", project.name))
+            };
+            ProjectRecord {
+                name: project.name.clone(),
+                workspace_root: repo.join("worktrees"),
+                repo,
+                workspaces: project
+                    .workspaces
+                    .iter()
+                    .map(|workspace| WorkspaceRecord {
+                        id: workspace.id.clone(),
+                        path: workspace.path.clone(),
+                        branch: workspace.name.clone(),
+                        git_identity: None,
+                        setup_pending: false,
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    Registry { projects }
+}
+
+fn fixture_registry() -> ovrcr::config::Registry {
+    registry_from_hierarchy(&fixture_hierarchy())
 }
 
 fn only_request(mut requests: Vec<ClientMessage>) -> ClientMessage {
@@ -333,6 +365,31 @@ fn answer_palette_inspect(dashboard: &mut Dashboard, _action: DashboardAction) {
     }
 }
 
+fn answer_palette_inspect_with_registry(
+    dashboard: &mut Dashboard,
+    _action: DashboardAction,
+    registry: ovrcr::config::Registry,
+) {
+    for message in dashboard.drain_outbox() {
+        if let Request::Inspect = message.request {
+            dashboard.handle_server_message(ServerMessage::Response {
+                request_id: message.request_id,
+                response: Response::Inventory {
+                    registry: registry.clone(),
+                    sessions: Vec::new(),
+                },
+            });
+        }
+    }
+}
+
+fn answer_palette_inspect_with_fixture_registry(
+    dashboard: &mut Dashboard,
+    action: DashboardAction,
+) {
+    answer_palette_inspect_with_registry(dashboard, action, fixture_registry());
+}
+
 fn hint_repository(extra_branches: &[&str]) -> tempfile::TempDir {
     use std::process::Command;
     let repo = tempfile::tempdir().unwrap();
@@ -387,31 +444,18 @@ fn answer_workspace_inspect(dashboard: &mut Dashboard, request_id: u64, repo: &s
     });
 }
 
-/// Drives the create-workspace form to a deferred submit on a typed branch.
-fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u64 {
-    use ovrcr::tui::DashboardAction;
-    assert_eq!(
-        dashboard.key(KeyCode::Char('w')),
-        ovrcr::tui::DashboardAction::Redraw
-    );
-    let inspect = only_request(dashboard.drain_outbox());
-    assert_eq!(inspect.request, Request::Inspect);
-    to_branch(dashboard);
-    dashboard.key(KeyCode::Tab); // branch mode
-    dashboard.key(KeyCode::Right); // existing
-    dashboard.key(KeyCode::BackTab); // branch
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste(branch.into()));
-    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
-    let text = palette_text(dashboard);
-    assert!(text.contains("Waiting for Git suggestions"), "{text}");
-    inspect.request_id
-}
-
-/// Create workspace opens on Task; Tab past Project to Branch.
+/// Standalone branch creation opens with Branch name focused.
 fn to_branch(dashboard: &mut Dashboard) {
-    dashboard.key(KeyCode::Tab); // Project
-    dashboard.key(KeyCode::Tab); // Branch
+    let text = palette_text(dashboard);
+    let lines: Vec<_> = text.lines().collect();
+    let index = lines
+        .iter()
+        .position(|line| line.contains("Branch name"))
+        .unwrap_or_else(|| panic!("Branch name field missing: {text}"));
+    assert!(
+        lines.get(index + 1).is_some_and(|line| line.contains('›')),
+        "Branch name should be active: {text}"
+    );
 }
 
 fn assert_workspace_id(id: &str) {

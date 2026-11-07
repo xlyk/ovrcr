@@ -470,7 +470,8 @@ fn save(
 mod tests {
     use super::*;
     use ovrcr_protocol::{
-        AgentOverride, AutomaticLocalTerminals, LaunchChoice, ReadySoundChoice, Settings,
+        AgentModelPolicy, AgentOverride, AutomaticLocalTerminals, LaunchChoice, ReadySoundChoice,
+        Settings,
     };
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
@@ -493,7 +494,9 @@ mod tests {
     const S_ON: (&str, &str) = ("ready_sound", "true");
     const C_CHIME: (&str, &str) = ("ready_sound_choice", "\"chime\"");
     const L_ON: (&str, &str) = ("automatic_local_terminals", "\"on\"");
-    const AGENT: &str = "{ kind = \"Agent\", preset = \"new\" }";
+    const AGENT: &str = "{ kind = \"Agent\", preset = \"new\", model_policy = \"HarnessDefault\" }";
+    const EXPLICIT_AGENT: &str =
+        "{ kind = \"Agent\", preset = \"new\", model_policy = { Explicit = \"fixture-model\" } }";
     const TERMINAL: &str = "{ kind = \"Terminal\" }";
 
     const ORIGINAL: &str =
@@ -606,7 +609,11 @@ mod tests {
                 |s| s.launch_choices["p"] == LaunchChoice::Terminal,
             ),
             ("launch_choices.\"p.q\"", AGENT, "launch_choices", |s| {
-                s.launch_choices["p.q"] == LaunchChoice::Agent("new".into())
+                s.launch_choices["p.q"]
+                    == LaunchChoice::Agent {
+                        preset: "new".into(),
+                        model_policy: AgentModelPolicy::HarnessDefault,
+                    }
             }),
             ("quota.enabled", "true", "quota.enabled", |s| {
                 s.quota.enabled
@@ -734,7 +741,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             reading(&document).settings.launch_choices["p"],
-            LaunchChoice::Agent("claude".into())
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
         set(&document, "launch_choices.p", None).unwrap();
         assert!(reading(&document).settings.launch_choices.is_empty());
@@ -1113,7 +1123,10 @@ branch_prefix = 'kh/' # mine
         assert_eq!(settings.launch_choices["demo"], LaunchChoice::Terminal);
         assert_eq!(
             settings.launch_choices["other.project"],
-            LaunchChoice::Agent("other".into())
+            LaunchChoice::Agent {
+                preset: "other".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
     }
 
@@ -1161,16 +1174,34 @@ branch_prefix = 'kh/' # mine
 
     #[test]
     fn launch_edits_preserve_existing_table_styles_and_unknown_fields() {
-        for original in [
-            "# config\n[launch_choices.'project.with.dots'] # project\nkind = 'Agent' # kind\npreset = 'old' # preset\nextra = 42 # future\n",
-            "# config\nlaunch_choices = { 'project.with.dots' = { kind = 'Agent', preset = 'old', extra = 42 } } # future\n",
-            "# config\nlaunch_choices.'project.with.dots'.kind = 'Agent' # kind\nlaunch_choices.'project.with.dots'.preset = 'old' # preset\nlaunch_choices.'project.with.dots'.extra = 42 # future\n",
+        for (original, expected_agent, expected_terminal) in [
+            (
+                "# config\n[launch_choices.'project.with.dots'] # project\nkind = 'Agent' # kind\npreset = 'old' # preset\nextra = 42 # future\n",
+                "# config\n[launch_choices.'project.with.dots'] # project\nkind = \"Agent\" # kind\npreset = \"new\" # preset\nextra = 42 # future\nmodel_policy = \"HarnessDefault\"\n",
+                "# config\n[launch_choices.'project.with.dots'] # project\nkind = \"Terminal\" # kind\nextra = 42 # future\n",
+            ),
+            (
+                "# config\nlaunch_choices = { 'project.with.dots' = { kind = 'Agent', preset = 'old', extra = 42 } } # future\n",
+                "# config\nlaunch_choices = { 'project.with.dots' = { kind = \"Agent\", preset = \"new\", extra = 42 , model_policy = \"HarnessDefault\" } } # future\n",
+                "# config\nlaunch_choices = { 'project.with.dots' = { kind = \"Terminal\", extra = 42 } } # future\n",
+            ),
+            (
+                "# config\nlaunch_choices.'project.with.dots'.kind = 'Agent' # kind\nlaunch_choices.'project.with.dots'.preset = 'old' # preset\nlaunch_choices.'project.with.dots'.extra = 42 # future\n",
+                "# config\nlaunch_choices.'project.with.dots'.kind = \"Agent\" # kind\nlaunch_choices.'project.with.dots'.preset = \"new\" # preset\nlaunch_choices.'project.with.dots'.extra = 42 # future\nlaunch_choices.'project.with.dots'.model_policy = \"HarnessDefault\"\n",
+                "# config\nlaunch_choices.'project.with.dots'.kind = \"Terminal\" # kind\nlaunch_choices.'project.with.dots'.extra = 42 # future\n",
+            ),
         ] {
             let root = tempfile::tempdir().unwrap();
             let document = root.path().join("dashboard.toml");
             std::fs::write(&document, original).unwrap();
             for (value, choice) in [
-                (AGENT, LaunchChoice::Agent("new".into())),
+                (
+                    AGENT,
+                    LaunchChoice::Agent {
+                        preset: "new".into(),
+                        model_policy: AgentModelPolicy::HarnessDefault,
+                    },
+                ),
                 (TERMINAL, LaunchChoice::Terminal),
             ] {
                 set(
@@ -1180,25 +1211,46 @@ branch_prefix = 'kh/' # mine
                 )
                 .unwrap();
                 let saved = read(&document);
-                assert!(saved.contains("# config"));
-                assert!(saved.contains("# future"));
-                assert!(saved.contains("extra = 42"));
-                if matches!(choice, LaunchChoice::Agent(_)) {
-                    assert_eq!(
-                        saved,
-                        original
-                            .replace("'old'", "\"new\"")
-                            .replace("'Agent'", "\"Agent\"")
-                    );
-                } else {
-                    assert!(!saved.contains("preset"));
-                }
+                assert_eq!(
+                    saved,
+                    if matches!(&choice, LaunchChoice::Agent { .. }) {
+                        expected_agent
+                    } else {
+                        expected_terminal
+                    }
+                );
                 assert_eq!(
                     reading(&document).settings.launch_choices["project.with.dots"],
                     choice
                 );
             }
         }
+    }
+
+    #[test]
+    fn launch_model_policies_round_trip_through_the_settings_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let document = root.path().join("dashboard.toml");
+        std::fs::write(&document, "").unwrap();
+
+        set(&document, "launch_choices.demo", Some(AGENT)).unwrap();
+        assert_eq!(
+            reading(&document).settings.launch_choices["demo"],
+            LaunchChoice::Agent {
+                preset: "new".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
+        );
+
+        set(&document, "launch_choices.demo", Some(EXPLICIT_AGENT)).unwrap();
+        assert_eq!(
+            reading(&document).settings.launch_choices["demo"],
+            LaunchChoice::Agent {
+                preset: "new".into(),
+                model_policy: AgentModelPolicy::Explicit("fixture-model".into()),
+            }
+        );
+        assert!(read(&document).contains("fixture-model"));
     }
 
     #[test]
@@ -1219,11 +1271,17 @@ branch_prefix = 'kh/' # mine
         let settings = reading(&document).settings;
         assert_eq!(
             settings.launch_choices[project],
-            LaunchChoice::Agent("new".into())
+            LaunchChoice::Agent {
+                preset: "new".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
         assert_eq!(
             settings.launch_choices["other.project"],
-            LaunchChoice::Agent("other".into())
+            LaunchChoice::Agent {
+                preset: "other".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
         assert_eq!(settings.launch_choices.len(), 2);
         assert_eq!(settings.branch_prefix, "fix/");

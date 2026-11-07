@@ -1,5 +1,7 @@
 use super::settings::AgentOverride;
 use std::ffi::{OsStr, OsString};
+
+pub use crate::protocol::AgentLaunchOrigin as AgentOrigin;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -64,6 +66,7 @@ pub struct AgentEntry {
     pub name: String,
     pub argv: Vec<OsString>,
     pub source: AgentSource,
+    pub origin: AgentOrigin,
 }
 
 pub fn detect_agents(
@@ -96,6 +99,7 @@ pub fn detect_agents(
                 name: name.into(),
                 argv,
                 source: AgentSource::Detected,
+                origin: AgentOrigin::Detected,
             });
         }
     }
@@ -106,11 +110,13 @@ pub fn detect_agents(
         name: "shell".into(),
         argv: vec![shell],
         source: AgentSource::Shell,
+        origin: AgentOrigin::Detected,
     });
     entries.push(AgentEntry {
         name: "Custom".into(),
         argv: Vec::new(),
         source: AgentSource::Custom,
+        origin: AgentOrigin::Detected,
     });
     entries
 }
@@ -132,12 +138,14 @@ pub fn apply_overrides(
             .find(|entry| entry.name == override_agent.name)
         {
             existing.argv = argv;
+            existing.origin = AgentOrigin::Configured;
         } else if shell
             .as_ref()
             .is_some_and(|entry| entry.name == override_agent.name)
         {
             if let Some(entry) = shell.as_mut() {
                 entry.argv = argv;
+                entry.origin = AgentOrigin::Configured;
             }
         } else if custom
             .as_ref()
@@ -145,12 +153,14 @@ pub fn apply_overrides(
         {
             if let Some(entry) = custom.as_mut() {
                 entry.argv = argv;
+                entry.origin = AgentOrigin::Configured;
             }
         } else {
             entries.push(AgentEntry {
                 name: override_agent.name.clone(),
                 argv,
                 source: AgentSource::Detected,
+                origin: AgentOrigin::Configured,
             });
         }
     }
@@ -269,6 +279,8 @@ mod tests {
             overridden[0].argv,
             vec![OsString::from("claude"), OsString::from("--verbose")]
         );
+        assert_eq!(overridden[0].source, AgentSource::Detected);
+        assert_eq!(overridden[0].origin, AgentOrigin::Configured);
         assert_eq!(overridden[1].name, "codex");
         assert_eq!(overridden[2].name, "shell");
         assert_eq!(overridden[3].name, "Custom");
@@ -293,6 +305,7 @@ mod tests {
             .collect();
         assert_eq!(customs.len(), 1);
         assert_eq!(customs[0].source, AgentSource::Custom);
+        assert_eq!(customs[0].origin, AgentOrigin::Configured);
         assert_eq!(
             customs[0].argv,
             vec![OsString::from("my-tool"), OsString::from("--flag")]

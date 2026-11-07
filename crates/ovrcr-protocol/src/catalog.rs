@@ -2,12 +2,12 @@
 //!
 //! The writer, the loader's rows, and the Dashboard editor read this module.
 //! It does not hold the effective value. See ADR 0007.
-use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use crate::{
-    DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF, ReadySoundChoice,
-    SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow, SettingSource, Settings, TITLES_OFF,
-    ThemeId,
+    AgentModelPolicy, DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF,
+    ReadySoundChoice, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow, SettingSource, Settings,
+    TITLES_OFF, ThemeId,
 };
+use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 
@@ -51,12 +51,12 @@ pub enum Shape {
     Paths,
     /// A list of `{ name, argv }` tables.
     Agents,
-    /// A map of `{ kind, preset }` tables.
+    /// A map of `{ kind, preset, model_policy }` tables.
     Launches,
 }
 
 const AGENT_FIELDS: &[&str] = &["name", "argv"];
-const LAUNCH_FIELDS: &[&str] = &["kind", "preset"];
+const LAUNCH_FIELDS: &[&str] = &["kind", "preset", "model_policy"];
 
 const NOTIFY_ABOUT: &[&str] = &[
     "Shows a desktop banner when a response is ready or a session needs input.",
@@ -171,15 +171,21 @@ pub fn write_of(path: &[SettingName<'_>]) -> Option<SettingWrite> {
             (Shape::Agents, [SettingName::Index(_), SettingName::Key("argv")]) => {
                 SettingWrite::Typed("an array of strings")
             }
-            (Shape::Launches, []) => SettingWrite::Typed("a table of { kind, preset } tables"),
-            (Shape::Launches, [SettingName::Key(_)]) => {
-                SettingWrite::Entry(LAUNCH_FIELDS, "an inline table { kind, preset }")
+            (Shape::Launches, []) => {
+                SettingWrite::Typed("a table of { kind, preset, model_policy } tables")
             }
+            (Shape::Launches, [SettingName::Key(_)]) => SettingWrite::Entry(
+                LAUNCH_FIELDS,
+                "an inline table { kind, preset, model_policy }",
+            ),
             (Shape::Launches, [SettingName::Key(_), SettingName::Key("kind")]) => {
                 SettingWrite::Text("\"Terminal\" or \"Agent\"")
             }
             (Shape::Launches, [SettingName::Key(_), SettingName::Key("preset")]) => {
                 SettingWrite::Text("a string")
+            }
+            (Shape::Launches, [SettingName::Key(_), SettingName::Key("model_policy")]) => {
+                SettingWrite::Typed("a model policy")
             }
             _ => return None,
         });
@@ -223,17 +229,26 @@ fn display(value: &impl Serialize) -> Option<String> {
 
 fn display_choices(choices: &BTreeMap<String, LaunchChoice>) -> Option<String> {
     #[derive(Serialize)]
-    #[serde(tag = "kind", content = "preset")]
+    #[serde(tag = "kind")]
     enum Spell<'a> {
         Terminal,
-        Agent(&'a str),
+        Agent {
+            preset: &'a str,
+            model_policy: &'a AgentModelPolicy,
+        },
     }
     let spelled: BTreeMap<&str, Spell> = choices
         .iter()
         .map(|(project, choice)| {
             let spell = match choice {
                 LaunchChoice::Terminal => Spell::Terminal,
-                LaunchChoice::Agent(preset) => Spell::Agent(preset),
+                LaunchChoice::Agent {
+                    preset,
+                    model_policy,
+                } => Spell::Agent {
+                    preset,
+                    model_policy,
+                },
             };
             (project.as_str(), spell)
         })
@@ -895,7 +910,7 @@ mod tests {
         );
         assert_eq!(
             element_fields("launch_choices"),
-            Some(&["kind", "preset"][..])
+            Some(&["kind", "preset", "model_policy"][..])
         );
         assert_eq!(element_fields("picker_roots"), None);
         assert_eq!(write_of(&dotted("quota.missing")), None);
@@ -942,7 +957,13 @@ mod tests {
     #[test]
     fn each_entry_reads_its_own_effective_value() {
         let mut launch_choices = BTreeMap::new();
-        launch_choices.insert("my.project".into(), LaunchChoice::Agent("claude".into()));
+        launch_choices.insert(
+            "my.project".into(),
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            },
+        );
         let settings = Settings {
             desktop_notifications: true,
             ready_sound_choice: Some(ReadySoundChoice::Chime),

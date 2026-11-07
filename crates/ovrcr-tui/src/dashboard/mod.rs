@@ -477,6 +477,12 @@ pub struct Dashboard {
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
+    /// One native model lookup may outlive its palette or owning socket. Keep
+    /// its identity here so a reopened form can wait and coalesce one latest
+    /// target after the result arrives.
+    model_query: Option<(u64, String)>,
+    #[cfg(test)]
+    model_agent_entries: Option<Vec<agents::AgentEntry>>,
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
@@ -498,6 +504,15 @@ pub struct Dashboard {
     error_owning_requests: HashSet<u64>,
     /// Ids of terminal input requests in flight: their refusal (input not admitted) is a limit.
     input_requests: HashSet<u64>,
+    /// One Start is between intent allocation and launch admission. Prompt is bounded by the
+    /// protocol's 64 KiB limit and is dropped as soon as the launch request is sent.
+    pending_initial_prompt_allocation: Option<InitialPromptAllocation>,
+    /// Latest Server-owned launch intent observed for this Dashboard.
+    initial_prompt_intent: Option<crate::protocol::InitialPromptIntentSnapshot>,
+    initial_prompt_intent_id: Option<crate::protocol::InitialPromptIntentId>,
+    initial_prompt_focus_pending: Option<crate::protocol::InitialPromptIntentId>,
+    deferred_initial_prompt_recovery: Option<crate::protocol::InitialPromptIntentId>,
+    initial_prompt_reconcile_request: Option<u64>,
     /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.
@@ -507,6 +522,14 @@ pub struct Dashboard {
     lifecycle_strip: Option<String>,
     /// Remembered launch choice held across Provisional wait until CreatedSession completes.
     lifecycle_preference: Option<(String, settings::LaunchChoice)>,
+}
+
+struct InitialPromptAllocation {
+    request_id: u64,
+    launch: crate::protocol::CreateAgentSessionRequest,
+    prompt: String,
+    form: Option<Box<palette::Palette>>,
+    then: Vec<crate::protocol::Request>,
 }
 
 thread_local! {

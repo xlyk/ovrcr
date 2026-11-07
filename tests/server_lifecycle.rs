@@ -6,11 +6,11 @@ use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport};
 use ovrcr::freshness;
 use ovrcr::protocol::{
-    AgentReport, AgentUpdate, BRIDGE_SCHEMA_VERSION, BranchRequest, ClientMessage,
-    CreateSessionRequest, DashboardView, ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow,
-    HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PROTOCOL_VERSION,
-    PaneTarget, Request, Response, ServerEvent, ServerMessage, SettingSource, SettingsReport,
-    client, connect_server, read_frame, write_frame,
+    AgentLaunchOrigin, AgentReport, AgentUpdate, BRIDGE_SCHEMA_VERSION, BranchRequest,
+    ClientMessage, CreateSessionRequest, DashboardView, ErrorCode, HISTORY_ROWS, HistoryOpened,
+    HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES, PAGE_COLS, PAGE_ROWS,
+    PROTOCOL_VERSION, PaneTarget, Request, Response, ServerEvent, ServerMessage, SettingSource,
+    SettingsReport, client, connect_server, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -67,6 +67,510 @@ fn context_report(
             capacity_tokens,
         }),
     })
+}
+
+fn dashboard_socket(fixture: &Live) -> UnixStream {
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Hierarchy(_),
+            }
+        ) {
+            break;
+        }
+    }
+    dashboard
+}
+
+#[test]
+fn detected_claude_model_launch_revalidates_alias_and_workspace_identity() {
+    let fixture = Live::idle().bounded();
+    let native_bin = fixture.root.path().join("fake-native");
+    std::fs::create_dir(&native_bin).unwrap();
+    let resolution_file = fixture.root.path().join("resolved-model");
+    std::fs::write(&resolution_file, "claude-opus-fixture-v1\n").unwrap();
+    let catalog_calls = fixture.root.path().join("catalog-calls");
+    let native = native_bin.join("claude");
+    std::fs::write(
+        &native,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"--output-format\" ]; then\n  printf 'catalog:%s\\n' \"$$\" >> '{}'\n  IFS= read -r frame || exit 70\n  request_id=$(printf '%s\\n' \"$frame\" | sed -E 's/.*\"request_id\":\"([^\"]+)\".*/\\1/')\n  resolved=$(cat '{}')\n  printf '{{\"type\":\"control_response\",\"response\":{{\"request_id\":\"%s\",\"subtype\":\"success\",\"response\":{{\"pid\":%s,\"claude_code_version\":\"2.1.318\",\"models\":[{{\"value\":\"opus\",\"resolvedModel\":\"%s\"}}]}}}}}}\\n' \"$request_id\" \"$$\" \"$resolved\"\n  while IFS= read -r trailing; do :; done\n  exit 0\nfi\nprintf 'MODEL_LAUNCH_ARGS'\nfor argument in \"$@\"; do printf '<%s>' \"$argument\"; done\nprintf '\\n'\n",
+            catalog_calls.display(),
+            resolution_file.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&native).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&native, permissions).unwrap();
+    let profile = fixture.root.path().join("claude-profile");
+    std::fs::create_dir(&profile).unwrap();
+    std::fs::write(
+        fixture.config.join("dashboard.toml"),
+        "agents = []\n[quota]\nenabled = false\n",
+    )
+    .unwrap();
+    let mut path_entries = vec![native_bin];
+    path_entries.extend(std::env::split_paths(&fixture.path()));
+    let path = std::env::join_paths(path_entries).unwrap();
+    fixture.start_binary_env(&[
+        ("PATH", path.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", profile.as_os_str()),
+    ]);
+    fixture.ready("feature/model-policy");
+
+    let launcher = fixture.executable.canonicalize().unwrap();
+    // The user's selected path can spell the same executable through a
+    // symlinked temp-directory prefix; model binding is by file identity.
+    let native = native.canonicalize().unwrap();
+    let mut native_argv = vec![native.as_os_str().to_owned()];
+    ovrcr::protocol::apply_default_auto_trust("claude", &mut native_argv);
+    let mut argv = vec![
+        launcher.as_os_str().to_owned(),
+        "agent".into(),
+        "run".into(),
+        "claude".into(),
+        "--".into(),
+    ];
+    argv.extend(native_argv);
+
+    let mut dashboard = dashboard_socket(&fixture);
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::QueryAgentModels {
+                preset: "claude".into(),
+                origin: AgentLaunchOrigin::Detected,
+                argv: argv.clone(),
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+            },
+        },
+    )
+    .unwrap();
+    let mut query_response = None;
+    let mut capabilities = None;
+    let query_deadline = Instant::now() + Duration::from_secs(5);
+    while capabilities.is_none() {
+        assert!(
+            Instant::now() < query_deadline,
+            "model lookup did not finish; response={query_response:?}; native calls={:?}",
+            std::fs::read_to_string(&catalog_calls)
+        );
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id: 2,
+                response,
+            } => query_response = Some(response),
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id: 2,
+                capabilities: found,
+            }) => capabilities = Some(found),
+            _ => {}
+        }
+    }
+    assert_eq!(query_response, Some(Response::Ok));
+    let capabilities = capabilities.unwrap();
+    assert_eq!(capabilities.preset, "claude");
+    assert_eq!(
+        capabilities.models,
+        [ovrcr::protocol::AgentModelOption {
+            alias: "opus".into(),
+            resolved: "claude-opus-fixture-v1".into(),
+        }],
+        "catalog capabilities: {capabilities:?}; fake native processes: {:?}",
+        std::fs::read_to_string(&catalog_calls)
+    );
+    let binding = capabilities.binding.expect("verified launch binding");
+
+    let explicit = |name: &str, expected_model: &str| {
+        Request::CreateAgentSession(ovrcr::protocol::CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+                name: name.into(),
+                label: Some("claude".into()),
+                argv: argv.clone(),
+                kind: ovrcr::protocol::SessionKind::Agent {
+                    name: "claude".into(),
+                },
+            },
+            model_policy: ovrcr::protocol::AgentModelPolicy::Explicit("opus".into()),
+            model_binding: Some(binding.clone()),
+            expected_model: Some(expected_model.into()),
+        })
+    };
+
+    let positive_token = 3;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: positive_token,
+            request: explicit("opus-positive", "claude-opus-fixture-v1"),
+        },
+    )
+    .unwrap();
+    let mut create_ack = None;
+    let positive = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id: received_id,
+                response,
+            } if received_id == positive_token => create_ack = Some(response),
+            ServerMessage::Event(ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome,
+                ..
+            }) if client_token == positive_token => break outcome,
+            _ => {}
+        }
+    };
+    assert_eq!(create_ack, Some(Response::Ok));
+    let ovrcr::protocol::LifecycleOutcome::CreatedSession(summary) = positive else {
+        panic!("fresh explicit model capability was refused: {positive:?}");
+    };
+    let terminal_deadline = Instant::now() + Duration::from_secs(5);
+    let text = loop {
+        let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+            session: summary.id,
+            max_lines: None,
+        }) else {
+            panic!("managed fake Claude terminal disappeared");
+        };
+        if text.contains("MODEL_LAUNCH_ARGS") {
+            break text;
+        }
+        assert!(
+            Instant::now() < terminal_deadline,
+            "managed fake Claude did not record launch argv: {text:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(text.contains("<--model><opus>"), "managed argv: {text:?}");
+
+    std::fs::write(&resolution_file, "claude-opus-fixture-v2\n").unwrap();
+    let stale_token = 4;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: stale_token,
+            request: explicit("opus-stale", "claude-opus-fixture-v1"),
+        },
+    )
+    .unwrap();
+    let mut stale_ack = None;
+    let stale = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id: received_id,
+                response,
+            } if received_id == stale_token => stale_ack = Some(response),
+            ServerMessage::Event(ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome,
+                ..
+            }) if client_token == stale_token => break outcome,
+            _ => {}
+        }
+    };
+    assert_eq!(stale_ack, Some(Response::Ok));
+    assert!(matches!(
+        stale,
+        ovrcr::protocol::LifecycleOutcome::Failed {
+            code: ErrorCode::InvalidRequest,
+            message,
+        } if message.contains("resolution changed")
+    ));
+    let Response::Hierarchy(snapshot) = fixture.request(Request::List) else {
+        panic!("expected workspace hierarchy");
+    };
+    assert!(
+        !snapshot
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+            .any(|session| session.name == "opus-stale")
+    );
+
+    std::fs::write(&resolution_file, "claude-opus-fixture-v1\n").unwrap();
+    let default_token = 5;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: default_token,
+            request: Request::CreateAgentSession(ovrcr::protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: PROJECT.into(),
+                    workspace: WORKSPACE.into(),
+                    name: "claude-default".into(),
+                    label: Some("claude".into()),
+                    argv: argv.clone(),
+                    kind: ovrcr::protocol::SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: ovrcr::protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            }),
+        },
+    )
+    .unwrap();
+    let mut default_ack = None;
+    let default = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } if request_id == default_token => default_ack = Some(response),
+            ServerMessage::Event(ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome,
+                ..
+            }) if client_token == default_token => break outcome,
+            _ => {}
+        }
+    };
+    assert_eq!(default_ack, Some(Response::Ok));
+    let ovrcr::protocol::LifecycleOutcome::CreatedSession(default_summary) = default else {
+        panic!("Harness default launch was refused: {default:?}");
+    };
+    let terminal_deadline = Instant::now() + Duration::from_secs(5);
+    let default_text = loop {
+        let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+            session: default_summary.id,
+            max_lines: None,
+        }) else {
+            panic!("managed fake Claude default terminal disappeared");
+        };
+        if text.contains("MODEL_LAUNCH_ARGS") {
+            break text;
+        }
+        assert!(
+            Instant::now() < terminal_deadline,
+            "managed fake Claude default did not record launch argv: {text:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        !default_text.contains("<--model>"),
+        "Harness default must leave native model selection alone: {default_text:?}"
+    );
+
+    let _ = std::fs::remove_file(&catalog_calls);
+    let checkout = fixture.workspace_path(WORKSPACE);
+    let git_dir = Command::new("git")
+        .arg("-C")
+        .arg(&checkout)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .output()
+        .expect("read task-owned checkout's git admin path");
+    assert!(git_dir.status.success());
+    let git_dir = PathBuf::from(String::from_utf8_lossy(&git_dir.stdout).trim());
+    std::fs::write(git_dir.join("ovrcr-identity"), "replacement-generation\n").unwrap();
+
+    let changed_identity_token = 6;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: changed_identity_token,
+            request: explicit("identity-stale", "claude-opus-fixture-v1"),
+        },
+    )
+    .unwrap();
+    let mut identity_ack = None;
+    let identity_result = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } if request_id == changed_identity_token => identity_ack = Some(response),
+            ServerMessage::Event(ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome,
+                ..
+            }) if client_token == changed_identity_token => break outcome,
+            _ => {}
+        }
+    };
+    assert_eq!(identity_ack, Some(Response::Ok));
+    assert!(matches!(
+        identity_result,
+        ovrcr::protocol::LifecycleOutcome::Failed {
+            code: ErrorCode::InvalidRequest,
+            message,
+        } if message.contains("Git worktree changed")
+    ));
+    assert!(
+        !catalog_calls.exists(),
+        "stale workspace must not run Claude"
+    );
+
+    let changed_query_token = 7;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: changed_query_token,
+            request: Request::QueryAgentModels {
+                preset: "claude".into(),
+                origin: AgentLaunchOrigin::Detected,
+                argv: argv.clone(),
+                project: PROJECT.into(),
+                workspace: WORKSPACE.into(),
+            },
+        },
+    )
+    .unwrap();
+    let mut changed_capabilities = None;
+    let query_deadline = Instant::now() + Duration::from_secs(5);
+    while changed_capabilities.is_none() {
+        assert!(
+            Instant::now() < query_deadline,
+            "identity check did not finish"
+        );
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id,
+                capabilities,
+            }) if request_id == changed_query_token => changed_capabilities = Some(capabilities),
+            _ => {}
+        }
+    }
+    let changed_capabilities = changed_capabilities.unwrap();
+    assert!(changed_capabilities.models.is_empty());
+    assert!(
+        changed_capabilities
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Git worktree changed"))
+    );
+    assert!(
+        !catalog_calls.exists(),
+        "stale workspace must not run Claude"
+    );
+}
+
+#[test]
+fn harness_default_claude_launches_without_catalog_or_model_override() {
+    let fixture = Live::idle().bounded();
+    let native_bin = fixture.root.path().join("fake-native");
+    std::fs::create_dir(&native_bin).unwrap();
+    let native = native_bin.join("claude");
+    std::fs::write(
+        &native,
+        "#!/bin/sh\nprintf 'MODEL_LAUNCH_ARGS'\nfor argument in \"$@\"; do printf '<%s>' \"$argument\"; done\nprintf '\\n'\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&native).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&native, permissions).unwrap();
+    let profile = fixture.root.path().join("claude-profile");
+    std::fs::create_dir(&profile).unwrap();
+    std::fs::write(
+        fixture.config.join("dashboard.toml"),
+        "agents = []\n[quota]\nenabled = false\n",
+    )
+    .unwrap();
+    let mut path_entries = vec![native_bin];
+    path_entries.extend(std::env::split_paths(&fixture.path()));
+    let path = std::env::join_paths(path_entries).unwrap();
+    fixture.start_binary_env(&[
+        ("PATH", path.as_os_str()),
+        ("CLAUDE_CONFIG_DIR", profile.as_os_str()),
+    ]);
+    fixture.ready("feature/default-model");
+
+    let mut native_argv = vec![native.into_os_string()];
+    ovrcr::protocol::apply_default_auto_trust("claude", &mut native_argv);
+    let mut argv = vec![
+        fixture.executable.as_os_str().to_owned(),
+        "agent".into(),
+        "run".into(),
+        "claude".into(),
+        "--".into(),
+    ];
+    argv.extend(native_argv);
+    let mut dashboard = dashboard_socket(&fixture);
+    let token = 2;
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: token,
+            request: Request::CreateAgentSession(ovrcr::protocol::CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: PROJECT.into(),
+                    workspace: WORKSPACE.into(),
+                    name: "claude-native-default".into(),
+                    label: Some("claude".into()),
+                    argv,
+                    kind: ovrcr::protocol::SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: ovrcr::protocol::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            }),
+        },
+    )
+    .unwrap();
+    let mut create_ack = None;
+    let outcome = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } if request_id == token => create_ack = Some(response),
+            ServerMessage::Event(ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome,
+                ..
+            }) if client_token == token => break outcome,
+            _ => {}
+        }
+    };
+    assert_eq!(create_ack, Some(Response::Ok));
+    let ovrcr::protocol::LifecycleOutcome::CreatedSession(summary) = outcome else {
+        panic!("Harness default launch was refused: {outcome:?}");
+    };
+    let terminal_deadline = Instant::now() + Duration::from_secs(5);
+    let text = loop {
+        let Response::TerminalText { text, .. } = fixture.request(Request::ReadTerminal {
+            session: summary.id,
+            max_lines: None,
+        }) else {
+            panic!("managed fake Claude terminal disappeared");
+        };
+        if text.contains("MODEL_LAUNCH_ARGS") {
+            break text;
+        }
+        assert!(
+            Instant::now() < terminal_deadline,
+            "managed fake Claude did not record launch argv: {text:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        !text.contains("<--model>"),
+        "Harness default must omit --model: {text:?}"
+    );
+    assert!(text.contains("<--dangerously-skip-permissions>"));
 }
 
 #[test]
@@ -19531,17 +20035,25 @@ fn dashboard_hello_carries_the_servers_settings_and_toggles_save_through_the_req
     .unwrap();
     let response = fixture.request(Request::SetSetting {
         path: "launch_choices.\"project.with.dots\"".into(),
-        value: Some("{ kind = \"Agent\", preset = \"claude\" }".into()),
+        value: Some(
+            "{ kind = \"Agent\", preset = \"claude\", model_policy = \"HarnessDefault\" }".into(),
+        ),
     });
     assert_eq!(response, Response::Ok);
     let saved = hello_settings(&fixture);
     assert_eq!(
         saved.settings.launch_choices["project.with.dots"],
-        ovrcr::protocol::LaunchChoice::Agent("claude".into())
+        ovrcr::protocol::LaunchChoice::Agent {
+            preset: "claude".into(),
+            model_policy: ovrcr::protocol::AgentModelPolicy::HarnessDefault,
+        }
     );
     assert_eq!(
         saved.settings.launch_choices["other.project"],
-        ovrcr::protocol::LaunchChoice::Agent("other".into())
+        ovrcr::protocol::LaunchChoice::Agent {
+            preset: "other".into(),
+            model_policy: ovrcr::protocol::AgentModelPolicy::HarnessDefault,
+        }
     );
     assert!(
         std::fs::read_to_string(&document)
