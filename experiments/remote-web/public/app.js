@@ -161,6 +161,10 @@ function providerLabel(session) {
   return session.label || session.agent?.binding?.provider || "";
 }
 
+function hasTerminal(session) {
+  return Boolean(session) && (session.phase === "running" || session.phase === "paused");
+}
+
 function renderList() {
   const groups = $("groups");
   groups.replaceChildren();
@@ -295,6 +299,13 @@ function renderComposerState() {
 
 function renderScreen() {
   const screen = $("screen");
+  const session = state.sessions.find((item) => item.id === state.selectedId);
+  if (session && !hasTerminal(session)) {
+    screen.textContent =
+      `This session is ${session.phase}; it has no live terminal.\n\n` +
+      `Reopen it from the desktop with:\n  ovrcr terminal reopen ${session.id}`;
+    return;
+  }
   const text = state.screen?.text ?? "";
   screen.textContent = text;
   if (state.scrollBottom) screen.scrollTop = screen.scrollHeight;
@@ -325,6 +336,7 @@ async function refreshList() {
       renderMeta();
       renderActions();
       renderComposerState();
+      renderScreen();
     }
   } catch (error) {
     if (Date.now() - state.lastOkAt > STALE_AFTER_MS) showBanner(error.message);
@@ -335,6 +347,8 @@ async function refreshList() {
 
 async function refreshScreen() {
   if (state.screenBusy || !state.selectedId) return;
+  const current = state.sessions.find((item) => item.id === state.selectedId);
+  if (current && !hasTerminal(current)) return;
   state.screenBusy = true;
   const id = state.selectedId;
   try {
@@ -381,8 +395,10 @@ async function select(id, { push = true } = {}) {
   $("back").hidden = false;
   renderSession();
   syncPolling();
-  await refreshScreen();
   await refreshList();
+  if (hasTerminal(state.sessions.find((item) => item.id === state.selectedId))) {
+    await refreshScreen();
+  }
   renderSession();
 }
 
