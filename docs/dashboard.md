@@ -24,7 +24,7 @@ Next input needed` or `i Next ready`, naming where it goes.
 | Transcript | `PageUp` or wheel-up on full-screen Claude Code or Codex | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY. `Ctrl-g` leaves it;
-the bundled GUI's qualified Control-hold gesture owns Ctrl+digit jump keys while
+a qualified frontend's Control-hold gesture owns Ctrl+digit jump keys while
 active. Other Control shortcuts, including Ctrl-c and Ctrl-o, keep their normal
 program or Dashboard handling. `Ctrl-o` reaches the program there (Oh My Pi expands tool
 output with it, Claude Code opens its transcript), so Operator **Quick message** is
@@ -99,7 +99,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| Bundled GUI: `Ctrl+1`–`Ctrl+9` | In the bundled OVRCR GUI, hold Control to label at most the first nine visible running or retained Agent rows. Press a shown digit to select immediately. Further visible rows stay unlabelled; scroll and start a fresh hold, or use `s` Agents search. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Control never reveals it. The Standard CLI and other frontends use `s` Agents search. |
+| `Ctrl+1`–`Ctrl+9` | In the bundled OVRCR GUI or direct macOS iTerm2 reporting version 3.7.2 or 3.7.7, hold Control to label at most the first nine visible running or retained Agent rows. Press a shown digit to select immediately. Further visible rows stay unlabelled; scroll and start a fresh hold, or use `s` Agents search. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Control never reveals it. Unqualified frontends use `s` Agents search. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -112,19 +112,21 @@ change when the Server republishes. The Claude probe is a separate consent,
 `N`, `O`, `S`, `R`, `b`, `i` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Shift` do not change which action a key runs: `Alt-x` closes the pane
 that `x` closes. Command/Super remains distinct from Control and never starts a
-session jump. In the bundled GUI's qualified Control-hold gesture, `Ctrl+1`–
+session jump. In a qualified frontend's Control-hold gesture, `Ctrl+1`–
 `Ctrl+9` choose a labeled Agent; non-digit Control shortcuts keep their ordinary
 Dashboard, Operator, or program handling. Other frontends use `s` Agents search.
 `Ctrl-t` reaches Browse with optional Alt or Shift. `Esc` and `Ctrl-g` cancel a
 history request that has not opened yet.
 
-Control-hold session jump is currently qualified only for the bundled OVRCR GUI,
-which owns the native Control input path. The Standard CLI and other frontends
-keep `s` Agents search and do not show or intercept the Control-hold gesture.
+Control-hold session jump is qualified for the bundled OVRCR GUI and direct macOS
+iTerm2 reporting version 3.7.2 or 3.7.7. iTerm2 is detected automatically from its
+terminal metadata. SSH,
+multiplexers, nested OVRCR sessions, and unverified terminal versions keep `s` Agents
+search and do not show or intercept the Control-hold gesture.
 Kitty keyboard-mode negotiation or a capability response alone does not qualify
 another frontend. Adding one requires native evidence that standalone Control
 press and release plus Ctrl+1–Ctrl+9 reach the application. Command/Super remains
-separate from this gesture. In the bundled GUI, the gesture also works from an
+separate from this gesture. In qualified frontends, the gesture also works from an
 unobscured Operator view when the shared sidebar is already visible; Operator
 conversation rows do not receive Agent labels.
 
@@ -560,7 +562,7 @@ insert a newline instead of submitting. Terminals without the kitty keyboard
 protocol report `Shift+Enter` as plain `Enter`, so the dashboard cannot tell them
 apart there.
 
-In the bundled GUI's qualified input profile, the Control session jump uses
+In a qualified input profile, the Control session jump uses
 Kitty's enhanced key events while the user holds Control. It labels at most the
 first nine drawn running or retained Agent rows, including the current session,
 in sidebar order and freezes each target's session and run for that hold. The
@@ -574,8 +576,9 @@ queued loading input is discarded. Non-digit Control shortcuts keep their
 ordinary Dashboard, Operator, or program handling. A retained Agent stays in
 Browse for inspection and is never resumed or reopened by navigation; use its
 explicit Resume/Reopen action when needed. Command/Super shortcuts remain
-separate. The feature does not infer support from a terminal name or capability
-reply. Other frontends remain on Agents search until native input has been
+separate. Qualification requires native input verification; terminal metadata
+selects only a previously qualified frontend. A capability reply alone does not
+qualify one. Other frontends remain on Agents search until native input has been
 verified and that frontend is explicitly qualified.
 
 ## Pause and resume

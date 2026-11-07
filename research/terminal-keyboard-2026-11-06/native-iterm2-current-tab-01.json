@@ -1,0 +1,67 @@
+{
+  "time": "2026-11-07T06:32:41.813913+00:00",
+  "terminal": "iTerm.app",
+  "version": "3.7.2",
+  "reason": "escape",
+  "requested_flags": 15,
+  "reported_flags": [
+    15
+  ],
+  "colon": true,
+  "question": true,
+  "control_pairs": [
+    57442
+  ],
+  "control_digit": true,
+  "events": [
+    {
+      "code": 59,
+      "shifted": 58,
+      "modifiers": 1,
+      "kind": 1
+    },
+    {
+      "code": 59,
+      "shifted": 58,
+      "modifiers": 1,
+      "kind": 3
+    },
+    {
+      "code": 47,
+      "shifted": 63,
+      "modifiers": 1,
+      "kind": 1
+    },
+    {
+      "code": 47,
+      "shifted": 63,
+      "modifiers": 1,
+      "kind": 3
+    },
+    {
+      "code": 57442,
+      "shifted": null,
+      "modifiers": 4,
+      "kind": 1
+    },
+    {
+      "code": 49,
+      "shifted": null,
+      "modifiers": 4,
+      "kind": 1
+    },
+    {
+      "code": 49,
+      "shifted": null,
+      "modifiers": 4,
+      "kind": 3
+    },
+    {
+      "code": 57442,
+      "shifted": null,
+      "modifiers": 0,
+      "kind": 3
+    }
+  ],
+  "transport_verified": true
+}

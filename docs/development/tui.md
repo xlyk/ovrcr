@@ -42,13 +42,21 @@ events, and queued loading input must never become child bytes. Opening an
 overlay, losing focus, scrolling, or resizing cancels the hold.
 
 Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.
+All-key reporting must also request alternate key values so shifted punctuation
+such as `:` and `?` arrives as the character the user typed. The bundled GUI's
+mode observer must recognize the same request as the real terminal path.
 Request its modes at Dashboard entry, restore the owned mode on normal exit,
 interrupt, error, and panic, and preserve the user's prior mode by popping only
 the push this Dashboard owns. A reply to a capability query is not proof that a
 host delivers the required standalone Control press, Ctrl+digit, and release.
 Control-hold session jump is enabled only for an explicitly qualified frontend:
 the bundled OVRCR GUI supplies `DashboardInputProfile::VerifiedOvrcrGui` after
-its native shortcut path has been verified. The CLI and other frontends default
+its native shortcut path has been verified. Direct macOS iTerm2 reporting 3.7.2
+or 3.7.7 is also qualified by native captures of standalone Control, Ctrl+1,
+release, and shifted punctuation. The CLI selects `VerifiedIterm2` from
+`TERM_PROGRAM=iTerm.app` and `TERM_PROGRAM_VERSION=3.7.2` or `3.7.7` only when no
+SSH, multiplexer, or parent OVRCR session marker is present. An explicit input
+profile retains priority. Other frontends default
 to `Standard`; terminal keyboard-mode negotiation alone does not qualify them.
 
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph, the plain-words state (with its narrow form, a bare `Unread` when there is one), the reporting words (`starting…`, `status off`) and elapsed clauses the pane headers read, and the activity, Unread and health clauses the Agents picker reads — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers, the picker and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width (`render::pane_header` gives up the pid, model, elapsed time and label before the state), and readiness itself is still decided in `dashboard::ready`. Quality words and reporter reasons never reach the headers. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the header still says Ready. The sidebar agent label appends the current model after a colon when one is known; on a shared line the title keeps its room first, so the model goes, then the agent, before the title clips. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.

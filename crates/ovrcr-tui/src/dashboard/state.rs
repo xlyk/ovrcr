@@ -634,9 +634,8 @@ impl Dashboard {
     }
 
     /// Construct the same production Dashboard boundary with an explicit
-    /// frontend profile. The standard terminal path must use [`Self::new`];
-    /// the OVRCR GUI selects `VerifiedOvrcrGui` because it owns native Control
-    /// event translation and delivers both modifier edges.
+    /// frontend profile. Unqualified terminals use [`Self::new`]; the CLI
+    /// selects qualified native frontends through `DashboardInputProfile`.
     pub fn with_input_profile(
         size: TerminalSize,
         input_profile: super::DashboardInputProfile,
