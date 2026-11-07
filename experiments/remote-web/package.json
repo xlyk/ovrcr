@@ -1,0 +1,10 @@
+{
+  "name": "ovrcr-remote-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/server.test.mjs",
+    "test:live": "node test/live-instance.mjs"
+  }
+}

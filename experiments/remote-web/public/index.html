@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1115" />
+    <title>OVRCR</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="back" class="icon" aria-label="Back" hidden>‹</button>
+      <div class="titles">
+        <h1 id="title">OVRCR</h1>
+        <p id="subtitle" class="subtitle"></p>
+      </div>
+      <span id="conn" class="conn" aria-label="connection" title="connection">…</span>
+    </header>
+
+    <main>
+      <div id="banner" class="banner" hidden>
+        <span id="banner-text"></span>
+        <button id="banner-dismiss" class="icon small" aria-label="Dismiss">×</button>
+      </div>
+
+      <section id="list-view" class="view">
+        <div id="groups"></div>
+        <p id="empty" class="empty" hidden>No sessions.</p>
+      </section>
+
+      <section id="session-view" class="view" hidden>
+        <div id="meta" class="meta"></div>
+        <div class="screen-wrap">
+          <pre id="screen" class="screen" tabindex="0" aria-label="terminal screen"></pre>
+        </div>
+        <div id="keybar" class="keybar" aria-label="terminal keys"></div>
+        <form id="composer" class="composer">
+          <textarea
+            id="text"
+            rows="2"
+            placeholder="Reply to this session…"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+          ></textarea>
+          <div class="composer-actions">
+            <button type="button" id="type-only" class="secondary">Type only</button>
+            <button type="submit" id="send" class="primary">Send ↵</button>
+          </div>
+        </form>
+        <div id="actions" class="actions"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
