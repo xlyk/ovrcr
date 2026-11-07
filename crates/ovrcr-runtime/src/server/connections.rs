@@ -497,6 +497,16 @@ pub(super) fn handle_request_with_id(
                 size,
                 text,
             }),
+        Request::ReadScreen {
+            session,
+            start_row,
+            rows,
+            cols,
+        } => state
+            .read_screen(session, start_row, rows, cols)
+            .map_or_else(error_for_lifecycle, |window| {
+                Response::ScreenWindow(Box::new(window))
+            }),
         Request::SendTerminal {
             session,
             text,
@@ -1195,19 +1205,7 @@ pub(super) fn handle_request_with_id(
             run,
             identity,
             before,
-        } => {
-            let Some(owner) = owner.filter(|_| dashboard) else {
-                return error_response(
-                    ErrorCode::InvalidRequest,
-                    "transcript requires the current Dashboard",
-                );
-            };
-            if !state.dashboard.owns(owner) {
-                error_response(ErrorCode::Conflict, "dashboard is disconnected")
-            } else {
-                super::transcript::page(state, session, run, identity, before)
-            }
-        }
+        } => super::transcript::page(state, session, run, identity, before),
         Request::SaveWorkspaceWip { project, name } => state
             .save_workspace_wip(&project, &name)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),

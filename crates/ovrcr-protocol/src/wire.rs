@@ -11,6 +11,9 @@ pub const HISTORY_ROWS: usize = 512;
 pub const PAGE_ROWS: u16 = 16;
 pub const PAGE_COLS: u16 = 128;
 pub const PAGE_BYTES: usize = 128 * 1024;
+/// Bounds for one read-only screen window (mobile/remote clients).
+pub const MAX_SCREEN_WINDOW_ROWS: u16 = 128;
+pub const MAX_SCREEN_WINDOW_COLS: u16 = 256;
 
 /// Upper bound on a pane's terminal size. A pane beyond this allocates an
 /// oversized `vt100::Screen` and PTY before the resulting frame is found to
@@ -61,6 +64,32 @@ pub struct HistoryRows {
     pub snapshot: HistorySnapshotId,
     pub start_row: u32,
     pub start_col: u16,
+    pub rows: Vec<HistoryRow>,
+}
+
+/// Cursor in visible-screen coordinates. `row` is relative to the live screen, not the
+/// window, so a scrollback window never carries a cursor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenCursor {
+    pub row: u16,
+    pub col: u16,
+    pub hidden: bool,
+}
+
+/// A read-only window of one session's screen and retained scrollback. Rows are addressed
+/// from the oldest retained scrollback row (zero) through the live screen, and carry the
+/// same styled cells History uses. Control may request this; it owns no seat and changes
+/// no geometry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenWindow {
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub size: TerminalSize,
+    pub history_rows: u32,
+    pub total_rows: u32,
+    pub start_row: u32,
+    pub alternate_screen: bool,
+    pub cursor: Option<ScreenCursor>,
     pub rows: Vec<HistoryRow>,
 }
 
@@ -432,6 +461,13 @@ pub enum Request {
         identity: Option<crate::ConversationReference>,
         before: Option<u64>,
     },
+    /// Read-only screen window: live screen plus retained scrollback. Control is allowed.
+    ReadScreen {
+        session: SessionId,
+        start_row: u32,
+        rows: u16,
+        cols: u16,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,6 +558,7 @@ pub enum Response {
     OperatorExchange(crate::OperatorExchangeResult),
     OperatorWorker(crate::OperatorWorkerResult),
     Transcript(TranscriptPage),
+    ScreenWindow(Box<ScreenWindow>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1116,6 +1153,15 @@ mod wire_snapshot {
                     before: Some(2),
                 },
             ),
+            (
+                "ReadScreen",
+                Request::ReadScreen {
+                    session: SessionId(1),
+                    start_row: 5,
+                    rows: 2,
+                    cols: 3,
+                },
+            ),
         ]
     }
 
@@ -1252,6 +1298,34 @@ mod wire_snapshot {
                         options: Vec::new(),
                     }),
                 }),
+            ),
+            (
+                "ScreenWindow",
+                Response::ScreenWindow(Box::new(crate::ScreenWindow {
+                    session: SessionId(1),
+                    run: SessionRunId(4),
+                    size: TerminalSize { rows: 24, cols: 80 },
+                    history_rows: 5,
+                    total_rows: 29,
+                    start_row: 5,
+                    alternate_screen: false,
+                    cursor: Some(crate::ScreenCursor {
+                        row: 3,
+                        col: 7,
+                        hidden: false,
+                    }),
+                    rows: vec![HistoryRow {
+                        width: 2,
+                        cells: vec![HistoryCell {
+                            text: "hi".into(),
+                            width: 1,
+                            fg: HistoryColor::Indexed(4),
+                            bg: HistoryColor::Default,
+                            attributes: 0,
+                        }],
+                        wrapped: false,
+                    }],
+                })),
             ),
         ]
     }
@@ -3453,19 +3527,20 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0447017301630168016c0104",
+            "2a0448017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0447017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0448017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
             "Request::Transcript",
             "3c010401000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e666967000102",
         ),
+        ("Request::ReadScreen", "3d01050203"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -3494,22 +3569,26 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04470000"),
+        ("Response::NotificationNavigation", "0d04480000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0447017301630168016c0104",
+            "0e01016e0448017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010447017301630168016c0164",
+            "0f0107080901016901010448017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004470107080901016901010447017301630168016c0164",
+            "1004480107080901016901010448017301630168016c0164",
         ),
         (
             "Response::Transcript",
             "1c0300017501016102016e016903000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "Response::ScreenWindow",
+            "1d01041850051d050001030700010201026869010104000000",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3533,7 +3612,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0447017301630168016c0104",
+            "08016e0448017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

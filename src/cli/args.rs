@@ -365,6 +365,25 @@ pub(super) enum TerminalCommand {
         #[arg(long, value_parser = parse_positive_usize)]
         max_lines: Option<usize>,
     },
+    /// Read a read-only window of the live screen and retained scrollback.
+    Screen {
+        id: u64,
+        #[arg(long, default_value_t = 0)]
+        start_row: u32,
+        #[arg(long, default_value_t = 40)]
+        rows: u16,
+        #[arg(long, default_value_t = 200)]
+        cols: u16,
+    },
+    /// Read one page of the agent's own conversation transcript (Claude, Codex).
+    Transcript {
+        id: u64,
+        #[arg(long)]
+        before: Option<u64>,
+        /// Identity JSON from a previous page; required when --before is set.
+        #[arg(long)]
+        identity: Option<String>,
+    },
     Send {
         id: u64,
         #[arg(long)]

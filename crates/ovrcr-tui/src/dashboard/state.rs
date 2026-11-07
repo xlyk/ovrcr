@@ -3950,7 +3950,8 @@ impl Dashboard {
                 | Response::NotificationNavigation(_)
                 | Response::NotificationNavigationConfirmed(_)
                 | Response::ITermFocusPrepared(_)
-                | Response::BridgeOwner(_) => {}
+                | Response::BridgeOwner(_)
+                | Response::ScreenWindow(_) => {}
                 Response::QuotaCooldown { remaining_ms } => self.set_limit(format!(
                     "Quota refresh cooling down: {}s left",
                     remaining_ms.div_ceil(1_000)

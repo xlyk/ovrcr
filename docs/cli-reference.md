@@ -10,7 +10,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | --- | --- |
 | `project` (`projects`) | Register and inspect Git projects |
 | `workspace` (`workspaces`) | Create and remove worktree workspaces |
-| `terminal` (`terminals`) | Create, read, send text or keys to, and close terminals |
+| `terminal` (`terminals`) | Create, read the screen or transcript, send text or keys to, and close terminals |
 | `task` (`tasks`), `run` (`runs`) | Scheduled Pi tasks; see [scheduled tasks](scheduled-tasks.md) |
 | `service` | Install, start, stop, or remove the background service |
 | `agent` | Supervise Claude Code, print setup, and inspect integration health |
@@ -320,6 +320,24 @@ means the bytes were written, not that the program handled the key.
 exited terminal's retained final screen. `--max-lines N` selects the last N text
 lines and requires a positive number. It does not expose scrollback. CLI reads and
 sends do not select or resize the dashboard terminal.
+
+`terminal screen ID [--start-row N] [--rows R] [--cols C]` returns a read-only
+window of the live screen plus retained scrollback as styled cells: text, width,
+foreground, background and attributes. Row 0 is the oldest retained scrollback
+row; `--start-row` and `--rows` address that range, and `--cols` caps the columns.
+The defaults are 40 rows and 200 columns; the server accepts at most 128 rows and
+256 columns and retains up to 512 scrollback rows. `--json` returns the whole
+`ScreenWindow`, including `history_rows`, `total_rows`, `size`, `cursor` and
+`alternate_screen`. Sessions on the alternate screen report `history_rows: 0` and
+only the visible rows. The request is read-only: it does not select, resize, focus
+or write, and a Control connection may use it.
+
+`terminal transcript ID [--before N] [--identity JSON]` reads one bounded page of
+the agent's own conversation (Claude and Codex). Without `--before` it opens the
+current conversation reference; pass the previous page's `start` and `identity`
+from `--json` to continue backwards. The page can be empty at the start of the
+conversation. A changed conversation refuses the page with `Conflict`. Transcript
+reads are read-only and do not require the Dashboard.
 
 `terminal close ID` archives an exited or stopped row immediately. For live work,
 this explicit command stops the currently owned processes and archives only after
