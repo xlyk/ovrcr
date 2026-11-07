@@ -85,10 +85,13 @@ impl DashboardInputProfile {
         ]
         .iter()
         .any(|key| read(key).is_some());
-        // Qualification is limited to the direct native setup whose modifier path was captured.
+        // Qualification is limited to direct native setups whose modifier paths were captured.
         if cfg!(target_os = "macos")
             && iterm.as_deref() == Some(std::ffi::OsStr::new("iTerm.app"))
-            && version.as_deref() == Some(std::ffi::OsStr::new("3.7.7"))
+            && matches!(
+                version.as_deref().and_then(|value| value.to_str()),
+                Some("3.7.2" | "3.7.7")
+            )
             && !proxied
         {
             Self::VerifiedIterm2
@@ -134,7 +137,13 @@ mod input_profile_tests {
         } else {
             DashboardInputProfile::Standard
         };
-        assert_eq!(profile(&[]), expected);
+        for version in ["3.7.2", "3.7.7"] {
+            assert_eq!(
+                profile(&[("TERM_PROGRAM_VERSION", version)]),
+                expected,
+                "{version}"
+            );
+        }
     }
 
     #[test]
@@ -164,11 +173,13 @@ mod input_profile_tests {
             "SSH_TTY",
             "OVRCR_SESSION_ID",
         ] {
-            assert_eq!(
-                profile(&[(key, "fixture")]),
-                DashboardInputProfile::Standard,
-                "{key}"
-            );
+            for version in ["3.7.2", "3.7.7"] {
+                assert_eq!(
+                    profile(&[(key, "fixture"), ("TERM_PROGRAM_VERSION", version)]),
+                    DashboardInputProfile::Standard,
+                    "{key}, {version}"
+                );
+            }
         }
     }
 

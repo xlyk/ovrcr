@@ -99,6 +99,17 @@ fn alternate_key_reporting_preserves_quick_message_control_shortcuts() -> Result
 #[cfg(target_os = "macos")]
 #[test]
 fn iterm2_control_hold_selects_an_agent_through_the_production_environment() -> Result<()> {
+    iterm2_control_hold_with_version("3.7.7")
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn iterm2_original_tab_control_hold_uses_the_production_environment() -> Result<()> {
+    iterm2_control_hold_with_version("3.7.2")
+}
+
+#[cfg(target_os = "macos")]
+fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     let first = create_search_agent(&mut fixture, "iterm-a")?;
@@ -113,11 +124,11 @@ fn iterm2_control_hold_selects_an_agent_through_the_production_environment() -> 
         },
         &[
             ("TERM_PROGRAM", "iTerm.app"),
-            ("TERM_PROGRAM_VERSION", "3.7.7"),
+            ("TERM_PROGRAM_VERSION", version),
         ],
     )?;
     dashboard.wait_until(|screen| screen.contains("iterm-b"), wait_deadline())?;
-    // These physical-key packets were captured from native iTerm2 3.7.7.
+    // Both verified native iTerm2 tabs produced these physical-key packets.
     dashboard.send(b"\x1b[57442;5:1u")?;
     dashboard.wait_until(
         |screen| {

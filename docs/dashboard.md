@@ -99,7 +99,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| `Ctrl+1`–`Ctrl+9` | In the bundled OVRCR GUI or direct macOS iTerm2 3.7.7, hold Control to label at most the first nine visible running or retained Agent rows. Press a shown digit to select immediately. Further visible rows stay unlabelled; scroll and start a fresh hold, or use `s` Agents search. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Control never reveals it. Unqualified frontends use `s` Agents search. |
+| `Ctrl+1`–`Ctrl+9` | In the bundled OVRCR GUI or direct macOS iTerm2 reporting version 3.7.2 or 3.7.7, hold Control to label at most the first nine visible running or retained Agent rows. Press a shown digit to select immediately. Further visible rows stay unlabelled; scroll and start a fresh hold, or use `s` Agents search. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Control never reveals it. Unqualified frontends use `s` Agents search. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -119,7 +119,8 @@ Dashboard, Operator, or program handling. Other frontends use `s` Agents search.
 history request that has not opened yet.
 
 Control-hold session jump is qualified for the bundled OVRCR GUI and direct macOS
-iTerm2 3.7.7. iTerm2 is detected automatically from its terminal metadata. SSH,
+iTerm2 reporting version 3.7.2 or 3.7.7. iTerm2 is detected automatically from its
+terminal metadata. SSH,
 multiplexers, nested OVRCR sessions, and unverified terminal versions keep `s` Agents
 search and do not show or intercept the Control-hold gesture.
 Kitty keyboard-mode negotiation or a capability response alone does not qualify
