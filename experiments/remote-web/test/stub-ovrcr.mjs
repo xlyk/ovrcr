@@ -112,6 +112,11 @@ function screenLine(row) {
   if (index === 34) return line("$ git status --short", { Indexed: 6 }, 1);
   if (index === 33) return line("test result: ok. 101 passed; 0 failed", { Indexed: 2 }, 1);
   if (index === 32) return line("");
+  if (index === 31) {
+    return line(" \uE0B0 \uE0B2 \uF121  \uE702  \uF17C  ┌─┐ └─┘ ▁▂▃ █", {
+      Indexed: 5,
+    });
+  }
   return line(`test wire::snapshot_${String(index).padStart(2, "0")} ... ok`, { Indexed: 2 });
 }
 

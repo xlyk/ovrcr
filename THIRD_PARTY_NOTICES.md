@@ -28,3 +28,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## JetBrains Mono Nerd Font (remote web MVP)
+
+`experiments/remote-web/public/fonts/jetbrains-mono-nerd-{regular,bold}.woff2`
+are WOFF2 conversions of `JetBrainsMonoNerdFontMono` from Nerd Fonts
+(https://github.com/ryanoasis/nerd-fonts), a patched build of JetBrains Mono
+(https://github.com/JetBrains/JetBrainsMono).
+
+Copyright 2020 The JetBrains Mono Project Authors
+
+SIL Open Font License 1.1. The full text is in
+`experiments/remote-web/public/fonts/OFL.txt`.

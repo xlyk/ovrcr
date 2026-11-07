@@ -203,6 +203,20 @@ test("oversized text and bodies are refused before the CLI runs", async (t) => {
   assert.equal(calls().length, 0);
 });
 
+test("serves the bundled Nerd Font and its license", async (t) => {
+  const { base } = await harness(t);
+
+  const font = await get(base, "/fonts/jetbrains-mono-nerd-regular.woff2");
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get("content-type"), "font/woff2");
+  assert.match(font.headers.get("cache-control"), /max-age/);
+  assert.ok((await font.arrayBuffer()).byteLength > 100_000);
+
+  const license = await get(base, "/fonts/OFL.txt");
+  assert.equal(license.status, 200);
+  assert.match(await license.text(), /SIL OPEN FONT LICENSE/);
+});
+
 test("CLI failures map to HTTP status and message", async (t) => {
   const { base } = await harness(t, { env: { STUB_FAIL: "NotFound:session 99 not found" } });
   const missing = await get(base, "/api/session/99/screen");

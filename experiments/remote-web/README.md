@@ -64,6 +64,23 @@ Environment:
 - The desktop Dashboard can stay attached. This app is a Control client: it
   never takes the Dashboard seat, resizes a PTY, or changes focus.
 
+## Fonts
+
+The terminal uses **JetBrains Mono Nerd Font Mono**, bundled as WOFF2
+(`public/fonts/`, regular and bold) so a phone does not need the font installed.
+It covers Nerd Font private-use glyphs, Powerline separators, box drawing and
+block elements; without it those cells render as tofu.
+
+The files are WOFF2 conversions of `JetBrainsMonoNerdFontMono` from
+[Nerd Fonts](https://github.com/ryanoasis/nerd-fonts), a patched build of
+[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono). Copyright 2020 The
+JetBrains Mono Project Authors, SIL Open Font License 1.1. The full license is
+in `public/fonts/OFL.txt`.
+
+The page preloads both weights, `font-display: block` avoids a tofu flash, and
+the server marks the fonts immutable for a day. Glyphs the font does not contain
+(emoji, CJK) fall back to the system font, where column widths can differ.
+
 ## Limits
 
 - **Alternate-screen sessions have no scrollback.** The Server's history path
@@ -96,7 +113,7 @@ Environment:
 ## Tests
 
 ```sh
-npm test           # 12 tests: HTTP, paging args, caching, validation, error mapping
+npm test           # 13 tests: HTTP, paging args, caching, validation, error mapping
 npm run test:live  # real ovrcr server against a disposable empty instance
 ```
 
@@ -127,7 +144,7 @@ Screenshots use Chrome DevTools device emulation at 390×844 with a 2× scale.
 ## Files
 
 - `server.mjs` — loopback HTTP server, CLI runner, routes, validation.
-- `public/` — `index.html`, `styles.css`, `app.js`; no external assets.
+- `public/` — `index.html`, `styles.css`, `app.js`, `fonts/`; no external assets.
 - `test/stub-ovrcr.mjs` — argv-recording CLI stub.
-- `test/server.test.mjs` — the 12 tests.
+- `test/server.test.mjs` — the 13 tests.
 - `test/live-instance.mjs` — real server, empty instance.

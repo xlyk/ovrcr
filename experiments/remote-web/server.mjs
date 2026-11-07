@@ -32,12 +32,17 @@ const STATIC_FILES = new Map([
   ["/index.html", "index.html"],
   ["/app.js", "app.js"],
   ["/styles.css", "styles.css"],
+  ["/fonts/jetbrains-mono-nerd-regular.woff2", "fonts/jetbrains-mono-nerd-regular.woff2"],
+  ["/fonts/jetbrains-mono-nerd-bold.woff2", "fonts/jetbrains-mono-nerd-bold.woff2"],
+  ["/fonts/OFL.txt", "fonts/OFL.txt"],
 ]);
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 const BASE_HEADERS = {
@@ -46,8 +51,8 @@ const BASE_HEADERS = {
   "Referrer-Policy": "no-referrer",
   "Content-Security-Policy":
     "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
-    "script-src 'self'; connect-src 'self'; base-uri 'none'; " +
-    "form-action 'none'; frame-ancestors 'none'",
+    "script-src 'self'; connect-src 'self'; font-src 'self'; " +
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
 class HttpError extends Error {
@@ -270,8 +275,10 @@ async function sendStatic(response, file) {
     sendError(response, 404, "not found");
     return 404;
   }
+  const cache = file.endsWith(".woff2") ? "public, max-age=86400, immutable" : "no-store";
   response.writeHead(200, {
     ...BASE_HEADERS,
+    "Cache-Control": cache,
     "Content-Type": MIME[path.extname(file)] ?? "application/octet-stream",
     "Content-Length": body.length,
   });
