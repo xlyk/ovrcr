@@ -1188,6 +1188,7 @@ max_execution_attempts = 2
                     "quota.cursor.dashboard",
                     ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION
                 ),
+                ("remote.enabled", ovrcr_protocol::REMOTE_OFF),
             ]
         );
         let keys: Vec<_> = report.rows.iter().map(|row| row.key.as_str()).collect();
@@ -1226,6 +1227,9 @@ max_execution_attempts = 2
                 "delegation.default_model",
                 "delegation.max_live_children",
                 "delegation.max_execution_attempts",
+                "remote.enabled",
+                "remote.port",
+                "remote.login",
             ]
         );
     }
