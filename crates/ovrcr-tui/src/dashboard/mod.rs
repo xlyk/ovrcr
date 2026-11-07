@@ -52,14 +52,13 @@ use std::collections::{HashSet, VecDeque};
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
-/// An explicitly qualified input frontend. The default terminal path does not
-/// advertise the Control-hold gesture; only the native OVRCR GUI currently
-/// owns the modifier translation that makes it usable.
+/// A frontend whose native Control press, digit, and release path is qualified.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DashboardInputProfile {
     #[default]
     Standard,
     VerifiedOvrcrGui,
+    VerifiedIterm2,
 }
 
 pub const DASHBOARD_INPUT_PROFILE_ENV: &str = "OVRCR_DASHBOARD_INPUT_PROFILE";
@@ -67,7 +66,35 @@ pub const VERIFIED_OVRCR_GUI_INPUT_PROFILE: &str = "ovrcr-gui";
 
 impl DashboardInputProfile {
     pub fn from_environment() -> Self {
-        Self::from_environment_value(std::env::var(DASHBOARD_INPUT_PROFILE_ENV).ok().as_deref())
+        Self::from_environment_with(|key| std::env::var_os(key))
+    }
+
+    fn from_environment_with(read: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
+        if let Some(value) = read(DASHBOARD_INPUT_PROFILE_ENV) {
+            return Self::from_environment_value(value.to_str());
+        }
+        let iterm = read("TERM_PROGRAM");
+        let version = read("TERM_PROGRAM_VERSION");
+        let proxied = [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ]
+        .iter()
+        .any(|key| read(key).is_some());
+        // Qualification is limited to the direct native setup whose modifier path was captured.
+        if cfg!(target_os = "macos")
+            && iterm.as_deref() == Some(std::ffi::OsStr::new("iTerm.app"))
+            && version.as_deref() == Some(std::ffi::OsStr::new("3.7.7"))
+            && !proxied
+        {
+            Self::VerifiedIterm2
+        } else {
+            Self::Standard
+        }
     }
 
     pub fn from_environment_value(value: Option<&str>) -> Self {
@@ -78,7 +105,91 @@ impl DashboardInputProfile {
     }
 
     pub const fn supports_control_hold(self) -> bool {
-        matches!(self, Self::VerifiedOvrcrGui)
+        matches!(self, Self::VerifiedOvrcrGui | Self::VerifiedIterm2)
+    }
+}
+
+#[cfg(test)]
+mod input_profile_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn profile(overrides: &[(&str, &str)]) -> DashboardInputProfile {
+        let mut values = std::collections::HashMap::from([
+            ("TERM_PROGRAM", OsString::from("iTerm.app")),
+            ("TERM_PROGRAM_VERSION", OsString::from("3.7.7")),
+        ]);
+        values.extend(
+            overrides
+                .iter()
+                .map(|(key, value)| (*key, OsString::from(value))),
+        );
+        DashboardInputProfile::from_environment_with(|key| values.get(key).cloned())
+    }
+
+    #[test]
+    fn direct_verified_iterm_selects_the_native_profile() {
+        let expected = if cfg!(target_os = "macos") {
+            DashboardInputProfile::VerifiedIterm2
+        } else {
+            DashboardInputProfile::Standard
+        };
+        assert_eq!(profile(&[]), expected);
+    }
+
+    #[test]
+    fn other_frontends_and_unverified_versions_keep_standard_input() {
+        for overrides in [
+            vec![("TERM_PROGRAM", "another-terminal")],
+            vec![("TERM_PROGRAM", "")],
+            vec![("TERM_PROGRAM_VERSION", "")],
+            vec![("TERM_PROGRAM_VERSION", "3.7.6")],
+            vec![("TERM_PROGRAM_VERSION", "99.0")],
+        ] {
+            assert_eq!(profile(&overrides), DashboardInputProfile::Standard);
+        }
+        assert_eq!(
+            DashboardInputProfile::from_environment_with(|_| None),
+            DashboardInputProfile::Standard
+        );
+    }
+
+    #[test]
+    fn input_proxies_keep_standard_input() {
+        for key in [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ] {
+            assert_eq!(
+                profile(&[(key, "fixture")]),
+                DashboardInputProfile::Standard,
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_frontend_profile_keeps_its_existing_priority() {
+        assert_eq!(
+            profile(&[
+                (
+                    DASHBOARD_INPUT_PROFILE_ENV,
+                    VERIFIED_OVRCR_GUI_INPUT_PROFILE
+                ),
+                ("TMUX", "fixture")
+            ]),
+            DashboardInputProfile::VerifiedOvrcrGui
+        );
+        for value in ["", "another-terminal"] {
+            assert_eq!(
+                profile(&[(DASHBOARD_INPUT_PROFILE_ENV, value)]),
+                DashboardInputProfile::Standard
+            );
+        }
     }
 }
 

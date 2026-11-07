@@ -2,6 +2,8 @@
 mod assignment_control;
 #[path = "support/dashboard_proxy.rs"]
 mod dashboard_proxy;
+#[path = "terminal_acceptance/keyboard_protocol.rs"]
+mod keyboard_protocol;
 #[path = "support/live.rs"]
 mod live;
 #[path = "support/mouse_app.rs"]
@@ -376,6 +378,7 @@ struct OuterDashboard {
     reader: Option<JoinHandle<()>>,
     parser: vt100::Parser,
     image: Option<Arc<tempfile::TempDir>>,
+    startup_output: Vec<u8>,
 }
 
 static DASHBOARD_IMAGE: Mutex<Weak<tempfile::TempDir>> = Mutex::new(Weak::new());
@@ -398,7 +401,7 @@ impl OuterDashboard {
         size: PtySize,
         server_executable: &Path,
     ) -> Result<Self> {
-        Self::start_with_server_executable_profile(fixture, size, server_executable, false)
+        Self::start_with_server_executable_profile(fixture, size, server_executable, false, &[])
     }
 
     fn start_with_server_executable_and_verified_gui_profile(
@@ -406,7 +409,21 @@ impl OuterDashboard {
         size: PtySize,
         server_executable: &Path,
     ) -> Result<Self> {
-        Self::start_with_server_executable_profile(fixture, size, server_executable, true)
+        Self::start_with_server_executable_profile(fixture, size, server_executable, true, &[])
+    }
+
+    fn start_with_input_environment(
+        fixture: &AcceptanceFixture,
+        size: PtySize,
+        environment: &[(&str, &str)],
+    ) -> Result<Self> {
+        Self::start_with_server_executable_profile(
+            fixture,
+            size,
+            &fixture.executable,
+            false,
+            environment,
+        )
     }
 
     fn start_with_server_executable_profile(
@@ -414,6 +431,7 @@ impl OuterDashboard {
         size: PtySize,
         server_executable: &Path,
         verified_gui_profile: bool,
+        input_environment: &[(&str, &str)],
     ) -> Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(size)?;
@@ -452,6 +470,21 @@ impl OuterDashboard {
             }
         }
         command.env_remove(ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV);
+        for key in [
+            "TERM_PROGRAM",
+            "TERM_PROGRAM_VERSION",
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ] {
+            command.env_remove(key);
+        }
+        for (key, value) in input_environment {
+            command.env(key, value);
+        }
         if verified_gui_profile {
             // These tests inject the verified GUI's enhanced modifier events
             // through the real CLI profile parser and Dashboard constructor.
@@ -479,6 +512,7 @@ impl OuterDashboard {
             reader: Some(reader_handle),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             image,
+            startup_output: Vec::new(),
         };
         dashboard.wait_for_startup(wait_deadline())?;
         Ok(dashboard)
@@ -496,6 +530,7 @@ impl OuterDashboard {
             // Startup notices also name OVRCR; only the alternate-screen
             // Dashboard header establishes readiness for test input.
             if screen.alternate_screen() && dashboard_header_visible(&screen.contents()) {
+                self.startup_output = output;
                 return Ok(());
             }
             if Instant::now() >= deadline {

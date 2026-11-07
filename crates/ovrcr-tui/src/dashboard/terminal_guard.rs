@@ -7,7 +7,8 @@ use crossterm::event::{
 use crossterm::{cursor, execute, terminal as crossterm_terminal};
 use std::io::{self, Write};
 
-const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>11u";
+// Alternate key values preserve shifted punctuation under all-key reporting.
+const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>15u";
 const KITTY_KEYBOARD_POP: &[u8] = b"\x1b[<1u";
 
 pub struct TerminalGuard<W: Write = io::Stdout> {
@@ -205,7 +206,7 @@ mod tests {
         assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
-        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[>15u"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
         assert!(
             bytes
@@ -235,7 +236,7 @@ mod tests {
         assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
-        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[>15u"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
     }
 
@@ -250,7 +251,7 @@ mod tests {
             assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
             assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
             assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
-            assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+            assert_eq!(occurrences(&bytes, b"\x1b[>15u"), 1);
             assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
         });
         drop(guard);
@@ -272,7 +273,7 @@ mod tests {
         let (writer, output) = InjectedWriter::new(3);
         assert!(TerminalGuard::enter_with_writer(writer).is_err());
         let bytes = output.lock().unwrap().clone();
-        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[>15u"), 1);
         assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 1);
     }
 
@@ -281,7 +282,7 @@ mod tests {
         let (writer, output) = InjectedWriter::new(1);
         assert!(TerminalGuard::enter_with_writer(writer).is_err());
         let bytes = output.lock().unwrap().clone();
-        assert_eq!(occurrences(&bytes, b"\x1b[>11u"), 0);
+        assert_eq!(occurrences(&bytes, b"\x1b[>15u"), 0);
         assert_eq!(occurrences(&bytes, b"\x1b[<1u"), 0);
     }
 

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 /// from `OVRCR_GUI_QUOTA_CONFIG` when that variable is set.
 pub const DEMO_SETTINGS_ALLOWLIST: &[&str] = &["automatic_local_terminals", "quota"];
 
-const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>11u";
+const KITTY_KEYBOARD_PUSH: &[u8] = b"\x1b[>15u";
 const KITTY_KEYBOARD_POP: &[u8] = b"\x1b[<1u";
 const FOCUS_REPORTING_ENABLE: &[u8] = b"\x1b[?1004h";
 const FOCUS_REPORTING_DISABLE: &[u8] = b"\x1b[?1004l";
@@ -648,7 +648,7 @@ mod tests {
     fn keyboard_mode_observer_tracks_split_push_and_pop_sequences() {
         let mut observer = ModeObserver::default();
         assert!(!observer.process(
-            b"dashboard output\x1b[>11",
+            b"dashboard output\x1b[>15",
             KITTY_KEYBOARD_PUSH,
             KITTY_KEYBOARD_POP,
         ));
