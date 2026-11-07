@@ -1008,6 +1008,11 @@ default_harness = "pi"
 default_model = "test/model"
 max_live_children = 6
 max_execution_attempts = 2
+
+[remote]
+enabled = true
+port = 8787
+login = "owner@example.com"
 "#;
 
     #[test]
@@ -1097,6 +1102,9 @@ max_execution_attempts = 2
         );
         assert_eq!(settings.delegation.max_live_children, 6);
         assert_eq!(settings.delegation.max_execution_attempts, Some(2));
+        assert!(settings.remote.enabled);
+        assert_eq!(settings.remote.port, 8787);
+        assert_eq!(settings.remote.login.as_deref(), Some("owner@example.com"));
         for row in &report.rows {
             let expected = if row.key == "quota.grok.home" {
                 SettingSource::Default
