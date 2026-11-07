@@ -50,6 +50,7 @@ mod operator_tests;
 mod outbound;
 mod quota;
 mod quota_probe;
+mod remote;
 mod reporting_queue;
 mod startup;
 mod title;
@@ -259,6 +260,7 @@ pub struct ServerState {
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
     quota_refresh: Mutex<quota::Refresh>,
     settings: Mutex<watch::Watched>,
+    remote: Mutex<remote::Supervisor>,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
@@ -1646,6 +1648,7 @@ impl ServerState {
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
             settings: Mutex::new(watch::Watched::empty()),
+            remote: Mutex::new(remote::Supervisor::default()),
             socket: crate::config::default_socket_path(&registry_path),
             registry_path,
             registry: Mutex::new(Registry::default()),

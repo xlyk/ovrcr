@@ -1379,7 +1379,8 @@ mod tests {
                 "Agents",
                 "Remembered launches",
                 "Operator",
-                "Delegation"
+                "Delegation",
+                "Remote"
             ]
         );
     }

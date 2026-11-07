@@ -62,6 +62,7 @@ pub(super) fn component_name(component: EventComponent) -> &'static str {
         EventComponent::Titles => "titles",
         EventComponent::Settings => "settings",
         EventComponent::Quota => "quota",
+        EventComponent::Remote => "remote",
     }
 }
 

@@ -1,11 +1,13 @@
 # Mobile remote for OVRCR
 
 Date: 2026-11-06
-Status: proposal, not approved. Slice 0 is implemented in
-[`experiments/remote-web`](../experiments/remote-web/) — loopback only, no
-Tailscale, no authentication. It now includes colored cells, retained
-scrollback, and the agent transcript through two read-only requests
-(`ReadScreen`, and `Transcript` opened to Control), protocol 72.
+Status: implemented. Slice 0 began in
+[`experiments/remote-web`](../experiments/remote-web/); the shipped backend is
+now `ovrcr remote serve`, a Rust subcommand that speaks the protocol directly.
+`[remote]` settings (enabled/port/login) start and stop it as a supervised child
+of the Server, so the Dashboard toggle persists and autostarts. Protocol 73.
+Colored cells, retained scrollback, and the agent transcript use the read-only
+`ReadScreen` request and `Transcript` opened to Control.
 
 ## Problem
 
@@ -314,11 +316,10 @@ supervision model.
 
 Three placements, in order of commitment:
 
-1. **The Node prototype (now).** Zero dependencies, fast to change, and it
-   already works. Costs: one process spawn per request, `terminal list` still
-   runs Git per workspace, polling instead of a stream, the installed CLI and
-   Server must match versions, and nothing supervises it.
-2. **`ovrcr remote`, a subcommand of the same binary (recommended end state).**
+1. **The Node prototype.** Kept for PWA iteration; no longer the installed
+   path. Costs: one process spawn per request, the installed CLI and Server must
+   match versions, and nothing supervises it.
+2. **`ovrcr remote`, a subcommand of the same binary (implemented).**
    A separate process that speaks the protocol directly: no spawns, one version
    with the binary, `Events { follow }` for push, the settings and service
    installers to reuse, and one artifact to ship. The PWA and HTTP shape stay.
@@ -327,9 +328,10 @@ Three placements, in order of commitment:
    the attack surface of the process that can type into agents, and makes a
    Server restart (which stops sessions) also drop the UI.
 
-Move to (2) when the prototype is used daily, when push replaces polling, or
-when it needs a supervised service. Until then the Node app is the cheaper
-tool. Either way, `tailscale serve` runs in tailscaled, not in this process.
+The Server supervises the child from `[remote] enabled`, with a bounded restart
+backoff, `remote.log`, and start/stop/failure Events. `tailscale serve` still
+runs in tailscaled, not in either process. Push (`Events { follow }`) remains the
+next transport improvement; the page still polls today.
 
 ## Security
 
@@ -482,8 +484,8 @@ and error mapping with a stub CLI, plus the inventory path against a disposable
 real server. The cell pager has unit tests against the real `vt100` parser. A
 full PTY round trip remains manual on a machine with PTY devices.
 
-Protocol 72 adds the read-only `ReadScreen` request and opens `Transcript` to
-Control. Neither can write, resize, focus, or take the Dashboard seat. Sessions
+Protocol 72 added the read-only `ReadScreen` request and opened `Transcript` to
+Control; protocol 73 adds `[remote]` and the supervised gateway. Neither can write, resize, focus, or take the Dashboard seat. Sessions
 on the alternate screen report no scrollback, which is the same refusal History
 already makes; their agent history is the transcript page.
 

@@ -1650,6 +1650,29 @@ impl DelegationSettings {
     }
 }
 
+/// Server-owned remote web gateway. Consent: off until enabled.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    pub port: u16,
+    /// Tailscale login allowed through Serve; `None` keeps the gateway loopback-only.
+    pub login: Option<String>,
+}
+
+impl Default for RemoteSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 8787,
+            login: None,
+        }
+    }
+}
+
+/// Shown while the remote web server is off.
+pub const REMOTE_OFF: &str =
+    "Remote web server off: set `[remote] enabled = true` to serve the phone UI on loopback";
+
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -1676,6 +1699,8 @@ pub struct Settings {
     pub quota: QuotaSettings,
     #[serde(default)]
     pub delegation: DelegationSettings,
+    #[serde(default)]
+    pub remote: RemoteSettings,
     /// Consent setting, off until set. When on, a dirty feature worktree is
     /// pushed to `origin/wip/<branch>` when that workspace is removed and when
     /// the server shuts down, without a prompt. The checkout's own branch is
@@ -1717,6 +1742,7 @@ impl Default for Settings {
             launch_choices: BTreeMap::new(),
             quota: QuotaSettings::default(),
             delegation: DelegationSettings::default(),
+            remote: RemoteSettings::default(),
             save_uncommitted_work: false,
         }
     }

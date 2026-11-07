@@ -81,8 +81,12 @@ pub fn serve(port: Option<u16>, login: Option<String>) -> Result<()> {
     let address = listener.local_addr().context("read listener address")?;
     println!("ovrcr remote web listening on http://{address}");
     println!(
-        "  tailnet login: {}",
-        login.as_deref().unwrap_or("unset (loopback only)")
+        "  tailnet gate: {}",
+        if login.is_some() {
+            "configured"
+        } else {
+            "loopback only"
+        }
     );
     let gateway = Arc::new(Gateway::new(login));
     http::serve(listener, move |request| gateway.handle(request))

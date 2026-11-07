@@ -302,6 +302,7 @@ fn format_event(event: &ovrcr::protocol::Event) -> String {
         ovrcr::protocol::EventComponent::Titles => "titles",
         ovrcr::protocol::EventComponent::Settings => "settings",
         ovrcr::protocol::EventComponent::Quota => "quota",
+        ovrcr::protocol::EventComponent::Remote => "remote",
     };
     let subject = event.subject.as_deref().unwrap_or("-");
     format!("{time}  {component:<8}  {subject:<8}  {}", event.message)

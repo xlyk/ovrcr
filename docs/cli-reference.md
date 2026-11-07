@@ -13,6 +13,7 @@ contract scripts can rely on. Every command accepts `--help`.
 | `terminal` (`terminals`) | Create, read the screen or transcript, send text or keys to, and close terminals |
 | `task` (`tasks`), `run` (`runs`) | Scheduled Pi tasks; see [scheduled tasks](scheduled-tasks.md) |
 | `service` | Install, start, stop, or remove the background service |
+| `remote` | Serve the optional loopback remote web UI, or report whether it is listening |
 | `agent` | Supervise Claude Code, print setup, and inspect integration health |
 | `operator` | Connect ChatGPT/Grok subscriptions and inspect models for native Operator chat |
 | `report` | Report agent activity, context, or status-line metrics from a provider hook |
@@ -100,7 +101,7 @@ ovrcr settings --json
 It never contacts or starts a server. It prints the resolved document path, then
 one line per setting with its key, owner (`Server` or `Dashboard`), source
 (`default` or `document`) and effective value (`unset` when there is none). An
-off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, `save_uncommitted_work`, and `quota.enabled` when it is false) is
+off consent setting (`desktop_notifications`, `title_model`, `quota.claude.probe`, `save_uncommitted_work`, `remote.enabled`, and `quota.enabled` when it is false) is
 followed by what to set to turn it on. `quota.enabled` defaults to true: Codex and Grok collection runs while a Dashboard is attached unless the document sets it false. Findings come last: wrong types, unknown
 keys, unknown spellings, an unparseable document, and a `[quota]` table left in
 the instance identity file, each with its key and line when known. The command exits 0 even
@@ -357,6 +358,23 @@ Archive, unarchive and deletion survive server restart. Archiving a naturally
 exited row does not prove that background jobs stopped: ownership acknowledgement
 may still be required before reopening an unarchived row. Agent suggestions alone
 do not close sessions.
+
+## Remote web UI
+
+`ovrcr remote serve [--port PORT] [--login LOGIN]` runs the optional loopback
+gateway that serves the phone UI. The PWA and fonts are embedded in the binary,
+and the gateway speaks the socket protocol directly: it owns no sessions and
+starts no Server. `--login`, or `OVRCR_REMOTE_LOGIN`, names the Tailscale login
+accepted when the request `Host` is not loopback; without it only loopback
+requests are served. `ovrcr remote status [--port PORT]` probes the port.
+
+`[remote]` in `dashboard.toml` holds `enabled` (consent, default false), `port`
+(1024 to 65535, default 8787) and `login` (a Tailscale login; empty keeps the
+gateway loopback-only). The Server starts the child at startup when enabled and
+reconciles it whenever any of these settings changes; a port or login edit
+restarts it. Start, stop and failure lines are Events under the `remote`
+component. Do not expose the loopback port directly; put `tailscale serve` in
+front of it.
 
 ## Operator account commands
 

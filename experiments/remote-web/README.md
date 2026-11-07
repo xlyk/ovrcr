@@ -5,13 +5,19 @@ scrollback, key bar, reply box, and the agent transcript. It is a Control client
 — it never takes the Dashboard seat, resizes a PTY, or changes focus, so the
 desktop TUI can stay attached.
 
+The installed product is **`ovrcr remote serve`** (Rust): it speaks the socket
+protocol directly and embeds the PWA from `public/`. This Node app is the
+original prototype; it remains useful for iterating on the page without
+rebuilding the CLI, but it is not what the Server supervises.
+
 Tailscale is optional. Without it the app is a loopback-only UI; with it,
 `tailscale serve` adds private HTTPS for a phone. Nothing in the code requires
 Tailscale, and no tailnet values are hard-coded.
 
-Status: working locally and over a private tailnet via `tailscale serve`. Slice 0 of
+Status: working locally, over a private tailnet, and as a settings-driven child
+of the Server. Slice 0 of
 [`plans/2026-11-06-mobile-remote-web.md`](../../plans/2026-11-06-mobile-remote-web.md),
-extended with read-only screen-window and transcript requests (protocol 72).
+extended with read-only screen-window and transcript requests (protocol 73).
 
 ## Architecture
 
@@ -28,6 +34,26 @@ tailscaled ── tailscale serve ──► 127.0.0.1:8787   [this app, Node]
 The app owns no session state. It spawns the installed `ovrcr` CLI and returns
 JSON to the page. The Server remains the one owner of the PTYs.
 
+## Server-managed mode
+
+In the rebuilt CLI, `[remote]` in `dashboard.toml` is the source of truth:
+
+```toml
+[remote]
+enabled = true
+port = 8787
+login = "you@example.com"   # optional; empty keeps it loopback-only
+```
+
+The Dashboard's Settings view exposes the same three rows. Enabling the toggle
+starts `ovrcr remote serve` as a supervised child of the Server; disabling it
+stops the child. A port or login change restarts it. The choice persists across
+Server restarts, and the child is stopped when the Server stops. Start, stop and
+failure lines are Events under the `remote` component; the child writes
+`remote.log` in the instance directory.
+
+`ovrcr remote status --port 8787` probes whether it is listening.
+
 ## Requirements
 
 - Node 22 (no npm dependencies).
@@ -43,12 +69,15 @@ cargo build -p ovrcr --bin ovrcr
 If the CLI predates `terminal screen`, the gateway falls back to
 `terminal read`: plain text, no scrollback, no cursor.
 
-## Run
+## Run the prototype
 
 ```sh
 cd experiments/remote-web
 OVRCR_REMOTE_LOGIN=you@example.com node server.mjs
 ```
+
+For the product, build the CLI and use `ovrcr remote serve --port 8787 --login
+you@example.com`, or enable `[remote] enabled` and let the Server start it.
 
 Open <http://127.0.0.1:8787>. It talks to the instance the CLI resolves
 (`OVRCR_HOME`, or the default config directory), so it **reads and writes your
@@ -233,10 +262,12 @@ JSON; it never touches a real instance. The gate tests drive raw `Host`,
 temporary `OVRCR_HOME`, starts a real `ovrcr server`, asserts an empty inventory,
 and shuts it down.
 
-Rust coverage for the new path: `page_rows` unit tests in
-`crates/ovrcr-terminal/src/history.rs` and the wire snapshot in
-`crates/ovrcr-protocol/src/wire.rs`. A full session round trip is still manual:
-this build sandbox has no PTY devices.
+Rust coverage: `page_rows` unit tests in
+`crates/ovrcr-terminal/src/history.rs`, the wire snapshot in
+`crates/ovrcr-protocol/src/wire.rs`, the settings matrix in
+`crates/ovrcr-runtime/tests/settings_matrix.rs`, and the autostart lifecycle in
+`tests/remote_web.rs` (real Server, disposable instance, toggle on and off). A
+full PTY round trip is still manual: this build sandbox has no PTY devices.
 
 ## Browser check
 

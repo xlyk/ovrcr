@@ -256,6 +256,7 @@ fn run_server_inner(
         quotas: Mutex::new(quota::initial(&settings.report.settings.quota)),
         quota_refresh: Mutex::default(),
         settings: Mutex::new(settings),
+        remote: Mutex::new(super::remote::Supervisor::default()),
         retained: parking_lot::Mutex::new(retained),
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
@@ -276,6 +277,7 @@ fn run_server_inner(
         #[cfg(feature = "acceptance-diagnostics")]
         dashboard_monitor,
     });
+    state.reconcile_remote();
     task_manager.start(Arc::downgrade(&state));
     let bridge_dispatch = dispatch.clone();
     let bridge = thread::Builder::new()
@@ -434,6 +436,7 @@ fn run_server_inner(
     let _ = refresh.join();
     let _ = settings_thread.join();
     let _ = title_thread.join();
+    state.stop_remote();
     state.events.lock().unwrap().take();
     drop(state);
     drop(dispatch);

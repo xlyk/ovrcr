@@ -317,6 +317,32 @@ impl Loader<'_> {
             }
             self.unknown(quota, "quota.");
         }
+        if let Some(mut remote) = self.take::<toml::Table>(table, "remote") {
+            self.value(&mut remote, "remote.enabled", &mut settings.remote.enabled);
+            if let Some(port) = self.take::<i64>(&mut remote, "remote.port") {
+                match u16::try_from(port).ok().filter(|port| *port >= 1024) {
+                    Some(port) => self.accept("remote.port", &mut settings.remote.port, port),
+                    None => self.finding(
+                        "remote.port",
+                        "expected an integer from 1024 to 65535".into(),
+                    ),
+                }
+            }
+            if let Some(login) = self.take::<String>(&mut remote, "remote.login") {
+                let login = login.trim().to_owned();
+                if login.len() > 320 || login.chars().any(char::is_control) {
+                    self.finding(
+                        "remote.login",
+                        "expected a Tailscale login or an empty string".into(),
+                    );
+                } else if login.is_empty() {
+                    self.accept("remote.login", &mut settings.remote.login, None);
+                } else {
+                    self.accept("remote.login", &mut settings.remote.login, Some(login));
+                }
+            }
+            self.unknown(remote, "remote.");
+        }
         if let Some(mut delegation) = self.take::<toml::Table>(table, "delegation") {
             if let Some(value) =
                 self.take::<u64>(&mut delegation, "delegation.progress_deadline_ms")

@@ -10,6 +10,7 @@ pub enum EventComponent {
     Titles,
     Settings,
     Quota,
+    Remote,
 }
 
 /// Oldest first when a list is returned. `subject` is a session id or a
