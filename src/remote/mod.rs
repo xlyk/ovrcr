@@ -154,12 +154,13 @@ impl Gateway {
                 return false;
             }
         }
-        if request.method != "GET" && request.method != "HEAD" {
-            if let Some(origin) = request.header("origin") {
-                if origin != format!("https://{host}") && origin != format!("http://{host}") {
-                    return false;
-                }
-            }
+        if request.method != "GET"
+            && request.method != "HEAD"
+            && let Some(origin) = request.header("origin")
+            && origin != format!("https://{host}")
+            && origin != format!("http://{host}")
+        {
+            return false;
         }
         true
     }
@@ -190,7 +191,7 @@ impl Gateway {
             return http::Response::error(400, "session id must be a positive integer");
         };
         let start_row = match query_number(request, "start_row", 0, 1_000_000) {
-            Ok(value) => value as u32,
+            Ok(value) => value,
             Err(response) => return response,
         };
         let rows = match query_number(request, "rows", 40, u32::from(MAX_SCREEN_ROWS)) {
@@ -353,12 +354,11 @@ impl Gateway {
     }
 
     fn inventory(&self, fresh: bool) -> Result<Snapshot, http::Response> {
-        if !fresh {
-            if let Some((at, snapshot)) = &*self.cache.lock().unwrap() {
-                if at.elapsed() < CACHE_TTL {
-                    return Ok(snapshot.clone());
-                }
-            }
+        if !fresh
+            && let Some((at, snapshot)) = &*self.cache.lock().unwrap()
+            && at.elapsed() < CACHE_TTL
+        {
+            return Ok(snapshot.clone());
         }
         match self.call(Request::Inspect)? {
             Response::Inventory {
@@ -629,12 +629,11 @@ fn agent_label(name: &str) -> String {
 }
 
 fn bytes(body: &'static [u8], content_type: &'static str, immutable: bool) -> http::Response {
-    let response = if immutable {
+    if immutable {
         http::Response::immutable(200, content_type, body.to_vec())
     } else {
         http::Response::new(200, content_type, body.to_vec())
-    };
-    response
+    }
 }
 
 fn json_response<T: serde::Serialize>(value: &T) -> http::Response {

@@ -93,10 +93,10 @@ impl Supervisor {
             }
         }
 
-        if let Some(at) = self.next_attempt {
-            if Instant::now() < at {
-                return;
-            }
+        if let Some(at) = self.next_attempt
+            && Instant::now() < at
+        {
+            return;
         }
 
         match spawn(state, port, login) {

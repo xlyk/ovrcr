@@ -301,10 +301,10 @@ fn remote_gateway_creates_an_agent_session_from_the_phone_payload() {
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let args = loop {
-        if let Ok(text) = fs::read_to_string(&args_path) {
-            if !text.trim().is_empty() {
-                break text;
-            }
+        if let Ok(text) = fs::read_to_string(&args_path)
+            && !text.trim().is_empty()
+        {
+            break text;
         }
         assert!(Instant::now() < deadline, "the agent stub never ran");
         std::thread::sleep(Duration::from_millis(100));
