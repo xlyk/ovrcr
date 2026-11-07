@@ -6,7 +6,7 @@
 use super::state::{find_session, workspace_heading};
 use super::{Dashboard, DashboardAction, InputMode, TreeRow};
 use crate::task_tui::TasksView;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
 use ovrcr_protocol::{SessionKind, SessionPhase};
 
 /// What a key does. Dispatch, the key popup and the palette run these directly,
@@ -64,6 +64,8 @@ pub(super) enum Action {
     Help,
     /// Open a key-popup group rather than run an action.
     Group(char),
+    /// A stateful Control-hold gesture that labels visible Agent rows.
+    SidebarJump,
     /// A Copy or History motion key. Those modes keep their own dispatcher, which
     /// reads a key event rather than an action, so this is the one action that
     /// rebuilds the event it names instead of calling a handler. Folding that
@@ -84,6 +86,7 @@ pub(super) struct GroupSlot {
 /// the pane has not acknowledged a screen yet, so the key becomes available on
 /// its own. Every other reason means the action does not apply to this target.
 const WAITING: &str = "waiting for acknowledged screen";
+const SIDEBAR_JUMP_BLOCKED: &str = "close the current overlay before holding Cmd";
 pub(super) const LAUNCH_BLOCKED: &str = "root workspace is not on the default branch";
 pub(super) const ROOT_PROTECTED: &str = "repository-root workspace cannot be removed";
 pub(super) struct KeyBinding {
@@ -141,11 +144,13 @@ fn capture(
 }
 
 /// Browse's own modifier rule, kept from the dispatcher this table replaced:
-/// Alt, Super and Shift never select a different action, so `Alt-x` closes the
-/// pane that `x` closes, and Ctrl reaches Browse only as Ctrl-t. The key popup
-/// is stricter and matches bindings without this fold.
+/// Alt and Shift never select a different action, so `Alt-x` closes the pane
+/// that `x` closes. Command stays present so it cannot become a bare Browse
+/// action; Ctrl reaches Browse only as Ctrl-t. The key popup is stricter and
+/// matches bindings without this fold.
 fn browse_modifiers(mut key: KeyEvent) -> KeyEvent {
-    key.modifiers &= KeyModifiers::CONTROL;
+    key.modifiers &=
+        KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META;
     key
 }
 
@@ -195,7 +200,11 @@ impl KeyBinding {
     /// A group drops a row the current target cannot use, and dims one that is
     /// only waiting for the screen.
     pub(super) fn shown_in_group(&self) -> bool {
-        self.enabled() || matches!(self.reason, Some(WAITING | LAUNCH_BLOCKED | ROOT_PROTECTED))
+        self.enabled()
+            || matches!(
+                self.reason,
+                Some(WAITING | LAUNCH_BLOCKED | ROOT_PROTECTED | SIDEBAR_JUMP_BLOCKED)
+            )
     }
 
     /// This binding as the popup group lists it: the group's label, and the
@@ -216,10 +225,17 @@ impl KeyBinding {
         if let Action::OperatorKey(code, modifiers) = self.action {
             return key.code == code && key.modifiers == modifiers;
         }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
+        if self.action == Action::SidebarJump {
+            let control_edge = matches!(
+                key.code,
+                KeyCode::Modifier(ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl)
+            );
+            return control_edge
+                && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::CONTROL);
+        }
+        if key.modifiers.intersects(
+            KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
+        ) {
             return false;
         }
         match self.action {
@@ -289,6 +305,9 @@ impl Dashboard {
             Action::Agents => self.open_agent_search(),
             Action::Operator => self.open_operator(),
             Action::OperatorQuick => unreachable!(),
+            // The gesture requires an observed physical modifier edge; a
+            // catalog row can describe it but cannot synthesize that edge.
+            Action::SidebarJump => DashboardAction::None,
             Action::OperatorKey(code, modifiers) => {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
@@ -418,6 +437,36 @@ pub(super) fn agents_binding() -> KeyBinding {
     .group('v', "s")
 }
 
+pub(super) fn sidebar_jump_binding(dashboard: &Dashboard) -> Option<KeyBinding> {
+    if !dashboard.input_profile.supports_control_hold() || dashboard.sidebar_preference() == Some(0)
+    {
+        return None;
+    }
+    let blocked = dashboard.sidebar_jump_modal_priority_open()
+        || !matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal)
+        || (dashboard.operator.visible
+            && (dashboard.outer_area.width < 60 || dashboard.outer_area.height < 16))
+        || dashboard.agent_typing.is_some()
+        || dashboard
+            .history_begin_request
+            .as_ref()
+            .is_some_and(|begin| !begin.cancelled)
+        || dashboard.deferred_history_at_tail.is_some()
+        || !dashboard.mouse_focused;
+    Some(
+        key_binding(
+            "Ctrl hold",
+            "Jump to visible Agent",
+            "Hold Ctrl to label the first nine visible Agent rows; press 1–9 to jump".into(),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
+            Action::SidebarJump,
+        )
+        .once()
+        .group('v', "Ctrl hold")
+        .unless(blocked.then_some(SIDEBAR_JUMP_BLOCKED)),
+    )
+}
+
 /// The Quick message key. `Dashboard::dispatch_key` reserves it everywhere except
 /// Terminal mode with nothing over the pane, where it goes to the program.
 pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
@@ -425,18 +474,22 @@ pub(super) fn is_operator_quick_key(key: KeyEvent) -> bool {
 }
 pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let mut groups = mode_keymap(dashboard);
+    let mut keys = vec![
+        key_binding(
+            "Ctrl-o",
+            "Quick message",
+            "Start an Operator conversation with configured defaults. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
+            KeyCode::Char('o'),
+            Action::OperatorQuick,
+        )
+        .once(),
+    ];
+    if let Some(binding) = sidebar_jump_binding(dashboard) {
+        keys.push(binding);
+    }
     groups.push(KeyGroup {
         title: "Global".into(),
-        keys: vec![
-            key_binding(
-                "Ctrl-o",
-                "Quick message",
-                "Start an Operator conversation with configured defaults. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
-                KeyCode::Char('o'),
-                Action::OperatorQuick,
-            )
-            .once(),
-        ],
+        keys,
     });
     groups
 }

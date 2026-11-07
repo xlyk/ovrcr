@@ -17,9 +17,9 @@ use ovrcr::protocol::{
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
-    DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding,
-    dashboard_message_channel, draw_dashboard_at, encode_key, encode_mouse, encode_paste,
-    pane_rects,
+    DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, DashboardInputProfile,
+    KeyEncoding, dashboard_message_channel, draw_dashboard_at, encode_key, encode_mouse,
+    encode_paste, pane_rects,
 };
 use ovrcr_terminal::vt100;
 use ratatui::backend::{CrosstermBackend, TestBackend};
@@ -39,6 +39,8 @@ mod mouse;
 mod operator;
 mod palette;
 mod quota;
+mod session_jump_retained;
+mod session_jump_single_digit;
 mod settings;
 mod sidebar;
 mod split;

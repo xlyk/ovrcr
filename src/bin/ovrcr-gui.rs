@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
 use ovrcr::gui::{
     Demo, Terminal,
-    input::{Mouse, encode_event, terminal_events},
+    input::{KeyboardState, Mouse, TerminalFrameInput, encode_terminal_frame},
 };
 use std::fs;
 use std::sync::Arc;
@@ -436,6 +436,8 @@ struct App {
     palette_pending: bool,
     // Wheel distance, held button and last motion outlive a single frame.
     mouse: Mouse,
+    // Modifier and shortcut edges must survive frame boundaries as well.
+    keyboard: KeyboardState,
 }
 
 impl App {
@@ -474,6 +476,7 @@ impl App {
                         ui.label(format!("Dashboard exited: {status}"));
                         if ui.button("Restart dashboard").clicked() || open_palette {
                             self.terminal.take();
+                            self.keyboard = KeyboardState::default();
                             match self.demo.dashboard(40, 120, ui.ctx().clone()) {
                                 Ok(terminal) => {
                                     self.terminal = Some(terminal);
@@ -582,21 +585,28 @@ impl App {
                             .or(input.pointer.latest_pos())
                             .unwrap_or(rect.min)
                     });
-                    let events = ui.input(|input| input.events.clone());
-                    for event in terminal_events(&events) {
-                        if !response.has_focus()
-                            && !matches!(
-                                event,
-                                egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. }
-                            )
-                        {
-                            continue;
-                        }
-                        let bytes =
-                            encode_event(event, &screen, rect, cell, pointer, &mut self.mouse);
-                        if !bytes.is_empty()
-                            && let Err(error) = terminal.send(&bytes)
-                        {
+                    let (focused, modifiers, events) =
+                        ui.input(|input| (input.focused, input.modifiers, input.events.clone()));
+                    self.keyboard
+                        .set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+                    self.keyboard
+                        .set_focus_reporting_enabled(terminal.focus_reporting_enabled());
+                    let encoded = encode_terminal_frame(
+                        TerminalFrameInput {
+                            events: &events,
+                            terminal_focused: response.has_focus(),
+                            focused,
+                            modifiers,
+                        },
+                        &screen,
+                        rect,
+                        cell,
+                        pointer,
+                        &mut self.mouse,
+                        &mut self.keyboard,
+                    );
+                    for bytes in encoded {
+                        if let Err(error) = terminal.send(&bytes) {
                             self.error = Some(format!("{error:#}"));
                         }
                     }
@@ -642,6 +652,7 @@ fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyho
         closing: false,
         palette_pending: false,
         mouse: Mouse::default(),
+        keyboard: KeyboardState::default(),
     };
     wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     let mut input = egui::RawInput::default();
@@ -698,11 +709,92 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         closing: false,
         palette_pending: false,
         mouse: Mouse::default(),
+        keyboard: KeyboardState::default(),
     };
     wait_for_test_dashboard(app.terminal.as_mut().unwrap())?;
     for detached in [false, true] {
         if detached {
             app.terminal.as_mut().unwrap().stop()?;
+        } else {
+            // Exercise a Control hold, then its ordinary Ctrl-g cancellation
+            // path, before checking that the separate Cmd-K host shortcut still
+            // opens the palette.
+            let screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(960.0, 600.0),
+            ));
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::ControlLeft,
+                        physical_key: Some(egui::Key::ControlLeft),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers {
+                            ctrl: true,
+                            ..Default::default()
+                        },
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let contents = app.terminal.as_ref().unwrap().screen().contents();
+                if contents.contains("No visible Agents") || contents.contains("Ctrl+1–9 jump") {
+                    break;
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "the GUI Command press did not start a Dashboard hold:\n{contents}"
+                );
+                std::thread::yield_now();
+            }
+
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::G,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers {
+                            ctrl: true,
+                            ..Default::default()
+                        },
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect,
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::ControlLeft,
+                        physical_key: Some(egui::Key::ControlLeft),
+                        pressed: false,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
         }
         let mut other_text = String::new();
         let mut output = context.run_ui(
@@ -777,6 +869,35 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
             );
             output.textures_delta.clear();
             std::thread::yield_now();
+        }
+        if !detached {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 600.0),
+                    )),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::SuperLeft,
+                        physical_key: Some(egui::Key::SuperLeft),
+                        pressed: false,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| app.show(ui),
+            );
+            output.textures_delta.clear();
+            anyhow::ensure!(
+                app.terminal
+                    .as_ref()
+                    .unwrap()
+                    .screen()
+                    .contents()
+                    .contains("Command palette"),
+                "releasing Command after the host shortcut must leave the palette open"
+            );
         }
     }
     app.close()?;
@@ -1056,6 +1177,7 @@ fn main() -> eframe::Result {
                 closing: false,
                 palette_pending: false,
                 mouse: Mouse::default(),
+                keyboard: KeyboardState::default(),
             }))
         }),
     )

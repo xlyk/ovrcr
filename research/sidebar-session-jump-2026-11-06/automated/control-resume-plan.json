@@ -1,0 +1,25 @@
+{
+  "total_selected": 2666,
+  "previous_passed": 1152,
+  "remaining": 1514,
+  "resume_selected": 1551,
+  "repeated_passed": 37,
+  "binaries": [
+    "ovrcr-protocol",
+    "ovrcr-protocol::questions",
+    "ovrcr-runtime",
+    "ovrcr-runtime::delegation_cancellation_state",
+    "ovrcr-runtime::delegation_fallback_files",
+    "ovrcr-runtime::settings_matrix",
+    "ovrcr-runtime::theme_catalog",
+    "ovrcr-terminal",
+    "ovrcr-tui",
+    "ovrcr-tui::settings_theme_preview",
+    "ovrcr::bin/ovrcr",
+    "ovrcr::bin/ovrcr-gui",
+    "ovrcr::tui",
+    "ovrcr::wip_save",
+    "ovrcr::workspace_identity"
+  ],
+  "filter": "not test(partial_resize_connection_delivers_error_before_owner_close) and (binary_id(=ovrcr-protocol) or binary_id(=ovrcr-protocol::questions) or binary_id(=ovrcr-runtime) or binary_id(=ovrcr-runtime::delegation_cancellation_state) or binary_id(=ovrcr-runtime::delegation_fallback_files) or binary_id(=ovrcr-runtime::settings_matrix) or binary_id(=ovrcr-runtime::theme_catalog) or binary_id(=ovrcr-terminal) or binary_id(=ovrcr-tui) or binary_id(=ovrcr-tui::settings_theme_preview) or binary_id(=ovrcr::bin/ovrcr) or binary_id(=ovrcr::bin/ovrcr-gui) or binary_id(=ovrcr::tui) or binary_id(=ovrcr::wip_save) or binary_id(=ovrcr::workspace_identity))"
+}

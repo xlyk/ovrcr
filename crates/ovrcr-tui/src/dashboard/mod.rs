@@ -37,7 +37,7 @@ mod whichkey;
 pub use agents::detect_agents;
 pub(crate) use copy::CopySelection;
 pub use copy::write_clipboard;
-pub use event_loop::{dashboard_message_channel, run_dashboard};
+pub use event_loop::{dashboard_message_channel, run_dashboard, run_dashboard_with_input_profile};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
 pub use settings::{LaunchChoice, Settings};
@@ -51,6 +51,158 @@ use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
+
+/// A frontend whose native Control press, digit, and release path is qualified.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DashboardInputProfile {
+    #[default]
+    Standard,
+    VerifiedOvrcrGui,
+    VerifiedIterm2,
+}
+
+pub const DASHBOARD_INPUT_PROFILE_ENV: &str = "OVRCR_DASHBOARD_INPUT_PROFILE";
+pub const VERIFIED_OVRCR_GUI_INPUT_PROFILE: &str = "ovrcr-gui";
+
+impl DashboardInputProfile {
+    pub fn from_environment() -> Self {
+        Self::from_environment_with(|key| std::env::var_os(key))
+    }
+
+    fn from_environment_with(read: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
+        if let Some(value) = read(DASHBOARD_INPUT_PROFILE_ENV) {
+            return Self::from_environment_value(value.to_str());
+        }
+        let iterm = read("TERM_PROGRAM");
+        let version = read("TERM_PROGRAM_VERSION");
+        let proxied = [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ]
+        .iter()
+        .any(|key| read(key).is_some());
+        // Qualification is limited to direct native setups whose modifier paths were captured.
+        if cfg!(target_os = "macos")
+            && iterm.as_deref() == Some(std::ffi::OsStr::new("iTerm.app"))
+            && matches!(
+                version.as_deref().and_then(|value| value.to_str()),
+                Some("3.7.2" | "3.7.7")
+            )
+            && !proxied
+        {
+            Self::VerifiedIterm2
+        } else {
+            Self::Standard
+        }
+    }
+
+    pub fn from_environment_value(value: Option<&str>) -> Self {
+        match value {
+            Some(VERIFIED_OVRCR_GUI_INPUT_PROFILE) => Self::VerifiedOvrcrGui,
+            _ => Self::Standard,
+        }
+    }
+
+    pub const fn supports_control_hold(self) -> bool {
+        matches!(self, Self::VerifiedOvrcrGui | Self::VerifiedIterm2)
+    }
+}
+
+#[cfg(test)]
+mod input_profile_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn profile(overrides: &[(&str, &str)]) -> DashboardInputProfile {
+        let mut values = std::collections::HashMap::from([
+            ("TERM_PROGRAM", OsString::from("iTerm.app")),
+            ("TERM_PROGRAM_VERSION", OsString::from("3.7.7")),
+        ]);
+        values.extend(
+            overrides
+                .iter()
+                .map(|(key, value)| (*key, OsString::from(value))),
+        );
+        DashboardInputProfile::from_environment_with(|key| values.get(key).cloned())
+    }
+
+    #[test]
+    fn direct_verified_iterm_selects_the_native_profile() {
+        let expected = if cfg!(target_os = "macos") {
+            DashboardInputProfile::VerifiedIterm2
+        } else {
+            DashboardInputProfile::Standard
+        };
+        for version in ["3.7.2", "3.7.7"] {
+            assert_eq!(
+                profile(&[("TERM_PROGRAM_VERSION", version)]),
+                expected,
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_frontends_and_unverified_versions_keep_standard_input() {
+        for overrides in [
+            vec![("TERM_PROGRAM", "another-terminal")],
+            vec![("TERM_PROGRAM", "")],
+            vec![("TERM_PROGRAM_VERSION", "")],
+            vec![("TERM_PROGRAM_VERSION", "3.7.6")],
+            vec![("TERM_PROGRAM_VERSION", "99.0")],
+        ] {
+            assert_eq!(profile(&overrides), DashboardInputProfile::Standard);
+        }
+        assert_eq!(
+            DashboardInputProfile::from_environment_with(|_| None),
+            DashboardInputProfile::Standard
+        );
+    }
+
+    #[test]
+    fn input_proxies_keep_standard_input() {
+        for key in [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ] {
+            for version in ["3.7.2", "3.7.7"] {
+                assert_eq!(
+                    profile(&[(key, "fixture"), ("TERM_PROGRAM_VERSION", version)]),
+                    DashboardInputProfile::Standard,
+                    "{key}, {version}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_frontend_profile_keeps_its_existing_priority() {
+        assert_eq!(
+            profile(&[
+                (
+                    DASHBOARD_INPUT_PROFILE_ENV,
+                    VERIFIED_OVRCR_GUI_INPUT_PROFILE
+                ),
+                ("TMUX", "fixture")
+            ]),
+            DashboardInputProfile::VerifiedOvrcrGui
+        );
+        for value in ["", "another-terminal"] {
+            assert_eq!(
+                profile(&[(DASHBOARD_INPUT_PROFILE_ENV, value)]),
+                DashboardInputProfile::Standard
+            );
+        }
+    }
+}
 
 pub(crate) fn history_view_size(pane: TerminalSize) -> TerminalSize {
     TerminalSize {
@@ -263,6 +415,7 @@ pub(super) enum HoveredRow {
 }
 
 pub struct Dashboard {
+    pub(super) input_profile: DashboardInputProfile,
     operator: operator::Hub,
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
@@ -285,6 +438,8 @@ pub struct Dashboard {
     handshake: view_handshake::ViewHandshake,
     navigation: navigation::Navigation,
     agent_typing: Option<state::AgentTyping>,
+    /// Session targets frozen for one observed Control hold.
+    sidebar_jump: Option<state::SidebarJump>,
     /// One display request per retained run; the server persists launch failures across reconnects.
     recovery_requests:
         std::collections::HashMap<(SessionId, crate::protocol::SessionRunId), Option<u64>>,

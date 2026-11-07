@@ -1,0 +1,71 @@
+{
+  "checked": "2026-11-06T21:08:34.856876+00:00",
+  "root_exists": false,
+  "socket_exists": false,
+  "groups": [
+    {
+      "pgid": 97194,
+      "state": "absent"
+    },
+    {
+      "pgid": 97311,
+      "state": "absent"
+    },
+    {
+      "pgid": 97412,
+      "state": "absent"
+    },
+    {
+      "pgid": 97714,
+      "state": "absent"
+    },
+    {
+      "pgid": 97825,
+      "state": "absent"
+    },
+    {
+      "pgid": 97940,
+      "state": "absent"
+    },
+    {
+      "pgid": 98248,
+      "state": "absent"
+    },
+    {
+      "pgid": 98440,
+      "state": "absent"
+    },
+    {
+      "pgid": 98564,
+      "state": "absent"
+    },
+    {
+      "pgid": 98686,
+      "state": "absent"
+    },
+    {
+      "pgid": 98813,
+      "state": "absent"
+    },
+    {
+      "pgid": 98936,
+      "state": "absent"
+    },
+    {
+      "pgid": 11933,
+      "state": "absent"
+    },
+    {
+      "pgid": 12086,
+      "state": "absent"
+    },
+    {
+      "pgid": 12230,
+      "state": "absent"
+    },
+    {
+      "pgid": 12373,
+      "state": "absent"
+    }
+  ]
+}

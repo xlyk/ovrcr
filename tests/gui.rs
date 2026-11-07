@@ -3,9 +3,12 @@
 #[path = "support/dashboard_proxy.rs"]
 mod dashboard_proxy;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
-use ovrcr::gui::input::{Mouse, encode_event};
+use ovrcr::gui::input::{
+    KeyboardState, Mouse, TerminalFrameInput, encode_event, encode_event_with_keyboard,
+    encode_terminal_frame,
+};
 use ovrcr::gui::{Demo, Terminal};
 use std::path::Path;
 use std::thread;
@@ -111,6 +114,111 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
         }
         if Instant::now() >= deadline {
             bail!("dashboard never rendered its header after optional setup:\n{text}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_keyboard_enhancement(terminal: &Terminal) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !terminal.keyboard_enhancement_enabled() {
+        if Instant::now() >= deadline {
+            bail!("Dashboard never enabled Kitty keyboard reporting");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+fn wait_focus_reporting(terminal: &Terminal) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !terminal.focus_reporting_enabled() {
+        if Instant::now() >= deadline {
+            bail!("Dashboard never enabled focus-change reporting");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+fn send_gui_key_event(
+    terminal: &mut Terminal,
+    keyboard: &mut KeyboardState,
+    event: Event,
+) -> Result<()> {
+    let screen = terminal.screen();
+    keyboard.set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+    keyboard.set_focus_reporting_enabled(terminal.focus_reporting_enabled());
+    let bytes = encode_event_with_keyboard(
+        &event,
+        &screen,
+        egui::Rect::NOTHING,
+        egui::vec2(8.0, 16.0),
+        egui::pos2(0.0, 0.0),
+        &mut Mouse::default(),
+        keyboard,
+    );
+    if !bytes.is_empty() {
+        terminal.send(&bytes)?;
+    }
+    Ok(())
+}
+
+fn send_gui_event_frame(
+    terminal: &mut Terminal,
+    keyboard: &mut KeyboardState,
+    events: &[Event],
+    focused: bool,
+    modifiers: Modifiers,
+) -> Result<Vec<Vec<u8>>> {
+    let screen = terminal.screen();
+    keyboard.set_kitty_enabled(terminal.keyboard_enhancement_enabled());
+    keyboard.set_focus_reporting_enabled(terminal.focus_reporting_enabled());
+    let encoded = encode_terminal_frame(
+        TerminalFrameInput {
+            events,
+            terminal_focused: true,
+            focused,
+            modifiers,
+        },
+        &screen,
+        egui::Rect::NOTHING,
+        egui::vec2(8.0, 16.0),
+        egui::pos2(0.0, 0.0),
+        &mut Mouse::default(),
+        keyboard,
+    );
+    for bytes in &encoded {
+        terminal.send(bytes)?;
+    }
+    Ok(encoded)
+}
+
+fn wait_sidebar_label(terminal: &Terminal, title: &str, label: Option<&str>) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let screen = terminal.screen();
+        let (_, cols) = screen.size();
+        let line = screen
+            .rows(0, cols)
+            .find(|line| {
+                line.find(title).is_some_and(|title_at| {
+                    line.find('│')
+                        .is_none_or(|divider_at| title_at < divider_at)
+                })
+            })
+            .unwrap_or_default();
+        let found = line.contains(title);
+        let visible = label.is_some_and(|label| {
+            line.find(title)
+                .is_some_and(|title_at| line[..title_at].contains(label))
+        });
+        let absent = label.is_none_or(|label| !line.contains(label));
+        if found && ((label.is_some() && visible) || (label.is_none() && absent)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("sidebar row did not match label {label:?} for {title:?}:\n{line}");
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -313,6 +421,349 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
 }
 
 #[test]
+fn gui_physical_control_and_digit_events_drive_a_real_agent_session() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let initial = terminal.screen().contents();
+        let selected_pane = initial
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split_once('│').map(|(_, pane)| pane))
+            .unwrap_or_default();
+        if selected_pane.contains("review auth handoff") {
+            bail!("the Demo must start on another session to prove the jump");
+        }
+
+        let mut keyboard = KeyboardState::default();
+        let control = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::ControlLeft,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: control,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: control,
+            },
+        )?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: control,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::ControlLeft,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        enter_selected_session(&mut terminal, "fixture: authentication handoff review")?;
+        terminal.send(b"printf 'GUI_CONTROL_JUMP\\n'\r")?;
+        wait_screen(&terminal, "GUI_CONTROL_JUMP")?;
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
+fn gui_command_shortcuts_do_not_activate_control_jump() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let mut keyboard = KeyboardState::default();
+        let command = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(command),
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Backspace,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Backspace,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        for pressed in [true, false] {
+            send_gui_key_event(
+                &mut terminal,
+                &mut keyboard,
+                Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: command,
+                },
+            )?;
+        }
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: command,
+            },
+        )?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::ModifiersChanged(Modifiers::NONE),
+        )?;
+        send_gui_key_event(&mut terminal, &mut keyboard, Event::Text("s".into()))?;
+        wait_screen(&terminal, "┌ Agents")?;
+        let screen = terminal.screen().contents();
+        anyhow::ensure!(
+            !screen.contains("Session selected"),
+            "Command+1 must not start Control-hold selection"
+        );
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
+fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_dashboard(&mut terminal)?;
+        wait_keyboard_enhancement(&terminal)?;
+        wait_focus_reporting(&terminal)?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let mut keyboard = KeyboardState::default();
+        let control = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let command = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::ControlLeft,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: control,
+            },
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))
+            .context("initial Control label before focus-loss regression")?;
+        send_gui_key_event(
+            &mut terminal,
+            &mut keyboard,
+            Event::Key {
+                key: Key::Num1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: control,
+            },
+        )?;
+        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
+        wait_screen(&terminal, "Session selected  release Ctrl")?;
+        let focus_loss_bytes = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[
+                Event::ModifiersChanged(Modifiers::NONE),
+                Event::WindowFocused(false),
+            ],
+            false,
+            Modifiers::NONE,
+        )?;
+        anyhow::ensure!(
+            focus_loss_bytes
+                .first()
+                .is_some_and(|bytes| bytes.starts_with(b"\x1b[O")),
+            "Dashboard focus-loss report must precede winit's synthetic modifier reset"
+        );
+        wait_screen_absent(&terminal, "Session selected")?;
+        wait_screen(&terminal, "BROWSE")?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+
+        // Focus regain is also sent only while the Dashboard's observed 1004
+        // mode remains active.
+        let gain_bytes = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[Event::WindowFocused(true)],
+            true,
+            Modifiers::NONE,
+        )?;
+        anyhow::ensure!(
+            gain_bytes == vec![b"\x1b[I".to_vec()],
+            "focused regain must be sent while DEC 1004 reporting is active"
+        );
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        // A mouse event can make winit restore Command from the native flags
+        // without producing a fresh Super press. Keep that stale aggregate
+        // quarantined until a focused native frame proves Command is clear.
+        let stale_bytes = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[
+                Event::ModifiersChanged(command),
+                Event::PointerMoved(egui::pos2(0.0, 0.0)),
+            ],
+            true,
+            command,
+        )?;
+        anyhow::ensure!(
+            stale_bytes.is_empty(),
+            "stale aggregate Cmd must not reach the Dashboard"
+        );
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let _ = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[Event::PointerMoved(egui::pos2(0.0, 0.0))],
+            true,
+            Modifiers::NONE,
+        )?;
+        let fresh_bytes = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[Event::ModifiersChanged(command)],
+            true,
+            command,
+        )?;
+        anyhow::ensure!(
+            fresh_bytes == vec![b"\x1b[57444;1:1u".to_vec()],
+            "a focused clear frame must rearm the next aggregate Cmd edge"
+        );
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let _ = send_gui_event_frame(
+            &mut terminal,
+            &mut keyboard,
+            &[Event::ModifiersChanged(Modifiers::NONE)],
+            true,
+            Modifiers::NONE,
+        )?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
+        let screen = terminal.screen().contents();
+        anyhow::ensure!(
+            !screen.contains("Terminal mode"),
+            "focus loss must not let a selected jump enter the Agent"
+        );
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    result
+}
+
+#[test]
 fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
@@ -456,6 +907,16 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
     else {
         bail!("demo did not return its sessions");
     };
+    assert!(
+        hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+            .filter(|session| session.name != "local")
+            .all(|session| matches!(&session.kind, ovrcr::protocol::SessionKind::Agent { .. })),
+        "GUI fixtures named as Agents must use the Agent session kind"
+    );
     let sessions: Vec<_> = hierarchy
         .projects
         .iter()
