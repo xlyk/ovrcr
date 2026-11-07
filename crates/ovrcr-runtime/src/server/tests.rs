@@ -2658,6 +2658,7 @@ fn test_state_with_dispatch(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2711,6 +2712,7 @@ pub(super) fn test_state_with_socket(
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2755,6 +2757,7 @@ fn spawn_live_test_session_with_hook(
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -2791,6 +2794,7 @@ fn spawn_exiting_test_session(
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4182,6 +4186,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
             SessionSpec {
                 scope: ovrcr_protocol::SessionScope::Workspace,
                 restore_command: None,
+                initial_prompt: None,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "p".into(),
@@ -4528,6 +4533,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4606,6 +4612,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -4703,7 +4710,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            SessionSpec { scope: ovrcr_protocol::SessionScope::Workspace, restore_command: None, initial_prompt: None, run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
             workspace: "w".into(),
             name: "exited-leader".into(),
             label: "sh".into(),
@@ -4797,6 +4804,7 @@ fn shutdown_without_kill_rejects_paused_session() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -4846,6 +4854,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         crate::session::SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             kind: ovrcr_protocol::SessionKind::Terminal,
             run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
@@ -5225,6 +5234,7 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
@@ -5370,6 +5380,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -5557,6 +5568,7 @@ fn session_output_flows_while_another_session_spawns() {
         SessionSpec {
             scope: ovrcr_protocol::SessionScope::Workspace,
             restore_command: None,
+            initial_prompt: None,
             run: ovrcr_protocol::SessionRunId(1),
             kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),
@@ -5594,6 +5606,7 @@ fn session_output_flows_while_another_session_spawns() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -8651,6 +8664,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
@@ -8960,6 +8974,113 @@ fn init_repo_with_default(repo: &Path, default_branch: &str) {
     }
 }
 
+#[test]
+fn agent_create_rechecks_git_generation_even_for_harness_default() {
+    use crate::config::{ProjectRecord, Registry, WorkspaceRecord};
+    use ovrcr_protocol::{AgentModelPolicy, CreateAgentSessionRequest, CreateSessionRequest};
+    use std::os::unix::net::UnixListener;
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    init_repo_with_default(&repo, "main");
+    let repo = repo.canonicalize().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["branch", "feature/agent-guard"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let workspace = root.path().join("feature-worktree");
+    let status = std::process::Command::new("git")
+        .args(["worktree", "add", "--quiet"])
+        .arg(&workspace)
+        .arg("feature/agent-guard")
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let workspace = workspace.canonicalize().unwrap();
+    let identity = crate::git::capture_worktree_identity(&workspace).unwrap();
+    let git_dir = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(git_dir.status.success());
+    let mut git_dir = PathBuf::from(String::from_utf8(git_dir.stdout).unwrap().trim());
+    if !git_dir.is_absolute() {
+        git_dir = workspace.join(git_dir);
+    }
+    std::fs::write(git_dir.join("ovrcr-identity"), "replacement-generation\n").unwrap();
+    assert_ne!(crate::git::worktree_identity(&workspace).unwrap(), identity);
+
+    let socket_root = tempfile::tempdir_in("/tmp").unwrap();
+    let socket = socket_root.path().join("s");
+    let _listener = UnixListener::bind(&socket)
+        .unwrap_or_else(|error| panic!("bind fixture socket {}: {error}", socket.display()));
+    let registry = Registry {
+        projects: vec![ProjectRecord {
+            name: "fixture".into(),
+            repo: repo.clone(),
+            workspace_root: root.path().join("workspaces"),
+            workspaces: vec![WorkspaceRecord {
+                id: "feature".into(),
+                path: workspace.clone(),
+                branch: "feature/agent-guard".into(),
+                git_identity: Some(identity),
+                setup_pending: false,
+            }],
+        }],
+    };
+    let (state, _dispatch, events) = test_state_with_socket(socket, registry);
+
+    let marker = root.path().join("agent-was-started");
+    let error = state
+        .create_agent_session(CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "fixture".into(),
+                workspace: "feature".into(),
+                name: String::new(),
+                label: Some("fixture-agent".into()),
+                argv: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!("printf started > {}", marker.display()).into(),
+                ],
+                kind: SessionKind::Agent {
+                    name: "fixture-agent".into(),
+                },
+            },
+            model_policy: AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        })
+        .expect_err("replacement worktree must be refused before spawn");
+    assert!(
+        format!("{error:#}").contains("registered Git worktree changed"),
+        "{error:#}"
+    );
+    assert!(!marker.exists(), "no agent process started");
+    assert!(state.session_summaries().is_empty());
+
+    let terminal = state
+        .create_session(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "feature".into(),
+            name: "legacy-terminal".into(),
+            label: None,
+            argv: vec!["/bin/sh".into(), "-c".into(), "exec sleep 30".into()],
+            kind: SessionKind::Terminal,
+        })
+        .expect("Terminal retains its existing admission path");
+    let session = state.sessions.lock().unwrap().remove(&terminal.id).unwrap();
+    cleanup_test_session(
+        &session,
+        apply_test_session_events(Arc::clone(&session), events),
+    )
+    .unwrap();
+}
+
 fn write_local_policy(home: &Path, policy: &str) {
     let dashboard = home.join("dashboard.toml");
     std::fs::write(
@@ -9044,7 +9165,7 @@ impl Drop for ProvisioningCleanup {
 }
 
 #[test]
-fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
+fn workspace_explicit_model_refusal_precedes_mutation_and_default_branch_policy_is_preserved() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     init_repo_with_default(&repo, "trunk");
@@ -9076,6 +9197,7 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),
@@ -9112,6 +9234,48 @@ fn automatic_local_terminals_default_branch_only_skips_feature_workspaces() {
         .id
         .clone();
     assert_eq!(live_local_sessions(&state, "fixture", &root_id), 1);
+
+    let sessions_before = state.session_summaries().len();
+    let refusal = state
+        .create_workspace_with_launch(
+            "fixture".into(),
+            "model-refused".into(),
+            BranchRequest::New {
+                branch: "feature/model-refused".into(),
+                base: "trunk".into(),
+            },
+            Some(ovrcr_protocol::SessionLaunch {
+                argv: vec!["/bin/true".into()],
+                label: Some("claude".into()),
+                kind: ovrcr_protocol::SessionKind::Agent {
+                    name: "claude".into(),
+                },
+                model_policy: ovrcr_protocol::AgentModelPolicy::Explicit("opus".into()),
+                model_binding: Some("binding".into()),
+                expected_model: Some("claude-opus".into()),
+            }),
+        )
+        .expect_err("explicit models require a registered workspace");
+    assert!(format!("{refusal:#}").contains("already registered workspace"));
+    assert_eq!(state.session_summaries().len(), sessions_before);
+    assert!(
+        !state
+            .registry
+            .lock()
+            .unwrap()
+            .project("fixture")
+            .unwrap()
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == "model-refused")
+    );
+    let branch = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["show-ref", "--verify", "refs/heads/feature/model-refused"])
+        .output()
+        .unwrap();
+    assert!(!branch.status.success(), "refused branch must not exist");
 
     state
         .create_workspace(
@@ -9177,6 +9341,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
             observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             lifecycle: lifecycle::Lifecycle::default(),
+            agent_model_catalog: agent_models::CatalogQueue::default(),
             operator: operator::OperatorRuntime::default(),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -9283,6 +9448,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch,
         shutdown: AtomicBool::new(false),

@@ -261,6 +261,7 @@ fn run_server_inner(
         observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         lifecycle: lifecycle::Lifecycle::default(),
+        agent_model_catalog: agent_models::CatalogQueue::default(),
         operator: operator::OperatorRuntime::default(),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -354,6 +355,11 @@ fn run_server_inner(
     let lifecycle_thread = thread::Builder::new()
         .name("ovrcr-lifecycle".into())
         .spawn(move || super::lifecycle::run(lifecycle_state, lifecycle_rx))?;
+    state.agent_model_catalog.attach();
+    let catalog_state = Arc::clone(&state);
+    let model_catalog_thread = thread::Builder::new()
+        .name("ovrcr-agent-model-catalog".into())
+        .spawn(move || super::agent_models::run(catalog_state))?;
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
     let signal_handle = signals.handle();
     let signal_state = Arc::downgrade(&state);
@@ -415,6 +421,8 @@ fn run_server_inner(
     claude_probe_thread.thread().unpark();
     signal_handle.close();
     let _ = signal_thread.join();
+    state.agent_model_catalog.stop();
+    let _ = model_catalog_thread.join();
     let task_shutdown = task_manager.stop();
     if let Some(snapshot) = state.dashboard.snapshot() {
         state.dashboard.disconnect(snapshot);

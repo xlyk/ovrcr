@@ -814,6 +814,7 @@ mod tests {
             name: name.into(),
             argv: argv.iter().map(std::ffi::OsString::from).collect(),
             source,
+            origin: ovrcr_protocol::AgentLaunchOrigin::Detected,
         }
     }
 

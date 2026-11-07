@@ -8,9 +8,9 @@
 //! Nothing here fails: a settings mistake never stops the Server.
 
 use ovrcr_protocol::{
-    AgentOverride, AutomaticLocalTerminals, DelegationHarness, DelegationSettings, LaunchChoice,
-    NativeCommand, ReadySoundChoice, SettingRow, Settings, SettingsFinding, SettingsReport,
-    ThemeId,
+    AgentModelPolicy, AgentOverride, AutomaticLocalTerminals, DelegationHarness,
+    DelegationSettings, LaunchChoice, NativeCommand, ReadySoundChoice, SettingRow, Settings,
+    SettingsFinding, SettingsReport, ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -271,13 +271,33 @@ impl Loader<'_> {
         if let Some(choices) = self.take_table::<DocumentLaunchChoice>(
             table,
             "launch_choices",
-            "a table { kind, preset }",
+            "a table { kind, preset, model_policy }",
         ) {
-            let choices = choices
-                .into_iter()
-                .map(|(project, choice)| (project, choice.into()))
-                .collect();
-            self.accept("launch_choices", &mut settings.launch_choices, choices);
+            let mut accepted = BTreeMap::new();
+            for (project, choice) in choices {
+                let key = dotted_child("launch_choices", &project);
+                let choice = match choice.into_choice() {
+                    Ok(choice) => choice,
+                    Err((field, message)) => {
+                        self.finding(&(key + field), message.into());
+                        continue;
+                    }
+                };
+                let valid = match &choice {
+                    LaunchChoice::Terminal => true,
+                    LaunchChoice::Agent { model_policy, .. } => model_policy.is_valid(),
+                };
+                if valid {
+                    accepted.insert(project, choice);
+                } else {
+                    self.finding(
+                        &(key + ".model_policy"),
+                        "expected HarnessDefault or a nonempty explicit model up to 256 bytes"
+                            .into(),
+                    );
+                }
+            }
+            self.accept("launch_choices", &mut settings.launch_choices, accepted);
         }
         if let Some(mut quota) = self.take::<toml::Table>(table, "quota") {
             self.value(&mut quota, "quota.enabled", &mut settings.quota.enabled);
@@ -747,19 +767,33 @@ enum Segment {
     Index(usize),
 }
 
-/// The document's spelling of a launch choice: `kind = "Agent"`, `preset = "…"`.
+/// The document's spelling of a launch choice. Older Agent rows omit `model_policy`.
 #[derive(Deserialize)]
-#[serde(tag = "kind", content = "preset", deny_unknown_fields)]
-enum DocumentLaunchChoice {
-    Terminal,
-    Agent(String),
+#[serde(deny_unknown_fields)]
+struct DocumentLaunchChoice {
+    kind: DocumentLaunchKind,
+    preset: Option<String>,
+    model_policy: Option<AgentModelPolicy>,
 }
 
-impl From<DocumentLaunchChoice> for LaunchChoice {
-    fn from(choice: DocumentLaunchChoice) -> Self {
-        match choice {
-            DocumentLaunchChoice::Terminal => Self::Terminal,
-            DocumentLaunchChoice::Agent(preset) => Self::Agent(preset),
+#[derive(Deserialize)]
+enum DocumentLaunchKind {
+    Terminal,
+    Agent,
+}
+
+impl DocumentLaunchChoice {
+    fn into_choice(self) -> Result<LaunchChoice, (&'static str, &'static str)> {
+        match (self.kind, self.preset, self.model_policy) {
+            (DocumentLaunchKind::Terminal, None, None) => Ok(LaunchChoice::Terminal),
+            (DocumentLaunchKind::Terminal, _, _) => {
+                Err(("", "Terminal choices cannot include Agent fields"))
+            }
+            (DocumentLaunchKind::Agent, Some(preset), model_policy) => Ok(LaunchChoice::Agent {
+                preset,
+                model_policy: model_policy.unwrap_or_default(),
+            }),
+            (DocumentLaunchKind::Agent, None, _) => Err((".preset", "Agent preset is required")),
         }
     }
 }
@@ -1034,7 +1068,10 @@ max_execution_attempts = 2
         );
         assert_eq!(
             settings.launch_choices["ovrcr"],
-            LaunchChoice::Agent("claude".into())
+            LaunchChoice::Agent {
+                preset: "claude".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
         assert_eq!(settings.launch_choices["notes"], LaunchChoice::Terminal);
         assert!(settings.quota.enabled);
@@ -1075,6 +1112,21 @@ max_execution_attempts = 2
             Some("pi/test")
         );
         assert_eq!(row(&report, "quota.grok.home").value, None);
+    }
+
+    #[test]
+    fn launch_choices_round_trip_default_and_explicit_model_policies() {
+        let report = read(
+            "[launch_choices.old]\nkind = 'Agent'\npreset = 'claude'\n\
+             [launch_choices.default]\nkind = 'Agent'\npreset = 'claude'\nmodel_policy = 'HarnessDefault'\n\
+             [launch_choices.explicit]\nkind = 'Agent'\npreset = 'claude'\nmodel_policy = { Explicit = 'fixture-model' }\n",
+        );
+
+        assert!(report.findings.is_empty(), "{:?}", report.findings);
+        let choices = row(&report, "launch_choices").value.as_deref().unwrap();
+        assert!(choices.contains("HarnessDefault"), "{choices}");
+        assert!(choices.contains("fixture-model"), "{choices}");
+        assert!(choices.contains("old"), "{choices}");
     }
 
     #[test]
@@ -1233,7 +1285,10 @@ max_execution_attempts = 2
         );
         assert_eq!(
             report.settings.launch_choices["p"],
-            LaunchChoice::Agent("x".into())
+            LaunchChoice::Agent {
+                preset: "x".into(),
+                model_policy: AgentModelPolicy::HarnessDefault,
+            }
         );
         assert_eq!(report.settings.launch_choices["q"], LaunchChoice::Terminal);
         assert_eq!(
@@ -1316,7 +1371,7 @@ launch_choices = { kept = { kind = \"Terminal\" }, bad = \"nope\" }
         finding(
             "launch_choices.bad",
             4,
-            r#"invalid type: string "nope", expected a table { kind, preset }"#,
+            r#"invalid type: string "nope", expected a table { kind, preset, model_policy }"#,
             &report,
         );
         assert!(

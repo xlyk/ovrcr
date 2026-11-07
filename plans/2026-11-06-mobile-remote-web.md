@@ -5,7 +5,7 @@ Status: implemented. Slice 0 began in
 [`experiments/remote-web`](../experiments/remote-web/); the shipped backend is
 now `ovrcr remote serve`, a Rust subcommand that speaks the protocol directly.
 `[remote]` settings (enabled/port/login) start and stop it as a supervised child
-of the Server, so the Dashboard toggle persists and autostarts. Protocol 73.
+of the Server, so the Dashboard toggle persists and autostarts. Protocol 75.
 Colored cells, retained scrollback, and the agent transcript use the read-only
 `ReadScreen` request and `Transcript` opened to Control.
 
@@ -485,7 +485,7 @@ real server. The cell pager has unit tests against the real `vt100` parser. A
 full PTY round trip remains manual on a machine with PTY devices.
 
 Protocol 72 added the read-only `ReadScreen` request and opened `Transcript` to
-Control; protocol 73 adds `[remote]` and the supervised gateway. Neither can write, resize, focus, or take the Dashboard seat. Sessions
+Control; protocol 73 added `[remote]` and the supervised gateway, and protocol 75 is current after the mainline agent-creation merge. Neither can write, resize, focus, or take the Dashboard seat. Sessions
 on the alternate screen report no scrollback, which is the same refusal History
 already makes; their agent history is the transcript page.
 
@@ -546,7 +546,7 @@ cannot resize, and `Request::Resize` is Dashboard-only through `SetView`
 Two paths, not built:
 
 1. A Control `ResizeScreen { session, expected_run, size }`, allowed only while
-   no Dashboard is claimed, debounced and clamped. Protocol 73 and a server
+   no Dashboard is claimed, debounced and clamped. Protocol 75 and a server
    restart; the agent repaints and the desktop's next `SetView` overrides it.
 2. The phone takes the Dashboard seat (`SetView`/`Resize`), which also replaces
    polling with the live output stream but refuses the desktop while attached.

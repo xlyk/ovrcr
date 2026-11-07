@@ -1,7 +1,7 @@
 use crate::context::ContextUsageReport;
 use crate::{
-    AgentActivity, Registry, SessionId, SessionKind, SessionRunId, SessionSummary, TaskRequest,
-    TaskResponse, TerminalSize,
+    AgentActivity, AgentLaunchOrigin, Registry, SessionId, SessionKind, SessionRunId,
+    SessionSummary, TaskRequest, TaskResponse, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -233,6 +233,181 @@ pub struct SessionLaunch {
     pub argv: Vec<OsString>,
     pub label: Option<String>,
     pub kind: SessionKind,
+    #[serde(default)]
+    pub model_policy: crate::AgentModelPolicy,
+    #[serde(default)]
+    pub model_binding: Option<String>,
+    #[serde(default)]
+    pub expected_model: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentModelOption {
+    pub alias: String,
+    pub resolved: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentModelCapabilities {
+    pub preset: String,
+    pub binding: Option<String>,
+    pub models: Vec<AgentModelOption>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAgentSessionRequest {
+    pub session: CreateSessionRequest,
+    pub model_policy: crate::AgentModelPolicy,
+    pub model_binding: Option<String>,
+    pub expected_model: Option<String>,
+}
+
+pub const MAX_INITIAL_PROMPT_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct InitialPromptIntentId {
+    pub server_lifetime: String,
+    pub sequence: u64,
+}
+
+impl InitialPromptIntentId {
+    pub fn validate(&self) -> Result<(), String> {
+        if !crate::bridge::canonical_uuid(&self.server_lifetime) || self.sequence == 0 {
+            return Err("initial-prompt intent identity is invalid".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitialPromptIntentState {
+    Issued,
+    Pending,
+    LaunchAccepted,
+    Refused,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitialPromptDelivery {
+    Unknown,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptIntentSnapshot {
+    pub id: InitialPromptIntentId,
+    pub state: InitialPromptIntentState,
+    pub project: String,
+    pub workspace: String,
+    pub name: String,
+    pub label: Option<String>,
+    pub session: Option<SessionId>,
+    pub run: Option<SessionRunId>,
+    /// Present only when the Server knows the process was never started.
+    pub recoverable_prompt: Option<String>,
+    /// Frozen harness and model options, present only for a known pre-spawn refusal.
+    pub recoverable_launch: Option<CreateAgentSessionRequest>,
+    pub message: Option<String>,
+    /// Process launch and provider delivery are separate acceptance boundaries.
+    pub delivery: Option<InitialPromptDelivery>,
+}
+
+impl std::fmt::Debug for InitialPromptIntentSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InitialPromptIntentSnapshot")
+            .field("id", &self.id)
+            .field("state", &self.state)
+            .field("project", &self.project)
+            .field("workspace", &self.workspace)
+            .field("name", &self.name)
+            .field("label", &self.label)
+            .field("session", &self.session)
+            .field("run", &self.run)
+            .field(
+                "recoverable_prompt",
+                &self.recoverable_prompt.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "recoverable_launch",
+                &self.recoverable_launch.as_ref().map(|_| "[redacted]"),
+            )
+            .field("message", &self.message)
+            .field("delivery", &self.delivery)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptLaunchRequest {
+    pub intent: InitialPromptIntentId,
+    pub launch: CreateAgentSessionRequest,
+    pub prompt: String,
+}
+
+impl std::fmt::Debug for InitialPromptLaunchRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InitialPromptLaunchRequest")
+            .field("intent", &self.intent)
+            .field("project", &self.launch.session.project)
+            .field("workspace", &self.launch.session.workspace)
+            .field("name", &self.launch.session.name)
+            .field("label", &self.launch.session.label)
+            .field("kind", &self.launch.session.kind)
+            .field("model_policy", &self.launch.model_policy)
+            .field("prompt", &"[redacted]")
+            .finish()
+    }
+}
+
+impl InitialPromptLaunchRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        self.intent.validate()?;
+        if self.prompt.len() > MAX_INITIAL_PROMPT_BYTES || self.prompt.contains('\0') {
+            return Err("initial prompt is empty or invalid".into());
+        }
+        if !matches!(self.launch.session.kind, SessionKind::Agent { .. })
+            || self
+                .launch
+                .session
+                .label
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
+            return Err("initial-prompt launch requires a selected agent harness".into());
+        }
+        if !self.prompt.trim().is_empty()
+            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex" | "omp"))
+                || !matches!(
+                    self.launch.session.label.as_deref(),
+                    Some("claude" | "pi" | "codex" | "omp")
+                )
+                || !matches!(
+                    (&self.launch.session.kind, self.launch.session.label.as_deref()),
+                    (SessionKind::Agent { name }, Some(label)) if name == label
+                ))
+        {
+            return Err(
+                "initial prompts require a detected Claude Code, Pi, Codex, or Oh My Pi launcher"
+                    .into(),
+            );
+        }
+        if self.launch.session.argv.len() > 128
+            || self
+                .launch
+                .session
+                .argv
+                .iter()
+                .map(|arg| arg.len())
+                .sum::<usize>()
+                > 64 * 1024
+        {
+            return Err("agent launch arguments exceed the supported size".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,6 +636,19 @@ pub enum Request {
         identity: Option<crate::ConversationReference>,
         before: Option<u64>,
     },
+    QueryAgentModels {
+        preset: String,
+        origin: AgentLaunchOrigin,
+        argv: Vec<OsString>,
+        project: String,
+        workspace: String,
+    },
+    CreateAgentSession(CreateAgentSessionRequest),
+    /// Allocate a one-use, Server-lifetime-bound identity before submitting a prompt launch.
+    AllocateInitialPromptIntent,
+    /// Reconcile the bounded current-Server intent set after a Dashboard reconnect.
+    ReconcileInitialPromptIntents,
+    CreateAgentSessionWithPrompt(InitialPromptLaunchRequest),
     /// Read-only screen window: live screen plus retained scrollback. Control is allowed.
     ReadScreen {
         session: SessionId,
@@ -558,6 +746,8 @@ pub enum Response {
     OperatorExchange(crate::OperatorExchangeResult),
     OperatorWorker(crate::OperatorWorkerResult),
     Transcript(TranscriptPage),
+    InitialPromptIntent(InitialPromptIntentId),
+    InitialPromptIntents(Vec<InitialPromptIntentSnapshot>),
     ScreenWindow(Box<ScreenWindow>),
 }
 
@@ -577,6 +767,14 @@ pub enum LifecycleOutcome {
     Succeeded,
     CreatedSession(Box<SessionSummary>),
     Failed { code: ErrorCode, message: String },
+}
+
+/// Exact registered workspace identity carried by a workspace lifecycle receipt.
+/// The client token alone is connection-local and may collide after Dashboard replacement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceLifecycleIdentity {
+    pub project: String,
+    pub id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -613,13 +811,23 @@ pub enum ServerEvent {
         branch: String,
     },
     /// A Lifecycle job finished. `client_token` is the request_id that accepted
-    /// the job on the Dashboard connection.
+    /// the job on the Dashboard connection. Workspace jobs also repeat their
+    /// frozen target identity so a replacement Dashboard cannot mistake an old
+    /// same-token completion for its own create.
     LifecycleCompleted {
         client_token: u64,
         op: LifecycleOp,
         outcome: LifecycleOutcome,
+        target_workspace: Option<WorkspaceLifecycleIdentity>,
     },
     OperatorChanged(crate::OperatorConversationId),
+    /// A current Dashboard's bounded model catalog lookup. The request id is
+    /// the correlation id; stale Dashboard owners never receive the result.
+    AgentModels {
+        request_id: u64,
+        capabilities: AgentModelCapabilities,
+    },
+    InitialPromptIntentChanged(Box<InitialPromptIntentSnapshot>),
 }
 
 #[cfg(test)]
@@ -673,9 +881,13 @@ mod wire_snapshot {
             }],
             ..Default::default()
         };
-        settings
-            .launch_choices
-            .insert("p".into(), crate::LaunchChoice::Agent("a".into()));
+        settings.launch_choices.insert(
+            "p".into(),
+            crate::LaunchChoice::Agent {
+                preset: "a".into(),
+                model_policy: crate::AgentModelPolicy::HarnessDefault,
+            },
+        );
         settings
             .launch_choices
             .insert("q".into(), crate::LaunchChoice::Terminal);
@@ -811,6 +1023,78 @@ mod wire_snapshot {
         assert_eq!(decoded, session);
         assert_eq!(decoded.manual_title, None);
         assert_eq!(decoded.title.as_deref(), Some("Conversation subject"));
+    }
+
+    #[test]
+    fn initial_prompt_wire_debug_redacts_prompt_text() {
+        let prompt = "  keep this\nexactly  ";
+        let request = Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+            intent: InitialPromptIntentId {
+                server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                sequence: 1,
+            },
+            launch: CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    argv: vec!["claude".into()],
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                },
+                model_policy: crate::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            },
+            prompt: prompt.into(),
+        });
+        assert!(!format!("{request:?}").contains(prompt));
+        assert!(format!("{request:?}").contains("redacted"));
+    }
+
+    #[test]
+    fn initial_prompt_validation_accepts_only_matching_detected_harness_names() {
+        let mut request = InitialPromptLaunchRequest {
+            intent: InitialPromptIntentId {
+                server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                sequence: 1,
+            },
+            launch: CreateAgentSessionRequest {
+                session: CreateSessionRequest {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("omp".into()),
+                    argv: vec!["ovrcr".into(), "agent".into(), "run".into(), "omp".into()],
+                    kind: SessionKind::Agent { name: "omp".into() },
+                },
+                model_policy: crate::AgentModelPolicy::HarnessDefault,
+                model_binding: None,
+                expected_model: None,
+            },
+            prompt: "first line\n-- a message, not an option".into(),
+        };
+        request
+            .validate()
+            .expect("OMP accepts a nonblank Initial prompt request");
+
+        request.launch.session.name = "codex".into();
+        request.launch.session.label = Some("codex".into());
+        request.launch.session.argv = vec!["codex".into()];
+        request.launch.session.kind = SessionKind::Agent {
+            name: "codex".into(),
+        };
+        assert!(request.validate().is_ok());
+
+        request.launch.session.label = Some("claude".into());
+        assert!(request.validate().is_err());
+        request.launch.session.label = Some("codex".into());
+        request.launch.session.kind = SessionKind::Agent {
+            name: "custom".into(),
+        };
+        assert!(request.validate().is_err());
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -985,6 +1269,9 @@ mod wire_snapshot {
                         argv: vec!["sh".into()],
                         label: None,
                         kind: SessionKind::Terminal,
+                        model_policy: crate::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
                     }),
                 },
             ),
@@ -1154,6 +1441,67 @@ mod wire_snapshot {
                 },
             ),
             (
+                "QueryAgentModels",
+                Request::QueryAgentModels {
+                    preset: "claude".into(),
+                    origin: crate::AgentLaunchOrigin::Detected,
+                    argv: vec!["ovrcr".into(), "agent".into(), "run".into()],
+                    project: "p".into(),
+                    workspace: "w".into(),
+                },
+            ),
+            (
+                "CreateAgentSession",
+                Request::CreateAgentSession(crate::CreateAgentSessionRequest {
+                    session: CreateSessionRequest {
+                        project: "p".into(),
+                        workspace: "w".into(),
+                        name: "n".into(),
+                        label: Some("claude".into()),
+                        argv: vec!["ovrcr".into(), "agent".into(), "run".into()],
+                        kind: SessionKind::Agent {
+                            name: "claude".into(),
+                        },
+                    },
+                    model_policy: crate::AgentModelPolicy::Explicit("opus".into()),
+                    model_binding: Some("binding".into()),
+                    expected_model: Some("claude-opus".into()),
+                }),
+            ),
+            (
+                "AllocateInitialPromptIntent",
+                Request::AllocateInitialPromptIntent,
+            ),
+            (
+                "ReconcileInitialPromptIntents",
+                Request::ReconcileInitialPromptIntents,
+            ),
+            (
+                "CreateAgentSessionWithPrompt",
+                Request::CreateAgentSessionWithPrompt(InitialPromptLaunchRequest {
+                    intent: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    launch: CreateAgentSessionRequest {
+                        session: CreateSessionRequest {
+                            project: "p".into(),
+                            workspace: "w".into(),
+                            name: "n".into(),
+                            label: Some("claude".into()),
+                            argv: vec!["claude".into()],
+                            kind: SessionKind::Agent {
+                                name: "claude".into(),
+                            },
+                        },
+                        model_policy: crate::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
+                    },
+                    prompt: "marker\ncontinued".into(),
+                }),
+            ),
+            (
                 "ReadScreen",
                 Request::ReadScreen {
                     session: SessionId(1),
@@ -1300,6 +1648,33 @@ mod wire_snapshot {
                 }),
             ),
             (
+                "InitialPromptIntent",
+                Response::InitialPromptIntent(InitialPromptIntentId {
+                    server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                    sequence: 1,
+                }),
+            ),
+            (
+                "InitialPromptIntents",
+                Response::InitialPromptIntents(vec![InitialPromptIntentSnapshot {
+                    id: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    state: InitialPromptIntentState::Refused,
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    session: None,
+                    run: None,
+                    recoverable_prompt: Some("marker".into()),
+                    recoverable_launch: None,
+                    message: Some("not started".into()),
+                    delivery: None,
+                }]),
+            ),
+            (
                 "ScreenWindow",
                 Response::ScreenWindow(Box::new(crate::ScreenWindow {
                     session: SessionId(1),
@@ -1404,7 +1779,55 @@ mod wire_snapshot {
                     client_token: 7,
                     op: LifecycleOp::CreateSession,
                     outcome: LifecycleOutcome::Succeeded,
+                    target_workspace: None,
                 },
+            ),
+            (
+                "LifecycleCompletedWithWorkspace",
+                ServerEvent::LifecycleCompleted {
+                    client_token: 7,
+                    op: LifecycleOp::CreateWorkspace,
+                    outcome: LifecycleOutcome::Succeeded,
+                    target_workspace: Some(WorkspaceLifecycleIdentity {
+                        project: "p".into(),
+                        id: "w".into(),
+                    }),
+                },
+            ),
+            (
+                "AgentModels",
+                ServerEvent::AgentModels {
+                    request_id: 9,
+                    capabilities: crate::AgentModelCapabilities {
+                        preset: "claude".into(),
+                        binding: Some("binding".into()),
+                        models: vec![crate::AgentModelOption {
+                            alias: "opus".into(),
+                            resolved: "claude-opus".into(),
+                        }],
+                        reason: None,
+                    },
+                },
+            ),
+            (
+                "InitialPromptIntentChanged",
+                ServerEvent::InitialPromptIntentChanged(Box::new(InitialPromptIntentSnapshot {
+                    id: InitialPromptIntentId {
+                        server_lifetime: "12345678-1234-4234-8234-123456789abc".into(),
+                        sequence: 1,
+                    },
+                    state: InitialPromptIntentState::LaunchAccepted,
+                    project: "p".into(),
+                    workspace: "w".into(),
+                    name: "n".into(),
+                    label: Some("claude".into()),
+                    session: Some(SessionId(1)),
+                    run: Some(SessionRunId(1)),
+                    recoverable_prompt: None,
+                    recoverable_launch: None,
+                    message: None,
+                    delivery: Some(InitialPromptDelivery::Unknown),
+                })),
             ),
         ]
     }
@@ -3502,7 +3925,7 @@ mod wire_snapshot {
         ("Request::SetView", "190301010401020101"),
         (
             "Request::CreateWorkspaceWithLaunch",
-            "1f016101620101630101000273680000",
+            "1f016101620101630101000273680000000000",
         ),
         (
             "Request::CreateWorkspaceWithoutLaunch",
@@ -3527,20 +3950,34 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0449017301630168016c0104",
+            "2a044b017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0449017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044b017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
             "Request::Transcript",
             "3c010401000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e666967000102",
         ),
-        ("Request::ReadScreen", "3d01050203"),
+        (
+            "Request::QueryAgentModels",
+            "3d06636c61756465000300056f7672637200056167656e74000372756e01700177",
+        ),
+        (
+            "Request::CreateAgentSession",
+            "3e01700177016e0106636c617564650300056f7672637200056167656e74000372756e0106636c6175646501046f707573010762696e64696e67010b636c617564652d6f707573",
+        ),
+        ("Request::AllocateInitialPromptIntent", "3f"),
+        ("Request::ReconcileInitialPromptIntents", "40"),
+        (
+            "Request::CreateAgentSessionWithPrompt",
+            "412431323334353637382d313233342d343233342d383233342d3132333435363738396162630101700177016e0106636c61756465010006636c617564650106636c61756465000000106d61726b65720a636f6e74696e756564",
+        ),
+        ("Request::ReadScreen", "4201050203"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -3569,26 +4006,34 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04490000"),
+        ("Response::NotificationNavigation", "0d044b0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0449017301630168016c0104",
+            "0e01016e044b017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010449017301630168016c0164",
+            "0f010708090101690101044b017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004490107080901016901010449017301630168016c0164",
+            "10044b010708090101690101044b017301630168016c0164",
         ),
         (
             "Response::Transcript",
             "1c0300017501016102016e016903000c636f6e766572736174696f6e072f636c617564650e2f686973746f72792e6a736f6e6c072f636f6e66696700",
         ),
         (
+            "Response::InitialPromptIntent",
+            "1d2431323334353637382d313233342d343233342d383233342d31323334353637383961626301",
+        ),
+        (
+            "Response::InitialPromptIntents",
+            "1e012431323334353637382d313233342d343233342d383233342d313233343536373839616263010301700177016e0106636c61756465000001066d61726b657200010b6e6f74207374617274656400",
+        ),
+        (
             "Response::ScreenWindow",
-            "1d01041850051d050001030700010201026869010104000000",
+            "1f01041850051d050001030700010201026869010104000000",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3603,7 +4048,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a020170010161017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -3612,14 +4057,26 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0449017301630168016c0104",
+            "08016e044b017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
             "ServerEvent::WipSavePrompt",
             "0a016101620d666561747572652f746f706963",
         ),
-        ("ServerEvent::LifecycleCompleted", "0b070200"),
+        ("ServerEvent::LifecycleCompleted", "0b07020000"),
+        (
+            "ServerEvent::LifecycleCompletedWithWorkspace",
+            "0b0700000101700177",
+        ),
+        (
+            "ServerEvent::AgentModels",
+            "0d0906636c61756465010762696e64696e6701046f7075730b636c617564652d6f70757300",
+        ),
+        (
+            "ServerEvent::InitialPromptIntentChanged",
+            "0e2431323334353637382d313233342d343233342d383233342d313233343536373839616263010201700177016e0106636c61756465010101010000000100",
+        ),
         ("QuotaState::Waiting", "00"),
         ("QuotaState::Current", "01"),
         ("QuotaState::Unavailable", "02"),

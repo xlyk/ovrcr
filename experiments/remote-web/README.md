@@ -18,7 +18,7 @@ Status: working locally, over a private tailnet, and as a settings-driven child
 of the Server. It can watch, reply to, and start sessions. Slice 0 of
 [`plans/2026-11-06-mobile-remote-web.md`](../../plans/2026-11-06-mobile-remote-web.md),
 extended with read-only screen-window and transcript requests, session creation,
-and the `[remote]` settings (protocol 73).
+and the `[remote]` settings (protocol 75).
 
 ## Architecture
 
@@ -74,7 +74,7 @@ to create the session; arbitrary commands are not accepted.
 
 ## Requirements
 
-- The rebuilt `ovrcr` CLI and a running Server on **protocol 73**. Build and
+- The rebuilt `ovrcr` CLI and a running Server on **protocol 75**. Build and
   install this branch, then restart the Server; a restart stops live sessions.
 - Node 22 only for the original prototype. The product is in the `ovrcr` binary.
 

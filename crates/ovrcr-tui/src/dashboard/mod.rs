@@ -52,14 +52,13 @@ use std::collections::{HashSet, VecDeque};
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
-/// An explicitly qualified input frontend. The default terminal path does not
-/// advertise the Control-hold gesture; only the native OVRCR GUI currently
-/// owns the modifier translation that makes it usable.
+/// A frontend whose native Control press, digit, and release path is qualified.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DashboardInputProfile {
     #[default]
     Standard,
     VerifiedOvrcrGui,
+    VerifiedIterm2,
 }
 
 pub const DASHBOARD_INPUT_PROFILE_ENV: &str = "OVRCR_DASHBOARD_INPUT_PROFILE";
@@ -67,7 +66,38 @@ pub const VERIFIED_OVRCR_GUI_INPUT_PROFILE: &str = "ovrcr-gui";
 
 impl DashboardInputProfile {
     pub fn from_environment() -> Self {
-        Self::from_environment_value(std::env::var(DASHBOARD_INPUT_PROFILE_ENV).ok().as_deref())
+        Self::from_environment_with(|key| std::env::var_os(key))
+    }
+
+    fn from_environment_with(read: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
+        if let Some(value) = read(DASHBOARD_INPUT_PROFILE_ENV) {
+            return Self::from_environment_value(value.to_str());
+        }
+        let iterm = read("TERM_PROGRAM");
+        let version = read("TERM_PROGRAM_VERSION");
+        let proxied = [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ]
+        .iter()
+        .any(|key| read(key).is_some());
+        // Qualification is limited to direct native setups whose modifier paths were captured.
+        if cfg!(target_os = "macos")
+            && iterm.as_deref() == Some(std::ffi::OsStr::new("iTerm.app"))
+            && matches!(
+                version.as_deref().and_then(|value| value.to_str()),
+                Some("3.7.2" | "3.7.7")
+            )
+            && !proxied
+        {
+            Self::VerifiedIterm2
+        } else {
+            Self::Standard
+        }
     }
 
     pub fn from_environment_value(value: Option<&str>) -> Self {
@@ -78,7 +108,99 @@ impl DashboardInputProfile {
     }
 
     pub const fn supports_control_hold(self) -> bool {
-        matches!(self, Self::VerifiedOvrcrGui)
+        matches!(self, Self::VerifiedOvrcrGui | Self::VerifiedIterm2)
+    }
+}
+
+#[cfg(test)]
+mod input_profile_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn profile(overrides: &[(&str, &str)]) -> DashboardInputProfile {
+        let mut values = std::collections::HashMap::from([
+            ("TERM_PROGRAM", OsString::from("iTerm.app")),
+            ("TERM_PROGRAM_VERSION", OsString::from("3.7.7")),
+        ]);
+        values.extend(
+            overrides
+                .iter()
+                .map(|(key, value)| (*key, OsString::from(value))),
+        );
+        DashboardInputProfile::from_environment_with(|key| values.get(key).cloned())
+    }
+
+    #[test]
+    fn direct_verified_iterm_selects_the_native_profile() {
+        let expected = if cfg!(target_os = "macos") {
+            DashboardInputProfile::VerifiedIterm2
+        } else {
+            DashboardInputProfile::Standard
+        };
+        for version in ["3.7.2", "3.7.7"] {
+            assert_eq!(
+                profile(&[("TERM_PROGRAM_VERSION", version)]),
+                expected,
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_frontends_and_unverified_versions_keep_standard_input() {
+        for overrides in [
+            vec![("TERM_PROGRAM", "another-terminal")],
+            vec![("TERM_PROGRAM", "")],
+            vec![("TERM_PROGRAM_VERSION", "")],
+            vec![("TERM_PROGRAM_VERSION", "3.7.6")],
+            vec![("TERM_PROGRAM_VERSION", "99.0")],
+        ] {
+            assert_eq!(profile(&overrides), DashboardInputProfile::Standard);
+        }
+        assert_eq!(
+            DashboardInputProfile::from_environment_with(|_| None),
+            DashboardInputProfile::Standard
+        );
+    }
+
+    #[test]
+    fn input_proxies_keep_standard_input() {
+        for key in [
+            "TMUX",
+            "STY",
+            "ZELLIJ",
+            "SSH_CONNECTION",
+            "SSH_TTY",
+            "OVRCR_SESSION_ID",
+        ] {
+            for version in ["3.7.2", "3.7.7"] {
+                assert_eq!(
+                    profile(&[(key, "fixture"), ("TERM_PROGRAM_VERSION", version)]),
+                    DashboardInputProfile::Standard,
+                    "{key}, {version}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_frontend_profile_keeps_its_existing_priority() {
+        assert_eq!(
+            profile(&[
+                (
+                    DASHBOARD_INPUT_PROFILE_ENV,
+                    VERIFIED_OVRCR_GUI_INPUT_PROFILE
+                ),
+                ("TMUX", "fixture")
+            ]),
+            DashboardInputProfile::VerifiedOvrcrGui
+        );
+        for value in ["", "another-terminal"] {
+            assert_eq!(
+                profile(&[(DASHBOARD_INPUT_PROFILE_ENV, value)]),
+                DashboardInputProfile::Standard
+            );
+        }
     }
 }
 
@@ -355,6 +477,12 @@ pub struct Dashboard {
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
+    /// One native model lookup may outlive its palette or owning socket. Keep
+    /// its identity here so a reopened form can wait and coalesce one latest
+    /// target after the result arrives.
+    model_query: Option<(u64, String)>,
+    #[cfg(test)]
+    model_agent_entries: Option<Vec<agents::AgentEntry>>,
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
@@ -376,6 +504,15 @@ pub struct Dashboard {
     error_owning_requests: HashSet<u64>,
     /// Ids of terminal input requests in flight: their refusal (input not admitted) is a limit.
     input_requests: HashSet<u64>,
+    /// One Start is between intent allocation and launch admission. Prompt is bounded by the
+    /// protocol's 64 KiB limit and is dropped as soon as the launch request is sent.
+    pending_initial_prompt_allocation: Option<InitialPromptAllocation>,
+    /// Latest Server-owned launch intent observed for this Dashboard.
+    initial_prompt_intent: Option<crate::protocol::InitialPromptIntentSnapshot>,
+    initial_prompt_intent_id: Option<crate::protocol::InitialPromptIntentId>,
+    initial_prompt_focus_pending: Option<crate::protocol::InitialPromptIntentId>,
+    deferred_initial_prompt_recovery: Option<crate::protocol::InitialPromptIntentId>,
+    initial_prompt_reconcile_request: Option<u64>,
     /// Lifecycle job accepted but not yet shown as a Provisional row (awaiting Response::Ok).
     lifecycle_pending: Option<lifecycle_ui::Provisional>,
     /// In-flight or failed Provisional row.
@@ -385,6 +522,14 @@ pub struct Dashboard {
     lifecycle_strip: Option<String>,
     /// Remembered launch choice held across Provisional wait until CreatedSession completes.
     lifecycle_preference: Option<(String, settings::LaunchChoice)>,
+}
+
+struct InitialPromptAllocation {
+    request_id: u64,
+    launch: crate::protocol::CreateAgentSessionRequest,
+    prompt: String,
+    form: Option<Box<palette::Palette>>,
+    then: Vec<crate::protocol::Request>,
 }
 
 thread_local! {

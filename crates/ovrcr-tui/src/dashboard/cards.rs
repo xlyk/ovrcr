@@ -165,7 +165,7 @@ impl Dashboard {
             .iter()
             .flat_map(|workspace| &workspace.sessions)
             .any(|session| matches!(session.kind, SessionKind::Agent { .. }));
-        if !has_agent && let Some(key) = keys.enabled(Action::CreateWorkspace) {
+        if !has_agent && let Some(key) = keys.enabled(Action::NewAgentSession) {
             head.push(Line::from(vec![
                 Span::styled(
                     "Next: ",
@@ -307,14 +307,14 @@ impl Dashboard {
             hints.push((key, "expand to reach its sessions".into()));
         }
         for (action, text) in [
-            (Action::CreateTerminal, "new agent or terminal here"),
-            (Action::CreateWorkspace, "new workspace"),
+            (Action::NewAgentSession, "new agent session"),
+            (Action::CreateWorkspace, "create branch"),
         ] {
             if let Some(key) = keys.enabled(action) {
                 hints.push((key, text.into()));
             }
         }
-        if let Some(more) = keys.group_key(Action::CreateTerminal) {
+        if let Some(more) = keys.group_key(Action::NewAgentSession) {
             hints.push((more, "more".into()));
         }
         Card {
@@ -549,7 +549,7 @@ impl Keys {
         ];
         let steps = [
             (Action::RegisterProject, "Register a repository"),
-            (Action::CreateWorkspace, "Start an agent in a new workspace"),
+            (Action::CreateWorkspace, "Create a branch"),
         ];
         let steps = steps
             .into_iter()
@@ -586,7 +586,8 @@ impl Keys {
 
     fn project_steps(&self) -> Vec<Line<'static>> {
         let hints = [
-            (Action::CreateWorkspace, "new workspace"),
+            (Action::NewAgentSession, "new agent session"),
+            (Action::CreateWorkspace, "create branch"),
             (Action::RegisterProject, "register another project"),
         ]
         .into_iter()
@@ -836,7 +837,7 @@ mod tests {
                 "Welcome to OVRCR",
                 "",
                 "1  a  Register a repository",
-                "2  w  Start an agent in a new workspace",
+                "2  w  Create a branch",
                 "",
                 "Space actions · : commands · ? keys",
             ]
@@ -870,8 +871,8 @@ mod tests {
             [
                 "",
                 "  j        open local",
-                "  n        new agent or terminal here",
-                "  w        new workspace",
+                "  n        new agent session",
+                "  w        create branch",
                 "  Space w  more",
             ]
         );
@@ -927,7 +928,7 @@ mod tests {
             !lines.iter().any(|line| line.contains("open")),
             "{lines:#?}"
         );
-        assert!(lines.contains(&"  n        new agent or terminal here".to_owned()));
+        assert!(lines.contains(&"  n        new agent session".to_owned()));
 
         select(
             &mut dashboard,
@@ -939,13 +940,13 @@ mod tests {
         let lines = text(&dashboard, 0, WIDE);
         assert_eq!(lines[0], "/srv/demo · root");
         assert_eq!(lines[1], "root is on feature/x; check out main");
-        // `n` is disabled on a drifted root, so the card does not offer it.
+        // `n` still opens the chooser so another registered branch can be selected.
         assert!(
-            !lines.iter().any(|line| line.contains("new agent")),
+            lines.contains(&"  n        new agent session".to_owned()),
             "{lines:#?}"
         );
         assert!(
-            lines.contains(&"  w        new workspace".to_owned()),
+            lines.contains(&"  w        create branch".to_owned()),
             "{lines:#?}"
         );
     }
@@ -970,7 +971,8 @@ mod tests {
                 "  main · root      1 session",
                 "  feature/spinner  4 sessions · ? 1 needs input · ✓ 1 ready",
                 "",
-                "  w  new workspace",
+                "  n  new agent session",
+                "  w  create branch",
                 "  a  register another project",
             ]
         );
@@ -999,7 +1001,7 @@ mod tests {
         };
         select(&mut dashboard, project.clone());
         let lines = text(&dashboard, 0, WIDE);
-        assert_eq!(lines[0], "Next: press w to start your first agent");
+        assert_eq!(lines[0], "Next: press n to start your first agent");
         // No worktree yet, so there is nothing to read the workspace root from.
         assert!(
             !lines.iter().any(|line| line.starts_with("Workspace root")),
@@ -1040,10 +1042,14 @@ mod tests {
         let lines = text(&dashboard, 0, WIDE);
         // No header names a project here, so each one names itself.
         assert_eq!(lines[0], "demo");
-        assert_eq!(lines[1], "Next: press w to start your first agent");
+        assert_eq!(lines[1], "Next: press n to start your first agent");
         assert_eq!(
-            lines[lines.len() - 2..],
-            ["  w  new workspace", "  a  register another project"]
+            lines[lines.len() - 3..],
+            [
+                "  n  new agent session",
+                "  w  create branch",
+                "  a  register another project"
+            ]
         );
     }
 
@@ -1101,7 +1107,7 @@ mod tests {
         // Even the welcome ends in `…` rather than at the pane edge.
         let welcome = Dashboard::new(TerminalSize { rows: 24, cols: 30 });
         let lines = text(&welcome, 0, Room { width: 30, ..WIDE });
-        assert_eq!(lines[3], "2  w  Start an agent in a new…");
+        assert_eq!(lines[3], "2  w  Create a branch");
     }
 
     #[test]
@@ -1165,10 +1171,7 @@ mod tests {
         let lines = text(&dashboard, 0, Room { height: 2, ..room });
         assert_eq!(
             lines,
-            [
-                "  j        open agent 00",
-                "  n        new agent or terminal here"
-            ]
+            ["  j        open agent 00", "  n        new agent session"]
         );
     }
 
@@ -1184,8 +1187,8 @@ mod tests {
             format!("{:?}", terminal.backend().buffer())
         };
         dashboard.select_session(SessionId(2));
-        assert!(!draw(&dashboard).contains("new workspace"));
+        assert!(!draw(&dashboard).contains("create branch"));
         select(&mut dashboard, feature());
-        assert!(draw(&dashboard).contains("new workspace"));
+        assert!(draw(&dashboard).contains("create branch"));
     }
 }

@@ -1517,10 +1517,47 @@ pub fn canonical_cloud_repository(origin: &str) -> Option<String> {
 
 /// A plain enum on the wire: bincode cannot decode serde-tagged enums. The
 /// settings loader reads the document's `kind`/`preset` form itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentModelPolicy {
+    #[default]
+    HarnessDefault,
+    Explicit(String),
+}
+
+/// Provenance of the launcher selected by the Dashboard. Model capability
+/// queries use this alongside the exact base argv; the Server verifies both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLaunchOrigin {
+    Detected,
+    Configured,
+    Cloud,
+}
+
+impl AgentModelPolicy {
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::HarnessDefault => true,
+            Self::Explicit(model) => {
+                !model.is_empty()
+                    && model.trim() == model
+                    && model.len() <= 256
+                    && !model.chars().any(char::is_control)
+            }
+        }
+    }
+}
+
+/// A plain enum on the wire: bincode cannot decode serde-tagged enums. The
+/// settings loader reads the document's `kind`/`preset` form itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaunchChoice {
     Terminal,
-    Agent(String),
+    Agent {
+        preset: String,
+        #[serde(default)]
+        model_policy: AgentModelPolicy,
+    },
 }
 
 /// One native CLI the Server runs for account quota.

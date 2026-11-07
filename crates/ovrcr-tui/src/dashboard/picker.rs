@@ -174,10 +174,82 @@ impl PickList {
         (lines, selected_line)
     }
 
+    /// Visible option rows bounded by their total rendered height, including
+    /// any section headings. The returned row/index pairs map option clicks
+    /// back to the filtered list; a one-row viewport keeps the selected option
+    /// visible and omits its heading when both cannot fit.
+    pub fn lines_bounded(&self, row_limit: usize) -> (Vec<Line<'_>>, Vec<(usize, usize)>) {
+        if row_limit == 0 {
+            return (Vec::new(), Vec::new());
+        }
+        let filtered = self.filtered();
+        if filtered.is_empty() {
+            return (
+                vec![Line::styled("    No matches", Style::default().fg(TEXT()))],
+                Vec::new(),
+            );
+        }
+
+        let selected = self.selected.min(filtered.len() - 1);
+        let mut count = row_limit.min(filtered.len());
+        let start = loop {
+            let start = selected.saturating_sub(count.saturating_sub(1));
+            let mut row_count = 0;
+            let mut previous_section: Option<&str> = None;
+            for item in filtered.iter().skip(start).take(count) {
+                let section = self.sections.get(&item.value).map(String::as_str);
+                if section.is_some_and(|section| Some(section) != previous_section) {
+                    row_count += 1;
+                }
+                previous_section = section;
+                row_count += 1;
+            }
+            if row_count <= row_limit || count == 1 {
+                break start;
+            }
+            count -= 1;
+        };
+
+        let mut lines = Vec::with_capacity(row_limit);
+        let mut option_rows = Vec::with_capacity(count);
+        let mut previous_section: Option<&str> = None;
+        for (index, item) in filtered.iter().enumerate().skip(start).take(count) {
+            let section = self.sections.get(&item.value).map(String::as_str);
+            if let Some(section) = section.filter(|section| Some(*section) != previous_section)
+                && lines.len() + 2 <= row_limit
+            {
+                lines.push(Line::styled(
+                    format!("  {section}"),
+                    Style::default()
+                        .fg(TEXT())
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            }
+            previous_section = section;
+            let chosen = index == selected;
+            option_rows.push((lines.len(), index));
+            lines.push(Line::styled(
+                format!("  {} {}", if chosen { "›" } else { " " }, item.label),
+                if chosen {
+                    Style::default().bg(MAUVE()).fg(CRUST())
+                } else {
+                    Style::default().fg(TEXT())
+                },
+            ));
+        }
+        (lines, option_rows)
+    }
+
     pub fn filtered(&self) -> Vec<&PickItem> {
         self.items
             .iter()
-            .filter(|item| subsequence(&self.query, &item.label))
+            .filter(|item| {
+                subsequence(&self.query, &item.label)
+                    || self
+                        .sections
+                        .get(&item.value)
+                        .is_some_and(|section| subsequence(&self.query, section))
+            })
             .collect()
     }
 
@@ -464,6 +536,34 @@ mod tests {
     }
 
     #[test]
+    fn picker_search_matches_section_labels_without_selecting_headers() {
+        let mut picker = PickList::new(vec![
+            PickItem {
+                label: "feature/cleanup".into(),
+                value: "repo/one".into(),
+            },
+            PickItem {
+                label: "feature/status".into(),
+                value: "other/two".into(),
+            },
+        ])
+        .with_sections([
+            ("repo/one".into(), "ovrcr".into()),
+            ("other/two".into(), "another".into()),
+        ]);
+        picker.query = "ovrcr".into();
+        assert_eq!(
+            picker
+                .filtered()
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            ["repo/one"]
+        );
+        assert_eq!(picker.accepted().unwrap().value, "repo/one");
+    }
+
+    #[test]
     fn cycle_wraps_and_the_window_always_holds_the_highlight() {
         let mut picker = PickList::new(
             ["a", "b", "c"]
@@ -491,6 +591,38 @@ mod tests {
         assert_eq!(picker.window(2), 0..0);
         picker.cycle(1);
         assert_eq!(picker.selected, 0);
+    }
+
+    #[test]
+    fn bounded_option_rows_include_section_headings_and_keep_the_highlight() {
+        let mut picker = PickList::new(
+            ["a", "b", "c", "d"]
+                .into_iter()
+                .map(|value| PickItem {
+                    label: format!("feature/{value}"),
+                    value: value.into(),
+                })
+                .collect(),
+        )
+        .with_sections([
+            ("a".into(), "alpha".into()),
+            ("b".into(), "alpha".into()),
+            ("c".into(), "alpha".into()),
+            ("d".into(), "beta".into()),
+        ]);
+        picker.selected = 2;
+
+        let (lines, targets) = picker.lines_bounded(3);
+        assert_eq!(
+            lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["  alpha", "    feature/b", "  › feature/c"]
+        );
+        assert_eq!(targets, [(1, 1), (2, 2)]);
+
+        let (lines, targets) = picker.lines_bounded(1);
+        assert_eq!(lines.len(), 1, "the option fits without its heading");
+        assert_eq!(lines[0].to_string(), "  › feature/c");
+        assert_eq!(targets, [(0, 2)]);
     }
 
     #[test]

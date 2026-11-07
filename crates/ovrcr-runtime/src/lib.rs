@@ -1,4 +1,5 @@
 pub mod agent_runner;
+pub(crate) mod catalog_process;
 pub mod claude_delegation;
 pub mod claude_recovery;
 pub mod codex_delegation;
@@ -8,6 +9,8 @@ pub mod extension_recovery;
 pub mod git;
 pub mod grok_recovery;
 pub mod hermes_recovery;
+pub(crate) mod omp_model_catalog;
+pub(crate) mod pi_model_catalog;
 pub mod recovery;
 pub mod retained;
 pub mod server;

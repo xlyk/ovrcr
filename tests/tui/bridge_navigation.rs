@@ -385,16 +385,14 @@ fn bridge_navigation_discards_unsent_palette_draft_and_ignores_submitted_complet
     assert!(!palette_text(&unsent).contains("UNSENT_PRIVATE_DRAFT"));
 
     let mut submitted = ready_dashboard();
-    submitted.key(KeyCode::Char('n'));
-    let mut request = None;
-    for _ in 0..6 {
-        let _ = submitted.key(KeyCode::Enter);
-        if let Some(message) = optional_request(submitted.drain_outbox()) {
-            request = Some(message);
-            break;
-        }
-    }
-    let request = request.expect("terminal creation form must submit");
+    // Keep this process-operation regression on the named Terminal action;
+    // direct `n` now opens the dedicated New agent session flow.
+    submitted.key(KeyCode::Char(' '));
+    submitted.key(KeyCode::Char('w'));
+    submitted.key(KeyCode::Char('t'));
+    let _ = submitted.event_action(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
+    let request =
+        optional_request(submitted.drain_outbox()).expect("terminal creation form must submit");
     let Request::CreateSession(original) = &request.request else {
         panic!("expected session creation")
     };

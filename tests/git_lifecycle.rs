@@ -1749,6 +1749,9 @@ fn automatic_local_terminals_policy_controls_provisioning_paths() {
                         argv: argv.clone(),
                         label: None,
                         kind: kind.clone(),
+                        model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                        model_binding: None,
+                        expected_model: None,
                     }),
                 }),
             ] {

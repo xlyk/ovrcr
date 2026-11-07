@@ -27,7 +27,74 @@ fn boundaries(text: &str) -> Vec<usize> {
     points
 }
 
+fn line_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            ranges.push((start, index));
+            start = index + 1;
+        }
+    }
+    ranges.push((start, text.len()));
+    ranges
+}
+
 impl TextCursor {
+    /// The logical line that contains the current byte cursor.
+    pub(crate) fn line(self, text: &str) -> usize {
+        let position = self.position(text);
+        text[..position]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+    }
+
+    /// Display one logical line with the shared grapheme-aware cursor window.
+    pub(crate) fn display_line(self, text: &str, line: usize, width: usize) -> Option<String> {
+        let (start, end) = *line_ranges(text).get(line)?;
+        let value = &text[start..end];
+        let position = self.position(text);
+        let local_position = if position >= start && position <= end {
+            position - start
+        } else {
+            value.len()
+        };
+        let cursor = Self(Some(local_position));
+        Some(cursor.display(value, width).0)
+    }
+
+    /// Place the byte cursor within one logical line using terminal cell columns.
+    pub(crate) fn click_line(&mut self, text: &str, line: usize, width: usize, column: usize) {
+        let Some((start, end)) = line_ranges(text).get(line).copied() else {
+            return;
+        };
+        let value = &text[start..end];
+        let position = self.position(text);
+        let local_position = if position >= start && position <= end {
+            position - start
+        } else {
+            value.len()
+        };
+        let mut cursor = Self(Some(local_position));
+        cursor.click(value, width, column);
+        self.0 = Some(start + cursor.position(value));
+    }
+
+    /// Edit one logical line while keeping Home and End local to that line.
+    pub(crate) fn line_key(&mut self, text: &mut String, key: KeyCode) {
+        let position = self.position(text);
+        let start = text[..position].rfind('\n').map_or(0, |index| index + 1);
+        let end = text[position..]
+            .find('\n')
+            .map_or(text.len(), |index| position + index);
+        match key {
+            KeyCode::Home => self.0 = Some(start),
+            KeyCode::End => self.0 = Some(end),
+            _ => self.key(text, key),
+        }
+    }
+
     /// Place a byte cursor on a rendered grapheme, including wide/combining cells.
     pub(crate) fn byte_at_column(text: &str, column: usize) -> usize {
         let mut used = 0;
@@ -234,5 +301,41 @@ impl TextCursor {
             cell += cells;
         }
         self.0 = Some(text.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multiline_cursor_tracks_lines_and_graphemes() {
+        let text = "first\n界e\u{301}z";
+        let mut cursor = TextCursor(Some("first\n界".len()));
+        assert_eq!(cursor.line(text), 1);
+        assert_eq!(
+            cursor.display_line(text, 1, 10).as_deref(),
+            Some("界▏e\u{301}z")
+        );
+        let mut editable = text.to_owned();
+        cursor.line_key(&mut editable, KeyCode::Home);
+        assert_eq!(cursor.position(&editable), "first\n".len());
+
+        // Column 0 is the rendered cursor glyph, so three cells lands after
+        // the two-cell CJK grapheme.
+        cursor.click_line(&editable, 1, 10, 3);
+        assert_eq!(cursor.position(&editable), "first\n界".len());
+    }
+
+    #[test]
+    fn multiline_vertical_motion_keeps_cell_column() {
+        let text = "界z\nab";
+        let mut cursor = TextCursor(Some("界".len()));
+        cursor.vertical(text, true);
+        assert_eq!(
+            cursor.position(text),
+            text.len(),
+            "short target clamps the column"
+        );
     }
 }

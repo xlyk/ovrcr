@@ -129,11 +129,31 @@ For Rust changes, choose the owning package and add a focused test filter as app
 ```sh
 cargo test -p ovrcr-tui --lib
 cargo test -p ovrcr --test tui
+cargo test --test initial_prompt
 cargo check --workspace --all-targets --all-features
 cargo fmt --all -- --check
 git diff --check
 node --test tests/pi_reporting_extension.mjs
 ```
+
+`tests/initial_prompt.rs` uses a disposable live Server, Dashboard socket and PTY
+fixture to cover one-use launch intents, lost-response reconciliation, restart,
+known refusal, privacy and blank interactive starts. Its accepted-process marker
+does not prove that a provider consumed the prompt.
+
+The Pi adapter case uses a task-owned fake `pi` CLI to exercise current-Dashboard
+model discovery, exact model revalidation, native option placement and the
+multiline prompt through the compiled Server and managed launch path. It does
+not establish provider acceptance or resolve Pi's post-check fuzzy fallback.
+
+The Oh My Pi adapter case uses a task-owned fake `omp` CLI to exercise the
+installed 18.10.3 `models --json` contract, exact selector revalidation, the
+preserved `--auto-approve` launch option, the native `--` message boundary,
+multiline prompt delivery, blank interactive start, reconnect and privacy. The
+fake catalog proves OVRCR's composition and refusal behavior only; it does not
+prove that OMP applied a model, accepted a prompt, or completed a task. OMP's
+native resolver may fuzzy-match after exact lookup, so a passing fixture does
+not close that native behavior gate.
 
 Node 22; the Pi extension and its host run outside cargo.
 
