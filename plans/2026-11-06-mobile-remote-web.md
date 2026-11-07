@@ -512,6 +512,25 @@ assertion weakening. The web tier adds unit tests for HTTP/auth/SSE and
 integration tests through the actual `server.sock`. There is no browser CUA
 harness in the repo; browser behavior is a stated gap until one exists.
 
+## Deferred: resize
+
+A browser resize re-renders the fixed grid; it does not re-layout the PTY. That
+needs `TIOCSWINSZ` and a `SIGWINCH` to the agent (`Session::resize`,
+`crates/ovrcr-runtime/src/session/mod.rs:878-893`). `ReadScreen` deliberately
+cannot resize, and `Request::Resize` is Dashboard-only through `SetView`
+(`crates/ovrcr-runtime/src/server/connections.rs:894-930`).
+
+Two paths, not built:
+
+1. A Control `ResizeScreen { session, expected_run, size }`, allowed only while
+   no Dashboard is claimed, debounced and clamped. Protocol 73 and a server
+   restart; the agent repaints and the desktop's next `SetView` overrides it.
+2. The phone takes the Dashboard seat (`SetView`/`Resize`), which also replaces
+   polling with the live output stream but refuses the desktop while attached.
+
+Resize is a shared-PTY write, so scrollback can be disturbed and two clients
+cannot hold independent geometry.
+
 ## Open questions
 
 1. **Simultaneous use or handoff?** If the desktop and phone must both work at
