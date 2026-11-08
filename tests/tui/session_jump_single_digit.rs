@@ -1,5 +1,4 @@
 use super::*;
-use crossterm::event::ModifierKeyCode;
 use ovrcr::protocol::{SessionKind, SessionRunId};
 use ratatui::backend::TestBackend;
 
@@ -8,10 +7,7 @@ fn jump_dashboard(agent_count: u64, rows: u16) -> Dashboard {
 }
 
 fn jump_dashboard_at(agent_count: u64, cols: u16, rows: u16) -> Dashboard {
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize { rows, cols },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
     dashboard.install_area(Rect::new(0, 0, cols, rows));
     dashboard.install_hierarchy(jump_hierarchy(agent_count));
     dashboard.install_focus(SessionId(1));
@@ -23,16 +19,20 @@ fn key(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Event {
     Event::Key(KeyEvent::new_with_kind(code, modifiers, kind))
 }
 
-fn control(dashboard: &mut Dashboard, kind: KeyEventKind) {
+fn ctrl_g(dashboard: &mut Dashboard) {
     dashboard.event_action(key(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        kind,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
     ));
 }
 
-fn digit(dashboard: &mut Dashboard, ch: char, kind: KeyEventKind) {
-    dashboard.event_action(key(KeyCode::Char(ch), KeyModifiers::CONTROL, kind));
+fn digit(dashboard: &mut Dashboard, ch: char) {
+    dashboard.event_action(key(
+        KeyCode::Char(ch),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
 }
 
 fn rendered(dashboard: &Dashboard, width: u16, height: u16) -> Vec<String> {
@@ -58,7 +58,7 @@ fn visible_count_uses_only_single_digit_labels_from_zero_to_fifty() {
     for count in [0, 1, 9, 10, 50] {
         let height = if count == 50 { 120 } else { 40 };
         let mut dashboard = jump_dashboard(count, height);
-        control(&mut dashboard, KeyEventKind::Press);
+        ctrl_g(&mut dashboard);
         let rows = rendered(&dashboard, 120, height);
         let screen = rows
             .iter()
@@ -73,7 +73,7 @@ fn visible_count_uses_only_single_digit_labels_from_zero_to_fifty() {
             }
             _ => {
                 assert!(screen.contains("[1]"), "count {count}: {screen}");
-                assert!(rendered_footer(&dashboard, 120).contains("Ctrl+1–9"));
+                assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
                 for id in 1..=count {
                     let row = rows
                         .iter()
@@ -88,14 +88,14 @@ fn visible_count_uses_only_single_digit_labels_from_zero_to_fifty() {
                 }
                 assert!(!screen.contains("[01]"), "labels always use one digit");
                 if count > 9 {
-                    digit(&mut dashboard, '0', KeyEventKind::Press);
+                    digit(&mut dashboard, '0');
                     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
                     assert!(
                         rendered_footer(&dashboard, 120)
                             .contains("No visible Agent for that number")
                     );
                     assert!(dashboard.drain_outbox().is_empty());
-                    digit(&mut dashboard, '9', KeyEventKind::Press);
+                    digit(&mut dashboard, '9');
                     assert_eq!(dashboard.focused_session(), Some(SessionId(9)));
                 }
             }
@@ -115,7 +115,7 @@ fn cmd_backspace_cancels_without_navigation_or_child_input() {
         .chars()
         .skip(5)
         .collect::<String>();
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     let held = rendered(&dashboard, 120, 40);
     let current_labeled = held
         .iter()
@@ -148,7 +148,7 @@ fn cmd_backspace_cancels_without_navigation_or_child_input() {
         KeyEventKind::Press,
     ));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    assert!(rendered_footer(&dashboard, 120).contains("Session jump cancelled"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
     assert!(dashboard.drain_outbox().is_empty());
     assert!(
         !rendered(&dashboard, 120, 40)
@@ -156,7 +156,7 @@ fn cmd_backspace_cancels_without_navigation_or_child_input() {
             .any(|row| row.contains("[1]")),
         "an unrelated Command shortcut cancels and hides the labels"
     );
-    digit(&mut dashboard, '2', KeyEventKind::Press);
+    digit(&mut dashboard, '2');
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(dashboard.drain_outbox().is_empty());
 }
@@ -165,7 +165,7 @@ fn cmd_backspace_cancels_without_navigation_or_child_input() {
 fn control_digit_with_extra_modifier_does_not_select_a_jump_target() {
     let mut dashboard = jump_dashboard(10, 40);
     let focused = dashboard.focused_session();
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
 
     assert_eq!(
         dashboard.event_action(key(
@@ -177,7 +177,7 @@ fn control_digit_with_extra_modifier_does_not_select_a_jump_target() {
         "Ctrl+Shift+9 keeps its ordinary Browse dispatch"
     );
     assert_eq!(dashboard.focused_session(), focused);
-    assert!(rendered_footer(&dashboard, 120).contains("Session jump cancelled"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
     assert!(
         !rendered(&dashboard, 120, 40)
             .iter()
@@ -204,7 +204,7 @@ fn first_nine_labels_follow_drawn_title_rows_in_wide_and_narrow_frames() {
             "frame {cols}x{rows} shows at least one Agent"
         );
 
-        control(&mut dashboard, KeyEventKind::Press);
+        ctrl_g(&mut dashboard);
         let after = rendered(&dashboard, cols, rows);
         for (ordinal, id) in visible.iter().enumerate() {
             let title = format!("jump-title-{id:02}");
@@ -271,7 +271,7 @@ fn fifty_agents_label_first_nine_and_scroll_to_new_first_nine() {
     );
     assert!(!visible.is_empty());
 
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     let after = rendered(&dashboard, 60, 24);
     for (ordinal, id) in visible.iter().enumerate() {
         let title = format!("jump-title-{id:02}");
@@ -311,8 +311,7 @@ fn fifty_agents_label_first_nine_and_scroll_to_new_first_nine() {
     assert!(later_visible.first().is_some_and(|id| *id > 9));
     assert!(!scrolled.iter().any(|row| sidebar(row).contains("[1]")));
 
-    control(&mut dashboard, KeyEventKind::Release);
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     let held_again = rendered(&dashboard, 60, 24);
     for (ordinal, id) in later_visible.iter().enumerate() {
         let title = format!("jump-title-{id:02}");
@@ -327,7 +326,7 @@ fn fifty_agents_label_first_nine_and_scroll_to_new_first_nine() {
             assert!(!row.contains("["), "{row}");
         }
     }
-    digit(&mut dashboard, '1', KeyEventKind::Press);
+    digit(&mut dashboard, '1');
     assert_eq!(
         dashboard.focused_session(),
         Some(SessionId(later_visible[0]))
@@ -335,23 +334,55 @@ fn fifty_agents_label_first_nine_and_scroll_to_new_first_nine() {
 }
 
 #[test]
-fn releasing_without_a_digit_cancels_without_selecting() {
+fn ctrl_g_again_closes_without_selecting() {
     let mut dashboard = jump_dashboard(10, 40);
-    control(&mut dashboard, KeyEventKind::Press);
-    control(&mut dashboard, KeyEventKind::Release);
+    ctrl_g(&mut dashboard);
+    assert!(
+        rendered(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "the picker labels the first Agent"
+    );
+    ctrl_g(&mut dashboard);
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(
         !rendered(&dashboard, 120, 40)
             .iter()
-            .any(|row| row.contains("[01]")),
-        "release without a choice cancels and hides every label"
+            .any(|row| row.contains("[1]")),
+        "closing the picker without a choice hides every label"
     );
+    assert!(dashboard.drain_outbox().is_empty());
+
+    // Legacy hosts report Ctrl-g as BEL; the toggle and labels still work.
+    dashboard.event_action(key(
+        KeyCode::Char('\u{7}'),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        rendered(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "BEL spelling opens the picker"
+    );
+    dashboard.event_action(key(
+        KeyCode::Char('\u{7}'),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    assert!(
+        !rendered(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "BEL spelling closes the picker"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 }
 
 #[test]
 fn captured_targets_stay_fixed_when_candidate_count_crosses_nine() {
     let mut dashboard = jump_dashboard(9, 40);
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         jump_hierarchy(10),
     )));
@@ -362,7 +393,7 @@ fn captured_targets_stay_fixed_when_candidate_count_crosses_nine() {
         .find(|row| row.contains("jump-title-10"))
         .expect("new candidate is visible");
     assert!(!tenth.contains("[10]") && !tenth.contains("[1]"));
-    digit(&mut dashboard, '9', KeyEventKind::Press);
+    digit(&mut dashboard, '9');
     assert_eq!(dashboard.focused_session(), Some(SessionId(9)));
 }
 
@@ -404,7 +435,7 @@ fn jump_hierarchy(agent_count: u64) -> HierarchySnapshot {
 #[test]
 fn invalidated_ninth_target_keeps_its_label_without_selecting_a_neighbor() {
     let mut dashboard = jump_dashboard(10, 40);
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     let mut changed = jump_hierarchy(10);
     let replacement = &mut changed.projects[0].workspaces[0].sessions[8];
     replacement.run = SessionRunId(99);
@@ -417,7 +448,7 @@ fn invalidated_ninth_target_keeps_its_label_without_selecting_a_neighbor() {
         .find(|row| row.contains("replacement-run"))
         .expect("replacement title remains in the list");
     assert!(!replacement_row.contains("[9]"));
-    digit(&mut dashboard, '9', KeyEventKind::Press);
+    digit(&mut dashboard, '9');
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(dashboard.drain_outbox().is_empty());
     assert!(rendered_footer(&dashboard, 120).contains("Agent unavailable"));
@@ -432,10 +463,7 @@ fn single_digit_badges_preserve_stacked_unicode_rows_and_clipped_metadata() {
         name: "agent-label-that-does-not-fit-in-sidebar".into(),
     };
     first.label = "agent-label-that-does-not-fit-in-sidebar / model-that-clips".into();
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize { rows: 40, cols: 60 },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 40, cols: 60 });
     dashboard.install_area(Rect::new(0, 0, 60, 40));
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
@@ -458,7 +486,7 @@ fn single_digit_badges_preserve_stacked_unicode_rows_and_clipped_metadata() {
         .find(|row| row.contains("└ agent-label-that-d"))
         .expect("long Agent metadata wraps to its own row");
 
-    control(&mut dashboard, KeyEventKind::Press);
+    ctrl_g(&mut dashboard);
     let after = rendered(&dashboard, 60, 40);
     let after_title = after
         .iter()

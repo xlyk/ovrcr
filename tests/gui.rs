@@ -3,7 +3,7 @@
 #[path = "support/dashboard_proxy.rs"]
 mod dashboard_proxy;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
 use ovrcr::gui::input::{
     KeyboardState, Mouse, TerminalFrameInput, encode_event, encode_event_with_keyboard,
@@ -421,7 +421,7 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
 }
 
 #[test]
-fn gui_physical_control_and_digit_events_drive_a_real_agent_session() -> Result<()> {
+fn gui_ctrl_g_and_digit_events_drive_a_real_agent_session() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
@@ -449,7 +449,7 @@ fn gui_physical_control_and_digit_events_drive_a_real_agent_session() -> Result<
             &mut terminal,
             &mut keyboard,
             Event::Key {
-                key: Key::ControlLeft,
+                key: Key::G,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
@@ -457,44 +457,13 @@ fn gui_physical_control_and_digit_events_drive_a_real_agent_session() -> Result<
             },
         )?;
         wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
-        send_gui_key_event(
-            &mut terminal,
-            &mut keyboard,
-            Event::Key {
-                key: Key::Num1,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: control,
-            },
-        )?;
+        // A bare printable key arrives from winit as text, not a Key event.
+        send_gui_key_event(&mut terminal, &mut keyboard, Event::Text("1".into()))?;
         wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
-        send_gui_key_event(
-            &mut terminal,
-            &mut keyboard,
-            Event::Key {
-                key: Key::Num1,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: control,
-            },
-        )?;
-        send_gui_key_event(
-            &mut terminal,
-            &mut keyboard,
-            Event::Key {
-                key: Key::ControlLeft,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            },
-        )?;
         wait_sidebar_label(&terminal, "review auth handoff", None)?;
-        enter_selected_session(&mut terminal, "fixture: authentication handoff review")?;
-        terminal.send(b"printf 'GUI_CONTROL_JUMP\\n'\r")?;
-        wait_screen(&terminal, "GUI_CONTROL_JUMP")?;
+        wait_screen(&terminal, "Terminal mode")?;
+        terminal.send(b"printf 'GUI_CTRL_G_JUMP\\n'\r")?;
+        wait_screen(&terminal, "GUI_CTRL_G_JUMP")?;
         Ok(())
     })();
     terminal.stop()?;
@@ -511,7 +480,7 @@ fn gui_physical_control_and_digit_events_drive_a_real_agent_session() -> Result<
 }
 
 #[test]
-fn gui_command_shortcuts_do_not_activate_control_jump() -> Result<()> {
+fn gui_command_shortcuts_do_not_open_or_select_the_jump() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
@@ -597,8 +566,8 @@ fn gui_command_shortcuts_do_not_activate_control_jump() -> Result<()> {
         wait_screen(&terminal, "┌ Agents")?;
         let screen = terminal.screen().contents();
         anyhow::ensure!(
-            !screen.contains("Session selected"),
-            "Command+1 must not start Control-hold selection"
+            !screen.contains("[1]"),
+            "Command+1 must not select a jump target"
         );
         wait_sidebar_label(&terminal, "review auth handoff", None)?;
         Ok(())
@@ -617,7 +586,7 @@ fn gui_command_shortcuts_do_not_activate_control_jump() -> Result<()> {
 }
 
 #[test]
-fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
+fn gui_focus_loss_closes_the_picker() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
@@ -628,42 +597,23 @@ fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
         wait_focus_reporting(&terminal)?;
         wait_sidebar_label(&terminal, "review auth handoff", None)?;
         let mut keyboard = KeyboardState::default();
-        let control = Modifiers {
-            ctrl: true,
-            ..Default::default()
-        };
-        let command = Modifiers {
-            mac_cmd: true,
-            command: true,
-            ..Default::default()
-        };
 
         send_gui_key_event(
             &mut terminal,
             &mut keyboard,
             Event::Key {
-                key: Key::ControlLeft,
+                key: Key::G,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers: control,
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
             },
         )?;
-        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))
-            .context("initial Control label before focus-loss regression")?;
-        send_gui_key_event(
-            &mut terminal,
-            &mut keyboard,
-            Event::Key {
-                key: Key::Num1,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: control,
-            },
-        )?;
-        wait_pane_header(&terminal, "review auth handoff", "grok:4.6")?;
-        wait_screen(&terminal, "Session selected  release Ctrl")?;
+        wait_sidebar_label(&terminal, "review auth handoff", Some("[1]"))?;
+
         let focus_loss_bytes = send_gui_event_frame(
             &mut terminal,
             &mut keyboard,
@@ -680,73 +630,12 @@ fn gui_focus_loss_cancels_a_selected_jump_before_terminal_mode() -> Result<()> {
                 .is_some_and(|bytes| bytes.starts_with(b"\x1b[O")),
             "Dashboard focus-loss report must precede winit's synthetic modifier reset"
         );
-        wait_screen_absent(&terminal, "Session selected")?;
+        wait_sidebar_label(&terminal, "review auth handoff", None)?;
         wait_screen(&terminal, "BROWSE")?;
-        wait_sidebar_label(&terminal, "review auth handoff", None)?;
-
-        // Focus regain is also sent only while the Dashboard's observed 1004
-        // mode remains active.
-        let gain_bytes = send_gui_event_frame(
-            &mut terminal,
-            &mut keyboard,
-            &[Event::WindowFocused(true)],
-            true,
-            Modifiers::NONE,
-        )?;
-        anyhow::ensure!(
-            gain_bytes == vec![b"\x1b[I".to_vec()],
-            "focused regain must be sent while DEC 1004 reporting is active"
-        );
-        wait_sidebar_label(&terminal, "review auth handoff", None)?;
-        // A mouse event can make winit restore Command from the native flags
-        // without producing a fresh Super press. Keep that stale aggregate
-        // quarantined until a focused native frame proves Command is clear.
-        let stale_bytes = send_gui_event_frame(
-            &mut terminal,
-            &mut keyboard,
-            &[
-                Event::ModifiersChanged(command),
-                Event::PointerMoved(egui::pos2(0.0, 0.0)),
-            ],
-            true,
-            command,
-        )?;
-        anyhow::ensure!(
-            stale_bytes.is_empty(),
-            "stale aggregate Cmd must not reach the Dashboard"
-        );
-        wait_sidebar_label(&terminal, "review auth handoff", None)?;
-        let _ = send_gui_event_frame(
-            &mut terminal,
-            &mut keyboard,
-            &[Event::PointerMoved(egui::pos2(0.0, 0.0))],
-            true,
-            Modifiers::NONE,
-        )?;
-        let fresh_bytes = send_gui_event_frame(
-            &mut terminal,
-            &mut keyboard,
-            &[Event::ModifiersChanged(command)],
-            true,
-            command,
-        )?;
-        anyhow::ensure!(
-            fresh_bytes == vec![b"\x1b[57444;1:1u".to_vec()],
-            "a focused clear frame must rearm the next aggregate Cmd edge"
-        );
-        wait_sidebar_label(&terminal, "review auth handoff", None)?;
-        let _ = send_gui_event_frame(
-            &mut terminal,
-            &mut keyboard,
-            &[Event::ModifiersChanged(Modifiers::NONE)],
-            true,
-            Modifiers::NONE,
-        )?;
-        wait_sidebar_label(&terminal, "review auth handoff", None)?;
         let screen = terminal.screen().contents();
         anyhow::ensure!(
             !screen.contains("Terminal mode"),
-            "focus loss must not let a selected jump enter the Agent"
+            "focus loss must not navigate to the labeled Agent"
         );
         Ok(())
     })();

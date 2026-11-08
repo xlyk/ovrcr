@@ -51,10 +51,7 @@ fn agents_with_separate_destination() -> HierarchySnapshot {
 }
 
 fn agents_dashboard() -> Dashboard {
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize { rows: 38, cols: 88 },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
     dashboard.install_area(Rect::new(0, 0, 88, 38));
     dashboard.install_hierarchy(agents_hierarchy());
     dashboard.install_focus(SessionId(1));
@@ -89,7 +86,7 @@ fn key_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Even
 }
 
 #[test]
-fn control_hold_labels_visible_running_agents_without_moving_the_title_column() {
+fn ctrl_g_labels_visible_running_agents_without_moving_the_title_column() {
     let mut dashboard = agents_dashboard();
     let before = rendered_rows(&dashboard, 120, 40);
     let original = before
@@ -105,8 +102,8 @@ fn control_hold_labels_visible_running_agents_without_moving_the_title_column() 
         .collect::<String>();
 
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
 
@@ -143,9 +140,9 @@ fn control_hold_labels_visible_running_agents_without_moving_the_title_column() 
     assert_eq!(held.len(), before.len(), "labels do not add sidebar rows");
 
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
     ));
     let after = rendered_rows(&dashboard, 120, 40);
     assert!(!after.iter().any(|row| row.contains("[1]")));
@@ -157,16 +154,16 @@ fn control_hold_labels_visible_running_agents_without_moving_the_title_column() 
                 .next()
                 .is_some_and(|left| left.contains("agent-title-1")))
             .is_some_and(|row| row.chars().skip(5).collect::<String>() == original),
-        "cancelling an unselected hold restores the original row"
+        "closing an unselected picker restores the original row"
     );
 }
 
 #[test]
-fn control_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() {
+fn digit_selects_its_frozen_agent_and_uses_the_view_ack() {
     let mut dashboard = agents_dashboard();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     let before = rendered_rows(&dashboard, 120, 40);
@@ -186,7 +183,7 @@ fn control_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() 
     assert_eq!(
         dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
@@ -199,45 +196,26 @@ fn control_label_selects_its_frozen_agent_and_waits_for_release_and_readiness() 
             .is_some_and(|left| left.contains("[1]"))),
         "selection hides every temporary label"
     );
-    assert!(rendered_footer(&dashboard, 120).contains("Session selected"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("Loading agent"));
     let request = only_request(dashboard.drain_outbox());
     assert!(matches!(
         &request.request,
         Request::SetView { view } if view.focused == Some(SessionId(2))
     ));
 
-    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::None);
+    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
     assert_eq!(
         dashboard.drain_outbox().len(),
         0,
-        "held input cannot reach either Agent"
-    );
-    acknowledge_all_view_targets(&mut dashboard, request);
-    assert!(
-        rendered_footer(&dashboard, 120).contains("Session selected"),
-        "an acknowledged view still waits for Control release"
-    );
-    assert_eq!(
-        dashboard.event_action(key_event(
-            KeyCode::Char('3'),
-            KeyModifiers::CONTROL,
-            KeyEventKind::Repeat,
-        )),
-        DashboardAction::None,
-        "repeat and later digits cannot select a second destination"
-    );
-
-    dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
-    ));
-    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
-    assert!(
-        dashboard.drain_outbox().is_empty(),
-        "input queued before the event-loop boundary is refused rather than replayed"
+        "input before the acknowledged view cannot reach either Agent"
     );
     assert!(rendered_footer(&dashboard, 120).contains("input was not sent"));
+
+    acknowledge_all_view_targets(&mut dashboard, request);
+    assert!(
+        rendered_footer(&dashboard, 120).starts_with("Terminal mode"),
+        "the acknowledged view enters the chosen Agent"
+    );
 }
 
 #[test]
@@ -253,10 +231,7 @@ fn control_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
             .find(|session| session.id == SessionId(1))
             .unwrap()
             .title = Some(unicode_title.into());
-        let mut dashboard = Dashboard::with_input_profile(
-            TerminalSize { rows, cols },
-            DashboardInputProfile::VerifiedOvrcrGui,
-        );
+        let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_area(Rect::new(0, 0, cols, rows));
         dashboard.install_focus(SessionId(1));
@@ -278,8 +253,8 @@ fn control_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
         let panes = dashboard.pane_rects(Rect::new(0, 0, cols, rows));
 
         dashboard.event_action(key_event(
-            KeyCode::Modifier(ModifierKeyCode::LeftControl),
-            KeyModifiers::NONE,
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         ));
 
@@ -311,33 +286,22 @@ fn control_labels_preserve_geometry_at_wide_and_narrow_sizes_with_unicode_titles
 }
 
 #[test]
-fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
+fn ctrl_g_toggle_and_hidden_sidebar_never_intercepts() {
     let mut dashboard = agents_dashboard();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
-    ));
-    dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::RightControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Press,
-    ));
-    dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
     ));
     assert!(
         rendered_rows(&dashboard, 120, 40)
             .iter()
-            .any(|row| row.contains("agent-title-1") && row.contains("[1]")),
-        "releasing one Control key leaves the other held"
+            .any(|row| row.contains("agent-title-1") && row.contains("[1]"))
     );
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::RightControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
     ));
     assert!(
         !rendered_rows(&dashboard, 120, 40)
@@ -348,8 +312,8 @@ fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
     dashboard.key(KeyCode::Char('b'));
     let focused = dashboard.focused_session();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     assert!(
@@ -360,11 +324,11 @@ fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
     assert_eq!(
         dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         )),
         DashboardAction::None,
-        "a hidden sidebar does not intercept the modified digit"
+        "a hidden sidebar does not intercept the digit"
     );
     assert_eq!(dashboard.focused_session(), focused);
     assert!(dashboard.drain_outbox().is_empty());
@@ -381,11 +345,22 @@ fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
         "expected hidden-sidebar Terminal mode after a fresh view ack: {terminal_footer}"
     );
     terminal.drain_outbox();
-    terminal.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Press,
-    ));
+    assert_eq!(
+        terminal.event_action(key_event(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::EnterBrowse
+    );
+    assert!(
+        !rendered_rows(&terminal, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "Ctrl-g never reveals a hidden sidebar"
+    );
+    terminal.install_screen(SessionId(1), &[]);
+    assert_eq!(terminal.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(
         terminal.event_action(key_event(
             KeyCode::Char('2'),
@@ -399,12 +374,12 @@ fn control_keys_share_one_hold_and_hidden_sidebar_never_intercepts() {
 }
 
 #[test]
-fn command_shortcut_cancels_control_hold_without_navigating() {
+fn command_shortcut_closes_the_picker_without_navigating() {
     let mut dashboard = agents_dashboard();
     let focused = dashboard.focused_session();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     assert!(
@@ -428,33 +403,27 @@ fn command_shortcut_cancels_control_hold_without_navigating() {
             .iter()
             .any(|row| row.contains("[1]"))
     );
-    assert!(rendered_footer(&dashboard, 120).contains("Session jump cancelled"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
 }
 
 #[test]
-fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
-    assert_eq!(
-        DashboardInputProfile::from_environment_value(Some(
-            ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
-        )),
-        DashboardInputProfile::VerifiedOvrcrGui
-    );
-    assert_eq!(
-        DashboardInputProfile::from_environment_value(Some("another-terminal")),
-        DashboardInputProfile::Standard
-    );
+fn ctrl_g_labels_need_no_frontend_profile_and_command_stays_separate() {
     let mut dashboard = unverified_agents_dashboard();
     let focused = dashboard.focused_session();
     let browse_footer = rendered_footer(&dashboard, 120);
     assert!(browse_footer.starts_with("BROWSE"));
-    dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Press,
-    ));
+
+    assert_eq!(
+        dashboard.event_action(key_event(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::Redraw
+    );
     let rows = rendered_rows(&dashboard, 120, 40);
-    assert!(!rows.iter().any(|row| row.contains("[1]")));
-    assert!(!rendered_footer(&dashboard, 120).contains("Ctrl+1–9"));
+    assert!(rows.iter().any(|row| row.contains("[1]")), "{rows:?}");
+    assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
 
     assert_eq!(
         dashboard.event_action(key_event(
@@ -466,6 +435,12 @@ fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
         "Command must not be stripped into the Browse k binding"
     );
     assert_eq!(dashboard.focused_session(), focused);
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("[1]")),
+        "a Command shortcut closes the picker"
+    );
     assert_eq!(rendered_footer(&dashboard, 120), browse_footer);
 
     dashboard.key(KeyCode::Enter);
@@ -484,10 +459,20 @@ fn unverified_frontend_keeps_control_hold_and_command_out_of_browse_actions() {
     assert!(dashboard.drain_outbox().is_empty());
     assert_eq!(dashboard.focused_session(), focused);
     assert_eq!(rendered_footer(&dashboard, 120), terminal_footer);
+
+    assert_eq!(
+        dashboard.event_action(key_event(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        )),
+        DashboardAction::EnterBrowse
+    );
+    assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
 }
 
 #[test]
-fn command_modifier_does_not_start_the_verified_control_hold() {
+fn command_modifier_does_not_open_labels() {
     let mut dashboard = agents_dashboard();
     let focused = dashboard.focused_session();
     dashboard.event_action(key_event(
@@ -499,7 +484,7 @@ fn command_modifier_does_not_start_the_verified_control_hold() {
         !rendered_rows(&dashboard, 120, 40)
             .iter()
             .any(|row| row.contains("[1]")),
-        "Command is separate from the Control hold"
+        "Command is separate from Ctrl-g"
     );
     assert_eq!(
         dashboard.event_action(key_event(
@@ -514,11 +499,11 @@ fn command_modifier_does_not_start_the_verified_control_hold() {
 }
 
 #[test]
-fn ctrl_o_keeps_its_operator_quick_message_path_during_control_hold() {
+fn ctrl_o_keeps_its_operator_quick_message_path_from_the_picker() {
     let mut dashboard = agents_dashboard();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     dashboard.event_action(key_event(
@@ -530,16 +515,16 @@ fn ctrl_o_keeps_its_operator_quick_message_path_during_control_hold() {
     assert!(screen.contains("Quick message"), "{screen}");
     assert!(
         !screen.contains("[1]"),
-        "the hold cancels before Operator opens"
+        "the picker closes before Operator opens"
     );
 }
 
 #[test]
-fn ctrl_g_cancels_a_live_hold_and_keeps_dashboard_handling() {
+fn ctrl_g_closes_the_picker_and_keeps_dashboard_handling() {
     let mut dashboard = agents_dashboard();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     assert!(
@@ -554,8 +539,8 @@ fn ctrl_g_cancels_a_live_hold_and_keeps_dashboard_handling() {
             KeyModifiers::CONTROL,
             KeyEventKind::Press,
         )),
-        DashboardAction::None,
-        "the ordinary Browse Ctrl-g handling remains available"
+        DashboardAction::Redraw,
+        "Ctrl-g closes its picker"
     );
     assert_eq!(
         dashboard.event_action(key_event(
@@ -569,9 +554,15 @@ fn ctrl_g_cancels_a_live_hold_and_keeps_dashboard_handling() {
 }
 
 #[test]
-fn shared_control_jump_binding_appears_in_footer_key_popup_and_palette() {
+fn shared_jump_binding_appears_in_footer_key_popup_and_palette() {
     let mut dashboard = agents_dashboard();
-    assert!(rendered_footer(&dashboard, 120).contains("Ctrl hold Jump to visible Agent"));
+    assert!(
+        !rendered_footer(&dashboard, 120).contains("Jump to visible Agent"),
+        "the idle footer stays compact"
+    );
+    dashboard.ctrl('g');
+    assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
+    dashboard.ctrl('g');
 
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('v'));
@@ -588,11 +579,11 @@ fn shared_control_jump_binding_appears_in_footer_key_popup_and_palette() {
 }
 
 #[test]
-fn control_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_label() {
+fn labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_label() {
     let mut dashboard = agents_dashboard();
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
 
@@ -636,7 +627,7 @@ fn control_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
     assert_eq!(
         dashboard.event_action(key_event(
             KeyCode::Char('2'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
@@ -646,7 +637,7 @@ fn control_labels_keep_frozen_run_identity_and_allow_retry_after_unavailable_lab
     assert_eq!(
         dashboard.event_action(key_event(
             KeyCode::Char('3'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw,
@@ -675,18 +666,15 @@ fn long_visible_agent_list_uses_first_nine_single_digit_labels_and_search_stays_
         agent.title = Some(format!("agent-title-{id}"));
         sessions.push(agent);
     }
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize {
-            rows: 40,
-            cols: 120,
-        },
-        DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     let rows = rendered_rows(&dashboard, 120, 40);
@@ -694,11 +682,11 @@ fn long_visible_agent_list_uses_first_nine_single_digit_labels_and_search_stays_
     assert!(rows.iter().any(|row| row.contains("[9]")));
     assert!(!rows.iter().any(|row| row.contains("[01]")));
     assert!(!rows.iter().any(|row| row.contains("[10]")));
-    assert!(rendered_footer(&dashboard, 120).contains("Ctrl+1–9 jump"));
+    assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
     dashboard.event_action(key_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
     ));
     open_agents(&mut dashboard);
     assert!(palette_text(&dashboard).contains("Agents"));

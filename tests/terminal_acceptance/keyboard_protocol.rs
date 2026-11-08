@@ -96,20 +96,8 @@ fn alternate_key_reporting_preserves_quick_message_control_shortcuts() -> Result
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn iterm2_control_hold_selects_an_agent_through_the_production_environment() -> Result<()> {
-    iterm2_control_hold_with_version("3.7.7")
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn iterm2_original_tab_control_hold_uses_the_production_environment() -> Result<()> {
-    iterm2_control_hold_with_version("3.7.2")
-}
-
-#[cfg(target_os = "macos")]
-fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
+fn ctrl_g_selects_an_agent_through_the_production_environment() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     let first = create_search_agent(&mut fixture, "iterm-a")?;
@@ -124,12 +112,11 @@ fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
         },
         &[
             ("TERM_PROGRAM", "iTerm.app"),
-            ("TERM_PROGRAM_VERSION", version),
+            ("TERM_PROGRAM_VERSION", "3.7.7"),
         ],
     )?;
     dashboard.wait_until(|screen| screen.contains("iterm-b"), wait_deadline())?;
-    // Both verified native iTerm2 tabs produced these physical-key packets.
-    dashboard.send(b"\x1b[57442;5:1u")?;
+    dashboard.send(b"\x1b[103;5:1u")?;
     dashboard.wait_until(
         |screen| {
             screen
@@ -138,12 +125,7 @@ fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
         },
         Duration::from_secs(3),
     )?;
-    dashboard.send(b"\x1b[49;5:1u")?;
-    dashboard.wait_until(
-        |screen| screen.contains("Session selected"),
-        wait_deadline(),
-    )?;
-    dashboard.send(b"\x1b[57442;1:3u")?;
+    dashboard.send(b"1")?;
     dashboard.wait_until(
         |screen| screen.contains("Terminal mode") && screen.contains("READY_iterm-a"),
         wait_deadline(),
@@ -158,7 +140,7 @@ fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
             break;
         }
         if Instant::now() >= deadline {
-            bail!("iTerm jump destination did not receive post-release input");
+            bail!("Ctrl-g jump destination did not receive input");
         }
         thread::yield_now();
     }
@@ -171,10 +153,10 @@ fn iterm2_control_hold_with_version(version: &str) -> Result<()> {
 }
 
 #[test]
-fn iterm2_metadata_through_a_proxy_keeps_control_input_out_of_browse_actions() -> Result<()> {
+fn ctrl_g_jump_works_behind_a_proxy() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
-    create_search_agent(&mut fixture, "proxy-agent")?;
+    let agent = create_search_agent(&mut fixture, "proxy-agent")?;
     let mut dashboard = OuterDashboard::start_with_input_environment(
         &fixture,
         PtySize {
@@ -190,9 +172,33 @@ fn iterm2_metadata_through_a_proxy_keeps_control_input_out_of_browse_actions() -
         ],
     )?;
     dashboard.wait_until(|screen| screen.contains("proxy-agent"), wait_deadline())?;
-    dashboard.send(b"\x1b[57442;5:1u\x1b[49;5:1u\x1b[57442;1:3u\x1b[59:58;2u")?;
-    dashboard.wait_until(|screen| screen.contains("Command palette"), wait_deadline())?;
-    assert!(!dashboard.rendered().contains("Session selected"));
-    assert!(!dashboard.rendered().contains("[1]"));
+    dashboard.send(b"\x1b[103;5:1u")?;
+    dashboard.wait_until(
+        |screen| {
+            screen
+                .lines()
+                .any(|row| row.contains("[1]") && row.contains("proxy-agent"))
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(b"1")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode") && screen.contains("READY_proxy-agent"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"PROXY_INPUT_TOKEN\r")?;
+    let deadline = Instant::now() + wait_deadline();
+    loop {
+        if fixture
+            .read_terminal(agent.id)?
+            .contains("RECEIVED_proxy-agent_PROXY_INPUT_TOKEN")
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            bail!("proxied Ctrl-g jump destination did not receive input");
+        }
+        thread::yield_now();
+    }
     Ok(())
 }

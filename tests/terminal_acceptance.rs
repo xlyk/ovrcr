@@ -388,28 +388,12 @@ impl OuterDashboard {
         Self::start_with_server_executable(fixture, size, &fixture.executable)
     }
 
-    fn start_with_verified_gui_profile(fixture: &AcceptanceFixture, size: PtySize) -> Result<Self> {
-        Self::start_with_server_executable_and_verified_gui_profile(
-            fixture,
-            size,
-            &fixture.executable,
-        )
-    }
-
     fn start_with_server_executable(
         fixture: &AcceptanceFixture,
         size: PtySize,
         server_executable: &Path,
     ) -> Result<Self> {
-        Self::start_with_server_executable_profile(fixture, size, server_executable, false, &[])
-    }
-
-    fn start_with_server_executable_and_verified_gui_profile(
-        fixture: &AcceptanceFixture,
-        size: PtySize,
-        server_executable: &Path,
-    ) -> Result<Self> {
-        Self::start_with_server_executable_profile(fixture, size, server_executable, true, &[])
+        Self::start_with_server_executable_and_environment(fixture, size, server_executable, &[])
     }
 
     fn start_with_input_environment(
@@ -417,20 +401,18 @@ impl OuterDashboard {
         size: PtySize,
         environment: &[(&str, &str)],
     ) -> Result<Self> {
-        Self::start_with_server_executable_profile(
+        Self::start_with_server_executable_and_environment(
             fixture,
             size,
             &fixture.executable,
-            false,
             environment,
         )
     }
 
-    fn start_with_server_executable_profile(
+    fn start_with_server_executable_and_environment(
         fixture: &AcceptanceFixture,
         size: PtySize,
         server_executable: &Path,
-        verified_gui_profile: bool,
         input_environment: &[(&str, &str)],
     ) -> Result<Self> {
         let pty = native_pty_system();
@@ -469,7 +451,6 @@ impl OuterDashboard {
                 None => command.env_remove(key),
             }
         }
-        command.env_remove(ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV);
         for key in [
             "TERM_PROGRAM",
             "TERM_PROGRAM_VERSION",
@@ -484,14 +465,6 @@ impl OuterDashboard {
         }
         for (key, value) in input_environment {
             command.env(key, value);
-        }
-        if verified_gui_profile {
-            // These tests inject the verified GUI's enhanced modifier events
-            // through the real CLI profile parser and Dashboard constructor.
-            command.env(
-                ovrcr::tui::DASHBOARD_INPUT_PROFILE_ENV,
-                ovrcr::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
-            );
         }
         command.env("OVRCR_SERVER_EXECUTABLE", server_executable);
         command.env(
@@ -987,12 +960,12 @@ fn agent_search_selects_and_types_through_real_dashboard() -> Result<()> {
 }
 
 #[test]
-fn command_digit_does_not_start_control_jump_through_real_dashboard() -> Result<()> {
+fn command_digit_does_not_open_or_select_a_jump_through_real_dashboard() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
     let first = create_search_agent(&mut fixture, "agent-a")?;
     let second = create_search_agent(&mut fixture, "agent-b")?;
-    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
+    let mut dashboard = OuterDashboard::start(
         &fixture,
         PtySize {
             rows: 40,
@@ -1019,13 +992,52 @@ fn command_digit_does_not_start_control_jump_through_real_dashboard() -> Result<
             .read_terminal(first.id)?
             .contains("RECEIVED_agent-a_COMMAND_DID_NOT_JUMP")
     );
-    assert!(!dashboard.rendered().contains("Session selected"));
+    assert!(!dashboard.rendered().contains("[1]"));
     assert!(
         !fixture
             .read_terminal(second.id)?
             .contains("COMMAND_DID_NOT_JUMP"),
         "Command+1 must not route input to the second Agent"
     );
+
+    // Ctrl-g opens the picker; a Command digit must not select from it.
+    dashboard.send(b"\x1b[103;5:1u")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen
+                .lines()
+                .any(|row| row.contains("[2]") && row.contains("agent-b"))
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x1b[50;9:1u")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("BROWSE") && !screen.contains("1–9 jump"),
+        wait_deadline(),
+    )?;
+    assert!(
+        !dashboard.rendered().contains("Terminal mode"),
+        "Command+2 must close the picker without selecting the second Agent"
+    );
+
+    // The picker itself still selects with a bare digit.
+    dashboard.send(b"\x1b[103;5:1u")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen
+                .lines()
+                .any(|row| row.contains("[2]") && row.contains("agent-b"))
+        },
+        wait_deadline(),
+    )?;
+    dashboard.send(b"2")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Terminal mode") && screen.contains("READY_agent-b"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"PICKER_SELECT_OK\r")?;
+    dashboard.wait_for(b"RECEIVED_agent-b_PICKER_SELECT_OK", wait_deadline())?;
+
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
