@@ -156,13 +156,16 @@ Managed fresh Codex CLI launches capture the exact conversation UUID
 and hook-supplied history path at an authenticated root startup or prompt. The
 bounded native `session_meta` header must match the UUID and CLI source. Missing
 or mismatched history leaves that identity unavailable; it never selects an older
-saved conversation. OVRCR stores metadata only, not prompts or transcripts.
+saved conversation. Reopen falls back to Codex's own `codex resume` picker when the
+retained reference cannot be used. OVRCR stores metadata only, not prompts or
+transcripts.
 
 `ovrcr terminal reopen ID` runs managed `codex resume UUID` with no new prompt,
 preserving the row, title and reference even across another immediate restart.
 The shared ownership acknowledgement, capacity and stale-run rules still apply.
-Missing history, executable, working directory, CODEX_HOME or an explicit profile
-file prevents launching and retains a retryable row. Native resume failure also
+Missing history, executable, CODEX_HOME or an explicit profile file opens Codex's
+native resume picker and keeps the reference for a later exact retry; a missing
+recorded working directory still prevents launching. Native resume failure also
 retains the row; Retry never starts fresh. Start new conversation is separate.
 
 Saved options are separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`,

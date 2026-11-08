@@ -32,7 +32,17 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
     let live = Live::idle().bounded();
     let home = live.root.path().join("codex-home");
     std::fs::create_dir(&home).unwrap();
-    let environment = [("CODEX_HOME", home.as_os_str())];
+    // The native picker resolves `codex` from PATH; keep it inside the fixture.
+    let bin = live.root.path().join("picker-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let picker = bin.join("codex");
+    std::fs::write(&picker, "#!/bin/sh\nprintf 'CODEX_NATIVE_PICKER\\n'\n").unwrap();
+    std::fs::set_permissions(&picker, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = format!("{}:{}", bin.display(), live.path().to_string_lossy());
+    let environment = [
+        ("CODEX_HOME", home.as_os_str()),
+        ("PATH", std::ffi::OsStr::new(&path)),
+    ];
     live.start_binary_env(&environment);
     live.ready("feature/codex-recovery");
     let cwd = ovrcr::config::load_registry(&live.config)
@@ -128,23 +138,50 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
             let history = home
                 .join("sessions/2026/09/10")
                 .join(format!("rollout-2026-09-10T19-46-58-{conversation}.jsonl"));
-            for path in [&history, &home, &native, &cwd] {
+            for (path, diagnostic) in [
+                (&history, "history"),
+                (&home, "configuration"),
+                (&native, "executable"),
+                (&cwd, "directory"),
+            ] {
                 let displaced = path.with_extension("unavailable");
                 std::fs::rename(path, &displaced).unwrap();
-                let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+                let result = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
                 std::fs::rename(&displaced, path).unwrap();
-                assert!(
-                    !failed.status.success(),
-                    "missing prerequisite launched fresh"
-                );
+                if diagnostic == "directory" {
+                    // The shell cannot start, so this still fails before any process.
+                    assert!(!result.status.success(), "missing directory launched");
+                    assert!(
+                        String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                } else {
+                    // A reference that cannot be validated opens Codex's own picker.
+                    assert!(
+                        result.status.success(),
+                        "missing {diagnostic}: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    wait_output(&live, &id_arg, "CODEX_NATIVE_PICKER");
+                    json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+                    wait_phase(&live, id, "exited");
+                }
                 assert_eq!(
                     std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
                     "PRIVATE_CODEX_PROMPT_118\n--approve-for-me\n"
                 );
             }
         }
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
         let old_run = row["run"].as_u64().unwrap();
-        let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+        let reopened = json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
         let duplicate = live.request(ovrcr::protocol::Request::ReopenSession {
             session: ovrcr::protocol::SessionId(id),
             expected_run: ovrcr::protocol::SessionRunId(old_run),
@@ -254,16 +291,26 @@ fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
     }
     let changed = live.root.path().join("different-codex-home");
     std::fs::create_dir(&changed).unwrap();
-    live.start_binary_env(&[("CODEX_HOME", changed.as_os_str())]);
-    let failed = cli(&live, &["terminal", "reopen", &id_arg]);
-    assert!(!failed.status.success());
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("configuration"));
+    live.start_binary_env(&[
+        ("CODEX_HOME", changed.as_os_str()),
+        ("PATH", std::ffi::OsStr::new(&path)),
+    ]);
+    // A different CODEX_HOME cannot certify the old identity; the picker opens.
+    let reopened = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
+    assert!(
+        reopened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reopened.stderr)
+    );
+    wait_output(&live, &id_arg, "CODEX_NATIVE_PICKER");
+    json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+    wait_phase(&live, id, "exited");
     json(&live, &["shutdown", "--kill"]);
     live.join();
     let fail = live.root.path().join("fail-resume");
     std::fs::write(&fail, "").unwrap();
     live.start_binary_env(&environment);
-    json(&live, &["terminal", "reopen", &id_arg]);
+    json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     track_groups(&live);
     wait_output(&live, &id_arg, "NATIVE_CODEX_RESUME_FAILED");
     // The native failure leaves a shell; closing it retains the native exit code.
@@ -583,8 +630,23 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
         // Runner/user profiles must not change this fixture's recovery capability.
         // Inherited XDG overrides make OMP recovery intentionally unavailable.
         let empty = std::ffi::OsStr::new("");
+        // The picker fallback resolves the provider from PATH; keep it inside the fixture.
+        let bin = live.root.path().join("picker-bin");
+        std::fs::create_dir(&bin).unwrap();
+        let picker = bin.join(provider);
+        std::fs::write(
+            &picker,
+            format!(
+                "#!/bin/sh\nprintf '{}_NATIVE_PICKER\\n'\n",
+                provider.to_uppercase()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&picker, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = format!("{}:{}", bin.display(), live.path().to_string_lossy());
         let environment = [
             ("PI_CODING_AGENT_DIR", config.as_os_str()),
+            ("PATH", std::ffi::OsStr::new(&path)),
             ("OMP_PROFILE", empty),
             ("PI_PROFILE", empty),
             ("PI_CONFIG_DIR", empty),
@@ -871,17 +933,34 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
                     let before = std::fs::read_to_string(config.join("argv")).unwrap();
                     let displaced = path.with_extension("unavailable");
                     std::fs::rename(&path, &displaced).unwrap();
-                    let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                    let result = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
                     std::fs::rename(&displaced, &path).unwrap();
-                    assert!(
-                        !result.status.success(),
-                        "missing {diagnostic} launched {provider}"
-                    );
-                    assert!(
-                        String::from_utf8_lossy(&result.stderr).contains(diagnostic),
-                        "{}",
-                        String::from_utf8_lossy(&result.stderr)
-                    );
+                    if diagnostic == "directory" {
+                        // The shell cannot start, so this still fails before any process.
+                        assert!(
+                            !result.status.success(),
+                            "missing directory launched {provider}"
+                        );
+                        assert!(
+                            String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+                            "{provider} {diagnostic}: {}",
+                            String::from_utf8_lossy(&result.stderr)
+                        );
+                    } else {
+                        // A reference that cannot be validated opens the provider's picker.
+                        assert!(
+                            result.status.success(),
+                            "{provider} missing {diagnostic}: {}",
+                            String::from_utf8_lossy(&result.stderr)
+                        );
+                        wait_output(
+                            &live,
+                            &id_arg,
+                            &format!("{}_NATIVE_PICKER", provider.to_uppercase()),
+                        );
+                        json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+                        wait_phase(&live, id, "exited");
+                    }
                     assert_eq!(
                         std::fs::read_to_string(config.join("argv")).unwrap(),
                         before
@@ -890,12 +969,22 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
                 let history = config.join("session-a.jsonl");
                 let original = std::fs::read(&history).unwrap();
                 std::fs::write(&history, "{\"type\":\"session\",\"id\":\"different\"}\n").unwrap();
-                let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                let result = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
                 std::fs::write(&history, original).unwrap();
-                assert!(!result.status.success());
-                assert!(String::from_utf8_lossy(&result.stderr).contains("identity"));
+                assert!(
+                    result.status.success(),
+                    "{provider} identity mismatch: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                wait_output(
+                    &live,
+                    &id_arg,
+                    &format!("{}_NATIVE_PICKER", provider.to_uppercase()),
+                );
+                json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+                wait_phase(&live, id, "exited");
             }
-            json(&live, &["terminal", "reopen", &id_arg]);
+            json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
             track_groups(&live);
             wait_output(&live, &id_arg, "PI_NATIVE_READY");
             assert!(
@@ -965,10 +1054,17 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
                 .any(|bytes| bytes == b"PRIVATE_PROMPT_119")
         );
         live.start_binary_env(&environment);
-        let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+        // The ephemeral identity has no history; the provider's own picker opens.
+        let picker = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
         assert!(
-            !failure.status.success(),
-            "ephemeral conversation reopened old A"
+            picker.status.success(),
+            "{}",
+            String::from_utf8_lossy(&picker.stderr)
+        );
+        wait_output(
+            &live,
+            &id_arg,
+            &format!("{}_NATIVE_PICKER", provider.to_uppercase()),
         );
     }
 }
@@ -1242,17 +1338,28 @@ fn assert_claude_recovery(initial_resume: bool, separated: bool) {
             ] {
                 let displaced = path.with_extension("temporarily-unavailable");
                 std::fs::rename(&path, &displaced).unwrap();
-                let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+                let result = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
                 std::fs::rename(&displaced, &path).unwrap();
-                assert!(
-                    !failure.status.success(),
-                    "missing {diagnostic} launched fresh"
-                );
-                assert!(
-                    String::from_utf8_lossy(&failure.stderr).contains(diagnostic),
-                    "{}",
-                    String::from_utf8_lossy(&failure.stderr)
-                );
+                if diagnostic == "directory" {
+                    // The shell cannot start, so this still fails before any process.
+                    assert!(!result.status.success(), "missing directory launched");
+                    assert!(
+                        String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                } else {
+                    // A reference that cannot be validated opens Claude's own picker.
+                    // The fixture `claude` answers any other argv with this message.
+                    assert!(
+                        result.status.success(),
+                        "missing {diagnostic}: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    wait_output(&live, &id_arg, "unsupported arguments: --resume");
+                    json(&live, &["terminal", "send", &id_arg, "--text", "exit"]);
+                    wait_phase(&live, id, "exited");
+                }
                 assert_eq!(
                     std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
                     arguments
@@ -1313,12 +1420,15 @@ fn assert_claude_recovery(initial_resume: bool, separated: bool) {
         );
     }
     live.start_binary_env(&environment);
-    let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+    // The invalidated reference cannot be used: Claude's own picker opens, and
+    // the exact-resume argv keeps only the two attempts already recorded.
+    let picker = cli(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     assert!(
-        !failure.status.success(),
-        "clear reopened stale Claude identity"
+        picker.status.success(),
+        "{}",
+        String::from_utf8_lossy(&picker.stderr)
     );
-    assert!(String::from_utf8_lossy(&failure.stderr).contains("unsupported"));
+    wait_output(&live, &id_arg, "unsupported arguments: --resume");
     let actual = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
     assert_eq!(
         actual,
@@ -2573,6 +2683,121 @@ fn assert_native_picker_in_shell(shell: &str) {
             ],
         );
         wait_output(&live, &id, "CONFIG_loaded");
+    }
+    track_groups(&live);
+}
+
+#[test]
+fn failed_exact_resume_opens_the_native_picker_for_picker_providers() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let bin = live.root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let native = bin.join("omp");
+    std::fs::write(
+        &native,
+        "#!/bin/sh\nif [ \"$1\" = --resume ]; then\n  if [ -z \"$2\" ]; then printf 'OMP_NATIVE_PICKER\\n'; else printf 'OMP_EXACT\\n'; fi\nelse\n  printf 'OMP_INITIAL\\n'\nfi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = live.root.path().join("omp-config");
+    std::fs::create_dir(&config).unwrap();
+    let path = format!("{}:{}", bin.display(), live.path().to_string_lossy());
+    let environment = [
+        ("PATH", std::ffi::OsStr::new(&path)),
+        ("SHELL", std::ffi::OsStr::new("/bin/sh")),
+        ("PI_CODING_AGENT_DIR", config.as_os_str()),
+        ("OMP_PROFILE", std::ffi::OsStr::new("")),
+        ("PI_PROFILE", std::ffi::OsStr::new("")),
+        ("PI_CONFIG_DIR", std::ffi::OsStr::new("")),
+        ("XDG_CONFIG_HOME", std::ffi::OsStr::new("")),
+        ("XDG_DATA_HOME", std::ffi::OsStr::new("")),
+        ("XDG_STATE_HOME", std::ffi::OsStr::new("")),
+        ("XDG_CACHE_HOME", std::ffi::OsStr::new("")),
+    ];
+    live.start_binary_env(&environment);
+    live.ready("feature/native-picker-fallback");
+    let create = |name: &str| {
+        let ovrcr::protocol::Response::CreatedSession(summary) = live.request(
+            ovrcr::protocol::Request::CreateSession(ovrcr::protocol::CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: name.into(),
+                label: None,
+                argv: vec![native.as_os_str().to_owned()],
+                kind: ovrcr::protocol::SessionKind::Agent { name: "omp".into() },
+            }),
+        ) else {
+            panic!("agent session was not created");
+        };
+        summary.id.0
+    };
+    let mismatch = create("picker-mismatch");
+    let unavailable = create("picker-unavailable");
+    for id in [mismatch, unavailable] {
+        wait_output(&live, &id.to_string(), "OMP_INITIAL");
+        wait_phase(&live, id, "exited");
+    }
+    // A real OMP history starts with the title slot; only the first-line reader
+    // rejects it, so this exercises the identity failure that stranded the row.
+    let conversation = "01a1b9f5-74db-7565-8aca-426afe9cf198";
+    let history = live.root.path().join("title-first.jsonl");
+    std::fs::write(
+        &history,
+        format!(
+            "{{\"type\":\"title\",\"v\":1,\"title\":\"fixture\",\"updatedAt\":\"2026-11-08T00:00:00Z\",\"pad\":\"\"}}\n{{\"type\":\"session\",\"version\":3,\"id\":\"{conversation}\",\"cwd\":\"{}\"}}\n",
+            live.workspace_path(live::WORKSPACE).display()
+        ),
+    )
+    .unwrap();
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let reference = |history: Option<&std::path::Path>| {
+        serde_json::json!({"Omp": {
+            "conversation": conversation,
+            "executable": native.to_str().unwrap(),
+            "history": history.map(|path| path.to_str().unwrap().to_owned()),
+            "config_dir": config.to_str().unwrap(),
+            "options": [],
+        }})
+    };
+    for (id, history) in [(mismatch, Some(history.as_path())), (unavailable, None)] {
+        database
+            .execute(
+                "INSERT OR REPLACE INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, 0)",
+                rusqlite::params![i64::try_from(id).unwrap(), reference(history).to_string()],
+            )
+            .unwrap();
+    }
+    drop(database);
+    live.start_binary_env(&environment);
+    let rows = json(&live, &["terminal", "list"]);
+    let row = |id: u64| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap()
+    };
+    assert!(
+        row(mismatch)["recovery"]["unavailable"].is_null(),
+        "the title-first reference must reach exact-resume validation"
+    );
+    assert!(
+        row(unavailable)["recovery"]["unavailable"]
+            .as_str()
+            .unwrap()
+            .contains("no native history"),
+        "the second row must exercise the precomputed unavailable gate"
+    );
+    for id in [mismatch, unavailable] {
+        let restored = json(
+            &live,
+            &["terminal", "reopen", &id.to_string(), "--ack-stopped"],
+        );
+        assert_eq!(restored["id"], id);
+        wait_output(&live, &id.to_string(), "OMP_NATIVE_PICKER");
     }
     track_groups(&live);
 }
