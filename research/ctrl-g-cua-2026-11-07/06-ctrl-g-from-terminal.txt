@@ -1,0 +1,61 @@
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│implement lifecycle cleanup  claude:sonnet-4  status off · 1m                                                        pid 40681
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  󰘬 main                          root │╭─ claude / sonnet-4 ────────────────────────────────────────╮
+     $ local                           ││ fixture: lifecycle cleanup
+  󰘬 gui-consigint-auth-handoff         │╰──────────────────────────────────────────────────╯
+     $ local                           │
+ [1] - review auth handoff    grok:4.6 │✓ deterministic local transcript ready
+  󰘬 gui-consigint-worktree-lifecycle   │sh-3.2$
+     $ local                           │
+▌[2] - implement lifecycle cleanup     │
+ [3] - review websocket shutdown       │
+ [4] - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+ [5] - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+ [6] - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │
+Codex · unavailable · retry 1m         │
+ Grok   wk ━━━━━━━━━━━━━━━━──────  72% │
+Cursor · usage off                     │
+                                       │
+1–9 jump  Ctrl-g/Esc cancel

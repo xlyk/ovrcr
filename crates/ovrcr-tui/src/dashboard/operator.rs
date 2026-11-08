@@ -841,6 +841,11 @@ impl Dashboard {
             self.operator.editing = false;
             self.operator.visible = false;
             self.retarget(super::state::PaneChange::Focus);
+            // Ctrl-g is the navigation key: leaving Operator with it also
+            // opens the label picker. Esc only leaves.
+            if super::input::is_browse_key(key) {
+                self.begin_sidebar_jump();
+            }
             return DashboardAction::EnterBrowse;
         }
         if self.operator.new.is_none()

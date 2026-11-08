@@ -1,0 +1,8 @@
+Cleanup after AX close button
+gui_pid=38948 gone
+server_pid=39335 gone
+dashboard_pid=41427 gone
+session_pids=39407,39546,39700,39868,40059,40459,40681,40848,40983,41107,41229,41353 all gone
+fixture_root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-40V40R removed
+launcher=exit 0 (service notification)
+remaining_ovrcr_gui_for_bundle=none

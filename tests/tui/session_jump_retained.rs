@@ -1,5 +1,4 @@
 use super::*;
-use crossterm::event::ModifierKeyCode;
 use ovrcr::protocol::{
     ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputKind,
     InputRequest, ReadyObservation, ReporterHealth, SampleQuality, SessionKind, SessionRecovery,
@@ -85,13 +84,10 @@ fn jump_event(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> Eve
 
 #[test]
 fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays_in_browse() {
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize {
-            rows: 40,
-            cols: 120,
-        },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_hierarchy(retained_jump_hierarchy());
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
@@ -105,8 +101,8 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
         .collect::<String>();
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
 
@@ -144,13 +140,13 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
     assert_eq!(
         dashboard.event_action(jump_event(
             KeyCode::Char('1'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         )),
         DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    assert!(rendered_footer(&dashboard, 120).contains("Session selected"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
     let request = only_request(dashboard.drain_outbox());
     assert!(matches!(
         &request.request,
@@ -168,58 +164,45 @@ fn retained_and_running_agents_share_visible_labels_and_retained_selection_stays
         "selection preserves retained status and title columns"
     );
 
-    dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
-    ));
     assert!(
         rendered_footer(&dashboard, 120).starts_with("BROWSE"),
-        "releasing Control cannot resume a retained destination"
+        "a retained destination cannot resume"
     );
     assert!(dashboard.drain_outbox().is_empty());
 }
 
 #[test]
-fn running_selection_from_retained_browse_waits_for_release_and_the_view_ack() {
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize {
-            rows: 40,
-            cols: 120,
-        },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+fn running_selection_from_retained_browse_uses_the_view_ack() {
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_hierarchy(retained_jump_hierarchy());
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('1'),
-        KeyModifiers::CONTROL,
+        KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     let retained_view = only_request(dashboard.drain_outbox());
     acknowledge_all_view_targets(&mut dashboard, retained_view);
-    dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
-    ));
     assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
 
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('4'),
-        KeyModifiers::CONTROL,
+        KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
@@ -229,21 +212,10 @@ fn running_selection_from_retained_browse_waits_for_release_and_the_view_ack() {
         Request::SetView { view } if view.focused == Some(SessionId(4))
     ));
     acknowledge_all_view_targets(&mut dashboard, running_view);
-    assert!(
-        rendered_footer(&dashboard, 120).contains("Session selected"),
-        "view readiness alone cannot type while Control remains held"
-    );
-    assert!(rendered_footer(&dashboard, 120).starts_with("Session selected"));
-
-    dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        KeyEventKind::Release,
-    ));
     let footer = rendered_footer(&dashboard, 120);
     assert!(
-        footer.starts_with("Loading agent") && !footer.starts_with("Terminal mode"),
-        "the public event seam remains gated until the production input-drain boundary: {footer}"
+        footer.starts_with("Terminal mode"),
+        "the acknowledged view enters the running destination: {footer}"
     );
 }
 
@@ -263,24 +235,21 @@ fn inspecting_an_interrupted_retained_agent_does_not_auto_recover_it() {
         failure: None,
     });
 
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize {
-            rows: 40,
-            cols: 120,
-        },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_focus(SessionId(2));
     dashboard.event_action(jump_event(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
         KeyEventKind::Press,
     ));
     dashboard.event_action(jump_event(
         KeyCode::Char('3'),
-        KeyModifiers::CONTROL,
+        KeyModifiers::NONE,
         KeyEventKind::Press,
     ));
 
@@ -301,19 +270,16 @@ fn inspecting_an_interrupted_retained_agent_does_not_auto_recover_it() {
 #[test]
 fn a_captured_target_that_changes_phase_run_or_archive_cannot_be_reassigned() {
     for changed_target in ["retained-run", "running-phase", "archived"] {
-        let mut dashboard = Dashboard::with_input_profile(
-            TerminalSize {
-                rows: 40,
-                cols: 120,
-            },
-            super::DashboardInputProfile::VerifiedOvrcrGui,
-        );
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
         dashboard.install_hierarchy(retained_jump_hierarchy());
         dashboard.install_area(Rect::new(0, 0, 120, 40));
         dashboard.install_focus(SessionId(2));
         dashboard.event_action(jump_event(
-            KeyCode::Modifier(ModifierKeyCode::LeftControl),
-            KeyModifiers::NONE,
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
             KeyEventKind::Press,
         ));
 
@@ -353,7 +319,7 @@ fn a_captured_target_that_changes_phase_run_or_archive_cannot_be_reassigned() {
         };
         dashboard.event_action(jump_event(
             KeyCode::Char(digit),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
             KeyEventKind::Press,
         ));
         assert_eq!(

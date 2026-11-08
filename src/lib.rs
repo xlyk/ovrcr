@@ -35,11 +35,10 @@ pub mod task_tui {
 pub mod tui {
     pub use ovrcr_tui::{ConnectStatus, ConnectStatusFn};
     pub use ovrcr_tui::{
-        DASHBOARD_INPUT_PROFILE_ENV, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction,
-        DashboardInputProfile, KeyEncoding, PaneRects, Settings, VERIFIED_OVRCR_GUI_INPUT_PROFILE,
-        actual_drawn_inner_rect, dashboard_message_channel, detect_agents, draw_dashboard,
-        draw_dashboard_at, encode_key, encode_mouse, encode_paste, pane_rects, render_terminal,
-        write_clipboard,
+        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding, PaneRects,
+        Settings, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,
+        draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste, pane_rects,
+        render_terminal, write_clipboard,
     };
 
     /// `status_off` is the startup note while agent status is off; `connect_status`
@@ -49,31 +48,16 @@ pub mod tui {
         status_off: Option<String>,
         connect_status: ovrcr_tui::ConnectStatusFn,
     ) -> anyhow::Result<()> {
-        run_dashboard_with_input_profile(
-            stream,
-            status_off,
-            connect_status,
-            DashboardInputProfile::Standard,
-        )
-    }
-
-    pub fn run_dashboard_with_input_profile(
-        stream: std::os::unix::net::UnixStream,
-        status_off: Option<String>,
-        connect_status: ovrcr_tui::ConnectStatusFn,
-        input_profile: DashboardInputProfile,
-    ) -> anyhow::Result<()> {
         let paths = (
             crate::config::RegistryPath::resolve()?.0,
             crate::server::ServerPaths::resolve()?.socket,
         );
-        ovrcr_tui::run_dashboard_with_input_profile(
+        ovrcr_tui::run_dashboard(
             stream,
             crate::task_cli::request,
             paths,
             status_off,
             connect_status,
-            input_profile,
         )
     }
 }

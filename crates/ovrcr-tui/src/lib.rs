@@ -28,11 +28,10 @@ pub type ConnectStatusFn = fn(apply: bool) -> ConnectStatus;
 pub use task_tui::{event_text, parse_duration};
 
 pub use dashboard::{
-    AgentEntry, AgentSource, DASHBOARD_INPUT_PROFILE_ENV, DASHBOARD_READER_QUEUE_CAPACITY,
-    Dashboard, DashboardAction, DashboardInputProfile, KeyEncoding, LaunchChoice, PaneRects,
-    Settings, VERIFIED_OVRCR_GUI_INPUT_PROFILE, actual_drawn_inner_rect, apply_overrides,
+    AgentEntry, AgentSource, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction,
+    KeyEncoding, LaunchChoice, PaneRects, Settings, actual_drawn_inner_rect, apply_overrides,
     dashboard_message_channel, detect_agents, draw_dashboard, draw_dashboard_at, encode_key,
-    encode_mouse, pane_rects, render_terminal, run_dashboard, run_dashboard_with_input_profile,
-    takes_task, with_task, write_clipboard,
+    encode_mouse, pane_rects, render_terminal, run_dashboard, takes_task, with_task,
+    write_clipboard,
 };
 pub use ovrcr_terminal::encode_paste;

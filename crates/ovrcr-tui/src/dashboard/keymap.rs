@@ -6,7 +6,7 @@
 use super::state::{find_session, workspace_heading};
 use super::{Dashboard, DashboardAction, InputMode, TreeRow};
 use crate::task_tui::TasksView;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_protocol::{SessionKind, SessionPhase};
 
 /// What a key does. Dispatch, the key popup and the palette run these directly,
@@ -64,7 +64,7 @@ pub(super) enum Action {
     Help,
     /// Open a key-popup group rather than run an action.
     Group(char),
-    /// A stateful Control-hold gesture that labels visible Agent rows.
+    /// Labels visible Agent rows until a digit selects, or Esc/Ctrl-g closes.
     SidebarJump,
     /// A Copy or History motion key. Those modes keep their own dispatcher, which
     /// reads a key event rather than an action, so this is the one action that
@@ -86,7 +86,7 @@ pub(super) struct GroupSlot {
 /// the pane has not acknowledged a screen yet, so the key becomes available on
 /// its own. Every other reason means the action does not apply to this target.
 const WAITING: &str = "waiting for acknowledged screen";
-const SIDEBAR_JUMP_BLOCKED: &str = "close the current overlay before holding Cmd";
+const SIDEBAR_JUMP_BLOCKED: &str = "close the current overlay before pressing Ctrl-g";
 pub(super) const LAUNCH_BLOCKED: &str = "root workspace is not on the default branch";
 pub(super) const ROOT_PROTECTED: &str = "repository-root workspace cannot be removed";
 pub(super) struct KeyBinding {
@@ -226,12 +226,10 @@ impl KeyBinding {
             return key.code == code && key.modifiers == modifiers;
         }
         if self.action == Action::SidebarJump {
-            let control_edge = matches!(
-                key.code,
-                KeyCode::Modifier(ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl)
-            );
-            return control_edge
-                && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::CONTROL);
+            // Some hosts deliver Ctrl-g as BEL (`\u{7}`) rather than a
+            // Control-modified `g`; `is_browse_key` accepts both spellings.
+            return (key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::CONTROL)
+                || (key.code == KeyCode::Char('\u{7}') && key.modifiers.is_empty());
         }
         if key.modifiers.intersects(
             KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
@@ -305,9 +303,7 @@ impl Dashboard {
             Action::Agents => self.open_agent_search(),
             Action::Operator => self.open_operator(),
             Action::OperatorQuick => unreachable!(),
-            // The gesture requires an observed physical modifier edge; a
-            // catalog row can describe it but cannot synthesize that edge.
-            Action::SidebarJump => DashboardAction::None,
+            Action::SidebarJump => self.begin_sidebar_jump(),
             Action::OperatorKey(code, modifiers) => {
                 self.operator_key(KeyEvent::new(code, modifiers))
             }
@@ -438,14 +434,13 @@ pub(super) fn agents_binding() -> KeyBinding {
 }
 
 pub(super) fn sidebar_jump_binding(dashboard: &Dashboard) -> Option<KeyBinding> {
-    if !dashboard.input_profile.supports_control_hold() || dashboard.sidebar_preference() == Some(0)
+    if dashboard.sidebar_preference() == Some(0)
+        || !matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal)
+        || dashboard.operator.visible
     {
         return None;
     }
     let blocked = dashboard.sidebar_jump_modal_priority_open()
-        || !matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal)
-        || (dashboard.operator.visible
-            && (dashboard.outer_area.width < 60 || dashboard.outer_area.height < 16))
         || dashboard.agent_typing.is_some()
         || dashboard
             .history_begin_request
@@ -455,14 +450,15 @@ pub(super) fn sidebar_jump_binding(dashboard: &Dashboard) -> Option<KeyBinding> 
         || !dashboard.mouse_focused;
     Some(
         key_binding(
-            "Ctrl hold",
+            "Ctrl-g",
             "Jump to visible Agent",
-            "Hold Ctrl to label the first nine visible Agent rows; press 1–9 to jump".into(),
-            KeyCode::Modifier(ModifierKeyCode::LeftControl),
+            "Label the first nine visible Agent rows; press 1–9 to jump, Esc or Ctrl-g to close"
+                .into(),
+            KeyCode::Char('g'),
             Action::SidebarJump,
         )
         .once()
-        .group('v', "Ctrl hold")
+        .group('v', "Ctrl-g")
         .unless(blocked.then_some(SIDEBAR_JUMP_BLOCKED)),
     )
 }

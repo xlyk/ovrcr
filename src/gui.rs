@@ -342,10 +342,6 @@ impl Demo {
         command.env("OVRCR_SERVER_EXECUTABLE", &self.executable);
         command.env("OVRCR_HOME", &self.root);
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
-        command.env(
-            crate::tui::DASHBOARD_INPUT_PROFILE_ENV,
-            crate::tui::VERIFIED_OVRCR_GUI_INPUT_PROFILE,
-        );
         command.env_remove("OVRCR_DASHBOARD_CONFIG");
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");

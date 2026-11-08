@@ -1,0 +1,6 @@
+tested_commit=2d6b79bd
+root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-40V40R
+socket=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-40V40R/server.sock
+gui_pid=38948
+server_pid=39335
+dashboard_pid=41427

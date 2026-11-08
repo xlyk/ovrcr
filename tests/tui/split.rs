@@ -835,6 +835,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(terminal.backend().cursor_position(), (84, 4).into());
 
     assert_eq!(dashboard.ctrl('g'), DashboardAction::EnterBrowse);
+    // Ctrl-g also opens the label picker; close it for the plain Browse footer.
+    assert_eq!(dashboard.ctrl('g'), DashboardAction::Redraw);
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -1026,7 +1028,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let footer = (0..80)
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
-    assert!(footer.contains("split hidden"));
+    assert!(footer.contains("split hidden"), "{footer}");
 
     let ordinary = dashboard_fixture();
     let backend = TestBackend::new(80, 24);
@@ -1043,6 +1045,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
     );
 
     assert_eq!(dashboard.ctrl('g'), DashboardAction::EnterBrowse);
+    // Ctrl-g also opens the label picker; close it for the plain Browse footer.
+    assert_eq!(dashboard.ctrl('g'), DashboardAction::Redraw);
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
