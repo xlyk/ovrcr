@@ -2688,15 +2688,16 @@ fn assert_native_picker_in_shell(shell: &str) {
 }
 
 #[test]
-fn failed_exact_resume_opens_the_native_picker_for_picker_providers() {
+fn omp_title_slot_resumes_exactly_and_an_unavailable_reference_opens_the_picker() {
     use std::os::unix::fs::PermissionsExt;
     let live = Live::idle().bounded();
     let bin = live.root.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let native = bin.join("omp");
+    // The managed exact resume inserts `-e <extension>` before the provider args.
     std::fs::write(
         &native,
-        "#!/bin/sh\nif [ \"$1\" = --resume ]; then\n  if [ -z \"$2\" ]; then printf 'OMP_NATIVE_PICKER\\n'; else printf 'OMP_EXACT\\n'; fi\nelse\n  printf 'OMP_INITIAL\\n'\nfi\n",
+        "#!/bin/sh\nseen=0\nfor a in \"$@\"; do\n  if [ \"$seen\" = 1 ]; then\n    if [ -n \"$a\" ]; then printf 'OMP_EXACT\\n'; exit 0; fi\n  fi\n  if [ \"$a\" = --resume ]; then seen=1; fi\ndone\nif [ \"$seen\" = 1 ]; then printf 'OMP_NATIVE_PICKER\\n'; exit 0; fi\nprintf 'OMP_INITIAL\\n'\n",
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -2791,14 +2792,25 @@ fn failed_exact_resume_opens_the_native_picker_for_picker_providers() {
             .contains("no native history"),
         "the second row must exercise the precomputed unavailable gate"
     );
-    for id in [mismatch, unavailable] {
-        let restored = json(
-            &live,
-            &["terminal", "reopen", &id.to_string(), "--ack-stopped"],
-        );
-        assert_eq!(restored["id"], id);
-        wait_output(&live, &id.to_string(), "OMP_NATIVE_PICKER");
-    }
+    // The title slot precedes the session header in every real OMP history.
+    let restored = json(
+        &live,
+        &["terminal", "reopen", &mismatch.to_string(), "--ack-stopped"],
+    );
+    assert_eq!(restored["id"], mismatch);
+    wait_output(&live, &mismatch.to_string(), "OMP_EXACT");
+    // Without a history file there is no identity to certify: the picker opens.
+    let restored = json(
+        &live,
+        &[
+            "terminal",
+            "reopen",
+            &unavailable.to_string(),
+            "--ack-stopped",
+        ],
+    );
+    assert_eq!(restored["id"], unavailable);
+    wait_output(&live, &unavailable.to_string(), "OMP_NATIVE_PICKER");
     track_groups(&live);
 }
 

@@ -136,6 +136,29 @@ pub fn validate(provider: AgentProvider, reference: &ExtensionConversation) -> R
     Ok(())
 }
 
+/// The bounded session identity from a native history header. OMP reserves its
+/// first line for the editable title slot and writes the session header second;
+/// Pi writes the session header first. Every other first record is not a header.
+fn history_identity(provider: AgentProvider, reader: &mut impl BufRead) -> Result<String> {
+    let mut record = history_record(reader)?;
+    if provider == AgentProvider::Omp && record["type"] == "title" {
+        record = history_record(reader)?;
+    }
+    if record["type"] != "session" {
+        bail!("provider history identity does not match the recorded conversation");
+    }
+    record["id"]
+        .as_str()
+        .map(str::to_owned)
+        .context("provider history identity does not match the recorded conversation")
+}
+
+fn history_record(reader: &mut impl BufRead) -> Result<serde_json::Value> {
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    serde_json::from_str(&line).context("provider history header is invalid")
+}
+
 pub fn resume_argv(
     provider: AgentProvider,
     reference: &ExtensionConversation,
@@ -161,11 +184,8 @@ pub fn resume_argv(
         bail!("provider history is not a regular file");
     }
     // Check only bounded header metadata; never copy transcript content into OVRCR.
-    let mut header = String::new();
-    BufReader::new(file.take(16 * 1024)).read_line(&mut header)?;
-    let header: serde_json::Value =
-        serde_json::from_str(&header).context("provider history header is invalid")?;
-    if header["type"] != "session" || header["id"] != reference.conversation {
+    let mut header = BufReader::new(file.take(16 * 1024));
+    if history_identity(provider, &mut header)? != reference.conversation {
         bail!("provider history identity does not match the recorded conversation");
     }
     let flag = match provider {
@@ -287,6 +307,38 @@ pub fn explicit_pi_resume(argv: &[OsString]) -> Result<Option<ExtensionConversat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_identity_accepts_only_the_provider_header_layout() {
+        let title_first =
+            b"{\"type\":\"title\",\"v\":1}\n{\"type\":\"session\",\"id\":\"native-a\"}\n";
+        assert_eq!(
+            history_identity(AgentProvider::Omp, &mut std::io::Cursor::new(title_first)).unwrap(),
+            "native-a"
+        );
+        // Pi never writes a title slot: a leading title is not a session header.
+        assert!(
+            history_identity(AgentProvider::Pi, &mut std::io::Cursor::new(title_first)).is_err()
+        );
+        let session_first = b"{\"type\":\"session\",\"id\":\"native-a\"}\n";
+        for provider in [AgentProvider::Pi, AgentProvider::Omp] {
+            assert_eq!(
+                history_identity(provider, &mut std::io::Cursor::new(session_first)).unwrap(),
+                "native-a"
+            );
+        }
+        // A truncated or foreign record after the title slot is never a session.
+        for header in [
+            &b"{\"type\":\"title\"}\n"[..],
+            &b"{\"type\":\"title\"}\n{\"type\":\"message\"}\n"[..],
+        ] {
+            assert!(
+                history_identity(AgentProvider::Omp, &mut std::io::Cursor::new(header)).is_err(),
+                "{}",
+                String::from_utf8_lossy(header)
+            );
+        }
+    }
 
     #[test]
     fn recovery_preserves_explicit_controls_but_never_prompts_or_selectors() {

@@ -617,7 +617,9 @@ resume. Reporting remains Confirmed Ready for Pi and Observed Ready for OMP.
 These are independent source/CLI checks, not native GUI acceptance. Prior OMP
 reporting acceptance used 18.1.19; it does not establish recovery on 18.2.2.
 The adapter checks a bounded session header for the recorded ID before launching.
-It never searches by prefix, chooses the newest file, or supplies a task prompt.
+Oh My Pi reserves its first line for the editable title slot, so the session header
+is read second there; Pi writes the session header first. The adapter never
+searches by prefix, chooses the newest file, or supplies a task prompt.
 Missing history, executable or matching configuration opens the provider's native
 resume picker; the reason is logged and the reference stays retained for a later
 exact retry. A missing recorded working directory still fails visibly because the
