@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1115" />
+    <title>OVRCR</title>
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-nerd-regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-nerd-bold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-nerd-italic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="back" class="icon" aria-label="Back" hidden>‹</button>
+      <div class="titles">
+        <h1 id="title">OVRCR</h1>
+        <p id="subtitle" class="subtitle"></p>
+      </div>
+      <button id="new-session" class="icon" aria-label="New session" title="New session">+</button>
+      <span id="conn" class="conn" aria-label="connection" title="connection">…</span>
+    </header>
+
+    <main>
+      <div id="banner" class="banner" hidden>
+        <span id="banner-text"></span>
+        <button id="banner-dismiss" class="icon small" aria-label="Dismiss">×</button>
+      </div>
+
+      <section id="list-view" class="view">
+        <div id="groups"></div>
+        <p id="empty" class="empty" hidden>No sessions.</p>
+      </section>
+
+      <section id="session-view" class="view" hidden>
+        <div id="meta" class="meta"></div>
+        <div class="screen-wrap">
+          <div id="screen" class="screen" tabindex="0" aria-label="terminal screen">
+            <div id="screen-rows" class="screen-rows"></div>
+          </div>
+          <div id="transcript-view" class="transcript" hidden>
+            <div id="transcript-entries" class="transcript-entries"></div>
+            <button id="load-older" type="button" class="secondary" hidden>Load older</button>
+          </div>
+        </div>
+        <div id="keybar" class="keybar" aria-label="terminal keys"></div>
+        <form id="composer" class="composer">
+          <textarea
+            id="text"
+            rows="2"
+            placeholder="Reply to this session…"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+          ></textarea>
+          <div class="composer-actions">
+            <button type="button" id="type-only" class="secondary">Type only</button>
+            <button type="submit" id="send" class="primary">Send ↵</button>
+          </div>
+        </form>
+        <div id="actions" class="actions"></div>
+      </section>
+    </main>
+
+    <div id="new-sheet" class="sheet" hidden>
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="new-title">
+        <div class="sheet-head">
+          <h2 id="new-title">New session</h2>
+          <button id="new-close" class="icon" type="button" aria-label="Close">×</button>
+        </div>
+        <form id="new-form">
+          <label class="field">Project
+            <select id="new-project"></select>
+          </label>
+          <label class="field">Workspace
+            <select id="new-workspace"></select>
+          </label>
+          <p id="new-workspace-note" class="hint" hidden></p>
+          <label class="field">Agent
+            <select id="new-agent"></select>
+          </label>
+          <p id="new-agent-note" class="hint"></p>
+          <label class="field">Initial prompt <span class="optional">optional</span>
+            <textarea id="new-prompt" rows="3" maxlength="8000" placeholder="What should it do?"
+              autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false"></textarea>
+          </label>
+          <label class="field">Name <span class="optional">optional</span>
+            <input id="new-name" maxlength="200" placeholder="Generated from the workspace"
+              autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <p id="new-error" class="form-error" hidden></p>
+          <div class="sheet-actions">
+            <button type="button" id="new-cancel" class="secondary">Cancel</button>
+            <button type="submit" id="new-create" class="primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

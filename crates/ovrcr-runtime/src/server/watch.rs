@@ -95,7 +95,9 @@ impl ServerState {
 
     /// The watcher tick: republish only on a real change.
     pub(super) fn poll_settings(&self) -> bool {
-        self.reload_and_publish(false)
+        let changed = self.reload_and_publish(false);
+        self.reconcile_remote();
+        changed
     }
 
     /// Republish the settings reading, and the quota rows that follow
@@ -105,6 +107,7 @@ impl ServerState {
         let changed = self.reload_settings(force);
         if changed {
             self.publish_settings();
+            self.reconcile_remote();
             let now = self.quotas.lock().unwrap().clone();
             if now != quotas {
                 // Even the default: turning quota off returns to it.

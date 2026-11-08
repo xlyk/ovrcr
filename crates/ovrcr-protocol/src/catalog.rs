@@ -4,8 +4,8 @@
 //! It does not hold the effective value. See ADR 0007.
 use crate::{
     AgentModelPolicy, DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF,
-    ReadySoundChoice, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow, SettingSource, Settings,
-    TITLES_OFF, ThemeId,
+    REMOTE_OFF, ReadySoundChoice, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow,
+    SettingSource, Settings, TITLES_OFF, ThemeId,
 };
 use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use serde::Serialize;
@@ -95,6 +95,16 @@ const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessio
 const THEME_ABOUT: &[&str] = &[
     "80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the default (alias dark); Catppuccin Latte also accepts light.",
     "Changing theme updates the Dashboard immediately; the choice persists in dashboard.toml.",
+];
+
+const REMOTE_ABOUT: &[&str] = &[
+    "Starts the loopback gateway with the Server when enabled; the choice persists across restarts.",
+    "A phone reaches it through Tailscale Serve; the gateway itself binds 127.0.0.1 only.",
+];
+
+const REMOTE_LOGIN_ABOUT: &[&str] = &[
+    "Only requests carrying this Tailscale login from Serve are accepted when the Host is not loopback.",
+    "Empty keeps the gateway loopback-only.",
 ];
 
 const STATE_DB_ABOUT: &[&str] =
@@ -260,7 +270,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 32] = [
+const CATALOG: [Entry; 35] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -652,6 +662,39 @@ const CATALOG: [Entry; 32] = [
         },
         show_off: |_| false,
     },
+    Entry {
+        path: "remote.enabled",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Server,
+        group: "Remote",
+        label: "Remote web server",
+        off_state: Some(REMOTE_OFF),
+        about: REMOTE_ABOUT,
+        value: |settings| display(&settings.remote.enabled),
+        show_off: |settings| !settings.remote.enabled,
+    },
+    Entry {
+        path: "remote.port",
+        shape: Shape::Typed("a TCP port from 1024 to 65535"),
+        owner: SettingOwner::Server,
+        group: "Remote",
+        label: "Port",
+        off_state: None,
+        about: &[],
+        value: |settings| Some(settings.remote.port.to_string()),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "remote.login",
+        shape: Shape::Text("a Tailscale login, or empty for loopback only"),
+        owner: SettingOwner::Server,
+        group: "Remote",
+        label: "Tailscale login",
+        off_state: None,
+        about: REMOTE_LOGIN_ABOUT,
+        value: |settings| settings.remote.login.clone(),
+        show_off: |_| false,
+    },
 ];
 
 #[cfg(test)]
@@ -702,6 +745,9 @@ mod tests {
                 "delegation.default_model",
                 "delegation.max_live_children",
                 "delegation.max_execution_attempts",
+                "remote.enabled",
+                "remote.port",
+                "remote.login",
             ]
         );
         let groups: Vec<_> = entries().iter().map(|entry| entry.group).collect();
@@ -718,7 +764,8 @@ mod tests {
                 "Agents",
                 "Remembered launches",
                 "Operator",
-                "Delegation"
+                "Delegation",
+                "Remote"
             ]
         );
         assert!(groups.windows(2).all(|pair| {
@@ -823,6 +870,7 @@ mod tests {
                 ("title_model", TITLES_OFF),
                 ("quota.claude.probe", CLAUDE_PROBE_DESCRIPTION),
                 ("quota.cursor.dashboard", CURSOR_QUOTA_DESCRIPTION),
+                ("remote.enabled", REMOTE_OFF),
             ]
         );
     }
@@ -945,6 +993,7 @@ mod tests {
             match entry.shape {
                 Shape::Path(_)
                     if entry.path.ends_with(".home") || entry.path.ends_with("state_db") => {}
+                Shape::Text(_) if entry.path == "remote.login" => {}
                 _ => assert!(
                     entry.value(&settings).is_some(),
                     "{} produced no value",

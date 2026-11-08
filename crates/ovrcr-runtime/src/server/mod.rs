@@ -51,6 +51,7 @@ mod operator_tests;
 mod outbound;
 mod quota;
 mod quota_probe;
+mod remote;
 mod reporting_queue;
 mod startup;
 mod title;
@@ -273,6 +274,7 @@ pub struct ServerState {
     quotas: Mutex<ovrcr_protocol::QuotaSnapshot>,
     quota_refresh: Mutex<quota::Refresh>,
     settings: Mutex<watch::Watched>,
+    remote: Mutex<remote::Supervisor>,
     pub(crate) retained: parking_lot::Mutex<SessionStore>,
     observations: parking_lot::Mutex<HashMap<(String, String), CheckoutObservation>>,
     pub mutation_lock: Mutex<()>,
@@ -562,6 +564,35 @@ impl ServerState {
             None => text,
         };
         Ok((size, text))
+    }
+
+    pub fn read_screen(
+        &self,
+        id: SessionId,
+        start_row: u32,
+        rows: u16,
+        cols: u16,
+    ) -> Result<ovrcr_protocol::ScreenWindow> {
+        if rows == 0 || rows > ovrcr_protocol::MAX_SCREEN_WINDOW_ROWS {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "rows must be between 1 and {}",
+                    ovrcr_protocol::MAX_SCREEN_WINDOW_ROWS
+                ),
+            ));
+        }
+        if cols == 0 || cols > ovrcr_protocol::MAX_SCREEN_WINDOW_COLS {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "cols must be between 1 and {}",
+                    ovrcr_protocol::MAX_SCREEN_WINDOW_COLS
+                ),
+            ));
+        }
+        let session = self.session_for_control(id)?;
+        session.screen_window(start_row, rows, cols)
     }
 
     pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
@@ -1763,6 +1794,7 @@ impl ServerState {
             quotas: Mutex::new(ovrcr_protocol::QuotaSnapshot::default()),
             quota_refresh: Mutex::default(),
             settings: Mutex::new(watch::Watched::empty()),
+            remote: Mutex::new(remote::Supervisor::default()),
             socket: crate::config::default_socket_path(&registry_path),
             registry_path,
             registry: Mutex::new(Registry::default()),

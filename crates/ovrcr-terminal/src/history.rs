@@ -58,45 +58,15 @@ impl FrozenHistory {
         if rows > PAGE_ROWS || cols > PAGE_COLS {
             bail!("history page exceeds protocol limits");
         }
-        let end_row = start_row
-            .checked_add(u32::from(rows))
-            .ok_or_else(|| anyhow::anyhow!("history row range overflows"))?;
-        let end_col = start_col
-            .checked_add(cols)
-            .ok_or_else(|| anyhow::anyhow!("history column range overflows"))?;
-        let total_rows = self.opened.total_rows;
-        if start_row > total_rows {
-            bail!("history row start is out of bounds");
-        }
-        let returned_end = end_row.min(total_rows);
-        let history_rows = self.opened.history_rows;
-        let mut output = Vec::with_capacity((returned_end - start_row) as usize);
-        for row in start_row..returned_end {
-            let visible_row = if row < history_rows {
-                self.screen
-                    .set_scrollback(usize::try_from(history_rows - row)?);
-                0
-            } else {
-                self.screen.set_scrollback(0);
-                u16::try_from(row - history_rows)?
-            };
-            let width = physical_width(&self.screen, visible_row);
-            let cells = if start_col >= width {
-                Vec::new()
-            } else {
-                let end = end_col.min(width);
-                (start_col..end)
-                    .filter_map(|col| self.screen.cell(visible_row, col))
-                    .map(history_cell)
-                    .collect()
-            };
-            output.push(HistoryRow {
-                width,
-                cells,
-                wrapped: self.screen.row_wrapped(visible_row),
-            });
-        }
-        self.screen.set_scrollback(0);
+        let output = page_rows(
+            &mut self.screen,
+            self.opened.history_rows,
+            self.opened.total_rows,
+            start_row,
+            rows,
+            start_col,
+            cols,
+        )?;
         Ok(HistoryRows {
             session: self.opened.session,
             snapshot: self.opened.snapshot,
@@ -105,6 +75,60 @@ impl FrozenHistory {
             rows: output,
         })
     }
+}
+
+/// Page styled cells out of a screen's retained scrollback plus visible rows. Rows are
+/// addressed from the oldest retained scrollback row. The viewport is always restored to
+/// the live screen, including on error.
+pub fn page_rows(
+    screen: &mut vt100::Screen,
+    history_rows: u32,
+    total_rows: u32,
+    start_row: u32,
+    rows: u16,
+    start_col: u16,
+    cols: u16,
+) -> Result<Vec<HistoryRow>> {
+    let result = (|| -> Result<Vec<HistoryRow>> {
+        let end_row = start_row
+            .checked_add(u32::from(rows))
+            .ok_or_else(|| anyhow::anyhow!("screen row range overflows"))?;
+        let end_col = start_col
+            .checked_add(cols)
+            .ok_or_else(|| anyhow::anyhow!("screen column range overflows"))?;
+        if start_row > total_rows {
+            bail!("screen row start is out of bounds");
+        }
+        let returned_end = end_row.min(total_rows);
+        let mut output = Vec::with_capacity((returned_end - start_row) as usize);
+        for row in start_row..returned_end {
+            let visible_row = if row < history_rows {
+                screen.set_scrollback(usize::try_from(history_rows - row)?);
+                0
+            } else {
+                screen.set_scrollback(0);
+                u16::try_from(row - history_rows)?
+            };
+            let width = physical_width(screen, visible_row);
+            let cells = if start_col >= width {
+                Vec::new()
+            } else {
+                let end = end_col.min(width);
+                (start_col..end)
+                    .filter_map(|col| screen.cell(visible_row, col))
+                    .map(history_cell)
+                    .collect()
+            };
+            output.push(HistoryRow {
+                width,
+                cells,
+                wrapped: screen.row_wrapped(visible_row),
+            });
+        }
+        Ok(output)
+    })();
+    screen.set_scrollback(0);
+    result
 }
 
 fn physical_width(screen: &vt100::Screen, row: u16) -> u16 {
@@ -156,6 +180,28 @@ fn history_color(color: vt100::Color) -> HistoryColor {
 mod tests {
     use super::*;
     use ovrcr_protocol::HISTORY_ROWS;
+    #[test]
+    fn page_rows_reads_scrollback_then_visible_rows_and_restores_the_view() {
+        let mut parser = vt100::Parser::new(2, 6, HISTORY_ROWS);
+        parser.process(b"\x1b[31mAA\x1b[0m\r\nBB\r\nCC\r\nDD");
+        let mut screen = parser.screen().clone();
+        screen.set_scrollback(usize::MAX);
+        let history_rows = u32::try_from(screen.scrollback()).unwrap();
+        assert_eq!(history_rows, 2);
+        screen.set_scrollback(0);
+
+        let rows = page_rows(&mut screen, history_rows, history_rows + 2, 0, 2, 0, 6).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].cells[0].text, "A");
+        assert_eq!(rows[0].cells[0].fg, HistoryColor::Indexed(1));
+        assert_eq!(rows[1].cells[0].text, "B");
+
+        let visible = page_rows(&mut screen, history_rows, history_rows + 2, 2, 2, 0, 6).unwrap();
+        assert_eq!(visible[0].cells[0].text, "C");
+        assert_eq!(visible[1].cells[0].text, "D");
+        assert_eq!(screen.scrollback(), 0);
+    }
+
     #[test]
     fn history_retention_is_frozen_and_evicts_oldest() {
         let mut parser = vt100::Parser::new(2, 12, HISTORY_ROWS);

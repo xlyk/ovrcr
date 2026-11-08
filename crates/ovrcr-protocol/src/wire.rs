@@ -11,6 +11,9 @@ pub const HISTORY_ROWS: usize = 512;
 pub const PAGE_ROWS: u16 = 16;
 pub const PAGE_COLS: u16 = 128;
 pub const PAGE_BYTES: usize = 128 * 1024;
+/// Bounds for one read-only screen window (mobile/remote clients).
+pub const MAX_SCREEN_WINDOW_ROWS: u16 = 128;
+pub const MAX_SCREEN_WINDOW_COLS: u16 = 256;
 
 /// Upper bound on a pane's terminal size. A pane beyond this allocates an
 /// oversized `vt100::Screen` and PTY before the resulting frame is found to
@@ -61,6 +64,32 @@ pub struct HistoryRows {
     pub snapshot: HistorySnapshotId,
     pub start_row: u32,
     pub start_col: u16,
+    pub rows: Vec<HistoryRow>,
+}
+
+/// Cursor in visible-screen coordinates. `row` is relative to the live screen, not the
+/// window, so a scrollback window never carries a cursor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenCursor {
+    pub row: u16,
+    pub col: u16,
+    pub hidden: bool,
+}
+
+/// A read-only window of one session's screen and retained scrollback. Rows are addressed
+/// from the oldest retained scrollback row (zero) through the live screen, and carry the
+/// same styled cells History uses. Control may request this; it owns no seat and changes
+/// no geometry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenWindow {
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub size: TerminalSize,
+    pub history_rows: u32,
+    pub total_rows: u32,
+    pub start_row: u32,
+    pub alternate_screen: bool,
+    pub cursor: Option<ScreenCursor>,
     pub rows: Vec<HistoryRow>,
 }
 
@@ -620,6 +649,13 @@ pub enum Request {
     /// Reconcile the bounded current-Server intent set after a Dashboard reconnect.
     ReconcileInitialPromptIntents,
     CreateAgentSessionWithPrompt(InitialPromptLaunchRequest),
+    /// Read-only screen window: live screen plus retained scrollback. Control is allowed.
+    ReadScreen {
+        session: SessionId,
+        start_row: u32,
+        rows: u16,
+        cols: u16,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -712,6 +748,7 @@ pub enum Response {
     Transcript(TranscriptPage),
     InitialPromptIntent(InitialPromptIntentId),
     InitialPromptIntents(Vec<InitialPromptIntentSnapshot>),
+    ScreenWindow(Box<ScreenWindow>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1464,6 +1501,15 @@ mod wire_snapshot {
                     prompt: "marker\ncontinued".into(),
                 }),
             ),
+            (
+                "ReadScreen",
+                Request::ReadScreen {
+                    session: SessionId(1),
+                    start_row: 5,
+                    rows: 2,
+                    cols: 3,
+                },
+            ),
         ]
     }
 
@@ -1627,6 +1673,34 @@ mod wire_snapshot {
                     message: Some("not started".into()),
                     delivery: None,
                 }]),
+            ),
+            (
+                "ScreenWindow",
+                Response::ScreenWindow(Box::new(crate::ScreenWindow {
+                    session: SessionId(1),
+                    run: SessionRunId(4),
+                    size: TerminalSize { rows: 24, cols: 80 },
+                    history_rows: 5,
+                    total_rows: 29,
+                    start_row: 5,
+                    alternate_screen: false,
+                    cursor: Some(crate::ScreenCursor {
+                        row: 3,
+                        col: 7,
+                        hidden: false,
+                    }),
+                    rows: vec![HistoryRow {
+                        width: 2,
+                        cells: vec![HistoryCell {
+                            text: "hi".into(),
+                            width: 1,
+                            fg: HistoryColor::Indexed(4),
+                            bg: HistoryColor::Default,
+                            attributes: 0,
+                        }],
+                        wrapped: false,
+                    }],
+                })),
             ),
         ]
     }
@@ -3876,13 +3950,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044a017301630168016c0104",
+            "2a044b017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044a017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044b017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3903,6 +3977,7 @@ mod wire_snapshot {
             "Request::CreateAgentSessionWithPrompt",
             "412431323334353637382d313233342d343233342d383233342d3132333435363738396162630101700177016e0106636c61756465010006636c617564650106636c61756465000000106d61726b65720a636f6e74696e756564",
         ),
+        ("Request::ReadScreen", "4201050203"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -3931,18 +4006,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044a0000"),
+        ("Response::NotificationNavigation", "0d044b0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044a017301630168016c0104",
+            "0e01016e044b017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044a017301630168016c0164",
+            "0f010708090101690101044b017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044a010708090101690101044a017301630168016c0164",
+            "10044b010708090101690101044b017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -3955,6 +4030,10 @@ mod wire_snapshot {
         (
             "Response::InitialPromptIntents",
             "1e012431323334353637382d313233342d343233342d383233342d313233343536373839616263010301700177016e0106636c61756465000001066d61726b657200010b6e6f74207374617274656400",
+        ),
+        (
+            "Response::ScreenWindow",
+            "1f01041850051d050001030700010201026869010104000000",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
         ("ServerEvent::Output", "010104030107"),
@@ -3969,7 +4048,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -3978,7 +4057,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044a017301630168016c0104",
+            "08016e044b017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

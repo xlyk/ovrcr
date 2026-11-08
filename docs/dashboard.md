@@ -1102,8 +1102,9 @@ every setting in one scrolling list under the group headers **Alerts**
 `picker_roots`), **Titles**
 (`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
 **Remembered launches** (`launch_choices`, one row per project), **Operator**
-(`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`) and
-**Delegation** (`delegation.*`).
+(`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`),
+**Delegation** (`delegation.*`) and **Remote** (`remote.enabled`,
+`remote.port`, `remote.login`).
 
 The view's title lists `↑/↓ move · Enter edit · r reset · / filter · Esc close`.
 Each row shows its label, effective value (`unset` for an empty optional value)
@@ -1127,6 +1128,15 @@ confirmation.
 | `/` | Filter rows across groups with the palette's word filter; Enter keeps it, Escape clears it |
 | `Escape` | Cancel the current edit, else clear the filter, else close |
 | `Ctrl-g` | Cancel the current edit and close Settings |
+
+**Remote** is the optional loopback web UI. `remote.enabled` is a consent
+setting: turning it on starts a supervised `ovrcr remote serve` child, and
+turning it off stops the child. `remote.port` and `remote.login` are passed to
+the child; changing either restarts it. The child runs outside the Server's
+threads, writes `remote.log` in the instance directory, and reports start,
+stop and failure lines as `remote` Events. It never takes the Dashboard seat or
+resizes a PTY. The page's **+** starts a session from a registered workspace and
+a detected agent; that is a Control `CreateSession`, not a Dashboard action.
 
 Enter edits with the palette's field kinds: a boolean saves the other value at
 once; `automatic_local_terminals` and a remembered launch open a pick list

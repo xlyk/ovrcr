@@ -84,6 +84,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
 - 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.
 - Pause / resume via SIGSTOP / SIGCONT on the session process group.
 - CLI with `--json` on every resource command.
+- Optional remote web UI: `ovrcr remote serve`, started from `[remote] enabled` in Settings, with the bundled PWA and a Tailscale login gate. Start sessions on a registered workspace with a detected agent and an optional prompt, then watch, reply, pause, or kill.
 - Optional: scheduled Pi tasks in fresh worktrees; macOS Bridge notifications.
 - Theme pick list in Settings (or `theme` in `dashboard.toml`). Hot-swaps without restart. Does not fix your agents.
 

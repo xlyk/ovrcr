@@ -112,6 +112,9 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::Service(args) => {
             ovrcr::service::run(args.command, json_output).map_err(RuntimeError::internal)
         }
+        Command::Remote(args) => {
+            ovrcr::remote::run(args, json_output).map_err(RuntimeError::internal)
+        }
         Command::TaskRunner {
             run_dir,
             pi_executable,
@@ -299,6 +302,7 @@ fn format_event(event: &ovrcr::protocol::Event) -> String {
         ovrcr::protocol::EventComponent::Titles => "titles",
         ovrcr::protocol::EventComponent::Settings => "settings",
         ovrcr::protocol::EventComponent::Quota => "quota",
+        ovrcr::protocol::EventComponent::Remote => "remote",
     };
     let subject = event.subject.as_deref().unwrap_or("-");
     format!("{time}  {component:<8}  {subject:<8}  {}", event.message)

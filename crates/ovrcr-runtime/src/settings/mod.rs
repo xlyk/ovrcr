@@ -337,6 +337,32 @@ impl Loader<'_> {
             }
             self.unknown(quota, "quota.");
         }
+        if let Some(mut remote) = self.take::<toml::Table>(table, "remote") {
+            self.value(&mut remote, "remote.enabled", &mut settings.remote.enabled);
+            if let Some(port) = self.take::<i64>(&mut remote, "remote.port") {
+                match u16::try_from(port).ok().filter(|port| *port >= 1024) {
+                    Some(port) => self.accept("remote.port", &mut settings.remote.port, port),
+                    None => self.finding(
+                        "remote.port",
+                        "expected an integer from 1024 to 65535".into(),
+                    ),
+                }
+            }
+            if let Some(login) = self.take::<String>(&mut remote, "remote.login") {
+                let login = login.trim().to_owned();
+                if login.len() > 320 || login.chars().any(char::is_control) {
+                    self.finding(
+                        "remote.login",
+                        "expected a Tailscale login or an empty string".into(),
+                    );
+                } else if login.is_empty() {
+                    self.accept("remote.login", &mut settings.remote.login, None);
+                } else {
+                    self.accept("remote.login", &mut settings.remote.login, Some(login));
+                }
+            }
+            self.unknown(remote, "remote.");
+        }
         if let Some(mut delegation) = self.take::<toml::Table>(table, "delegation") {
             if let Some(value) =
                 self.take::<u64>(&mut delegation, "delegation.progress_deadline_ms")
@@ -982,6 +1008,11 @@ default_harness = "pi"
 default_model = "test/model"
 max_live_children = 6
 max_execution_attempts = 2
+
+[remote]
+enabled = true
+port = 8787
+login = "owner@example.com"
 "#;
 
     #[test]
@@ -1071,6 +1102,9 @@ max_execution_attempts = 2
         );
         assert_eq!(settings.delegation.max_live_children, 6);
         assert_eq!(settings.delegation.max_execution_attempts, Some(2));
+        assert!(settings.remote.enabled);
+        assert_eq!(settings.remote.port, 8787);
+        assert_eq!(settings.remote.login.as_deref(), Some("owner@example.com"));
         for row in &report.rows {
             let expected = if row.key == "quota.grok.home" {
                 SettingSource::Default
@@ -1162,6 +1196,7 @@ max_execution_attempts = 2
                     "quota.cursor.dashboard",
                     ovrcr_protocol::CURSOR_QUOTA_DESCRIPTION
                 ),
+                ("remote.enabled", ovrcr_protocol::REMOTE_OFF),
             ]
         );
         let keys: Vec<_> = report.rows.iter().map(|row| row.key.as_str()).collect();
@@ -1200,6 +1235,9 @@ max_execution_attempts = 2
                 "delegation.default_model",
                 "delegation.max_live_children",
                 "delegation.max_execution_attempts",
+                "remote.enabled",
+                "remote.port",
+                "remote.login",
             ]
         );
     }

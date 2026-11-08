@@ -3,7 +3,8 @@ use clap::Parser;
 use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
 use ovrcr::freshness;
 use ovrcr::protocol::{
-    AgentProvider, BranchRequest, CreateSessionRequest, ErrorCode, Request, Response, SessionKind,
+    AgentProvider, BranchRequest, ConversationReference, CreateSessionRequest, ErrorCode, Request,
+    Response, SessionKind, TranscriptEntry,
 };
 use ovrcr::session::{SessionId, SessionSummary};
 use serde_json::json;
@@ -205,6 +206,73 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                     } else {
                         print!("{text}");
                         std::io::stdout().flush().map_err(RuntimeError::internal)
+                    }
+                }
+                response => Err(unexpected_response(response)),
+            }
+        }
+        TerminalCommand::Screen {
+            id,
+            start_row,
+            rows,
+            cols,
+        } => match request_without_start(Request::ReadScreen {
+            session: SessionId(id),
+            start_row,
+            rows,
+            cols,
+        })? {
+            Response::ScreenWindow(window) => {
+                if json_output {
+                    print_json(&serde_json::to_value(&window).map_err(RuntimeError::internal)?)
+                } else {
+                    for row in &window.rows {
+                        let text: String =
+                            row.cells.iter().map(|cell| cell.text.as_str()).collect();
+                        println!("{text}");
+                    }
+                    Ok(())
+                }
+            }
+            response => Err(unexpected_response(response)),
+        },
+        TerminalCommand::Transcript {
+            id,
+            before,
+            identity,
+        } => {
+            let session = online_session(id)?;
+            let identity: Option<ConversationReference> = match identity {
+                Some(raw) => Some(serde_json::from_str(&raw).map_err(|error| {
+                    RuntimeError::new(
+                        ErrorCode::InvalidRequest,
+                        format!("invalid identity JSON: {error}"),
+                    )
+                })?),
+                None => None,
+            };
+            match request_without_start(Request::Transcript {
+                session: session.id,
+                run: session.run,
+                identity,
+                before,
+            })? {
+                Response::Transcript(page) => {
+                    if json_output {
+                        print_json(&serde_json::to_value(&page).map_err(RuntimeError::internal)?)
+                    } else {
+                        for entry in &page.entries {
+                            match entry {
+                                TranscriptEntry::User(text) => println!("You: {text}\n"),
+                                TranscriptEntry::Assistant(text) => {
+                                    println!("Assistant: {text}\n");
+                                }
+                                TranscriptEntry::Tool { name, input } => {
+                                    println!("[tool {name}] {input}\n");
+                                }
+                            }
+                        }
+                        Ok(())
                     }
                 }
                 response => Err(unexpected_response(response)),

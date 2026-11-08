@@ -20710,18 +20710,16 @@ fn transcript_reads_only_the_retained_conversation_and_rejects_stale_pages() {
             .unwrap(),
             Response::AgentOperation(AgentOperationResult::ConversationRetained)
         );
-        assert!(matches!(
-            fixture.request(Request::Transcript {
-                session: summary.id,
-                run: summary.run,
-                identity: None,
-                before: None,
-            }),
-            Response::Error {
-                code: ErrorCode::InvalidRequest,
-                ..
-            }
-        ));
+        // Control clients may read the current page; the web gateway relies on it.
+        let Response::Transcript(control_page) = fixture.request(Request::Transcript {
+            session: summary.id,
+            run: summary.run,
+            identity: None,
+            before: None,
+        }) else {
+            panic!("Control transcript denied");
+        };
+        assert_eq!(control_page.identity, reference);
         let mut read = |run, identity, before| {
             request_id += 1;
             dashboard_request(

@@ -35,6 +35,7 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
     ("quota.codex.home", Kind::Str),
     ("quota.grok.home", Kind::Str),
     ("quota.cursor.state_db", Kind::Str),
+    ("remote.login", Kind::Str),
 ];
 
 /// Enum settings: how one spelling sits in the document, and the documented
@@ -96,6 +97,7 @@ const SAMPLES: &[(&str, &str)] = &[
     ),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
     ("launch_choices", "{ p = { kind = \"Terminal\" } }"),
+    ("remote.login", "\"owner@example.com\""),
 ];
 
 /// One declared setting as the matrix sees it.
@@ -408,6 +410,9 @@ fn matrix_covers_every_declared_setting() {
             "delegation.default_model",
             "delegation.max_live_children",
             "delegation.max_execution_attempts",
+            "remote.enabled",
+            "remote.port",
+            "remote.login",
         ]
     );
     let kinds: Vec<_> = settings.iter().map(|setting| setting.kind).collect();
@@ -417,7 +422,7 @@ fn matrix_covers_every_declared_setting() {
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
             Bool, Str, Array, Array, Table, Str, Str, Str, Integer, Bool, Array, Array, Str, Str,
-            Integer, Integer,
+            Integer, Integer, Bool, Integer, Str,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

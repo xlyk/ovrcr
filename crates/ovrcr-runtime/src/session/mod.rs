@@ -1021,6 +1021,70 @@ impl Session {
         terminal.parser.screen().state_formatted()
     }
 
+    /// Read-only window of the live screen and retained scrollback. `start_row` counts
+    /// from the oldest retained scrollback row. Does not resize, focus, or write.
+    pub fn screen_window(
+        &self,
+        start_row: u32,
+        rows: u16,
+        cols: u16,
+    ) -> Result<ovrcr_protocol::ScreenWindow> {
+        let id = self.id();
+        let run = self.run();
+        let mut terminal = self.terminal.lock().unwrap();
+        let screen = terminal.parser.screen_mut();
+        let (visible_rows, visible_cols) = screen.size();
+        let alternate_screen = screen.alternate_screen();
+        let history_rows = if alternate_screen {
+            0
+        } else {
+            screen.set_scrollback(usize::MAX);
+            let history_count = u32::try_from(screen.scrollback())
+                .map_err(|_| anyhow::anyhow!("scrollback row count exceeds protocol bounds"))?;
+            screen.set_scrollback(0);
+            history_count
+        };
+        let total_rows = history_rows
+            .checked_add(u32::from(visible_rows))
+            .ok_or_else(|| anyhow::anyhow!("screen row count exceeds protocol bounds"))?;
+        let cols = cols.min(visible_cols).max(1);
+        let window_rows = ovrcr_terminal::history::page_rows(
+            screen,
+            history_rows,
+            total_rows,
+            start_row,
+            rows,
+            0,
+            cols,
+        )?;
+        let cursor = if !alternate_screen
+            && u64::from(start_row) + u64::from(rows) > u64::from(history_rows)
+        {
+            let (row, col) = screen.cursor_position();
+            Some(ovrcr_protocol::ScreenCursor {
+                row,
+                col,
+                hidden: screen.hide_cursor(),
+            })
+        } else {
+            None
+        };
+        Ok(ovrcr_protocol::ScreenWindow {
+            session: id,
+            run,
+            size: ovrcr_protocol::TerminalSize {
+                rows: visible_rows,
+                cols,
+            },
+            history_rows,
+            total_rows,
+            start_row,
+            alternate_screen,
+            cursor,
+            rows: window_rows,
+        })
+    }
+
     pub fn terminal_text(&self) -> (TerminalSize, String) {
         let mut terminal = self.terminal.lock().unwrap();
         terminal.parser.screen_mut().set_scrollback(0);
