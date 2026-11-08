@@ -1,0 +1,61 @@
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                                             [Commands] [Menu]
+ OPERATOR ───────────────────────── [+]│local (#1)  shell · 0m                                                                                               pid 39407
+ CONSIGINT ────────────────────────────│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  󰘬 main                          root │consigint ›
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │
+Codex · checking                       │
+ Grok   wk ━━━━━━━━━━━━━━━━──────  72% │
+Cursor · usage off                     │
+                                       │
+Claude and Codex status off — :connect to set up
