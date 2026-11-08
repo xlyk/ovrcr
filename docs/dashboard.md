@@ -920,12 +920,15 @@ resume adapters, with the limitations below. Other providers remain unavailable.
 Workspace removal remains a separate action.
 
 Claude recovery retains the exact UUID, provider history path, executable and
-non-secret configuration references. Missing history, executable, recorded
-working directory or matching configuration blocks recovery with a diagnostic;
-Retry never starts fresh. An observed unsupported or ambiguous Claude
+non-secret configuration references. Missing history, executable or matching
+configuration opens Claude's native resume picker instead of failing; the UUID
+stays retained, so a later Retry still attempts the exact conversation. A missing
+recorded working directory still blocks with a diagnostic because the shell cannot
+start. An observed unsupported or ambiguous Claude
 conversation transition (`identity_transition_unavailable`, including bare fork
-without a leave of the current conversation) permanently disables recovery for
-that row, retaining its old UUID as context. Supported clear / in-process resume /
+without a leave of the current conversation) permanently disables exact recovery
+for that row, retaining its old UUID as context; an explicit reopen still offers
+Claude's native picker. Supported clear / in-process resume /
 foreground-branch replacements update the retained reference instead.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
 Inventory restoration never launches a process. First display in a visible pane
@@ -935,9 +938,11 @@ recovery; same-boot or unknown ownership still requires explicit confirmation
 that old agents and descendants stopped. Live runs are reused. Shells, deliberately
 stopped/exited rows and newly unarchived rows do not launch automatically.
 
-Missing prerequisites or full live capacity leave a diagnostic and **Retry resume
-conversation** in the command palette. Fix the prerequisite, then explicitly retry;
-redraws and reconnects do not retry failed launches. Hidden panes and sidebar rows
+Full live capacity leaves a diagnostic and **Retry resume conversation** in the
+command palette. A reference that cannot be certified opens the provider's native
+resume picker (Claude, Codex, Pi and Oh My Pi); providers without a picker keep the
+diagnostic. Fix capacity, then explicitly retry; redraws and reconnects do not retry
+failed launches. Hidden panes and sidebar rows
 do not trigger recovery. Native GUI acceptance of this automatic path is tracked
 separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
 
@@ -955,7 +960,9 @@ switches cannot update the reference without a supported hook. See
 Pi and Oh My Pi retain the exact native session ID and file from their managed
 extension. History must remain unchanged by external processes during reopening,
 from prelaunch validation until native attachment. Concurrent deletion or replacement
-can cause a native fresh session and is outside the recovery guarantee.
+can cause a native fresh session and is outside the recovery guarantee. A reference
+that cannot be validated at reopen opens the provider's native resume picker; the
+reason is logged and the reference stays retained for a later exact retry.
 Accepted conversation switches replace the reference, including switches
 back to an earlier conversation. An ephemeral conversation replaces the old
 reference but cannot be resumed. Unsupported launch configuration leaves resume

@@ -139,8 +139,10 @@ Retained rows stay selectable without allocating a parser on the server or
 inventing live timing. Reopen targets the existing row and expected run; Retry
 never implies ownership acknowledgement. Same-boot or unverifiable recovery
 requires a separate explicit confirmation that old agents and background
-processes have stopped. Agent rows without a conversation reference open the supported provider's native
-resume picker. Unknown providers and invalidated references remain unavailable.
+processes have stopped. Agent rows without a conversation reference, or whose
+recorded reference cannot be certified, open the provider's native resume picker
+for Claude, Codex, Pi and Oh My Pi. Unknown providers and references without a
+native picker keep the unavailable notice.
 
 
 Operator conversations occupy one-line rows above Projects in the existing sidebar.

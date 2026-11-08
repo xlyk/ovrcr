@@ -124,6 +124,38 @@ fn lifecycle_error_with_hierarchy(
     })
 }
 
+/// The shell command for an Agent reopen. A validating exact reference wins;
+/// when it cannot be built, a provider with a native picker opens its own menu
+/// instead of leaving the row stopped with a dead end. Providers without a
+/// picker keep the original failure.
+fn agent_resume_command(
+    id: SessionId,
+    name: &str,
+    reference: Option<&ovrcr_protocol::ConversationReference>,
+    fallback: bool,
+) -> Result<(String, bool)> {
+    match reference {
+        Some(reference) => match crate::recovery::resume_argv(name, reference) {
+            Ok(argv) => Ok((crate::recovery::terminal_command(&argv)?, true)),
+            Err(error) if fallback && crate::recovery::has_picker(name) => {
+                eprintln!(
+                    "reopen session {}: exact conversation unavailable ({error:#}); opening the native resume picker",
+                    id.0
+                );
+                Ok((
+                    crate::recovery::terminal_command(&crate::recovery::picker_argv(name)?)?,
+                    false,
+                ))
+            }
+            Err(error) => Err(error),
+        },
+        None => Ok((
+            crate::recovery::terminal_command(&crate::recovery::picker_argv(name)?)?,
+            false,
+        )),
+    }
+}
+
 pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
 pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
@@ -1470,7 +1502,8 @@ impl ServerState {
         acknowledge_stopped: bool,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
-        self.reopen_session_locked(id, expected_run, acknowledge_stopped)
+        // An explicit reopen may fall back to the provider's native picker.
+        self.reopen_session_locked(id, expected_run, acknowledge_stopped, true)
     }
 
     pub fn recover_session(
@@ -1486,7 +1519,8 @@ impl ServerState {
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
         // A duplicate may observe its successor, but must never launch that successor again.
         if summary.run != expected_run || summary.phase.is_live() {
-            return self.reopen_session_locked(id, expected_run, false);
+            // Automatic recovery never opens a picker the user did not ask for.
+            return self.reopen_session_locked(id, expected_run, false, false);
         }
         if !summary.can_auto_recover() {
             return Err(lifecycle_error(
@@ -1494,7 +1528,7 @@ impl ServerState {
                 "session requires an explicit recovery action",
             ));
         }
-        let result = self.reopen_session_locked(id, expected_run, false);
+        let result = self.reopen_session_locked(id, expected_run, false, false);
         if let Err(error) = &result {
             // Failures before begin_run (including capacity) must also suppress retries
             // across Dashboard reconnects. Spawn failures already record the new run.
@@ -1517,6 +1551,7 @@ impl ServerState {
         id: SessionId,
         expected_run: SessionRunId,
         acknowledge_stopped: bool,
+        fallback_to_picker: bool,
     ) -> Result<SessionSummary> {
         self.reject_if_stopping()?;
         self.reject_archive_lifecycle(id)?;
@@ -1560,10 +1595,22 @@ impl ServerState {
         if summary.phase.is_live() {
             return Ok(summary);
         }
-        if let Some(reason) = summary
+        // A provider that can open its own picker does not need a certified
+        // reference: an unavailable or failed exact reference falls back to the
+        // native menu instead of leaving the row stopped with a dead end.
+        let picker = match &summary.kind {
+            SessionKind::Agent { name } => crate::recovery::has_picker(name),
+            SessionKind::Terminal => false,
+        };
+        let unavailable = summary
             .recovery
             .as_ref()
-            .and_then(|recovery| recovery.unavailable.as_ref())
+            .and_then(|recovery| recovery.unavailable.as_ref());
+        // An unavailable reference is never attempted: an invalidated identity must
+        // not resume exactly. A picker-capable provider goes straight to its menu.
+        let picker_only = unavailable.is_some() && picker && fallback_to_picker;
+        if let Some(reason) = unavailable
+            && !picker_only
         {
             return Err(lifecycle_error(ErrorCode::InvalidRequest, reason.clone()));
         }
@@ -1604,6 +1651,7 @@ impl ServerState {
                     "SHELL is unset; configure a shell before reopening",
                 )
             })?;
+        let mut exact_resume = false;
         let command = match &record.metadata.kind {
             SessionKind::Agent { name } => {
                 let command = if let Some(target) = record
@@ -1620,15 +1668,19 @@ impl ServerState {
                         target.intent.account.name.clone().into(),
                         serde_json::to_string(&target)?.into(),
                     ])
+                    .map(|command| (command, false))
+                } else if picker_only {
+                    crate::recovery::picker_argv(name)
+                        .and_then(|argv| crate::recovery::terminal_command(&argv))
+                        .map(|command| (command, false))
                 } else {
-                    match record.conversation.as_ref() {
-                        Some(reference) => crate::recovery::resume_argv(name, reference),
-                        None => crate::recovery::picker_argv(name),
-                    }
-                    .and_then(|argv| crate::recovery::terminal_command(&argv))
+                    agent_resume_command(id, name, record.conversation.as_ref(), fallback_to_picker)
                 };
                 match command {
-                    Ok(command) => Some(command),
+                    Ok((command, exact)) => {
+                        exact_resume = exact;
+                        Some(command)
+                    }
                     Err(error) => {
                         let message = error.to_string();
                         self.retained
@@ -1664,7 +1716,9 @@ impl ServerState {
                 command
             }
         });
-        if let Some(reference) = record.conversation.as_ref() {
+        // Only an exact resume has a retained native reference to record. A picker
+        // launch has no certified conversation yet.
+        if exact_resume && let Some(reference) = record.conversation.as_ref() {
             self.retained.lock().record_workflow_reopen(
                 id,
                 expected_run,

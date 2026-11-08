@@ -1021,11 +1021,24 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         // The row outlived its process. Enter is the one key everyone tries, so
         // it leads straight to the recovery the palette already offers.
         let recovery = session.recovery.as_ref();
+        let picker = super::palette::native_picker(session);
         let (name, description) = match &session.kind {
-            SessionKind::Agent { .. } if recovery.is_some_and(|r| r.unavailable.is_some()) => (
-                "Resume unavailable",
-                format!("Explain why {target} cannot resume its conversation"),
-            ),
+            SessionKind::Agent { .. }
+                if !picker && recovery.is_none_or(|r| r.unavailable.is_some()) =>
+            {
+                (
+                    "Resume unavailable",
+                    format!("Explain why {target} cannot resume its conversation"),
+                )
+            }
+            SessionKind::Agent { .. }
+                if picker && recovery.is_none_or(|r| r.unavailable.is_some()) =>
+            {
+                (
+                    "Open native resume picker",
+                    format!("Choose a session for {target} in the agent's own resume menu"),
+                )
+            }
             SessionKind::Agent { .. } if recovery.is_some_and(|r| r.failure.is_some()) => (
                 "Retry resume conversation",
                 format!(

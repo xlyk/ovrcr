@@ -87,10 +87,17 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
     }
 }
 
+/// Whether the provider CLI can open a native resume picker without a certified
+/// reference. Providers without one must keep a missing or mismatched reference
+/// a visible failure rather than launching something they cannot recover from.
+pub fn has_picker(name: &str) -> bool {
+    AgentProvider::from_name(name).is_some_and(AgentProvider::has_native_resume_picker)
+}
+
 /// Without a retained identity, let the native agent offer its own history picker.
 pub fn picker_argv(name: &str) -> Result<Vec<OsString>> {
     let provider = AgentProvider::from_name(name)
-        .filter(|provider| supported(*provider))
+        .filter(|provider| provider.has_native_resume_picker())
         .ok_or_else(|| anyhow::anyhow!("Native resume is not available for {name}"))?;
     Ok(vec![
         provider.name().into(),
@@ -171,6 +178,14 @@ mod tests {
             );
         }
         assert!(picker_argv("unrecognized; exit").is_err());
+        // Only providers that really open a picker may receive the fallback.
+        for name in ["hermes", "grok", "cursor-agent", "cursor-cloud", "operator"] {
+            assert!(picker_argv(name).is_err(), "{name}");
+            assert!(!has_picker(name), "{name}");
+        }
+        for name in ["claude", "codex", "pi", "omp"] {
+            assert!(has_picker(name), "{name}");
+        }
         let command = terminal_command(&[
             "/usr/bin/printf".into(),
             "%s".into(),

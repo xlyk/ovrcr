@@ -66,6 +66,16 @@ impl AgentProvider {
                 | AgentProvider::Operator
         )
     }
+
+    /// Whether the CLI opens its native resume picker when the resume flag is
+    /// given without a session argument. These are the providers OVRCR can fall
+    /// back to after an exact reference cannot be launched.
+    pub const fn has_native_resume_picker(self) -> bool {
+        matches!(
+            self,
+            AgentProvider::Claude | AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp
+        )
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SampleQuality {
