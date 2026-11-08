@@ -248,7 +248,7 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
         },
         wait_deadline(),
     )?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x1b[200~FORBIDDEN_BEFORE_TAKEOVER\x1b[201~")?;
     // Passive split/focus/resize/hide affects only view subscriptions. Use the
@@ -345,7 +345,7 @@ fn assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return() ->
             .read_terminal(child)?
             .contains("FORBIDDEN_BEFORE_TAKEOVER")
     );
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"H")?;
     dashboard.wait_for_screen(|screen| screen.contains("Human control"), wait_deadline())?;

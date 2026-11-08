@@ -1150,7 +1150,7 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
         wait_deadline(),
     )?;
     // Ctrl-o in Terminal mode belongs to the program; Ctrl-g then Ctrl-o opens Quick.
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|s| s.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"\x0f")?;
     dashboard.wait_for_screen(
@@ -1939,7 +1939,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     dashboard.wait_for_screen(|screen| ready_headers(screen, 100, 30, 1), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_26 30", wait_deadline())?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(
         |screen| ready_headers(screen, 100, 30, 1) && screen.contains("BROWSE"),
         wait_deadline(),
@@ -2097,7 +2097,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     dashboard
         .wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())
         .context("history dashboard terminal mode")?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard
         .wait_for_screen(
             |screen| {
@@ -2284,7 +2284,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     dashboard.wait_for_screen(|screen| screen.contains("INITIAL_READY"), wait_deadline())?;
     dashboard.send(b"\r")?;
     dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE  Space Menu") && !screen.contains("Terminal mode"),
         wait_deadline(),
@@ -2465,7 +2465,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         sorted_single_key[sorted_single_key.len() * 19 / 20] < Duration::from_millis(100),
         "single-key visible echo exceeded 100ms: {sorted_single_key:?}"
     );
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for(b"BROWSE", wait_deadline())?;
     dashboard.click_visible_text("     - mouse")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
@@ -2479,7 +2479,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         |screen| screen.contains("Terminal mode  Ctrl-g browse"),
         remaining(readiness_deadline),
     )?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE  Space Menu"),
         remaining(readiness_deadline),
@@ -2517,7 +2517,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         resize_ack, 80,
         "rendered resized pane geometry changed unexpectedly"
     );
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(
         |screen| {
             dashboard_header_visible(screen)
@@ -2827,7 +2827,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
-    dashboard.send(b"\r\x07")?;
+    dashboard.send(b"\r\x07\x1b")?;
     dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
 
     dashboard.send(b"p")?;
@@ -2894,7 +2894,7 @@ fn external_pause_resume_and_exit_redraw_the_live_dashboard() -> Result<()> {
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
-    dashboard.send(b"\r\x07")?;
+    dashboard.send(b"\r\x07\x1b")?;
     dashboard.wait_for(b"BROWSE  Space Menu", wait_deadline())?;
 
     let listed = fixture.list()?;
@@ -2980,7 +2980,7 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
 
     // A plain shell never asks for mouse reports, so the same wheel tick over
     // its pane has to reach the dashboard's own history instead of the child.
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.click_visible_text("     - waiting")?;
     dashboard.wait_until(|screen| screen.contains("WAITING_READY"), wait_deadline())?;
@@ -2991,7 +2991,7 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
         |screen| screen.contains("HISTORY · frozen"),
         wait_deadline(),
     )?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.detach()?;
     fixture.shutdown()?;
@@ -3101,7 +3101,7 @@ fn full_screen_program_history_is_quiet_on_wheel_and_explained_on_page_up() -> R
     // requests below reach the Server rather than stopping at a loading pane.
     dashboard.send(b"\r")?;
     dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
-    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     let pane = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
         .into_iter()

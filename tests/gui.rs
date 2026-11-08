@@ -722,7 +722,9 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
             let mut expected = pgids.clone();
             expected.sort_unstable();
             anyhow::ensure!(child_pgids == expected, "CLI reached a different server");
-            terminal.send(b"\x07")?;
+            // Ctrl-g returns to Browse and opens the label picker; close it
+            // before expecting the plain Browse footer.
+            terminal.send(b"\x07\x07")?;
             wait_screen(&terminal, "BROWSE")?;
         }
         Ok(())
@@ -1359,7 +1361,8 @@ fn real_dashboard_cycles_local_policy_and_same_server_provisions_from_saved_sett
     wait_screen(&terminal, "policy-manual")?;
     select_sidebar_session(&mut terminal, "policy-manual")?;
     enter_selected_session(&mut terminal, "POLICY_EXPLICIT")?;
-    terminal.send(b"\x07")?;
+    // Ctrl-g returns to Browse and opens the picker; close it for BROWSE.
+    terminal.send(b"\x07\x07")?;
     wait_screen(&terminal, "BROWSE")?;
     terminal.stop()?;
 
