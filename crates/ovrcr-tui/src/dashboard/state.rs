@@ -763,6 +763,7 @@ impl Dashboard {
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
         self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
+        self.settings_editor.report_published(&report);
         if self.settings_editor.preview_request.is_some()
             && self.settings_editor.preview_theme == Some(self.settings.theme)
         {
@@ -793,6 +794,7 @@ impl Dashboard {
             self.cancel_sidebar_jump();
         }
         self.outer_area = area;
+        self.settings_editor.resize(area);
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -2770,9 +2772,12 @@ impl Dashboard {
                 self.mouse_focused = true;
                 DashboardAction::Redraw
             }
-            Event::Resize(_, _) => {
+            Event::Resize(cols, rows) => {
                 self.cancel_sidebar_jump();
                 self.agent_typing = None;
+                let area = Rect::new(0, 0, cols, rows);
+                self.outer_area = area;
+                self.settings_editor.resize(area);
                 DashboardAction::Redraw
             }
             Event::Paste(_) => DashboardAction::None,
