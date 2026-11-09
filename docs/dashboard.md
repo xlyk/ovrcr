@@ -49,12 +49,27 @@ you are away waits for you. A notice that waited behind it shows next.
 
 ## Operator chat
 
-Browse `o` or the pinned Operator title-bar control opens native chat. `Ctrl-o`
-opens Quick message from every view except Terminal mode. It has its
-own multiline composer and conversation history, independent of terminal panes.
-`Ctrl-g` or `Esc` leaves it for the terminal panes in Browse; every draft stays
-with its conversation for the next `o`.
-Conversations stream concurrently and continue while another view is selected.
+OVRCR has one Operator conversation, run by the installed pi agent. The shared
+sidebar shows one fixed **Operator** row above Projects: its activity glyph and at
+most `1 unread`, with no count, collapse arrow, plus button, child row or close
+control. Browse `o`, that row, or the pinned Operator title-bar control opens the
+conversation with the composer focused. `Ctrl-o` opens Quick message for that same
+conversation from every view except Terminal mode; its composer edits the same
+draft and captures the same workspace/session target for the next message as the
+full view. `Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse,
+keeping the draft; `o` returns to the same history and draft. Reopening never
+resets the conversation: it keeps the draft and re-captures the current selection
+as the target for the next message, and an earlier message's recorded target never
+overwrites that capture. The header reads `Operator · pi` before a model is
+selected and `Operator · pi · provider/id` afterwards.
+
+There is no New, switch or close action: pi compacts the one conversation when it
+needs room. `Ctrl-l` toggles the ordinary Projects sidebar and never reveals a
+conversation list. `Ctrl-x`, or `Ctrl-c` in an empty full composer, stops the exact
+current turn; a busy or stop-unconfirmed conversation keeps a Send draft instead of
+queuing it. Legacy Operator conversations stay on disk but do not appear in the
+Dashboard or the Archived palette.
+
 See [Operator setup and controls](operator.md).
 
 ## Browse keys
@@ -68,7 +83,7 @@ yet (still checking, failed, or every window past its reset) shows a muted
 give way from the end to `…`. Click the line, or press `u`, for the windows,
 states, ages and next checks in the [details](provider-quota.md). That page also
 covers native sources, collection settings, freshness and reset behavior. The
-line hides when the sidebar is too short to keep the Operator heading and three
+line hides when the sidebar is too short to keep the Operator row and three
 tree lines. The tree scrolls above it; sidebar and pane dividers remain
 draggable over their full height.
 
@@ -127,8 +142,8 @@ Kitty keyboard-mode negotiation or a capability response alone does not qualify
 another frontend. Adding one requires native evidence that standalone Control
 press and release plus Ctrl+1–Ctrl+9 reach the application. Command/Super remains
 separate from this gesture. In qualified frontends, the gesture also works from an
-unobscured Operator view when the shared sidebar is already visible; Operator
-conversation rows do not receive Agent labels.
+unobscured Operator view when the shared sidebar is already visible; the
+Operator navigation row never receives Agent labels.
 
 ## Search other running agents
 
@@ -436,8 +451,8 @@ paused session does not count as needing input: it cannot take the answer until
 `r` resumes it. Ready means an [unread response](#unread-responses) from a session
 that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
-session that is both counts once, as needs input. Operator conversations stay
-out; the Operator heading counts their unread replies. The line disappears when
+session that is both counts once, as needs input. The Operator conversation stays
+out; its own navigation row shows its unread reply. The line disappears when
 nothing is left, and stays visible while the quota section compacts when the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
@@ -1102,7 +1117,7 @@ every setting in one scrolling list under the group headers **Alerts**
 `picker_roots`), **Titles**
 (`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
 **Remembered launches** (`launch_choices`, one row per project), **Operator**
-(`operator.provider`, `operator.chat_gpt_model`, `operator.grok_model`),
+(`operator.model`),
 **Delegation** (`delegation.*`) and **Remote** (`remote.enabled`,
 `remote.port`, `remote.login`).
 
@@ -1209,10 +1224,8 @@ command = "grok"
 dashboard = false                 # opt in: experimental personal Cursor dashboard reader
 # state_db = "/absolute/path/to/state.vscdb" # omit for the Cursor desktop default
 
-[operator]                           # defaults for new conversations
-provider = "chat_gpt"                # chat_gpt | grok
-# chat_gpt_model = "model-id"        # optional; choose a subscription model
-# grok_model = "model-id"            # optional; choose a subscription model
+[operator]
+# model = "provider/model"           # optional; unset uses the dedicated pi profile's default
 ```
 
 Every setting takes effect without a restart: the Server checks the file every

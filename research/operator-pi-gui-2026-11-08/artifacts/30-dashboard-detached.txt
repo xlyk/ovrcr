@@ -1,0 +1,22 @@
+OVRCR GUI
+Dashboard exited: Success
+Restart dashboard
+OVRCR • startup
+Connect agent
+status
+Lets OVRCR
+show when your Claude and Codex sessions are working, need you or
+are
+done
+Adds or updates OVRCR hooks in:
+<home>/.claude/settings.json
+<home>/.codex/config.toml
+Your other settings, status line and approvals stay as they are.
+Codex asks you to trust the new hooks the next time it starts.
+Lyl Connect
+OVRCR Bridge
+installed
+but cannot be checked or repaired: startup assets
+are missi
+just install-startup-assets /var/folders/j9/h6rlffxd1r
+cr. From an OVRCR checkout, run

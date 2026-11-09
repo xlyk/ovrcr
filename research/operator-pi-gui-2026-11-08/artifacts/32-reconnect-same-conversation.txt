@@ -1,0 +1,85 @@
+OVRCR GUI
+OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+completel
+Operator • pi • fixture/operator-fixture • complete
+CONSIGINT
+P main
+root
+• Context • consigint / main / #1 run 1
+$ Local
+REQUEST_ONE_REAL_TOOLS
+} gui-consigint-auth-handoff
+$ Local
+• write
+- review auth
+handoff
+grok:4.6
+• succeeded • Output
+f gui-consigint-worktree-lifecycle
+• read
+$ Local
+• succeeded • Output
+- implement lifecycle cleanup
+• edit
+- review websocket shutdown
+succeeded Output
+- plan snapshot restore
+pi
+•bash
+succeeded Output
+SPACELIFT-AGENT
+TURN_ONE_DONE
+} main
+root
+$ local
+) You
+} gui-spacelift-agent-pipeline-progr.
+REQUEST_TWO_RESUME
+$ Local
+- build pipeline progress claude
+Operator
+} gui-spacelift-agent-scope-quality
+TURN_TWO_DONE
+$ local
+- review
+scope quality
+codex
+) You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+) You
+REQUEST_FOUR_BACKGROUND
+• bash
+• succeeded • Output
+FIXTURE_FOLLOWUP_DONE
+) You
+quick draft must stay
+unsent
+Operator
+FIXTURE_FOLLOWUP_DONE
+) You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+Interrupted • accepted operations may finish; no rollback.
+) You
+busy quick draftREQUEST_FIVE_AFTER_INTERRUPT
+Operator
+TURN_FIVE_DONE
+QUOTA LEFT
+Claude
+•checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry 7m
+Grok
+wk -
+39%
+Cursor
+• usage off
+OPERATOR
+Shift-Enter Newline Ctrl-g Browse Ctrl hold Jump to visible Agent

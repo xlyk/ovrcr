@@ -1,0 +1,54 @@
+OVRCR GUI
+d OVRCR
+Operator [ol • 1 unread
+[Ctrl-o]
+[Commands] [Menul
+? Operator
+1 unread
+Operator • pi • fixture/operator-fixture • interrupted
+CONSIGINT
+) You
+} main
+root
+• Context • consigint / main / #1 run 1
+$ Local
+REQUEST_FOUR_BACKGROUND
+} gui-consigint-auth-handoff
+$ Local
+• bash
+- review auth handoff
+grok:4.6
+Interrupted • accepted operations may finish; no rollback.
+f gui-consigint-worktree-lifecycle
+$ Local
+- implement lifecycle cleanup
+- review websocket shutdown
+- plan snapshot restore
+pi
+SPACELIFT-AGENT
+} main
+root
+$ Local
+} gui-spacelift-agent-pipeline-progr…
+$ Local
+- build pipeline progress
+claude
+} gui-spacelift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+QUOTA LEFT
+Claude
+•checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry 1m
+Grok
+wk -
+33%
+> I
+Cursor
+usage off
+OPERATOR
+Shift-Enter Newline Ctrl-g Browse
+Ctrl hold Jump to visible Agent

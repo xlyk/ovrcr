@@ -1,0 +1,94 @@
+OVRCR GUI
+OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+completel
+Operator
+• pi
+•fixture/operator-fixture • complete
+CONSIGINT
+REQUEST_ONE_REAL_TOOLS
+P main
+root
+$ Local
+•write
+} gui-consigint-auth-handoff
+write [call-writel
+$ Local
+{"content":"OFFLINE_MARKER_v1\n","path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-dB0LsN/operato
+- review auth
+handoff
+grok:4.6
+r-target/gui-fixture-marker.txt"}
+f gui-consigint-worktree-lifecycle
+succeeded • Output
+$ Local
+• read
+- implement lifecycle cleanup
+succeeded • Output
+- review websocket shutdown
+edit
+- plan snapshot restore
+pi
+succeeded Output
+• bash
+SPACELIFT-AGENT
+• succeeded • Output
+} main
+root
+TURN_ONE_DONE
+$ local
+} gui-spacelift-agent-pipeline-progr.
+) You
+$ Local
+REQUEST_TWO_RESUME
+- build pipeline progress claude
+f gui-spaceLift-agent-scope-quality
+Operator
+$ local
+TURN_TWO_DONE
+- review
+scope quality
+codex
+) You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+) You
+REQUEST_FOUR_BACKGROUND
+bash
+• succeeded • Output
+FIXTURE_FOLLOWUP_DONE
+) You
+quick draft must
+stay unsent
+Operator
+FIXTURE_FOLLOWUP_DONE
+) You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+Interrupted • accepted operations may finish; no rollback.
+) You
+busy quick draftREQUEST_FIVE_AFTER_INTERRUPT
+Operator
+TURN_FIVE_DONE
+QUOTA LEFT
+Claude
+•checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry
+10m
+Grok
+wk -
+39%
+> clearmel
+Cursor
+• usage off
+OPERATOR
+Enter Send
+Shift-Enter Newline
+Ctrl-g Browse
+Ctrl hold Jump to visible Agent
