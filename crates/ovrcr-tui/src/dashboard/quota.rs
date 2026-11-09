@@ -258,23 +258,22 @@ impl Dashboard {
             1
         };
         let available = quota_space - height;
-        // The fixed Operator row is reserved with three tree lines beneath it.
-        let operator_height = u16::from(available > 3);
+        // Pin the shared Operator dock to the sidebar's last row while three
+        // tree lines remain above it; shorter sidebars give the row to the
+        // tree and keep the keyboard route.
+        let operator_height = u16::from(sidebar.width > 0 && available > 3);
+        let operator_y = sidebar.bottom() - operator_height;
+        let quota_y = operator_y - height;
         super::SidebarRects {
-            attention: Rect::new(
-                sidebar.x,
-                sidebar.bottom() - height - attention,
-                sidebar.width,
-                attention,
-            ),
-            operator: Rect::new(sidebar.x, sidebar.y, sidebar.width, operator_height),
             tree: Rect::new(
                 sidebar.x,
-                sidebar.y + operator_height,
+                sidebar.y,
                 sidebar.width,
                 available - operator_height,
             ),
-            quota: Rect::new(sidebar.x, sidebar.bottom() - height, sidebar.width, height),
+            attention: Rect::new(sidebar.x, quota_y - attention, sidebar.width, attention),
+            quota: Rect::new(sidebar.x, quota_y, sidebar.width, height),
+            operator: Rect::new(sidebar.x, operator_y, sidebar.width, operator_height),
         }
     }
 
@@ -992,7 +991,7 @@ mod layout_tests {
         let area = Rect::new(0, 0, 120, 30);
         dashboard.install_area(area);
         let line = dashboard.sidebar_rects(area).quota;
-        assert_eq!((line.y, line.height), (23, 6));
+        assert_eq!((line.y, line.height), (22, 6));
         let click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: line.x + 2,
@@ -1073,8 +1072,8 @@ mod layout_tests {
         assert_eq!(rects(&dashboard, 4), (0, 0, 3));
         let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
         assert_eq!(
-            full.operator.y, 1,
-            "the strip never moves Operator or the tree"
+            full.tree.y, 1,
+            "the strip never moves the tree off the title"
         );
         assert_eq!(full.tree.bottom(), full.attention.y);
         assert_eq!(
@@ -1082,7 +1081,8 @@ mod layout_tests {
             full.quota.y,
             "directly above the quota section"
         );
-        assert_eq!(full.quota.bottom(), 29);
+        assert_eq!(full.quota.bottom(), full.operator.y);
+        assert_eq!(full.operator.bottom(), 29);
         dashboard.toggle_sidebar();
         assert!(
             dashboard

@@ -329,22 +329,41 @@ session, confirm viewing it and pressing Enter leave the `✓`; type one
 character and confirm the `✓` and the line's ready count drop without `R`. Any
 key sent to the session counts as a reply, arrows and Esc included. Let a session
 become ready while the pointer rests on a tree row and confirm no row moves.
-Click the quota section at the bottom of the sidebar and confirm the quota details
-open. Shorten the window: the quota section compacts to provider summaries, then a details
-pointer, then hides before the attention line,
-and the tree keeps three lines under the one Operator navigation row. Keep
-screenshots and accessibility text for each outcome.
+Click quota above the Operator dock and confirm its details open. Shorten the
+window: quota compacts to provider summaries, then a details pointer, then hides
+before attention. Preserve three tree lines; the dock yields its row if needed.
+Keep screenshots and accessibility text for each outcome.
 
 ### Operator
 
-The Operator is one durable conversation run by the installed pi agent. From
-Browse press `o`, click the single **Operator** row above Projects, or click the
-title-bar Operator control. Confirm there is exactly one sidebar row with no
-conversation count, collapse arrow, plus button, child row or close control, and
-that `Ctrl-n` does nothing. The header reads `Operator · pi` before any model has
-been selected and `Operator · pi · provider/id` afterwards; never an invented
-`unknown/unknown`. The composer is focused, and `Ctrl-l` reveals the ordinary
-Projects sidebar rather than a conversation list.
+The Operator is one durable conversation run by the installed pi agent. Start
+with a disposable fixture and no provider turn. Confirm the first project is
+directly below the title, and a single **Operator** dock sits below attention and
+quota, immediately above the footer. A closed idle dock says **Open chat**.
+Confirm neither Operator shortcut appears in the title bar; clicking the retired
+positions opens neither Operator surface.
+
+Click each end of the dock, returning with `Ctrl-g` between opens. Confirm both
+open the same conversation with the composer focused. Type an unsent draft,
+return to Browse and confirm **Draft** in the dock. Select another session and
+press `o`: confirm the text remains and the target above the composer now names
+that session. The open dock has a selection marker. Save Browse and conversation
+screenshots with matching accessibility text.
+
+Return to Browse, open **Quick message** through Commands, and cancel without
+sending. Check `Ctrl-o` too. In Terminal mode `Ctrl-o` must stay with the program;
+`Ctrl-g` then `Ctrl-o` opens Quick message. Hide the sidebar and confirm the dock
+hides too. At 80×24 and in a 60-column split, Operator opens full-width by default;
+`Ctrl-l` reveals the ordinary Projects sidebar. At 60×16 the composer stays
+usable; below that floor, resize guidance retains the draft.
+
+Confirm there is no conversation count, collapse arrow, plus button, child row
+or close control, and `Ctrl-n` does nothing. The conversation header reads
+`Operator · pi` before model selection and `Operator · pi · provider/id`
+afterwards, never an invented `unknown/unknown`.
+
+For the separate provider and activity walkthrough below, use the loopback
+helper; it is not needed for dock placement, focus or draft acceptance.
 
 Start the GUI provider helper against the launcher's fixture root and wait for
 `OPERATOR_PI_GUI_READY` before sending:

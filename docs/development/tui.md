@@ -149,22 +149,26 @@ for Claude, Codex, Pi and Oh My Pi. Unknown providers and references without a
 native picker keep the unavailable notice.
 
 
-The Operator occupies one fixed navigation row above Projects in the existing sidebar.
-`SidebarRects` supplies the Operator, project-tree, attention strip and quota rectangles
-to rendering, mouse input and viewport calculations. Operator and the tree start at the
-top; the strip sits directly above the quota section at the bottom, so its coming and going
-never moves a row under the pointer. The Operator row and three project-tree lines are
-reserved first; the strip takes one line, and the quota section uses its full provider bars,
-compact provider rows, a one-line details pointer, or hides as space shrinks, and neither
-depends on the clock. The row shares the session activity glyphs and selected
-background/bar, shows at most `1 unread` or the activity clause, and has no count,
-collapse arrow, plus button, child row, hover close mark or close hit target. A
-server update that brings the strip in or out keeps the tree selection in view.
+The Operator occupies one fixed dock row at the bottom of the existing sidebar,
+immediately above the Dashboard footer. `SidebarRects` supplies project-tree,
+attention, quota and Operator rectangles to rendering, mouse input and viewport
+calculations in that order. The tree starts at the top. Attention and quota sit
+above the dock; their updates never move it at a fixed window size. Reserve three
+project-tree lines before a dock row; shorter sidebars yield the dock to the tree.
+The strip takes one line, and quota uses full provider bars, compact rows, a
+one-line details pointer, or hides as space shrinks, independently of the clock.
+The dock preserves its name and right-aligned state before optional glyphs. Idle
+is quiet; the open conversation uses the existing selected-row background/bar.
+Unread leads activity or exceptional outcomes, then Draft, then Open chat (omitted
+when open and idle). Opening and unavailable remain distinct. No count, collapse
+arrow, plus button, child row, hover close mark or close hit target is added.
+A server update that brings the strip in or out keeps the tree selection in view.
 Saved summaries load asynchronously after the production handshake and initial
 terminal attachment, through `OperatorRequest::Current`, without opening Operator.
 
-Browse `o`, the sidebar row and the clickable title-bar control open the single
-conversation with the composer focused. Terminal pane assignments survive, but the
+Browse `o` and any cell of the dock open the single conversation with the composer
+focused. The title bar has neither full-chat nor Quick message targets; Quick
+message remains in Commands and on its existing key routes. Terminal pane assignments survive, but the
 desired terminal view is empty while Operator is visible and native composer input
 never produces PTY bytes. `Open` is idempotent: reopening returns the same identity
 and resets no history, draft or turn. Leaving Operator (Ctrl-g or Esc) hides it

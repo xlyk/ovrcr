@@ -1527,7 +1527,7 @@ fn pause_resume_dense_status_has_priority() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(4).trim_end(), "▌    P local");
+    assert_eq!(row(3).trim_end(), "▌    P local");
     let rendered = draw_text(&dashboard, 120, 40);
     // Paused outranks the activity it froze, in words, ahead of the elapsed time.
     assert!(

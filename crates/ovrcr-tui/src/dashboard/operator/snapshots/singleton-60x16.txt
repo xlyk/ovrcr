@@ -1,4 +1,4 @@
-󰚩 OVRCR Operator [o]       [Ctrl-o]        [Commands] [Menu]
+󰚩 OVRCR                                    [Commands] [Menu]
 Operator · pi · openai/gpt-6.1-sol · ready
 ❯ You
   ▸ Context · global

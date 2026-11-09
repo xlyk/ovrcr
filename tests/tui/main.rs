@@ -37,6 +37,7 @@ mod copy_history;
 mod events;
 mod mouse;
 mod operator;
+mod operator_dock;
 mod palette;
 mod quota;
 mod session_jump_retained;

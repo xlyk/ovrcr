@@ -42,16 +42,25 @@ The model pi uses for a turn is either the profile's current default or the
 
 ## One conversation in the Dashboard
 
-The shared sidebar has one fixed **Operator** row above Projects. It shows the
-conversation's activity and Unread state; it has no count, collapse arrow, plus
-button, child row or close control. Click the row, press `o` in Browse, or click
-the **Operator** control in the title bar to open the one conversation with the
-composer focused.
+The sidebar starts with the first project. One fixed **Operator** dock sits below
+attention and quota, immediately above the Dashboard footer. Click anywhere on
+the row or press `o` in Browse to open the conversation with the composer focused.
+The title bar has no Operator controls.
 
-`Ctrl-o` from any Dashboard view opens **Quick message** for that same conversation.
+The name stays on the left and one state appears on the right. A closed idle
+conversation says **Open chat**; an open idle conversation shows its selection
+marker without that prompt. **1 unread** takes priority until the loaded tail
+has been seen. Next come current activity or an exceptional outcome, then
+**Draft**, then the idle action. Sending, Responding, Waiting for a tool result,
+Stopping, Stop unconfirmed, failed and interrupted turns remain distinguishable.
+A reviewed successful turn returns to idle. Drawing only the dock never reviews
+a reply or starts a worker. Opening and unavailable states have their own labels.
+The dock hides with the sidebar and yields its row to preserve three tree lines
+in a very short window; `o` still works.
+
+**Quick message** is available in Commands and on `Ctrl-o` from Dashboard views.
 In Terminal mode `Ctrl-o` goes to the program (Oh My Pi expands tool output, Claude
-Code opens its transcript), so press `Ctrl-g` then `Ctrl-o`. The title-bar
-`[Ctrl-o]` control and the Quick message palette action open the same overlay.
+Code opens its transcript), so press `Ctrl-g` then `Ctrl-o` for Quick message.
 
 Quick message captures the current workspace/session target each time it opens an
 editable draft. Type a message and press Enter to send it once. If the conversation

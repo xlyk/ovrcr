@@ -1,6 +1,6 @@
 # Provider allowance in the Dashboard
 
-The sidebar's bottom line shows account allowance remaining, not a terminal's tokens, cost, or context occupancy. Click it, press `u` in Browse, or find **Quota details** in the menu or palette to see every window. Details remain accessible when the sidebar is hidden. Use Up/Down to scroll and Escape to close.
+The sidebar's quota section, immediately above the Operator dock, shows account allowance remaining, not a terminal's tokens, cost, or context occupancy. Click it, press `u` in Browse, or find **Quota details** in the menu or palette to see every window. Details remain accessible when the sidebar is hidden. Use Up/Down to scroll and Escape to close.
 
 ## Sources
 
@@ -72,7 +72,7 @@ Omit `home` to use the native client's existing profile. OVRCR does not provide 
 
 ## Interpret the display
 
-The sidebar’s **QUOTA LEFT** section shows each provider’s allowance windows with provider-colored bars, remaining percentages and stale ages. Unknown values use an empty track, and unavailable providers show their state and retry time. Percentages turn yellow at 20% or less and red at 5% or less. The attention strip sits immediately above this section. As space shrinks, the section drops its trailing blank, uses compact provider rows, then a `Quota: u` pointer, and finally hides while preserving the Operator heading, three tree rows and the attention strip when possible. Click the section or press `u` for details.
+The sidebar’s **QUOTA LEFT** section shows each provider’s allowance windows with provider-colored bars, remaining percentages and stale ages. Unknown values use an empty track, and unavailable providers show their state and retry time. Percentages turn yellow at 20% or less and red at 5% or less. The attention strip sits immediately above this section; the pinned Operator dock sits below it. As space shrinks, quota drops its trailing blank, uses compact provider rows, then a `Quota: u` pointer, and finally hides while preserving the dock, three tree rows and the attention strip when possible. Click the section or press `u` for details.
 
 Details open with "Subscription allowance only": the block and details never show tokens or spend. Each provider gets a line with its state in words (`up to date`, `out of date`, `checking…`, `unavailable`, `not signed in`, `off`), then its quota reason or off-state sentence, then one line per window: its length in words (`5-hour`, `weekly`; a bucket that is not general allowance keeps its provider identity, such as `1-hour (special-model/primary)`), the allowance left, and when it resets as local time and relative (`resets 9:10 PM (in 8h)`, with the weekday or date when that is not today). A last line says how old the reading is, from the later of the last observation and the last account check (`as of 12:28 PM (4m ago)`), and when the next check runs. Window keys, sources and Reporting generations stay off the popup. Repeated Claude callbacks cannot claim a backend check. Account changes invalidate older native generations, including A→B→A notifications received during a read. Quota snapshots are bounded, in-memory Server state and are not persisted as account history.
 

@@ -50,23 +50,37 @@ you are away waits for you. A notice that waited behind it shows next.
 
 ## Operator chat
 
-OVRCR has one Operator conversation, run by the installed pi agent. The shared
-sidebar shows one fixed **Operator** row above Projects: its activity glyph and at
-most `1 unread`, with no count, collapse arrow, plus button, child row or close
-control. Browse `o`, that row, or the pinned Operator title-bar control opens the
-conversation with the composer focused. `Ctrl-o` opens Quick message for that same
-conversation from every view except Terminal mode; its composer edits the same
-draft and captures the same workspace/session target for the next message as the
-full view. `Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse,
+OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
+starts with the first project. A fixed **Operator** dock sits below attention and
+quota, immediately above the Dashboard footer. Click anywhere on the dock or
+press `o` in Browse to open the conversation with the composer focused. There are
+no Operator controls in the title bar.
+
+The dock shows **Open chat** when closed and idle, **Draft** for unfinished input,
+or **1 unread** until the loaded conversation tail has been seen. Unread takes
+priority over activity; activity and exceptional outcomes take priority over a
+draft. Sending, Responding, Waiting for a tool result, Stopping, Stop unconfirmed,
+failed and interrupted turns remain visible in words. A reviewed successful turn
+returns to idle. An open, idle conversation has a selection marker instead of the
+Open chat prompt. Opening and unavailable states are distinct.
+
+**Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation
+from every view except Terminal mode; its composer edits the same draft and
+captures the same workspace/session target for the next message as the full view.
+`Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse,
 keeping the draft; `o` returns to the same history and draft. Reopening never
 resets the conversation: it keeps the draft and re-captures the current selection
 as the target for the next message, and an earlier message's recorded target never
 overwrites that capture. The header reads `Operator · pi` before a model is
 selected and `Operator · pi · provider/id` afterwards.
 
-There is no New, switch or close action: pi compacts the one conversation when it
-needs room. `Ctrl-l` toggles the ordinary Projects sidebar and never reveals a
-conversation list. `Ctrl-x`, or `Ctrl-c` in an empty full composer, stops the exact
+The dock hides with the sidebar, and yields its row when fewer than three
+project-tree lines would remain. The `o` route still works. There is no New,
+switch or close action: pi compacts the one conversation when it needs room.
+`Ctrl-l` toggles the ordinary Projects sidebar and never reveals a conversation
+list. At widths below 100, the conversation opens full-width by default; reveal
+the sidebar on demand. Below 60×16, resize guidance preserves the draft.
+`Ctrl-x`, or `Ctrl-c` in an empty full composer, stops the exact
 current turn; a busy or stop-unconfirmed conversation keeps a Send draft instead of
 queuing it. Legacy Operator conversations stay on disk but do not appear in the
 Dashboard or the Archived palette.
@@ -75,7 +89,7 @@ See [Operator setup and controls](operator.md).
 
 ## Browse keys
 
-The sidebar's last line summarizes remaining Claude, Codex, Grok and Cursor account
+The sidebar's quota section, above the Operator dock, summarizes remaining Claude, Codex, Grok and Cursor account
 allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
 least allowance left in any of its general windows. The number is red at 5% or
 less and yellow at 20% or less. A stale value is muted. A provider with no value
@@ -437,9 +451,9 @@ then a `Quota: u` pointer. Press `u` or click the section for details.
 
 While any session needs you, a line at the bottom of the sidebar, directly above
 the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
-for more than one), or `? 1 · ✓ 2` when the words do not fit. It sits at the
-bottom so that, as it comes and goes, Operator and the tree never move under the
-pointer; only the tree's last visible line gives way. It counts every project,
+for more than one), or `? 1 · ✓ 2` when the words do not fit. Attention and quota
+sit above the pinned Operator dock. As attention comes and goes, the dock and
+existing tree rows stay put; only the tree's last visible line gives way. It counts every project,
 including folded and scrolled-away rows and the focused session, and lists needs
 input first, the order the jump visits. Needs input means a running session
 waiting for an answer (including an open [input request](#input-requests)). A
