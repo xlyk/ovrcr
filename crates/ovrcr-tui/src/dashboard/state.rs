@@ -812,10 +812,6 @@ impl Dashboard {
             self.clear_sidebar_jump();
         }
         self.outer_area = area;
-        if self.sidebar_preference() == Some(0) {
-            self.operator_clear_hover();
-        }
-        self.operator_ensure_visible();
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -1051,7 +1047,6 @@ impl Dashboard {
             || self.copy.is_some()
             || self.history.is_some()
             || self.operator_quick_visible()
-            || (self.operator.visible && self.operator_has_form())
     }
 
     fn sidebar_jump_can_start(&self) -> bool {
@@ -1663,9 +1658,6 @@ impl Dashboard {
             self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
         self.outer_area = area;
-        if geometry_changed {
-            self.operator_ensure_visible();
-        }
         let desired = self.desired_view();
         let current_runs: HashSet<_> = self
             .hierarchy
@@ -2947,7 +2939,6 @@ impl Dashboard {
                 self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
-                self.operator_clear_hover();
                 self.mouse_focused = false;
                 DashboardAction::Redraw
             }
@@ -3096,7 +3087,6 @@ impl Dashboard {
     pub(super) fn toggle_sidebar(&mut self) -> DashboardAction {
         self.sidebar_hidden = !self.sidebar_hidden;
         self.mouse.hovered = None;
-        self.operator_clear_hover();
         self.apply_pane_sizes(self.outer_area);
         DashboardAction::Redraw
     }
@@ -3359,7 +3349,7 @@ impl Dashboard {
     }
 
     /// Copy the drawn pane sizes into each pane's desired size and revoke readiness.
-    fn apply_pane_sizes(&mut self, area: Rect) {
+    pub(super) fn apply_pane_sizes(&mut self, area: Rect) {
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {

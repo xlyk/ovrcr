@@ -12,8 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(target_os = "macos")]
 use ovrcr_protocol::ReadySoundChoice;
 use ovrcr_protocol::{
-    ClientMessage, OperatorProvider, Request, Response, SettingSource, SettingsReport,
-    ThemeAppearance, ThemeId,
+    ClientMessage, Request, Response, SettingSource, SettingsReport, ThemeAppearance, ThemeId,
 };
 use ratatui::{
     Frame,
@@ -27,7 +26,6 @@ use std::collections::HashMap;
 pub(super) const TITLE: &str = "Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close";
 const UNPARSEABLE: &str = "Editing is off until dashboard.toml is fixed by hand.";
 const PICK_VISIBLE_ROWS: usize = 6;
-const OPERATOR_PROVIDER: &str = "operator.provider";
 
 #[derive(Default)]
 pub(super) struct Editor {
@@ -397,7 +395,7 @@ fn items(report: &SettingsReport, presets: &[String]) -> Vec<Row> {
                 #[cfg(target_os = "macos")]
                 let row = native_sound_choice_labels(row, settings);
                 let row = theme_choice_labels(row, settings);
-                items.push(operator_provider_labels(row));
+                items.push(row);
             }
         }
     }
@@ -442,17 +440,6 @@ fn theme_choice_labels(mut row: Row, settings: &ovrcr_protocol::Settings) -> Row
     row
 }
 
-/// Provider display names in the list; pick values stay the saved identifiers.
-fn operator_provider_labels(mut row: Row) -> Row {
-    if row.id == OPERATOR_PROVIDER {
-        row.value = OperatorProvider::label_of(&row.value).into();
-        row.default = row
-            .default
-            .map(|default| OperatorProvider::label_of(&default).into());
-    }
-    row
-}
-
 fn editor_kind(
     shape: ovrcr_protocol::Shape,
     entry: &ovrcr_protocol::Entry,
@@ -472,9 +459,6 @@ fn editor_kind(
                     let mut label: &str = value;
                     if entry.path == ThemeId::KEY {
                         label = ThemeId::parse(label).map_or(label, ThemeId::label);
-                    }
-                    if entry.path == OPERATOR_PROVIDER {
-                        label = OperatorProvider::label_of(label);
                     }
                     #[cfg(target_os = "macos")]
                     if entry.path == ReadySoundChoice::KEY {

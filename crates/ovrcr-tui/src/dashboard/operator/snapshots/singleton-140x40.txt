@@ -1,7 +1,7 @@
 󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                   [Commands] [Menu]
- OPERATOR ───────────────────────── [+]│Operator · ChatGPT / fixture · complete
-▌  chat-1                              │❯ You
-   chat-2                              │  ▸ Context · global
+▌  Operator                       ready│Operator · pi · openai/gpt-6.1-sol · ready
+                                       │❯ You
+                                       │  ▸ Context · global
                                        │  Review this workspace.
                                        │
                                        ││ Operator
