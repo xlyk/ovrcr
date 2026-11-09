@@ -102,16 +102,20 @@ Operator editor, agent-loading intent or Quick form over the pane
 Claude Code bind it; Ctrl-g then Ctrl-o opens the form. Elsewhere key dispatch,
 event dispatch before Tasks, and the production mouse path give the Hub-owned
 quick form priority. The form layers above existing views without taking their
-state; Repeat/Release and all modal mouse events are consumed. Its frozen
-generation/context/defaults follow a request-owned Create → Submit continuation,
-using the acknowledged conversation's retained `summary.run`. Esc hides submitted
-work, and only a still-visible matching generation may navigate on acceptance.
+state; Repeat/Release and all modal mouse events are consumed. Quick addresses the
+same singleton conversation as the full view. Startup sends `OperatorRequest::Current`,
+which never creates a record or process; the first explicit Send sends `Open` only
+when `Current` returned none, then `Submit` in one frozen transaction using the
+acknowledged `summary.run`. An unsent cancelled draft sends nothing. Esc hides
+submitted work, and only a still-visible matching generation may navigate on
+acceptance. A busy or stop-unconfirmed conversation keeps the draft and shows the
+reason; nothing queues, steers, creates another conversation or submits later.
 The quick dialog starts at seven rows (two editor rows), grows with wrapped input
 and an optional error row to sixteen, and keeps its eighty-column cap. Errors and
 pending phase hints remain visible; shrinking the form cannot forward modal clicks.
-Failures retain the message; retries after Create target that chat. Notification
-retarget cancels an unsent form or hides its pending continuation. Quick visibility
-also blocks durable-tail review acknowledgement.
+Failures retain the message; an explicit retry reuses the same conversation.
+Notification retarget cancels an unsent form or hides its pending continuation.
+Quick visibility also blocks durable-tail review acknowledgement.
 
 Full Operator message input and editable Quick Message call
 `TextCursor::edit_key(KeyEvent)` for line/grapheme/word editing; other fields keep
@@ -121,10 +125,10 @@ Home/End remain whole-buffer. Modifiers match exactly; unsupported combinations
 are consumed without inserting letters. Full input repeats ordinary edits, while
 Quick retains Press-only editing. Each owner handles Ctrl+C itself: a Press clears
 literal nonempty text and resets the cursor; a separate empty full Press calls the
-existing exact selected Stop. Repeat/Release do neither, empty Quick is a no-op,
-and pending Quick/closing chats stay frozen. Quick edits must reach the existing
-seeded-retry synchronization without changing unseeded chat drafts or captured
-Submit/Create payloads. The native GUI's `encode_event` suppresses known repeated
+existing exact Stop. Repeat/Release do neither and empty Quick is a no-op. Quick
+edits mirror the singleton draft once that conversation exists, so both entry
+points share one draft; an unseeded Quick draft is its own unsent text. A frozen
+Open+Submit payload never changes after Send. The native GUI's `encode_event` suppresses known repeated
 Ctrl+C before raw byte 3 loses repeat identity; first Press still sends byte 3.
 Control-only bytes and ordinary repeat stay unchanged. Alphabetic Control keys
 with Alt or Shift retain those bits using the existing CSI-u spelling (lowercase
@@ -145,95 +149,96 @@ for Claude, Codex, Pi and Oh My Pi. Unknown providers and references without a
 native picker keep the unavailable notice.
 
 
-Operator conversations occupy one-line rows above Projects in the existing sidebar.
+The Operator occupies one fixed navigation row above Projects in the existing sidebar.
 `SidebarRects` supplies the Operator, project-tree, attention strip and quota rectangles
 to rendering, mouse input and viewport calculations. Operator and the tree start at the
 top; the strip sits directly above the quota section at the bottom, so its coming and going
-never moves a row under the pointer. The Operator heading and three project-tree lines
-are reserved first; the strip takes one line, and the quota section uses its full provider bars,
-compact provider rows, a one-line details pointer, or hides as space shrinks, and neither depends on the clock. Up to five conversation rows use the remaining space and shrink first.
-A server update that brings the strip in or out keeps the selection in view. Collapsing keeps the heading and active-conversation count.
-Rows share the session activity glyphs, selected background/bar and hover close mark,
-and omit provider/model metadata. Archived chats remain cached as authority tombstones
-but never appear in the active list. Saved summaries load asynchronously after the
-production handshake and initial terminal attachment, without opening Operator.
+never moves a row under the pointer. The Operator row and three project-tree lines are
+reserved first; the strip takes one line, and the quota section uses its full provider bars,
+compact provider rows, a one-line details pointer, or hides as space shrinks, and neither
+depends on the clock. The row shares the session activity glyphs and selected
+background/bar, shows at most `1 unread` or the activity clause, and has no count,
+collapse arrow, plus button, child row, hover close mark or close hit target. A
+server update that brings the strip in or out keeps the tree selection in view.
+Saved summaries load asynchronously after the production handshake and initial
+terminal attachment, through `OperatorRequest::Current`, without opening Operator.
 
-Browse `o` and the clickable title-bar control open the native hub. Terminal pane
-assignments survive, but the desired terminal view is empty while the hub is visible
-and native composer input never produces PTY bytes. Leaving the hub (Ctrl-g or Esc)
-hides it through `retarget(PaneChange::Focus)`, so the next view request
-re-subscribes the unchanged panes. Existing overlays retain input
-priority; spaces and punctuation in an active composer remain ordinary text.
+Browse `o`, the sidebar row and the clickable title-bar control open the single
+conversation with the composer focused. Terminal pane assignments survive, but the
+desired terminal view is empty while Operator is visible and native composer input
+never produces PTY bytes. `Open` is idempotent: reopening returns the same identity
+and resets no history, draft or turn. Leaving Operator (Ctrl-g or Esc) hides it
+through `retarget(PaneChange::Focus)`, so the next view request re-subscribes the
+unchanged panes. Existing overlays retain input priority; spaces and punctuation in
+an active composer remain ordinary text.
 
-`dashboard::operator` owns per-conversation drafts, context, grapheme cursor,
-scroll/follow-tail and completion Unread state. Selecting a saved conversation never
-recaptures the last terminal's context. Scrolled transcripts keep a durable message
-ordinal, logical part and byte anchor
-across streaming, receipt expansion, conversation switches and resize. Styled
-graphemes survive wrapping; the Working journal reserves a two-cell gutter before
-wrapping and decorates only after source-byte anchor calculation. User prompts
-have a mauve cue; assistant/tool activity shares a muted guide. Prose and
+`dashboard::operator` owns the singleton's draft, context, grapheme cursor,
+scroll/follow-tail and completion Unread state. Selecting a terminal does not
+change a message that is already being composed or sent; the captured target
+travels with each message, and reopening either composer captures the current
+selection for the next one. Scrolled transcripts keep a durable message ordinal,
+logical part and byte anchor across streaming, receipt expansion and resize.
+Styled graphemes survive wrapping; the Working journal reserves a two-cell gutter
+before wrapping and decorates only after source-byte anchor calculation. User
+prompts have a mauve cue; assistant/tool activity shares a muted guide. Prose and
 command/output details use the available transcript width after the gutter.
 Adjacent tool calls and outputs stay separate disclosures under their original
-ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs. Successful completion
-Unread comes from the exact durable turn summary; SDK model history stays private.
-`Tab` cycles sidebar, transcript and composer; `Ctrl-l` toggles sidebar/composer.
-Transcript Up/Down selects a user-context/tool entry; Enter expands its full details.
+ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs.
+Expanded context prints the captured target and the fixed agent workdir separately.
+Successful completion Unread comes from the exact durable turn summary;
+`ModelSelected` updates the header without becoming a journal row.
+`Tab` cycles transcript and composer; `Ctrl-l` toggles the ordinary Projects
+sidebar and never reveals a conversation list. Transcript Up/Down selects a
+user-context/tool entry; Enter expands its full details.
 The borderless composer uses `clamp(wrapped_draft_rows, 2, min(6, body_height / 3).max(2))`
 text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
 rule and muted bottom rule define the editor. `OperatorLayout` owns header,
 transcript, context, writable composer and both rule rectangles for rendering,
-hit-testing and review. The target uses the context row above the top rule.
+hit-testing and review. The captured target uses the context row above the top rule.
 A single transient journal row follows the latest durable message or receipt,
 aligned after the same two-cell gutter: Sending before submission acceptance,
 Responding throughout Running (including silence), or Waiting for a recorded
 current-turn tool result. Tool waits require caught-up history and match
 call IDs within the current turn; paging/dirty history falls back to Responding.
-Stopping/Closing remain explicit and terminal work without stop proof says static
+Stopping remains explicit and terminal work without stop proof says static
 Stop unconfirmed. Confirmed terminal work removes the indicator. The private
 derived activity decision also requests the shared 100 ms spinner cadence while
-the journal is visible, independent of sidebar visibility. Rendering uses the
+the journal is visible, independent of sidebar visibility; the fixed sidebar row
+also animates while the conversation is busy. Rendering uses the
 shared draw timestamp. Canonical visual rows carry optional durable anchors; the
 activity row has none and replaces only the final durable blank separator. It
 occupies one clipped row before viewport slicing, so older history scrolls it away
 and returning to the tail reveals it. Focus, disclosure and durable scroll anchors
 ignore unanchored rows. The context/error row keeps its full width, and review
 requires three durable viewport rows in addition to any activity row.
-The local header shows Operator/provider/model/state only when the selected chat's
-row is rendered in the shared sidebar. Collapsed, offscreen or absent rows retain
-the clipped chat title, shortening model metadata first. Only visible Operator
-quiets the global title fill. The keymap-derived footer prioritizes eligible Send,
-Newline, Browse and applicable Stop. Send is disabled in the shared keymap/menu
-while the draft is empty or the selected chat cannot submit (including running,
-pending and unconfirmed-worker-stop states). Secondary actions remain in navigation
-and menus.
-At widths below 100, the same combined sidebar opens on demand without changing the
-saved preference. Below 60×16, Operator shows resize guidance and preserves work.
-Unread review requires an unobscured, actually drawn, adequately sized transcript
-at its confirmed durable tail; empty, new, too-small and sidebar-only views cannot
-acknowledge it.
-`Ctrl-n` opens creation, Enter sends, Shift-Enter inserts a newline, paste only edits,
-Ctrl-g or Esc returns to the terminal panes in Browse retaining drafts, and Ctrl-x
-stops only the selected exact current turn. Provider names display through
-`OperatorProvider::label` (`ChatGPT`, `Grok`); `as_str` stays the saved identifier. A pending submission clears only its captured draft after acceptance;
-refusal or later typing preserves the draft.
+The header reads `Operator · pi · provider/id` once a model has been selected and
+`Operator · pi` before that; it never guesses an identifier from settings or a
+catalog. Only visible Operator quiets the global title fill. The keymap-derived
+footer prioritizes eligible Send, Newline, Browse and applicable Stop. Send is
+disabled in the shared keymap/menu while the draft is empty or the conversation
+cannot submit (including running, pending and unconfirmed-worker-stop states).
+Secondary actions remain in navigation and menus.
+At widths below 100, the ordinary sidebar opens on demand through `Ctrl-l` without
+changing the saved preference. Below 60×16, Operator shows resize guidance and
+preserves work. Unread review requires an unobscured, actually drawn, adequately
+sized transcript at its confirmed durable tail; empty, too-new, too-small and
+sidebar-only views cannot acknowledge it.
+Enter sends, Shift-Enter inserts a newline, paste only edits, Ctrl-g or Esc returns
+to the terminal panes in Browse retaining the draft, and Ctrl-x (or Ctrl-c in an
+empty full composer) stops only the exact current turn. There is no `Ctrl-n`,
+conversation switching, close confirmation or archived-Operator action. A pending
+submission clears only its captured draft after acceptance; refusal or later typing
+preserves the draft.
 
-Sidebar `X` and `[x]` open the native confirmation for that conversation's retained
-run. Confirmation explains uncertain/live work and draft discard, then sends the
-Operator Close request rather than workspace WIP-save. Only that chat is frozen
-while close is pending. Cancel or error retains its draft and row; acknowledged
-archive clears the confirmed draft and removes its active row without stealing a
-newer selection. Ordinary `x` in either composer remains text. Sidebar focus,
-collapse and viewport movement never acknowledge completion Unread.
-
-OperatorChanged is a coalescible dirty signal, never transcript content. Tracked
-requests load durable summaries and ordinal-paged history independently of focus,
-with one read per conversation in flight and a further catch-up when dirtied
-during a read. Only retained `worker_stopped` proof enables another submission;
-Complete without that proof displays finishing/stop-unconfirmed. History commits
-completion Unread only after a successful unobscured tail draw, with sufficient
-transcript geometry. Model/tool strings escape terminal and directional controls
-before rendering, including tool output with explicit empty-success results.
+OperatorChanged is a coalescible dirty signal, never transcript content, and only
+the singleton's id is tracked: legacy rows stay on disk but never enter this view.
+Tracked requests load durable summaries and ordinal-paged history independently of
+focus, with one read in flight and a further catch-up when dirtied during a read.
+Only retained `worker_stopped` proof enables another submission; Complete without
+that proof displays finishing/stop-unconfirmed. History commits completion Unread
+only after a successful unobscured tail draw, with sufficient transcript geometry.
+Model/tool strings escape terminal and directional controls before rendering,
+including tool output with explicit empty-success results.
 
 The read-only `dashboard::transcript` view replaces an alternate-screen History refusal
 with provider-owned Claude/Codex conversation pages. Its loading and loaded states use

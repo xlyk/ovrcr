@@ -1,673 +1,483 @@
-//! Only the operator test's OAuth and Responses HTTP fixture, layered on `Live`.
-use ovrcr::operator::auth::{AuthCancel, AuthEndpoints, AuthManager};
-use ovrcr_protocol::OperatorProvider;
+//! A local OpenAI-compatible streaming provider for the installed-pi and GUI
+//! Operator acceptance paths.
+//!
+//! It binds loopback only, speaks `chat/completions` SSE (the shape in
+//! `scripts/validate-pi-rpc.py`), records every request body and authorization
+//! header, and answers from a test-supplied synchronous plan. A plan may hold
+//! the stream after its text/tool chunks so a test can observe partial
+//! assistant output before the provider finishes.
+//!
+//! The provider also seeds only the fixture instance's private `operator-pi`
+//! profile with a synthetic provider/model/auth and default model. It never
+//! reads or writes a real Pi profile or credential.
+
+#![allow(dead_code)]
+
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
-    io::{self, Read, Write},
+    collections::VecDeque,
+    fs,
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    path::Path,
-    process::{Command, Stdio},
-    sync::{Arc, Condvar, Mutex},
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const BUDGET: Duration = Duration::from_secs(20);
+pub const PROVIDER: &str = "fixture";
+pub const MODEL: &str = "operator-fixture";
+pub const MODEL_ID: &str = "fixture/operator-fixture";
+pub const API_KEY: &str = "fixture-synthetic-key";
+const CONTEXT_WINDOW: u64 = 200_000;
+
+/// One streamed piece the fixture "model" returns.
+#[derive(Clone, Debug)]
+pub enum Chunk {
+    Text(String),
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: Value,
+    },
+}
+
+/// One scripted assistant response.
+#[derive(Clone, Debug, Default)]
+pub struct Plan {
+    pub chunks: Vec<Chunk>,
+    /// Flush the chunks, then wait for `Provider::release` before finishing.
+    pub hold: bool,
+}
+
+impl Plan {
+    pub fn new(chunks: Vec<Chunk>) -> Self {
+        Self {
+            chunks,
+            hold: false,
+        }
+    }
+
+    pub fn text(text: &str) -> Self {
+        Self::new(vec![Chunk::Text(text.into())])
+    }
+
+    pub fn tool(id: &str, name: &str, arguments: Value) -> Self {
+        Self::new(vec![Chunk::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+        }])
+    }
+
+    /// Text followed by a tool call in the same assistant message.
+    pub fn text_then_tool(text: &str, id: &str, name: &str, arguments: Value) -> Self {
+        Self::new(vec![
+            Chunk::Text(text.into()),
+            Chunk::ToolCall {
+                id: id.into(),
+                name: name.into(),
+                arguments,
+            },
+        ])
+    }
+
+    pub fn holding(mut self) -> Self {
+        self.hold = true;
+        self
+    }
+}
+
+pub type Handler = Box<dyn Fn(&Value, usize) -> Plan + Send + Sync>;
+
+#[derive(Clone, Debug)]
+pub struct Recorded {
+    pub body: Value,
+    pub authorization: Option<String>,
+    pub path: String,
+}
+
 #[derive(Default)]
 struct State {
-    stopped: bool,
-    inference_attempts: usize,
-    released: HashSet<String>,
-    requests: HashMap<String, Vec<Value>>,
+    requests: Vec<Recorded>,
+    connections: usize,
     errors: Vec<String>,
+    released: bool,
+    stopped: bool,
 }
-type Shared = Arc<(Mutex<State>, Condvar)>;
 
 pub struct Provider {
     pub base: String,
-    shared: Shared,
+    port: u16,
+    shared: Arc<(Mutex<State>, Condvar)>,
+    stop: Arc<AtomicBool>,
     listener: Option<JoinHandle<()>>,
 }
+
 impl Provider {
-    pub fn new(workdir: &Path, gate_budget: Duration) -> Self {
-        let socket = TcpListener::bind("127.0.0.1:0").unwrap();
-        socket.set_nonblocking(true).unwrap();
-        let base = format!("http://{}", socket.local_addr().unwrap());
-        let shared = Shared::default();
-        let state = shared.clone();
-        let workdir = workdir.to_owned();
-        let listener = thread::spawn(move || {
-            let mut connections = Vec::new();
-            while !state.0.lock().unwrap().stopped {
-                match socket.accept() {
+    pub fn start(handler: Handler) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let shared = Arc::new((Mutex::new(State::default()), Condvar::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let handler = Arc::new(handler);
+        let state = Arc::clone(&shared);
+        let stopping = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !stopping.load(Ordering::Acquire) {
+                match listener.accept() {
                     Ok((stream, peer)) => {
+                        assert!(
+                            peer.ip().is_loopback(),
+                            "provider accepted a non-loopback peer"
+                        );
+                        // macOS may let an accepted socket inherit the listener's
+                        // nonblocking flag; each exchange is served to completion.
                         stream.set_nonblocking(false).unwrap();
-                        assert!(peer.ip().is_loopback());
-                        let state = state.clone();
-                        let workdir = workdir.clone();
-                        connections.push(thread::spawn(move || {
-                            if let Err(error) = serve(stream, &state, &workdir, gate_budget) {
+                        state.0.lock().unwrap().connections += 1;
+                        let state = Arc::clone(&state);
+                        let handler = Arc::clone(&handler);
+                        thread::spawn(move || {
+                            if let Err(error) = serve(stream, &state, handler) {
                                 state.0.lock().unwrap().errors.push(error.to_string());
                             }
-                        }));
+                        });
                     }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
-                    Err(error) => panic!("loopback provider accept: {error}"),
+                    Err(error) => panic!("provider accept failed: {error}"),
                 }
-            }
-            for connection in connections {
-                connection.join().unwrap();
             }
         });
         Self {
             base,
+            port,
             shared,
-            listener: Some(listener),
+            stop,
+            listener: Some(thread),
         }
     }
 
-    /// Resolve OAuth in a child with no inherited proxy/profile environment.
-    pub fn sign_in(&self, instance: &Path) {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "compiled_worker::seed_grok_auth",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env_clear()
-            .env("HOME", instance.parent().unwrap())
-            .env("NO_PROXY", "*")
-            .env("no_proxy", "*")
-            .env("OVRCR_OPERATOR_E2E_AUTH_BASE", &self.base)
-            .env("OVRCR_OPERATOR_E2E_AUTH_INSTANCE", instance)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + BUDGET;
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Seed the instance's private profile: a synthetic provider/model/auth and
+    /// the profile's default model. Returns the profile directory.
+    pub fn seed_profile(&self, instance: &Path) -> PathBuf {
+        self.seed_profile_with(instance, CONTEXT_WINDOW, None)
+    }
+
+    /// Same, with an explicit context window and optional compaction settings.
+    pub fn seed_profile_with(
+        &self,
+        instance: &Path,
+        context_window: u64,
+        compaction: Option<Value>,
+    ) -> PathBuf {
+        let profile = instance.join("operator-pi");
+        fs::create_dir_all(&profile).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
+        let models = json!({
+            "providers": {
+                PROVIDER: {
+                    "baseUrl": format!("{}/v1", self.base),
+                    "api": "openai-completions",
+                    "apiKey": API_KEY,
+                    "models": [{
+                        "id": MODEL,
+                        "name": "Fixture Operator",
+                        "reasoning": false,
+                        "input": ["text"],
+                        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                        "contextWindow": context_window,
+                        "maxTokens": 1024
+                    }]
+                }
+            }
+        });
+        let mut settings = json!({ "defaultModel": MODEL_ID });
+        if let Some(compaction) = compaction {
+            settings["compaction"] = compaction;
+        }
+        write_private(&profile.join("models.json"), &models);
+        write_private(&profile.join("settings.json"), &settings);
+        profile
+    }
+
+    pub fn requests(&self) -> Vec<Recorded> {
+        self.shared.0.lock().unwrap().requests.clone()
+    }
+
+    pub fn request_bodies(&self) -> Vec<Value> {
+        self.requests()
+            .into_iter()
+            .map(|request| request.body)
+            .collect()
+    }
+
+    pub fn authorizations(&self) -> Vec<Option<String>> {
+        self.requests()
+            .into_iter()
+            .map(|request| request.authorization)
+            .collect()
+    }
+
+    pub fn wait_requests(&self, at_least: usize, budget: Duration) -> Vec<Recorded> {
+        let deadline = Instant::now() + budget;
         loop {
-            if child.try_wait().unwrap().is_some() {
-                break;
+            self.assert_healthy();
+            let requests = self.requests();
+            if requests.len() >= at_least {
+                return requests;
             }
-            if Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-                panic!("fixture OAuth child exceeded its deadline");
-            }
+            assert!(
+                Instant::now() < deadline,
+                "provider request deadline: saw {} of {at_least}",
+                requests.len()
+            );
             thread::sleep(Duration::from_millis(10));
         }
-        let output = child.wait_with_output().unwrap();
-        let errors = self.shared.0.lock().unwrap().errors.clone();
-        assert!(
-            output.status.success(),
-            "fixture OAuth child status {}: {} {}; provider errors: {:?}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-            errors
-        );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
-            "OAuth fixture filter did not execute exactly one test: {} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 
-    pub fn release(&self, model: &str) {
-        self.shared
-            .0
-            .lock()
-            .unwrap()
-            .released
-            .insert(model.to_owned());
-        self.shared.1.notify_all();
+    /// Let every held stream finish.
+    pub fn release(&self) {
+        let (lock, condvar) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+        state.released = true;
+        condvar.notify_all();
     }
-    pub fn inference_attempts(&self) -> usize {
-        self.shared.0.lock().unwrap().inference_attempts
+
+    pub fn diagnostics(&self) -> (usize, Vec<String>) {
+        let state = self.shared.0.lock().unwrap();
+        (state.connections, state.errors.clone())
     }
-    pub fn requests(&self, model: &str) -> Vec<Value> {
-        self.shared
-            .0
-            .lock()
-            .unwrap()
-            .requests
-            .get(model)
-            .cloned()
-            .unwrap_or_default()
-    }
+
     pub fn assert_healthy(&self) {
-        let errors = self.shared.0.lock().unwrap().errors.clone();
-        assert!(errors.is_empty(), "loopback provider errors: {errors:?}");
+        assert!(
+            !self.stop.load(Ordering::Acquire) && self.listener.is_some(),
+            "provider is stopped"
+        );
     }
 }
+
 impl Drop for Provider {
     fn drop(&mut self) {
-        self.shared
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .stopped = true;
-        self.shared.1.notify_all();
+        self.stop.store(true, Ordering::Release);
+        self.release();
         if let Some(listener) = self.listener.take() {
-            let result = listener.join();
-            if !thread::panicking() {
-                result.unwrap();
-            }
+            let _ = listener.join();
         }
     }
 }
 
-fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, String)> {
-    stream.set_read_timeout(Some(BUDGET))?;
-    stream.set_write_timeout(Some(BUDGET))?;
-    let mut bytes = Vec::new();
-    loop {
-        if bytes.len() > 1024 * 1024 {
-            return Err(io::Error::other("fixture request exceeds 1 MiB"));
-        }
-        let mut block = [0; 4096];
-        let count = stream.read(&mut block)?;
-        if count == 0 {
-            return Err(io::Error::other("request closed before body"));
-        }
-        bytes.extend_from_slice(&block[..count]);
-        if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
-            let length = headers
-                .lines()
-                .find_map(|line| {
-                    line.strip_prefix("content-length:")
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                })
-                .unwrap_or(0);
-            if bytes.len() >= end + 4 + length {
-                let path = headers
-                    .lines()
-                    .next()
-                    .and_then(|line| line.split_whitespace().nth(1))
-                    .unwrap_or_default()
-                    .to_owned();
-                let body = String::from_utf8(bytes[end + 4..end + 4 + length].to_vec())
-                    .map_err(io::Error::other)?;
-                return Ok((path, headers, body));
-            }
-        }
-    }
+fn write_private(path: &Path, value: &Value) {
+    fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
-fn json_response(stream: &mut TcpStream, body: Value) -> io::Result<()> {
-    let body = body.to_string();
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )
-}
-fn event(stream: &mut TcpStream, body: Value) -> io::Result<()> {
-    write!(
-        stream,
-        "event: {}\ndata: {body}\n\n",
-        body["type"].as_str().unwrap()
-    )?;
-    stream.flush()
-}
-fn complete(stream: &mut TcpStream, model: &str, output: Vec<Value>) -> io::Result<()> {
-    event(
-        stream,
-        json!({"type":"response.completed","response":{"id":format!("resp-{model}"),"status":"completed","output":output,"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}),
-    )
-}
-fn message(model: &str, text: &str) -> Value {
-    json!({"type":"message","id":format!("msg-{model}"),"role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]})
-}
-fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
-}
+
 fn serve(
     mut stream: TcpStream,
-    shared: &Shared,
-    workdir: &Path,
-    gate_budget: Duration,
-) -> io::Result<()> {
-    let (path, headers, body) = read_request(&mut stream)?;
-    if path == "/device" {
-        if !body.contains("referrer=ovrcr") {
-            return Err(io::Error::other("missing real device request"));
-        }
-        return json_response(
-            &mut stream,
-            json!({"device_code":"fixture-device","user_code":"E2E-LOCAL","verification_uri":"https://127.0.0.1/activate","expires_in":60,"interval":1}),
-        );
-    }
-    if path == "/token" {
-        if !body.contains("device_code=fixture-device") {
-            return Err(io::Error::other("unexpected token request or refresh"));
-        }
-        return json_response(
-            &mut stream,
-            json!({"access_token":"operator-e2e-oauth-only","refresh_token":"operator-e2e-refresh-only","token_type":"Bearer","expires_in":86400}),
-        );
-    }
-    shared.0.lock().unwrap().inference_attempts += 1;
-    if !matches!(path.as_str(), "/v1/responses" | "/responses")
-        || !headers.contains("authorization: bearer operator-e2e-oauth-only")
-    {
-        return Err(io::Error::other("unexpected inference path or bearer"));
-    }
-    let request: Value = serde_json::from_str(&body).map_err(io::Error::other)?;
-    let model = request["model"]
-        .as_str()
-        .ok_or_else(|| io::Error::other("missing model"))?
+    shared: &Arc<(Mutex<State>, Condvar)>,
+    handler: Arc<Handler>,
+) -> std::io::Result<()> {
+    stream.set_nodelay(true)?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/v1/chat/completions")
         .to_owned();
-    if !matches!(
-        model.as_str(),
-        "fixture-a"
-            | "fixture-b"
-            | "fixture-timeout"
-            | "fixture-incomplete"
-            | "fixture-lifecycle"
-            | "fixture-quick"
-            | "fixture-close-a"
-            | "fixture-close-b"
-            | "fixture-activity"
-    ) && !model.starts_with("fixture-error-")
-        && !model.starts_with("fixture-siwc-")
-        || request["stream"] != true
-    {
-        return Err(io::Error::other("unexpected model or nonstreaming request"));
+    let mut authorization = None;
+    let mut content_length = 0usize;
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header)? == 0 {
+            break;
+        }
+        let trimmed = header.trim_end();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.eq_ignore_ascii_case("authorization") {
+                authorization = Some(value.trim().to_owned());
+            } else if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
     }
-    if !model.starts_with("fixture-siwc-") && path != "/v1/responses" {
-        return Err(io::Error::other("unexpected fixture route"));
-    }
-    let ordinal = {
-        let mut state = shared.0.lock().unwrap();
-        let requests = state.requests.entry(model.clone()).or_default();
-        requests.push(request.clone());
-        requests.len()
+    let mut body = vec![0u8; content_length];
+    reader.read_exact(&mut body)?;
+    let decoded: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let index = {
+        let (lock, _) = &**shared;
+        let mut state = lock.lock().unwrap();
+        state.requests.push(Recorded {
+            body: decoded.clone(),
+            authorization,
+            path: path.clone(),
+        });
+        state.requests.len() - 1
     };
-    if model.starts_with("fixture-siwc-") {
-        if !wait_release(shared, &model, gate_budget)? {
-            return Ok(());
-        }
-        if model == "fixture-siwc-error" {
-            stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"invalid_request_error\"}}")?;
-            return Ok(());
-        }
-        let result = (|| {
-            let content_type = if model == "fixture-siwc-wrong" {
-                "Content-Type: application/json\r\n"
-            } else {
-                ""
-            };
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\n{content_type}Connection: close\r\n\r\n"
-            )?;
-            if model == "fixture-siwc-malformed" {
-                return stream.write_all(b"this is not SSE\n");
+    let plan = handler(&decoded, index);
+    let model = decoded["model"].as_str().unwrap_or(MODEL).to_owned();
+
+    let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+    stream.write_all(headers.as_bytes())?;
+    stream.flush()?;
+
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let mut emitted = VecDeque::new();
+    let has_tools = plan
+        .chunks
+        .iter()
+        .any(|chunk| matches!(chunk, Chunk::ToolCall { .. }));
+    let mut first = true;
+    // Pi identifies streamed tool calls by `index`; two calls in one assistant
+    // message need distinct indexes or the second is merged into the first.
+    let mut tool_index = 0u64;
+    for chunk in &plan.chunks {
+        match chunk {
+            Chunk::Text(text) => {
+                let mut delta = json!({ "content": text });
+                if first {
+                    delta["role"] = json!("assistant");
+                    first = false;
+                }
+                emitted.push_back(sse(&model, created, delta, Value::Null));
             }
-            let output = message("siwc-headerless", "HEADERLESS_E2E_OK");
-            event(
-                &mut stream,
-                json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-siwc-headerless","role":"assistant","content":[]}}),
-            )?;
-            event(
-                &mut stream,
-                json!({"type":"response.output_text.delta","output_index":0,"item_id":"msg-siwc-headerless","content_index":0,"delta":"HEADERLESS_E2E_OK"}),
-            )?;
-            event(
-                &mut stream,
-                json!({"type":"response.output_item.done","output_index":0,"item":output}),
-            )?;
-            if model == "fixture-siwc-incomplete" {
-                event(
-                    &mut stream,
-                    json!({"type":"response.incomplete","response":{"id":"resp-siwc-incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[output]}}),
-                )
-            } else {
-                complete(&mut stream, &model, vec![output])
+            Chunk::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                let mut delta = json!({
+                    "tool_calls": [{
+                        "index": tool_index,
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": serde_json::to_string(arguments).unwrap()
+                        }
+                    }]
+                });
+                tool_index += 1;
+                if first {
+                    delta["role"] = json!("assistant");
+                    first = false;
+                }
+                emitted.push_back(sse(&model, created, delta, Value::Null));
             }
-        })();
-        return match result {
-            Err(error)
-                if matches!(
-                    model.as_str(),
-                    "fixture-siwc-wrong" | "fixture-siwc-grok-missing"
-                ) && matches!(
-                    error.kind(),
-                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
-                ) =>
-            {
-                Ok(())
-            }
-            other => other,
-        };
-    } else if model.starts_with("fixture-error-") {
-        const HOSTILE: &str = "FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT";
-        if !wait_release(shared, &model, gate_budget)? {
-            return Ok(());
         }
-        if model == "fixture-error-transport" {
-            return Ok(());
-        }
-        if let Some(status) = model.strip_prefix("fixture-error-http-") {
-            let status: u16 = status.parse().map_err(io::Error::other)?;
-            let body = match status {
-                401 | 503 => json!({"detail": HOSTILE}),
-                400 => json!({"error":{"code":"subscription_sharing_unsupported_capability","param":"tools","message":HOSTILE},"request_id":HOSTILE}),
-                429 => json!({"error":{"code":"subscription_sharing_usage_limit_exceeded","param":HOSTILE,"message":HOSTILE}}),
-                _ => json!({"error":{"code":HOSTILE,"param":HOSTILE,"message":HOSTILE}}),
-            }.to_string();
-            write!(
-                stream,
-                "HTTP/1.1 {status} Fixture failure\r\nContent-Type: application/json\r\nContent-Length: {}\r\nx-request-id: {HOSTILE}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )?;
-            return Ok(());
-        }
-        stream.write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
-        )?;
-        if model == "fixture-error-parse" {
-            return write!(stream, "event: response.created\ndata: {{{HOSTILE}\n\n");
-        }
-        let status = if model == "fixture-error-incomplete" {
-            "incomplete"
-        } else {
-            "failed"
-        };
-        event(
-            &mut stream,
-            json!({"type":format!("response.{status}"),"response":{"id":HOSTILE,"status":status,"incomplete_details":{"reason":"max_output_tokens"},"error":{"code":HOSTILE,"message":HOSTILE},"output":[]}}),
-        )?;
-        return Ok(());
     }
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
-    )?;
-    let label = model.strip_prefix("fixture-").unwrap().to_ascii_uppercase();
-    if model == "fixture-activity"
-        && ordinal == 1
-        && !wait_release(shared, "fixture-activity-start", gate_budget)?
-    {
-        return Ok(());
+    for event in emitted {
+        stream.write_all(event.as_bytes())?;
     }
-    if model == "fixture-quick"
-        || ((model.starts_with("fixture-close-") || model == "fixture-activity") && ordinal > 1)
-    {
-        if (model == "fixture-quick" && ordinal != 1)
-            || ((model.starts_with("fixture-close-") || model == "fixture-activity")
-                && ordinal != 2)
-        {
-            return Err(io::Error::other("quick first message retried"));
+    stream.flush()?;
+
+    if plan.hold {
+        let (lock, condvar) = &**shared;
+        let mut state = lock.lock().unwrap();
+        while !state.released {
+            state = condvar.wait(state).unwrap();
         }
-        let final_text = if model == "fixture-activity" {
-            "ACTIVITY final"
-        } else {
-            "QUICK final"
-        };
-        let text = message(&model, final_text);
-        if !wait_release(shared, &model, gate_budget)? {
+        if state.stopped {
             return Ok(());
         }
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":final_text}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.done","output_index":0,"item":text}),
-        )?;
-        complete(&mut stream, &model, vec![text])
-    } else if model == "fixture-lifecycle" {
-        let text = message(&model, "LIFECYCLE waiting");
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg-lifecycle","role":"assistant","content":[]}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_text.delta","output_index":0,"item_id":"msg-lifecycle","content_index":0,"delta":"LIFECYCLE waiting"}),
-        )?;
-        if !wait_release(shared, &format!("fixture-lifecycle-{ordinal}"), gate_budget)? {
-            return Ok(());
-        }
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.done","output_index":0,"item":text}),
-        )?;
-        complete(&mut stream, &model, vec![text])
-    } else if model == "fixture-incomplete" {
-        if ordinal != 1 {
-            return Err(io::Error::other("incomplete response retried"));
-        }
-        let text = message(&model, "INCOMPLETE partial visible");
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":"INCOMPLETE partial visible"}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.done","output_index":0,"item":text}),
-        )?;
-        if !wait_release(shared, &model, gate_budget)? {
-            return Ok(());
-        }
-        event(
-            &mut stream,
-            json!({"type":"response.incomplete","response":{"id":"resp-incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[text],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}),
-        )
-    } else if ordinal == 1 {
-        let timeout = model == "fixture-timeout";
-        let closing = model.starts_with("fixture-close-") || model == "fixture-activity";
-        let command = if closing {
-            format!(
-                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; while [ ! -e {} ]; do /bin/sleep 0.01; done; printf 'CLOSE_%s\n' BASH_OK",
-                shell_quote(&workdir.join(format!("{model}.executions"))),
-                shell_quote(&workdir.join(format!("{model}.pid"))),
-                shell_quote(&workdir.join(format!("{model}.bash-release")))
-            )
-        } else if timeout {
-            format!(
-                "printf 'started\n' >> {}; printf '%s\n' \"$$\" > {}; exec /bin/sleep 30",
-                shell_quote(&workdir.join("timeout.executions")),
-                shell_quote(&workdir.join("timeout.pid"))
-            )
-        } else {
-            format!(
-                "printf 'E2E_{label}_TOOL\nCLI_BEGIN\n'; \"$OVRCR_EXECUTABLE\" --json list; cli_status=$?; printf '\nCLI_END\n'; printf 'ran\n' >> {}; exit \"$cli_status\"",
-                shell_quote(&workdir.join(format!("{model}.executions")))
-            )
-        };
-        let arguments =
-            json!({"command":command,"cwd":workdir,"timeout_seconds":if timeout {2} else if model == "fixture-activity" {gate_budget.as_secs()} else {10}})
-                .to_string();
-        let call = json!({"type":"function_call","id":format!("fc-{model}"),"call_id":format!("call-{model}"),"name":"bash","arguments":arguments,"status":"completed"});
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":format!("msg-{model}"),"role":"assistant","content":[]}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_text.delta","output_index":0,"item_id":format!("msg-{model}"),"content_index":0,"delta":format!("{label} before tool")}),
-        )?;
-        let text = message(&model, &format!("{label} before tool"));
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.done","output_index":0,"item":text}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":format!("fc-{model}"),"call_id":format!("call-{model}"),"name":"bash","arguments":""}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":arguments}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.done","output_index":1,"item":call}),
-        )?;
-        complete(&mut stream, &model, vec![text, call])
-    } else if ordinal == 2 || (ordinal == 3 && model == "fixture-b") {
-        // Validate the actual serialized Bash result, including CLI exit and JSON bytes.
-        let result = request["input"]
-            .as_array()
-            .and_then(|items| {
-                items
-                    .iter()
-                    .find(|item| item["type"] == "function_call_output")
-            })
-            .and_then(|item| item["output"].as_str())
-            .ok_or_else(|| io::Error::other("missing Bash result"))?;
-        let result: Value = serde_json::from_str(result).map_err(io::Error::other)?;
-        let output = result["output"]
-            .as_str()
-            .ok_or_else(|| io::Error::other("missing Bash output"))?;
-        if !output.contains(&format!("E2E_{label}_TOOL"))
-            || result["exit_code"] != 0
-            || result["truncated"] != false
-            || result["timed_out"] != false
-        {
-            return Err(io::Error::other("real Bash/CLI command did not succeed"));
-        }
-        cli_array(output)?;
-        let partial = if ordinal == 3 {
-            "B follow-up waiting".to_owned()
-        } else {
-            format!("{label} partial waiting")
-        };
-        let tail = if ordinal == 3 {
-            " B follow-up final".to_owned()
-        } else {
-            format!(" {label} final")
-        };
-        let gate = if ordinal == 3 {
-            "fixture-b-followup"
-        } else {
-            &model
-        };
-        let message_id = format!("msg-{model}-final-{ordinal}");
-        event(
-            &mut stream,
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":message_id,"role":"assistant","content":[]}}),
-        )?;
-        event(
-            &mut stream,
-            json!({"type":"response.output_text.delta","output_index":0,"item_id":message_id,"content_index":0,"delta":partial}),
-        )?;
-        // A bounded barrier proves partial text reached the journal before final completion.
-        if !wait_release(shared, gate, gate_budget)? {
-            return Ok(());
-        }
-        // A stopped worker closes its socket; that is expected for the independently cancelled arm.
-        let result = (|| {
-            event(
-                &mut stream,
-                json!({"type":"response.output_text.delta","output_index":0,"item_id":message_id,"content_index":0,"delta":tail}),
-            )?;
-            let mut text = message(
-                &format!("{model}-final-{ordinal}"),
-                &format!("{partial}{tail}"),
-            );
-            text["id"] = json!(message_id);
-            event(
-                &mut stream,
-                json!({"type":"response.output_item.done","output_index":0,"item":text}),
-            )?;
-            complete(&mut stream, &model, vec![text])
-        })();
-        match result {
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
-                ) =>
-            {
-                Ok(())
-            }
-            other => other,
-        }
-    } else {
-        Err(io::Error::other(
-            "unexpected replay or extra inference request",
-        ))
     }
+
+    let finish = if has_tools { "tool_calls" } else { "stop" };
+    let done = sse(&model, created, json!({}), json!(finish));
+    stream.write_all(done.as_bytes())?;
+    stream.write_all(b"data: [DONE]\n\n")?;
+    stream.flush()?;
+    Ok(())
 }
 
-fn wait_release(shared: &Shared, gate: &str, budget: Duration) -> io::Result<bool> {
-    let deadline = Instant::now() + budget;
-    let mut state = shared.0.lock().unwrap();
-    while !state.stopped && !state.released.contains(gate) {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(io::Error::other("model gate was not released"));
-        }
-        state = shared.1.wait_timeout(state, remaining).unwrap().0;
-    }
-    Ok(!state.stopped)
-}
-
-/// The public CLI list is an array; delimiters separate it from the Bash evidence marker.
-pub fn cli_array(output: &str) -> io::Result<Value> {
-    let (_, json) = output
-        .split_once("CLI_BEGIN\n")
-        .ok_or_else(|| io::Error::other("missing CLI_BEGIN"))?;
-    let (json, _) = json
-        .split_once("\nCLI_END")
-        .ok_or_else(|| io::Error::other("missing CLI_END"))?;
-    let value: Value = serde_json::from_str(json.trim()).map_err(io::Error::other)?;
-    if !value.is_array() {
-        return Err(io::Error::other("CLI list must be an array"));
-    }
-    Ok(value)
-}
-
-/// Child-only real OAuth seeding; all six configurable endpoints point at one loopback listener.
-pub fn sign_in_local(base: &str, instance: &Path) {
-    let url = reqwest::Url::parse(base).unwrap();
-    assert_eq!(url.scheme(), "http");
-    assert!(
-        url.host_str()
-            .unwrap()
-            .parse::<std::net::IpAddr>()
-            .unwrap()
-            .is_loopback()
-    );
-    assert_eq!(std::env::var("NO_PROXY").unwrap(), "*");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let auth = AuthManager::new(instance)
-            .unwrap()
-            .with_endpoints(AuthEndpoints {
-                grok_device: format!("{base}/device"),
-                grok_token: format!("{base}/token"),
-                chat_token: format!("{base}/token"),
-                chat_jwks: format!("{base}/jwks"),
-                chat_models: format!("{base}/models"),
-                chat_revoke: format!("{base}/revoke"),
-                ..Default::default()
-            });
-        let cancel = AuthCancel::default();
-        let login = auth.begin_grok(&cancel).await.unwrap();
-        auth.finish_grok(login, &cancel).await.unwrap();
-        assert!(auth.status(OperatorProvider::Grok).await.unwrap().signed_in);
+fn sse(model: &str, created: u64, delta: Value, finish_reason: Value) -> String {
+    let chunk = json!({
+        "id": "fixture",
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]
     });
+    format!("data: {chunk}\n\n")
+}
+
+/// The last user message text in an OpenAI-completions request.
+pub fn last_user_text(body: &Value) -> String {
+    let mut texts = body["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|message| message["role"] == "user")
+        .map(|message| content_text(&message["content"]));
+    texts.next_back().unwrap_or_default()
+}
+
+/// OpenAI content may be a plain string or text parts.
+pub fn content_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// Whether the request is Pi's compaction summarization call.
+pub fn is_compaction_request(body: &Value) -> bool {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    messages.iter().any(|message| {
+        message["role"] == "system"
+            && message["content"]
+                .as_str()
+                .is_some_and(|text| text.to_lowercase().contains("summar"))
+    }) || messages.iter().any(|message| {
+        message["content"].as_str().is_some_and(|text| {
+            text.contains("Summarize the conversation") || text.contains("compaction summary")
+        })
+    })
+}
+
+/// All text content in a recorded request, for context assertions.
+pub fn request_text(body: &Value) -> String {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    messages
+        .iter()
+        .map(|message| content_text(&message["content"]))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn tool_result_texts(body: &Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| content_text(&message["content"]))
+        .collect()
+}
+
+pub fn read_marker(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
 }

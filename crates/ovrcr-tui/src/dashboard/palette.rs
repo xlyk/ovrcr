@@ -133,6 +133,15 @@ struct AgentCandidate {
     unavailable: Option<&'static str>,
 }
 
+/// Legacy Operator records remain on disk for diagnostics but are hidden from
+/// every Dashboard list; their lifecycle routes are refused by the Server.
+fn is_operator_scope(session: &SessionSummary) -> bool {
+    matches!(
+        session.scope,
+        ovrcr_protocol::SessionScope::OperatorConversation { .. }
+    )
+}
+
 fn running_agent(session: &SessionSummary) -> bool {
     !session.archived
         && session.phase == SessionPhase::Running
@@ -2774,45 +2783,6 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    pub(super) fn open_close_operator_for(
-        &mut self,
-        id: ovrcr_protocol::OperatorConversationId,
-    ) -> DashboardAction {
-        let Some((session, run, title, busy, draft)) = self.operator_close_target(id) else {
-            return DashboardAction::None;
-        };
-        self.whichkey = None;
-        self.palette = Some(Palette {
-            page: Page::Confirm {
-                request: Some(Box::new(Request::Operator(
-                    ovrcr_protocol::OperatorRequest::Close {
-                        conversation: id,
-                        expected_run: run,
-                    },
-                ))),
-                target: format!(
-                    "Close Operator {} (#{} / session {} / run {}). {}Archive its history.{}",
-                    title,
-                    id.0,
-                    session.0,
-                    run.0,
-                    if busy {
-                        "Stop its live or unconfirmed work, then "
-                    } else {
-                        ""
-                    },
-                    if draft {
-                        " The draft will be discarded."
-                    } else {
-                        ""
-                    }
-                ),
-            },
-            ..Palette::new()
-        });
-        DashboardAction::Redraw
-    }
-
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
         let matches_close = self
             .palette
@@ -3175,58 +3145,43 @@ impl Dashboard {
         }
         if let Some(rows) = archive {
             let query = query.to_lowercase();
+            // Legacy Operator rows stay on disk for diagnostics but never appear here.
             return rows
                 .iter()
                 .filter(|row| {
-                    let place = session_workspace_heading(self, row);
-                    let label = format!(
-                        "{} {} {} {} {} {}",
-                        row.display_name(),
-                        place,
-                        row.project,
-                        row.workspace,
-                        row.cwd.display(),
-                        if matches!(
-                            row.scope,
-                            ovrcr_protocol::SessionScope::OperatorConversation { .. }
-                        ) {
-                            "Operator"
-                        } else {
-                            ""
-                        }
-                    )
-                    .to_lowercase();
-                    query.split_whitespace().all(|word| label.contains(word))
+                    !is_operator_scope(row) && {
+                        let place = session_workspace_heading(self, row);
+                        let label = format!(
+                            "{} {} {} {} {}",
+                            row.display_name(),
+                            place,
+                            row.project,
+                            row.workspace,
+                            row.cwd.display(),
+                        )
+                        .to_lowercase();
+                        query.split_whitespace().all(|word| label.contains(word))
+                    }
                 })
                 .flat_map(|row| {
-                    let operator = matches!(
-                        row.scope,
-                        ovrcr_protocol::SessionScope::OperatorConversation { .. }
+                    let label = format!(
+                        "{} / {} (#{})",
+                        session_workspace_heading(self, row),
+                        row.display_name(),
+                        row.id.0
                     );
-                    let label = if operator {
-                        format!("Operator / {} (#{})", row.display_name(), row.id.0)
-                    } else {
-                        format!(
-                            "{} / {} (#{})",
-                            session_workspace_heading(self, row),
-                            row.display_name(),
-                            row.id.0
-                        )
-                    };
                     let mut entries = vec![Entry {
                         label: format!("Unarchive: {label}"),
                         command: Command::Unarchive(row.id, row.run),
                     }];
-                    if !operator {
-                        entries.push(Entry {
-                            label: format!("Delete record: {label}"),
-                            command: Command::DeleteArchived(
-                                row.id,
-                                row.run,
-                                row.display_name().to_owned(),
-                            ),
-                        });
-                    }
+                    entries.push(Entry {
+                        label: format!("Delete record: {label}"),
+                        command: Command::DeleteArchived(
+                            row.id,
+                            row.run,
+                            row.display_name().to_owned(),
+                        ),
+                    });
                     // Filing a row keeps its ownership uncertainty, which blocks
                     // workspace removal; the archive must offer the acknowledgement.
                     if row
@@ -5051,15 +5006,6 @@ impl Dashboard {
                 }
                 Page::Confirm { request, .. } => {
                     if let Some(request) = request.as_deref().cloned() {
-                        if let Request::Operator(ovrcr_protocol::OperatorRequest::Close {
-                            conversation,
-                            expected_run,
-                        }) = request
-                        {
-                            self.operator_close(conversation, expected_run);
-                            self.palette = None;
-                            return DashboardAction::Redraw;
-                        }
                         // Removal first stops the running sessions it named, one
                         // Lifecycle job at a time, then removes the workspace.
                         let mut steps = self.removal_steps(&request);
@@ -6874,7 +6820,7 @@ impl Dashboard {
                 palette.pending = None;
                 let mut rows: Vec<_> = sessions
                     .iter()
-                    .filter(|row| row.archived)
+                    .filter(|row| row.archived && !is_operator_scope(row))
                     .cloned()
                     .collect();
                 rows.sort_by_key(|row| std::cmp::Reverse(row.id.0));
@@ -13868,20 +13814,31 @@ mod launch_tests {
     }
 
     #[test]
-    fn operator_archive_palette_omits_delete() {
+    fn operator_archive_palette_hides_legacy_rows_entirely() {
         let d = dashboard();
         let mut row = summary(9);
         row.archived = true;
         row.scope = ovrcr_protocol::SessionScope::OperatorConversation {
             conversation: ovrcr_protocol::OperatorConversationId(3),
         };
-        let entries = d.palette_entries("", Some(&[row]), None, None, false);
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].label.starts_with("Unarchive: Operator / "));
-        assert!(matches!(
-            entries[0].command,
-            Command::Unarchive(SessionId(9), _)
-        ));
+        let mut ordinary = summary(10);
+        ordinary.archived = true;
+        let entries = d.palette_entries("", Some(&[row, ordinary]), None, None, false);
+        assert_eq!(
+            entries.len(),
+            2,
+            "only the ordinary archived row is offered"
+        );
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !entry.label.contains("Operator"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| matches!(entry.command, Command::Unarchive(SessionId(10), _)))
+        );
     }
 
     #[test]

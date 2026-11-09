@@ -1,4 +1,6 @@
-//! Native chat is durable protocol data, never a terminal parser or PTY input target.
+//! One durable pi conversation is protocol data, never a terminal parser or a
+//! PTY input target. The shared sidebar row, the full view and the Quick
+//! message overlay all address that same singleton.
 mod render;
 
 use super::text_cursor::TextCursor;
@@ -9,9 +11,9 @@ use crossterm::event::{
 use ovrcr_protocol::{
     ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorProvider, OperatorRequest, OperatorResponse,
-    OperatorToolStatus, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState,
-    OperatorWorkerEvent, Request, Response, SessionRunId,
+    OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorToolStatus, OperatorTurnId,
+    OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request, Response, SessionId,
+    SessionRunId,
 };
 use ratatui::{
     Frame,
@@ -27,18 +29,12 @@ use unicode_width::UnicodeWidthStr;
 pub(super) struct Hub {
     pub visible: bool,
     editing: bool,
-    list_focus: bool,
     transcript_focus: bool,
     sidebar_open: bool,
-    pub(super) collapsed: bool,
-    list_offset: usize,
-    hovered: Option<Id>,
-    selected: Option<Id>,
-    chats: BTreeMap<u64, Chat>,
+    chat: Option<Chat>,
+    /// One Open or history read is in flight for the singleton.
+    loading: bool,
     pending: HashMap<u64, Pending>,
-    listing: bool,
-    list_dirty: bool,
-    new: Option<NewChat>,
     context: OperatorContext,
     error: Option<String>,
     quick: Option<QuickMessage>,
@@ -50,27 +46,25 @@ struct QuickMessage {
     text: String,
     cursor: TextCursor,
     context: OperatorContext,
-    provider: OperatorProvider,
-    model: String,
     error: Option<String>,
     phase: QuickPhase,
-    conversation: Option<(Id, ovrcr_protocol::SessionId)>,
-    draft_seeded: bool,
+    /// The overlay mirrors the singleton's draft once that conversation exists,
+    /// so both entry points edit one draft instead of competing copies.
+    seeded: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum QuickPhase {
     Editing,
-    Creating,
+    Opening,
     Submitting,
 }
 struct QuickSubmission {
     generation: u64,
     text: String,
     context: OperatorContext,
-    provider: OperatorProvider,
-    model: String,
 }
-enum CreateOrigin {
+/// Why an Open was sent: the full view, or the first explicit Quick Send.
+enum OpenOrigin {
     Manual,
     Quick(QuickSubmission),
 }
@@ -81,6 +75,8 @@ enum SubmitOrigin {
 }
 struct Chat {
     summary: Summary,
+    /// The fixed agent working directory; the captured target is per message.
+    workdir: Option<std::path::PathBuf>,
     error: Option<String>,
     draft: String,
     cursor: TextCursor,
@@ -92,7 +88,6 @@ struct Chat {
     dirty: bool,
     submitting: bool,
     stopping: bool,
-    closing: bool,
     scroll: usize,
     anchor: Option<(u64, usize, usize)>,
     expanded: BTreeSet<u64>,
@@ -105,6 +100,7 @@ impl Chat {
     fn new(summary: Summary, context: OperatorContext) -> Self {
         Self {
             summary,
+            workdir: None,
             error: None,
             draft: String::new(),
             cursor: TextCursor::default(),
@@ -116,7 +112,6 @@ impl Chat {
             dirty: true,
             submitting: false,
             stopping: false,
-            closing: false,
             scroll: 0,
             anchor: None,
             expanded: BTreeSet::new(),
@@ -127,9 +122,7 @@ impl Chat {
         }
     }
     fn can_submit(&self) -> bool {
-        !self.closing
-            && !self.summary.archived
-            && !self.submitting
+        !self.submitting
             && self.summary.worker_stopped
             && self
                 .summary
@@ -138,31 +131,19 @@ impl Chat {
                 .is_none_or(|turn| turn.state != OperatorTurnState::Running)
     }
 }
-struct NewChat {
-    provider: OperatorProvider,
-    model: String,
-    cursor: TextCursor,
-    provider_focus: bool,
-}
 enum Pending {
-    List,
+    Current,
+    Open {
+        origin: OpenOrigin,
+    },
     Read {
         id: Id,
         after: u64,
     },
-    Create {
-        context: Box<OperatorContext>,
-        origin: CreateOrigin,
-    },
-    Close {
-        id: Id,
-        session: ovrcr_protocol::SessionId,
-        expected_run: SessionRunId,
-    },
     Submit {
         id: Id,
         text: String,
-        session: ovrcr_protocol::SessionId,
+        session: SessionId,
         expected_run: SessionRunId,
         origin: SubmitOrigin,
     },
@@ -170,6 +151,8 @@ enum Pending {
         identity: OperatorTurnIdentity,
     },
 }
+const BUSY_REASON: &str = "The Operator is busy or its worker stop is unconfirmed; draft retained.";
+const UNAVAILABLE_REASON: &str = "Operator response did not match the singleton conversation.";
 
 /// Display escaped control characters literally. In particular ESC, OSC, CSI and bidi controls
 /// can never reach the terminal backend as active controls. Newlines and tabs retain structure.
@@ -195,22 +178,6 @@ fn paste_text(text: &str) -> String {
         .chars()
         .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
         .collect()
-}
-fn default_model(dashboard: &Dashboard, provider: OperatorProvider) -> String {
-    match provider {
-        OperatorProvider::ChatGpt => dashboard
-            .settings
-            .operator
-            .chat_gpt_model
-            .clone()
-            .unwrap_or_else(|| "gpt-6.1-sol".into()),
-        OperatorProvider::Grok => dashboard
-            .settings
-            .operator
-            .grok_model
-            .clone()
-            .unwrap_or_else(|| "grok-4.7".into()),
-    }
 }
 fn content_area(dashboard: &Dashboard, area: Rect) -> Rect {
     let sidebar = super::sidebar_width_for(area, dashboard.sidebar_preference());
@@ -244,6 +211,12 @@ fn context_label(context: &OperatorContext) -> String {
     }
     display_text(&label)
 }
+/// The fixed agent working directory every pi turn runs in. The captured
+/// target is separate: pi's cwd never follows the Dashboard selection.
+fn agent_workdir(dashboard: &Dashboard) -> Option<std::path::PathBuf> {
+    (!dashboard.config_dir.as_os_str().is_empty())
+        .then(|| dashboard.config_dir.join("operator-workdir"))
+}
 fn status(chat: &Chat) -> &'static str {
     if chat.stopping {
         return "stopping · accepted operations may finish";
@@ -265,21 +238,29 @@ fn status(chat: &Chat) -> &'static str {
         None => "ready",
     }
 }
+/// `Operator · pi · provider/id` once the worker has selected a model, else
+/// `Operator · pi`. The model is never guessed from settings, and the worker's
+/// reserved `unknown/unknown` placeholder is treated as no selection.
+fn identity(chat: &Chat) -> String {
+    match &chat.summary.model {
+        Some(model) if !(model.provider == "unknown" && model.id == "unknown") => format!(
+            "Operator · pi · {}/{}",
+            display_text(&model.provider),
+            display_text(&model.id)
+        ),
+        Some(_) | None => "Operator · pi".into(),
+    }
+}
 
 struct ConversationActivity {
     label: String,
     animated: bool,
 }
 fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
-    if chat.summary.archived {
-        return None;
-    }
     let label = if chat.submitting {
         "Sending".into()
     } else if chat.stopping {
         "Stopping".into()
-    } else if chat.closing {
-        "Closing".into()
     } else {
         let turn = chat.summary.current_turn.as_ref()?;
         if turn.state != OperatorTurnState::Running {
@@ -342,15 +323,15 @@ fn expandable(message: &OperatorMessage) -> bool {
     )
 }
 impl Dashboard {
+    /// The singleton is worth a spinner while its visible journal animates.
     pub(super) fn operator_conversation_busy(&self) -> bool {
         self.operator.visible
-            && self.operator.new.is_none()
             && self.outer_area.width >= 60
             && self.outer_area.height >= 16
             && self
                 .operator
-                .selected
-                .and_then(|id| self.operator.chats.get(&id.0))
+                .chat
+                .as_ref()
                 .and_then(conversation_activity)
                 .is_some_and(|activity| activity.animated)
     }
@@ -361,48 +342,59 @@ impl Dashboard {
             .is_some_and(|quick| quick.visible)
     }
     pub(super) fn open_operator_quick_message(&mut self) -> DashboardAction {
+        // The captured target belongs to the next message, so opening an
+        // editable Quick draft re-captures the Dashboard's current selection. A
+        // frozen Open or Submit keeps the context it captured for itself.
+        let context = self.operator_next_context();
         if let Some(quick) = &mut self.operator.quick {
             quick.visible = true;
-            if quick.phase == QuickPhase::Editing
-                && quick.draft_seeded
-                && let Some((id, _)) = quick.conversation
-                && let Some(chat) = self.operator.chats.get(&id.0)
-            {
-                quick.text = chat.draft.clone();
-                quick.cursor = chat.cursor;
+            if quick.phase == QuickPhase::Editing {
+                quick.context = context;
+                if let Some(chat) = &mut self.operator.chat {
+                    if quick.seeded {
+                        // The overlay is another editor for the singleton's one draft.
+                        quick.text = chat.draft.clone();
+                        quick.cursor = chat.cursor;
+                    } else {
+                        // Adopt a draft typed before the singleton resolved rather
+                        // than replacing it with the empty full draft.
+                        chat.draft = quick.text.clone();
+                        chat.cursor = quick.cursor;
+                        quick.seeded = true;
+                    }
+                }
             }
         } else {
-            let context = if self.operator.visible {
-                self.operator
-                    .selected
-                    .and_then(|id| self.operator.chats.get(&id.0))
-                    .map(|chat| chat.context.clone())
-                    .unwrap_or_else(|| self.operator.context.clone())
-            } else {
-                self.capture_operator_context()
-            };
-            let provider = self.settings.operator.provider;
+            let seeded = self.operator.chat.is_some();
+            let (text, cursor) = self
+                .operator
+                .chat
+                .as_ref()
+                .map_or((String::new(), TextCursor::default()), |chat| {
+                    (chat.draft.clone(), chat.cursor)
+                });
             self.operator.quick_generation = self.operator.quick_generation.wrapping_add(1);
             self.operator.quick = Some(QuickMessage {
                 generation: self.operator.quick_generation,
                 visible: true,
-                text: String::new(),
-                cursor: TextCursor::default(),
+                text,
+                cursor,
                 context,
-                provider,
-                model: default_model(self, provider),
                 error: None,
                 phase: QuickPhase::Editing,
-                conversation: None,
-                draft_seeded: false,
+                seeded,
             });
         }
         DashboardAction::Redraw
     }
     pub(super) fn operator_dismiss_quick(&mut self) {
-        if self.operator.quick.as_ref().is_some_and(|q| {
-            q.phase == QuickPhase::Editing && q.error.is_none() && q.conversation.is_none()
-        }) {
+        if self
+            .operator
+            .quick
+            .as_ref()
+            .is_some_and(|q| q.phase == QuickPhase::Editing && q.error.is_none() && !q.seeded)
+        {
+            // A cancelled unsent Quick draft creates nothing and leaves no overlay.
             self.operator.quick = None;
         } else if let Some(quick) = &mut self.operator.quick {
             quick.visible = false;
@@ -440,30 +432,17 @@ impl Dashboard {
                     }
                     quick.error = None;
                     let generation = quick.generation;
-                    if let Some((id, _)) = quick.conversation {
+                    if self.operator.chat.is_some() {
                         quick.phase = QuickPhase::Submitting;
-                        self.operator_submit_to(id, SubmitOrigin::Quick { generation });
+                        self.operator_submit_to(SubmitOrigin::Quick { generation });
                     } else {
                         let submission = QuickSubmission {
                             generation,
                             text: quick.text.clone(),
                             context: quick.context.clone(),
-                            provider: quick.provider,
-                            model: quick.model.clone(),
                         };
-                        let context = submission.context.clone();
-                        let request = OperatorRequest::Create {
-                            provider: submission.provider,
-                            model: submission.model.clone(),
-                        };
-                        quick.phase = QuickPhase::Creating;
-                        self.operator_request(
-                            Pending::Create {
-                                context: Box::new(context),
-                                origin: CreateOrigin::Quick(submission),
-                            },
-                            request,
-                        );
+                        quick.phase = QuickPhase::Opening;
+                        self.operator_open(OpenOrigin::Quick(submission));
                     }
                 }
                 KeyCode::Char(ch) if !ch.is_control() => {
@@ -475,15 +454,7 @@ impl Dashboard {
                 code => quick.cursor.key(&mut quick.text, code),
             }
         }
-        if let Some(quick) = &self.operator.quick
-            && quick.phase == QuickPhase::Editing
-            && quick.draft_seeded
-            && let Some((id, _)) = quick.conversation
-            && let Some(chat) = self.operator.chats.get_mut(&id.0)
-        {
-            chat.draft = quick.text.clone();
-            chat.cursor = quick.cursor;
-        }
+        self.operator_sync_quick_draft();
         DashboardAction::Redraw
     }
     pub(super) fn operator_quick_paste(&mut self, text: &str) -> DashboardAction {
@@ -493,16 +464,24 @@ impl Dashboard {
             let text = paste_text(text);
             if quick.text.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES {
                 quick.cursor.insert(&mut quick.text, &text);
-                if quick.draft_seeded
-                    && let Some((id, _)) = quick.conversation
-                    && let Some(chat) = self.operator.chats.get_mut(&id.0)
-                {
-                    chat.draft = quick.text.clone();
-                    chat.cursor = quick.cursor;
-                }
             }
         }
+        self.operator_sync_quick_draft();
         DashboardAction::Redraw
+    }
+    /// Mirror Quick edits into the singleton draft while the overlay owns it.
+    fn operator_sync_quick_draft(&mut self) {
+        let Some(quick) = &self.operator.quick else {
+            return;
+        };
+        if quick.phase != QuickPhase::Editing || !quick.seeded {
+            return;
+        }
+        let (text, cursor) = (quick.text.clone(), quick.cursor);
+        if let Some(chat) = &mut self.operator.chat {
+            chat.draft = text;
+            chat.cursor = cursor;
+        }
     }
     pub(super) fn operator_quick_mouse(
         &mut self,
@@ -520,41 +499,30 @@ impl Dashboard {
             quick.error = Some(display_text(error));
         }
     }
-    pub(super) fn operator_clear_hover(&mut self) {
-        self.operator.hovered = None;
-    }
     pub(super) fn operator_sidebar_requested(&self) -> bool {
         self.operator.visible && self.operator.sidebar_open
     }
     pub(super) fn operator_sidebar_on_demand(&self) -> bool {
         self.operator.visible && self.outer_area.width < 100 && !self.operator.sidebar_open
     }
-    pub(super) fn operator_has_form(&self) -> bool {
-        self.operator.new.is_some()
-    }
     pub(super) fn operator_transcript_focused(&self) -> bool {
         self.operator.visible && self.operator.transcript_focus
     }
     pub(super) fn operator_submit_available(&self) -> bool {
         self.operator
-            .selected
-            .and_then(|id| self.operator.chats.get(&id.0))
+            .chat
+            .as_ref()
             .is_some_and(|chat| chat.can_submit() && !chat.draft.trim().is_empty())
     }
     pub(super) fn operator_stop_available(&self) -> bool {
-        self.operator.new.is_none()
-            && self
-                .operator
-                .selected
-                .and_then(|id| self.operator.chats.get(&id.0))
-                .is_some_and(|chat| {
-                    !chat.summary.worker_stopped
-                        || chat
-                            .summary
-                            .current_turn
-                            .as_ref()
-                            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
-                })
+        self.operator.chat.as_ref().is_some_and(|chat| {
+            !chat.summary.worker_stopped
+                || chat
+                    .summary
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+        })
     }
     pub(super) fn operator_header_rect(&self, area: Rect) -> Rect {
         let sidebar =
@@ -594,36 +562,53 @@ impl Dashboard {
             run: session.map(|session| session.run),
         }
     }
+    /// The target the next message will carry. A visible full view already owns
+    /// the next-message target in `chat.context`; any other view captures the
+    /// current selection now. Opening either composer uses this one rule, so
+    /// Quick and the full composer never disagree about the next message.
+    fn operator_next_context(&self) -> OperatorContext {
+        if self.operator.visible {
+            self.operator.chat.as_ref().map_or_else(
+                || self.operator.context.clone(),
+                |chat| chat.context.clone(),
+            )
+        } else {
+            self.capture_operator_context()
+        }
+    }
+    /// The full view opens the singleton directly, composer focused. Open is
+    /// idempotent, so reopening never resets the conversation or its draft.
     pub(super) fn open_operator(&mut self) -> DashboardAction {
         if !self.operator.visible {
+            // The row above the composer names the target for the next message,
+            // so opening the composer re-captures the current selection. A
+            // message already being sent keeps its own frozen target.
             self.operator.context = self.capture_operator_context();
+            if let Some(chat) = self.operator.chat.as_mut() {
+                chat.context = self.operator.context.clone();
+            }
             self.retarget(super::state::PaneChange::Focus);
         }
         self.operator.visible = true;
         self.operator.editing = true;
+        self.operator.transcript_focus = false;
+        self.operator.error = None;
         self.mode = InputMode::Browse;
-        if self.operator.chats.is_empty() && self.operator.new.is_none() {
-            self.operator_new();
-        }
-        self.operator_list(0);
-        self.operator_catch_up();
+        self.operator_open(OpenOrigin::Manual);
+        self.operator_read();
         DashboardAction::Redraw
     }
-    pub(super) fn operator_start_listing(&mut self) {
-        self.operator_list(0);
-    }
-    fn operator_new(&mut self) {
-        let provider = self.settings.operator.provider;
-        self.operator.new = Some(NewChat {
-            provider,
-            model: default_model(self, provider),
-            cursor: TextCursor::default(),
-            provider_focus: false,
-        });
-        self.operator.list_focus = false;
-        self.operator.transcript_focus = false;
-        self.operator.editing = true;
-        self.operator.error = None;
+    /// Startup probes the singleton without creating a record or a process.
+    pub(super) fn operator_start_current(&mut self) {
+        if self
+            .operator
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::Current))
+        {
+            return;
+        }
+        self.operator_request(Pending::Current, OperatorRequest::Current);
     }
     fn operator_request(&mut self, pending: Pending, request: OperatorRequest) {
         let request_id = self.next_request_id();
@@ -633,107 +618,61 @@ impl Dashboard {
             request: Request::Operator(request),
         });
     }
-    fn operator_list(&mut self, after: u64) {
-        if self.operator.listing {
-            self.operator.list_dirty = true;
+    fn operator_open(&mut self, origin: OpenOrigin) {
+        if matches!(origin, OpenOrigin::Manual)
+            && self.operator.pending.values().any(|pending| {
+                matches!(
+                    pending,
+                    Pending::Open {
+                        origin: OpenOrigin::Manual
+                    }
+                )
+            })
+        {
             return;
         }
-        self.operator.listing = true;
-        self.operator_request(Pending::List, OperatorRequest::List { after, limit: 100 });
+        self.operator.loading = true;
+        self.operator_request(Pending::Open { origin }, OperatorRequest::Open);
     }
-    fn operator_catch_up(&mut self) {
-        let ids: Vec<_> = self
-            .operator
-            .chats
-            .iter()
-            .filter_map(|(id, chat)| (chat.dirty && !chat.reading).then_some(Id(*id)))
-            .collect();
-        for id in ids {
-            let chat = self.operator.chats.get_mut(&id.0).unwrap();
-            chat.dirty = false;
-            chat.reading = true;
-            chat.confirmed_tail = None;
-            let after = chat.ordinal;
-            self.operator_request(
-                Pending::Read { id, after },
-                OperatorRequest::Read {
-                    conversation: id,
-                    after,
-                    limit: 100,
-                },
-            );
-        }
-    }
-    pub(super) fn operator_changed(&mut self, id: Id) {
-        if let Some(chat) = self.operator.chats.get_mut(&id.0) {
-            chat.dirty = true;
-            chat.confirmed_tail = None;
-        }
-        self.operator_list(0);
-        self.operator_catch_up();
-    }
-    fn operator_select(&mut self, id: Id) {
-        if self
-            .operator
-            .chats
-            .get(&id.0)
-            .is_some_and(|chat| !chat.summary.archived)
-        {
-            self.operator.selected = Some(id);
-            self.operator.new = None;
-            self.operator.error = None;
-            self.operator.list_focus = false;
-            self.operator.transcript_focus = false;
-            self.operator.sidebar_open = false;
-            self.operator.editing = true;
-            self.operator_ensure_visible();
-            self.operator_catch_up();
-        }
-    }
-    pub(super) fn operator_close_target(
-        &self,
-        id: Id,
-    ) -> Option<(ovrcr_protocol::SessionId, SessionRunId, String, bool, bool)> {
-        let chat = self.operator.chats.get(&id.0)?;
-        (!chat.summary.archived && !chat.closing).then(|| {
-            (
-                chat.summary.session,
-                chat.summary.run,
-                display_text(&chat.summary.title),
-                !chat.summary.worker_stopped,
-                !chat.draft.is_empty(),
-            )
-        })
-    }
-    pub(super) fn operator_close(&mut self, id: Id, expected_run: SessionRunId) {
-        let Some(chat) = self.operator.chats.get_mut(&id.0) else {
+    /// Load the next page of the singleton journal when it is dirty.
+    fn operator_read(&mut self) {
+        let Some(chat) = &mut self.operator.chat else {
             return;
         };
-        if chat.summary.archived || chat.closing || chat.summary.run != expected_run {
+        if chat.reading || !chat.dirty {
             return;
         }
-        let session = chat.summary.session;
-        chat.closing = true;
+        chat.dirty = false;
+        chat.reading = true;
+        chat.confirmed_tail = None;
+        let (id, after) = (chat.summary.id, chat.ordinal);
+        self.operator.loading = true;
         self.operator_request(
-            Pending::Close {
-                id,
-                session,
-                expected_run,
-            },
-            OperatorRequest::Close {
+            Pending::Read { id, after },
+            OperatorRequest::Read {
                 conversation: id,
-                expected_run,
+                after,
+                limit: 100,
             },
         );
     }
-    fn operator_submit(&mut self) {
-        let Some(id) = self.operator.selected else {
+    pub(super) fn operator_changed(&mut self, id: Id) {
+        let Some(chat) = &mut self.operator.chat else {
             return;
         };
-        self.operator_submit_to(id, SubmitOrigin::Composer);
+        if chat.summary.id != id {
+            // Legacy rows stay on disk but never enter this Dashboard view.
+            return;
+        }
+        chat.dirty = true;
+        chat.confirmed_tail = None;
+        self.operator_read();
     }
-    fn operator_submit_to(&mut self, id: Id, origin: SubmitOrigin) {
-        let Some(chat) = self.operator.chats.get_mut(&id.0) else {
+    fn operator_submit(&mut self) {
+        self.operator_submit_to(SubmitOrigin::Composer);
+    }
+    fn operator_submit_to(&mut self, origin: SubmitOrigin) {
+        let Some(chat) = self.operator.chat.as_mut() else {
             return;
         };
         let (text, context) = match origin {
@@ -747,29 +686,13 @@ impl Dashboard {
                 else {
                     return;
                 };
-                if quick.conversation != Some((id, chat.summary.session))
-                    || quick.provider != chat.summary.provider
-                    || quick.model != chat.summary.model
-                {
-                    self.operator_quick_failed(
-                        generation,
-                        "Created conversation identity changed; message retained.",
-                    );
-                    return;
-                }
                 (quick.text.clone(), quick.context.clone())
             }
         };
         if !chat.can_submit() {
-            chat.error = Some(
-                "This conversation is busy or its worker stop is unconfirmed; draft retained."
-                    .into(),
-            );
+            chat.error = Some(BUSY_REASON.into());
             if let SubmitOrigin::Quick { generation } = origin {
-                self.operator_quick_failed(
-                    generation,
-                    "This conversation is busy or its worker stop is unconfirmed; draft retained.",
-                );
+                self.operator_quick_failed(generation, BUSY_REASON);
             }
             return;
         }
@@ -778,7 +701,9 @@ impl Dashboard {
         }
         let expected_run = chat.summary.run;
         let session = chat.summary.session;
+        let id = chat.summary.id;
         chat.submitting = true;
+        chat.context = context.clone();
         chat.error = None;
         self.operator_request(
             Pending::Submit {
@@ -797,14 +722,7 @@ impl Dashboard {
         );
     }
     fn operator_stop(&mut self) {
-        if self.operator.new.is_some() {
-            return;
-        }
-        let Some(chat) = self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get_mut(&id.0))
-        else {
+        let Some(chat) = self.operator.chat.as_mut() else {
             return;
         };
         let Some(turn) = chat.summary.current_turn.as_ref() else {
@@ -826,9 +744,7 @@ impl Dashboard {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
-        if self.operator.new.is_none()
-            && !self.operator.list_focus
-            && !self.operator.transcript_focus
+        if !self.operator.transcript_focus
             && key.modifiers != KeyModifiers::NONE
             && key.modifiers != KeyModifiers::SHIFT
             && key.modifiers != KeyModifiers::CONTROL
@@ -837,7 +753,7 @@ impl Dashboard {
             return DashboardAction::None;
         }
         if super::input::is_browse_key(key) || key.code == KeyCode::Esc {
-            // Back to the terminal panes; each chat keeps its draft.
+            // Back to the terminal panes; the conversation keeps its draft.
             self.operator.editing = false;
             self.operator.visible = false;
             self.retarget(super::state::PaneChange::Focus);
@@ -848,14 +764,8 @@ impl Dashboard {
             }
             return DashboardAction::EnterBrowse;
         }
-        if self.operator.new.is_none()
-            && !self.operator.list_focus
-            && !self.operator.transcript_focus
-            && let Some(chat) = self
-                .operator
-                .selected
-                .and_then(|id| self.operator.chats.get_mut(&id.0))
-            && !chat.closing
+        if !self.operator.transcript_focus
+            && let Some(chat) = self.operator.chat.as_mut()
         {
             if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
                 if key.kind == KeyEventKind::Press {
@@ -868,9 +778,9 @@ impl Dashboard {
                 }
                 return DashboardAction::Redraw;
             }
-            // Existing application commands still belong to the owner below.
+            // Ctrl-l and Ctrl-x are commands, never draft text.
             if !(key.modifiers == KeyModifiers::CONTROL
-                && matches!(key.code, KeyCode::Char('n' | 'x' | 'l')))
+                && matches!(key.code, KeyCode::Char('l' | 'x')))
                 && chat.cursor.edit_key(&mut chat.draft, key)
             {
                 return DashboardAction::Redraw;
@@ -878,44 +788,24 @@ impl Dashboard {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('n') => self.operator_new(),
-                KeyCode::Char('x') => self.operator_stop(),
                 KeyCode::Char('l') => {
-                    self.operator.list_focus = !self.operator.list_focus;
-                    self.operator.transcript_focus = false;
-                    self.operator.sidebar_open = self.operator.list_focus;
-                    if self.operator.selected.is_none() {
-                        self.operator.selected = self.operator_ids().first().copied();
-                    }
-                    if self.operator.list_focus && self.operator.selected.is_some() {
-                        self.operator.new = None;
-                        self.operator_set_collapsed(false);
-                        self.operator_ensure_visible();
-                    }
+                    let shown = self.sidebar_preference() != Some(0);
+                    self.operator.sidebar_open = !shown;
+                    self.sidebar_hidden = shown;
+                    self.mouse.hovered = None;
+                    self.apply_pane_sizes(self.outer_area);
                 }
+                // Ctrl-x is Stop in both composer and transcript focus.
+                KeyCode::Char('x') => self.operator_stop(),
                 _ => {}
             }
             return DashboardAction::Redraw;
         }
-        if self.operator.new.is_none() && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-            let focus = if self.operator.list_focus {
-                0
-            } else if self.operator.transcript_focus {
-                1
-            } else {
-                2
-            };
-            let next = (focus + if key.code == KeyCode::BackTab { 2 } else { 1 }) % 3;
-            self.operator.list_focus = next == 0;
-            self.operator.transcript_focus = next == 1;
-            self.operator.sidebar_open = self.operator.list_focus;
-            self.operator_clear_hover();
+        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            self.operator.transcript_focus = !self.operator.transcript_focus;
             let layout = self.operator_layout(self.outer_area);
-            if next == 1
-                && let Some(chat) = self
-                    .operator
-                    .selected
-                    .and_then(|id| self.operator.chats.get_mut(&id.0))
+            if self.operator.transcript_focus
+                && let Some(chat) = self.operator.chat.as_mut()
             {
                 let rows = transcript_rows(chat, layout.transcript.width, 0);
                 let offset = transcript_offset(chat, &rows, layout.transcript.height as usize);
@@ -929,7 +819,6 @@ impl Dashboard {
                         .find_map(|(_, anchor)| anchor.map(|anchor| anchor.0));
                 }
             }
-            self.operator_ensure_visible();
             return DashboardAction::Redraw;
         }
         if self.operator.transcript_focus {
@@ -938,11 +827,7 @@ impl Dashboard {
                 return DashboardAction::Redraw;
             }
             let layout = self.operator_layout(self.outer_area);
-            if let Some(chat) = self
-                .operator
-                .selected
-                .and_then(|id| self.operator.chats.get_mut(&id.0))
-            {
+            if let Some(chat) = self.operator.chat.as_mut() {
                 let entries: Vec<_> = chat
                     .messages
                     .iter()
@@ -999,98 +884,8 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if self.operator.list_focus {
-            let ids = self.operator_ids();
-            let current = ids
-                .iter()
-                .position(|id| Some(*id) == self.operator.selected)
-                .unwrap_or(0);
-            let next = match key.code {
-                KeyCode::Up | KeyCode::Char('k') => current.saturating_sub(1),
-                KeyCode::Down | KeyCode::Char('j') => {
-                    (current + 1).min(ids.len().saturating_sub(1))
-                }
-                KeyCode::Char('X') => {
-                    if let Some(id) = self.operator.selected {
-                        return self.open_close_operator_for(id);
-                    }
-                    return DashboardAction::None;
-                }
-                KeyCode::Left => {
-                    self.operator_set_collapsed(true);
-                    return DashboardAction::Redraw;
-                }
-                KeyCode::Right => {
-                    self.operator_set_collapsed(false);
-                    return DashboardAction::Redraw;
-                }
-                KeyCode::Enter => {
-                    if let Some(id) = self.operator.selected.or_else(|| ids.first().copied()) {
-                        self.operator_select(id);
-                    }
-                    return DashboardAction::Redraw;
-                }
-                _ => return DashboardAction::None,
-            };
-            if let Some(id) = ids.get(next) {
-                self.operator.selected = Some(*id);
-                self.operator_set_collapsed(false);
-                self.operator.new = None;
-                self.operator_ensure_visible();
-            }
+        if self.operator.chat.is_none() {
             return DashboardAction::Redraw;
-        }
-        if let Some(form) = &mut self.operator.new {
-            match key.code {
-                KeyCode::Tab | KeyCode::BackTab => form.provider_focus = !form.provider_focus,
-                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.provider_focus => {
-                    let provider = match form.provider {
-                        OperatorProvider::ChatGpt => OperatorProvider::Grok,
-                        OperatorProvider::Grok => OperatorProvider::ChatGpt,
-                    };
-                    let model = default_model(self, provider);
-                    let form = self.operator.new.as_mut().unwrap();
-                    form.provider = provider;
-                    form.model = model;
-                    form.cursor = TextCursor::default();
-                }
-                KeyCode::Enter => {
-                    let model = form.model.trim().to_owned();
-                    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control)
-                    {
-                        self.operator.error =
-                            Some("Choose a model identifier (1–256 bytes, no controls).".into());
-                    } else if !self
-                        .operator
-                        .pending
-                        .values()
-                        .any(|pending| matches!(pending, Pending::Create { .. }))
-                    {
-                        let provider = form.provider;
-                        self.operator_request(
-                            Pending::Create {
-                                context: Box::new(self.operator.context.clone()),
-                                origin: CreateOrigin::Manual,
-                            },
-                            OperatorRequest::Create { provider, model },
-                        );
-                    }
-                }
-                KeyCode::Char(ch) if !form.provider_focus && !ch.is_control() => {
-                    form.cursor.insert(&mut form.model, &ch.to_string())
-                }
-                code if !form.provider_focus => form.cursor.key(&mut form.model, code),
-                _ => {}
-            }
-            return DashboardAction::Redraw;
-        }
-        if self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get(&id.0))
-            .is_some_and(|chat| chat.closing)
-        {
-            return DashboardAction::None;
         }
         match key.code {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -1098,11 +893,7 @@ impl Dashboard {
             }
             KeyCode::Enter => self.operator_submit(),
             KeyCode::Up | KeyCode::Down => {
-                if let Some(chat) = self
-                    .operator
-                    .selected
-                    .and_then(|id| self.operator.chats.get_mut(&id.0))
-                {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.cursor.vertical(&chat.draft, key.code == KeyCode::Down);
                 }
             }
@@ -1110,60 +901,35 @@ impl Dashboard {
             KeyCode::PageDown => self.operator_scroll(10),
             KeyCode::Char(ch) if !ch.is_control() => self.operator_insert(&ch.to_string()),
             code => {
-                if let Some(chat) = self
-                    .operator
-                    .selected
-                    .and_then(|id| self.operator.chats.get_mut(&id.0))
-                {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.cursor.key(&mut chat.draft, code);
                 }
             }
         }
         DashboardAction::Redraw
     }
-    pub(super) fn operator_sidebar_focused(&self) -> bool {
-        self.operator.visible && self.operator.list_focus
-    }
     pub(super) fn operator_is_editing(&self) -> bool {
         self.operator.visible && self.operator.editing
     }
     fn operator_insert(&mut self, text: &str) {
-        if let Some(chat) = self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get_mut(&id.0))
-        {
+        if let Some(chat) = self.operator.chat.as_mut() {
             // Match the protocol's user-text bound without splitting UTF-8.
-            if !chat.closing
-                && chat.draft.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES
-            {
+            if chat.draft.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES {
                 chat.cursor.insert(&mut chat.draft, text);
             }
         }
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
-        if self.operator.list_focus || self.operator.transcript_focus {
+        if self.operator.transcript_focus {
             return DashboardAction::None;
         }
-        let text = paste_text(text);
-        if let Some(form) = &mut self.operator.new {
-            if !form.provider_focus && form.model.len().saturating_add(text.len()) <= 256 {
-                form.cursor
-                    .insert(&mut form.model, &text.replace(['\n', '\t'], ""));
-            }
-        } else {
-            self.operator_insert(&text);
-        }
+        self.operator_insert(&paste_text(text));
         DashboardAction::Redraw
     }
     fn operator_scroll(&mut self, delta: isize) {
         let layout = self.operator_layout(self.outer_area);
         let height = layout.transcript.height as usize;
-        if let Some(chat) = self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get_mut(&id.0))
-        {
+        if let Some(chat) = self.operator.chat.as_mut() {
             let rows = transcript_rows(chat, layout.transcript.width, 0);
             let offset = transcript_offset(chat, &rows, height);
             let target = if delta < 0 {
@@ -1185,16 +951,16 @@ impl Dashboard {
         mouse: MouseEvent,
         area: Rect,
     ) -> Option<DashboardAction> {
-        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
             return Some(action);
         }
+        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
         if self.operator_header_rect(area).contains(point)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
         {
             return Some(self.open_operator());
         }
-        if !self.operator.visible {
+        if !self.operator.visible || self.operator.chat.is_none() {
             return None;
         }
         let content = content_area(self, area);
@@ -1205,18 +971,14 @@ impl Dashboard {
         let transcript = layout.transcript;
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if !transcript.is_empty() => {
-                if stop_rect(layout.header).contains(point) && self.operator.new.is_none() {
+                if stop_rect(layout.header).contains(point) && self.operator_stop_available() {
                     self.operator_stop();
                 } else {
                     self.operator.editing = true;
-                    self.operator.list_focus = false;
                     self.operator.sidebar_open = false;
                     self.operator.transcript_focus = transcript.contains(point);
                     if self.operator.transcript_focus
-                        && let Some(chat) = self
-                            .operator
-                            .selected
-                            .and_then(|id| self.operator.chats.get_mut(&id.0))
+                        && let Some(chat) = self.operator.chat.as_mut()
                     {
                         let rows = transcript_rows(chat, transcript.width, 0);
                         let offset = transcript_offset(chat, &rows, transcript.height as usize);
@@ -1247,34 +1009,29 @@ impl Dashboard {
             return false;
         };
         match &pending {
-            Pending::List => self.operator.listing = false,
-            Pending::Read { id, .. } => {
-                if let Some(chat) = self.operator.chats.get_mut(&id.0) {
+            Pending::Current => {}
+            Pending::Open { .. } => self.operator.loading = false,
+            Pending::Read { .. } => {
+                self.operator.loading = false;
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.reading = false;
                 }
             }
-            Pending::Submit { id, .. } => {
-                if let Some(chat) = self.operator.chats.get_mut(&id.0) {
+            Pending::Submit { .. } => {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.submitting = false;
                 }
             }
-            Pending::Stop { identity } => {
-                if let Some(chat) = self.operator.chats.get_mut(&identity.conversation.0) {
+            Pending::Stop { .. } => {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.stopping = false;
                 }
             }
-            Pending::Close { id, .. } => {
-                if let Some(chat) = self.operator.chats.get_mut(&id.0) {
-                    chat.closing = false;
-                }
-            }
-            Pending::Create { .. } => {}
         }
         if let Response::Error { message, .. } = response {
             match &pending {
-                Pending::Create {
-                    origin: CreateOrigin::Quick(submission),
-                    ..
+                Pending::Open {
+                    origin: OpenOrigin::Quick(submission),
                 } => self.operator_quick_failed(submission.generation, message),
                 Pending::Submit {
                     origin: SubmitOrigin::Quick { generation },
@@ -1282,15 +1039,14 @@ impl Dashboard {
                 } => self.operator_quick_failed(*generation, message),
                 _ => {}
             }
-            let id = match &pending {
-                Pending::Read { id, .. }
-                | Pending::Submit { id, .. }
-                | Pending::Close { id, .. } => Some(*id),
-                Pending::Stop { identity } => Some(identity.conversation),
-                Pending::List | Pending::Create { .. } => None,
-            };
-            if let Some(chat) = id.and_then(|id| self.operator.chats.get_mut(&id.0)) {
-                chat.error = Some(display_text(message));
+            let chat_error = matches!(
+                pending,
+                Pending::Read { .. } | Pending::Submit { .. } | Pending::Stop { .. }
+            );
+            if chat_error {
+                if let Some(chat) = self.operator.chat.as_mut() {
+                    chat.error = Some(display_text(message));
+                }
             } else {
                 self.operator.error = Some(display_text(message));
             }
@@ -1298,138 +1054,62 @@ impl Dashboard {
             return true;
         }
         match (pending, response) {
-            (
-                Pending::Close {
-                    id,
-                    session,
-                    expected_run,
-                },
-                Response::Operator(OperatorResponse::Closed(summary)),
-            ) if summary.id == id
-                && summary.session == session
-                && summary.archived
-                && summary.worker_stopped
-                && summary.run.0 == expected_run.0.saturating_add(1) =>
-            {
-                self.operator_summary(summary.clone());
-                if let Some(chat) = self.operator.chats.get_mut(&id.0)
-                    && chat.summary.archived
-                    && chat.summary.run == summary.run
-                {
-                    chat.draft.clear();
-                    chat.cursor = TextCursor::default();
-                }
-                if self.operator.selected == Some(id) && self.operator.chats[&id.0].summary.archived
-                {
-                    self.operator.selected = self.operator_ids().first().copied();
-                    if self.operator.selected.is_none() {
-                        self.operator_new();
+            (Pending::Current, Response::Operator(OperatorResponse::Current(current))) => {
+                if let Some(summary) = current {
+                    let context = self.operator.context.clone();
+                    if self.operator_attach(summary.clone(), context) {
+                        self.operator_read();
                     }
                 }
-                self.operator_ensure_visible();
             }
-            (Pending::List, Response::Operator(OperatorResponse::Conversations(summaries))) => {
-                for summary in summaries {
-                    self.operator_summary(summary.clone());
-                }
-                if summaries.len() == 100 {
-                    if let Some(last) = summaries.last() {
-                        self.operator_list(last.id.0);
+            (Pending::Open { origin }, Response::Operator(OperatorResponse::Opened(summary))) => {
+                let context = match &origin {
+                    OpenOrigin::Manual => self.operator.context.clone(),
+                    OpenOrigin::Quick(submission) => submission.context.clone(),
+                };
+                if !self.operator_attach(summary.clone(), context) {
+                    match origin {
+                        OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
+                        OpenOrigin::Quick(submission) => {
+                            self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON)
+                        }
                     }
-                } else if std::mem::take(&mut self.operator.list_dirty) {
-                    self.operator_list(0);
+                    return true;
                 }
-                self.operator_catch_up();
+                match &origin {
+                    OpenOrigin::Manual => self.operator_read(),
+                    OpenOrigin::Quick(submission) => {
+                        let Some(chat) = self.operator.chat.as_mut() else {
+                            return true;
+                        };
+                        if !chat.can_submit() {
+                            self.operator_quick_failed(submission.generation, BUSY_REASON);
+                            return true;
+                        }
+                        // Simulate the captured text on the existing chat so the
+                        // ordinary Submit path freezes and clears it exactly once.
+                        chat.context = submission.context.clone();
+                        chat.draft = submission.text.clone();
+                        chat.cursor = TextCursor::default();
+                        if let Some(quick) = &mut self.operator.quick
+                            && quick.generation == submission.generation
+                        {
+                            quick.seeded = true;
+                            quick.phase = QuickPhase::Submitting;
+                        }
+                        self.operator_submit_to(SubmitOrigin::Quick {
+                            generation: submission.generation,
+                        });
+                        self.operator_read();
+                    }
+                }
             }
             (
                 Pending::Read { id, after },
                 Response::Operator(OperatorResponse::History(history)),
             ) if history.conversation.id == id => {
                 self.operator_history(id, after, history);
-                self.operator_catch_up();
-            }
-            (
-                Pending::Create { context, origin },
-                Response::Operator(OperatorResponse::Created(summary)),
-            ) => {
-                if let CreateOrigin::Quick(submission) = &origin
-                    && (summary.provider != submission.provider
-                        || summary.model != submission.model
-                        || summary.archived
-                        || !summary.worker_stopped)
-                {
-                    self.operator_quick_failed(submission.generation, "Operator Create receipt did not match the captured provider/model or live conversation; message retained.");
-                    return true;
-                }
-                if let CreateOrigin::Quick(submission) = &origin {
-                    if let Some(quick) = &mut self.operator.quick
-                        && quick.generation == submission.generation
-                    {
-                        quick.conversation = Some((summary.id, summary.session));
-                    }
-                    if self.operator.chats.get(&summary.id.0).is_some_and(|chat| {
-                        chat.summary.archived
-                            || chat.summary.session != summary.session
-                            || chat.summary.provider != summary.provider
-                            || chat.summary.model != summary.model
-                            || chat.summary.run.0 > summary.run.0
-                            || !chat.can_submit()
-                    }) {
-                        self.operator_quick_failed(
-                            submission.generation,
-                            "Created conversation authority changed; message retained.",
-                        );
-                        return true;
-                    }
-                }
-                let selected = self.operator.selected;
-                self.operator_summary(summary.clone());
-                match origin {
-                    CreateOrigin::Manual => {
-                        if let Some(chat) = self.operator.chats.get_mut(&summary.id.0) {
-                            chat.context = *context;
-                        }
-                        if self.operator.visible
-                            && self.operator.new.is_some()
-                            && !self.operator_quick_visible()
-                        {
-                            self.operator_select(summary.id);
-                        }
-                    }
-                    CreateOrigin::Quick(submission) => {
-                        self.operator.selected = selected;
-                        let id = summary.id;
-                        if !self
-                            .operator
-                            .chats
-                            .get(&id.0)
-                            .is_some_and(|chat| chat.summary == *summary && chat.can_submit())
-                        {
-                            self.operator_quick_failed(
-                                submission.generation,
-                                "Created conversation authority changed; message retained.",
-                            );
-                            return true;
-                        }
-                        let chat = self.operator.chats.get_mut(&id.0).unwrap();
-                        chat.context = submission.context;
-                        chat.draft = submission.text;
-                        chat.cursor = TextCursor::default();
-                        if let Some(quick) = &mut self.operator.quick
-                            && quick.generation == submission.generation
-                        {
-                            quick.draft_seeded = true;
-                            quick.phase = QuickPhase::Submitting;
-                        }
-                        self.operator_submit_to(
-                            id,
-                            SubmitOrigin::Quick {
-                                generation: submission.generation,
-                            },
-                        );
-                    }
-                }
-                self.operator_catch_up();
+                self.operator_read();
             }
             (
                 Pending::Submit {
@@ -1447,15 +1127,14 @@ impl Dashboard {
             {
                 let clear_draft = match origin {
                     SubmitOrigin::Composer => true,
-                    SubmitOrigin::Quick { generation } => {
-                        self.operator.quick.as_ref().is_some_and(|quick| {
-                            quick.generation == generation && quick.draft_seeded
-                        })
-                    }
+                    SubmitOrigin::Quick { generation } => self
+                        .operator
+                        .quick
+                        .as_ref()
+                        .is_some_and(|quick| quick.generation == generation && quick.seeded),
                 };
-                if let Some(chat) = self.operator.chats.get_mut(&id.0) {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     if clear_draft
-                        && !chat.summary.archived
                         && chat.summary.run.0 <= turn.identity.run.0
                         && chat.draft == text
                     {
@@ -1463,8 +1142,7 @@ impl Dashboard {
                         chat.cursor = TextCursor::default();
                     }
                     let current = chat.summary.current_turn.as_ref();
-                    if !chat.summary.archived
-                        && chat.summary.run.0 <= turn.identity.run.0
+                    if chat.summary.run.0 <= turn.identity.run.0
                         && current.is_none_or(|current| {
                             current.identity.run.0 < turn.identity.run.0
                                 || (current.identity == turn.identity
@@ -1492,99 +1170,131 @@ impl Dashboard {
                     if quick.visible
                         && self
                             .operator
-                            .chats
-                            .get(&id.0)
-                            .is_some_and(|chat| !chat.summary.archived)
+                            .chat
+                            .as_ref()
+                            .is_some_and(|c| c.summary.id == id)
                     {
-                        self.open_operator_conversation(id);
+                        // Show the accepted turn; Open is not re-sent.
+                        self.operator.visible = true;
+                        self.operator.editing = true;
+                        self.operator.transcript_focus = false;
+                        self.mode = InputMode::Browse;
+                        self.retarget(super::state::PaneChange::Focus);
                     }
                 }
-                self.operator_list(0);
-                self.operator_catch_up();
+                self.operator_read();
             }
             (Pending::Stop { identity }, Response::Operator(OperatorResponse::Stopped(turn)))
                 if turn.identity == identity =>
             {
-                if let Some(chat) = self.operator.chats.get_mut(&identity.conversation.0) {
+                if let Some(chat) = self.operator.chat.as_mut() {
                     chat.dirty = true;
+                    chat.confirmed_tail = None;
                 }
                 // The response retires authority; only a refreshed summary certifies process stop.
-                self.operator_list(0);
-                self.operator_catch_up();
+                self.operator_read();
             }
             (pending, _) => {
                 match pending {
-                    Pending::Create { origin: CreateOrigin::Quick(submission), .. } => self.operator_quick_failed(submission.generation, "Operator response did not match its request; message retained."),
-                    Pending::Submit { origin: SubmitOrigin::Quick { generation }, .. } => self.operator_quick_failed(generation, "Operator response did not match its requested conversation/session/run; message retained."),
+                    Pending::Open {
+                        origin: OpenOrigin::Quick(submission),
+                    } => self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON),
+                    Pending::Submit {
+                        origin: SubmitOrigin::Quick { generation },
+                        ..
+                    } => self.operator_quick_failed(generation, UNAVAILABLE_REASON),
                     _ => {}
                 }
-                self.operator.error =
-                    Some("Operator response did not match its requested conversation.".into());
+                self.operator.error = Some(UNAVAILABLE_REASON.into());
             }
         }
         true
     }
-    fn operator_summary(&mut self, summary: Summary) {
-        let previous_tree = self.sidebar_rects(self.outer_area).tree;
-        let id = summary.id;
+    /// Adopt an unseeded Quick draft into the singleton the moment it exists, so
+    /// the overlay and the full composer edit one shared draft instead of
+    /// competing copies. The text and cursor are the user's pending draft and
+    /// are never replaced by the empty full draft.
+    fn operator_quick_adopt_draft(&mut self) {
+        let Some(quick) = self.operator.quick.as_mut() else {
+            return;
+        };
+        if quick.seeded {
+            return;
+        }
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return;
+        };
+        chat.draft = quick.text.clone();
+        chat.cursor = quick.cursor;
+        quick.seeded = true;
+    }
+    /// Merge one summary into the singleton, refusing any regression that
+    /// could revive older authority. Returns false when the identity differs.
+    fn operator_attach(&mut self, summary: Summary, context: OperatorContext) -> bool {
         if summary.current_turn.as_ref().is_some_and(|turn| {
             turn.identity.validate().is_err()
-                || turn.identity.conversation != id
+                || turn.identity.conversation != summary.id
                 || turn.identity.session != summary.session
                 || turn.identity.run.0 > summary.run.0
         }) {
-            return;
+            return false;
         }
-        if let Some(chat) = self.operator.chats.get_mut(&id.0) {
-            if chat.summary.session != summary.session
-                || chat.summary.provider != summary.provider
-                || chat.summary.model != summary.model
-            {
-                return;
-            }
-            if summary.run.0 < chat.summary.run.0 {
-                return;
-            }
-            if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
-                return;
-            }
-            if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn)
-                && (new.identity.run.0 < old.identity.run.0
-                    || (new.identity.run == old.identity.run && new.identity != old.identity)
-                    || (new.identity == old.identity
-                        && (new.sequence < old.sequence
-                            || (chat.summary.worker_stopped && !summary.worker_stopped))))
-            {
-                return;
-            }
-            chat.summary = summary;
-        } else {
-            self.operator
-                .chats
-                .insert(id.0, Chat::new(summary, OperatorContext::default()));
+        if self.operator.chat.is_none() {
+            let workdir = agent_workdir(self);
+            let mut chat = Chat::new(summary, context);
+            chat.workdir = workdir;
+            self.operator.chat = Some(chat);
+            self.operator_quick_adopt_draft();
+            return true;
         }
-        if !self.operator.chats[&id.0].summary.archived
-            && self.operator.selected.is_none()
-            && self.operator.new.is_none()
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return false;
+        };
+        if chat.summary.id != summary.id || chat.summary.session != summary.session {
+            return false;
+        }
+        if summary.run.0 < chat.summary.run.0 {
+            return false;
+        }
+        if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
+            return false;
+        }
+        if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn)
+            && (new.identity.run.0 < old.identity.run.0
+                || (new.identity.run == old.identity.run && new.identity != old.identity)
+                || (new.identity == old.identity
+                    && (new.sequence < old.sequence
+                        || (chat.summary.worker_stopped && !summary.worker_stopped))))
         {
-            self.operator.selected = Some(id);
+            return false;
         }
-        self.operator_reconcile_tree(previous_tree);
+        chat.summary = summary;
+        self.operator_quick_adopt_draft();
+        true
     }
     fn operator_history(&mut self, id: Id, after: u64, history: &OperatorHistory) {
-        self.operator_summary(history.conversation.clone());
-        let Some(chat) = self.operator.chats.get_mut(&id.0) else {
+        // A page still belongs to this journal when a newer summary refused the
+        // page's older authority metadata; install only what the guards allow.
+        let context = self
+            .operator
+            .chat
+            .as_ref()
+            .map(|chat| chat.context.clone())
+            .unwrap_or_default();
+        self.operator_attach(history.conversation.clone(), context);
+        let Some(chat) = self.operator.chat.as_mut() else {
             return;
         };
-        if chat.ordinal != after || history.conversation.session != chat.summary.session {
+        if history.conversation.id != id
+            || chat.summary.id != id
+            || chat.ordinal != after
+            || history.conversation.session != chat.summary.session
+        {
             return;
         }
         let mut previous = after;
         for message in &history.messages {
-            if message.ordinal <= previous
-                || message.turn.0 == 0
-                || history.conversation.session != chat.summary.session
-            {
+            if message.ordinal <= previous || message.turn.0 == 0 {
                 chat.error = Some("Invalid Operator history cursor or identity.".into());
                 return;
             }
@@ -1598,20 +1308,21 @@ impl Dashboard {
             return;
         }
         for message in &history.messages {
-            if let OperatorMessageContent::User { context, .. } = &message.content
-                && chat.draft.is_empty()
-                && !chat.submitting
-            {
-                chat.context = context.clone();
-            }
-            if matches!(
-                message.content,
+            // The row above the composer shows the captured target for the next
+            // message; an older journal page never reloads it over that capture.
+            match &message.content {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(model)) => {
+                    chat.summary.model = Some(model.clone());
+                }
                 OperatorMessageContent::Worker(
-                    OperatorWorkerEvent::Completed(_) | OperatorWorkerEvent::Failed(_)
-                ) | OperatorMessageContent::Interrupted
-            ) && chat.reviewed != Some(message.turn)
-            {
-                chat.unread = Some(message.turn);
+                    OperatorWorkerEvent::Completed | OperatorWorkerEvent::Failed(_),
+                )
+                | OperatorMessageContent::Interrupted
+                    if chat.reviewed != Some(message.turn) =>
+                {
+                    chat.unread = Some(message.turn);
+                }
+                _ => {}
             }
             chat.messages.push(message.clone());
             chat.ordinal = message.ordinal;
@@ -1629,18 +1340,14 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_commit_presented(&mut self) {
-        if !self.operator.visible
-            || !self.operator.editing
-            || self.operator.new.is_some()
-            || self.operator.list_focus
-        {
+        if !self.operator.visible || !self.operator.editing || self.operator.transcript_focus {
             return;
         }
         let layout = self.operator_layout(self.outer_area);
         let activity_rows = u16::from(
             self.operator
-                .selected
-                .and_then(|id| self.operator.chats.get(&id.0))
+                .chat
+                .as_ref()
                 .and_then(conversation_activity)
                 .is_some(),
         );
@@ -1652,10 +1359,7 @@ impl Dashboard {
         {
             return;
         }
-        if let Some(chat) = self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get_mut(&id.0))
+        if let Some(chat) = self.operator.chat.as_mut()
             && !chat.messages.is_empty()
             && chat.follow
             && !chat.reading
@@ -1669,12 +1373,11 @@ impl Dashboard {
     pub(super) fn draw_operator_header(&self, frame: &mut Frame<'_>) {
         let unread = self
             .operator
-            .chats
-            .values()
-            .filter(|chat| !chat.summary.archived && chat.unread.is_some())
-            .count();
-        let label = if unread > 0 {
-            format!(" Operator [o] · {unread} unread")
+            .chat
+            .as_ref()
+            .is_some_and(|chat| chat.unread.is_some());
+        let label = if unread {
+            " Operator [o] · 1 unread".to_string()
         } else {
             " Operator [o]".into()
         };
@@ -1714,7 +1417,6 @@ impl Dashboard {
             ),
             area,
         );
-        let right = area;
         if frame.area().width < 60 || frame.area().height < 16 {
             frame.render_widget(
                 Paragraph::new(format!("Operator needs 60×16 · current {}×{}\nResize to continue · Esc / Ctrl-g Browse", frame.area().width, frame.area().height))
@@ -1723,38 +1425,32 @@ impl Dashboard {
             );
             return;
         }
-        if right.is_empty() {
+        if area.is_empty() {
             return;
         }
-        if let Some(form) = &self.operator.new {
-            let mut model = form.model.clone();
-            if self.operator.editing && !form.provider_focus {
-                model.insert(form.cursor.position(&model), '▏');
-            }
-            let model = display_text(&model);
-            let text = format!(
-                "New Conversation\n\nProvider: {} {}\nModel: {model}\n\nTab: provider/model · ←/→: choose provider\nCtrl-l: conversations\nEnter: create · Ctrl-g: Browse\nSubscription sign-in: ovrcr operator login {}\n\n{}",
-                form.provider.label(),
-                if form.provider_focus { "◀" } else { "" },
-                match form.provider {
-                    OperatorProvider::ChatGpt => "chatgpt",
-                    OperatorProvider::Grok => "grok",
-                },
-                self.operator.error.as_deref().unwrap_or("")
-            );
+        let Some(chat) = &self.operator.chat else {
+            let (text, failed) = match &self.operator.error {
+                Some(error) => (
+                    format!("Operator unavailable\n\n{}", display_text(error)),
+                    true,
+                ),
+                None if self.operator.loading => ("Opening Operator…".into(), false),
+                None => (
+                    "Operator is not available yet; run `ovrcr operator setup` if pi is not configured.\nReopen with o."
+                        .into(),
+                    false,
+                ),
+            };
             frame.render_widget(
                 Paragraph::new(text)
                     .wrap(Wrap { trim: false })
-                    .block(Block::default().borders(Borders::ALL)),
-                right,
+                    .style(Style::default().fg(if failed {
+                        super::render::RED()
+                    } else {
+                        super::render::SUBTEXT()
+                    })),
+                area,
             );
-            return;
-        }
-        let Some(chat) = self
-            .operator
-            .selected
-            .and_then(|id| self.operator.chats.get(&id.0))
-        else {
             return;
         };
         self.draw_operator_conversation(frame, chat, now_unix_ms);
@@ -1765,673 +1461,110 @@ impl Dashboard {
 mod tests {
     use super::*;
     use crossterm::event::Event;
-    use ovrcr_protocol::{
-        OperatorModelHistory, OperatorTurn, OperatorTurnId, ServerEvent, ServerMessage, SessionId,
-        TerminalSize,
-    };
-    fn summary(id: u64, run: u64, state: OperatorTurnState, stopped: bool) -> Summary {
+    use ovrcr_protocol::{OperatorModel, OperatorTurn, ServerEvent, ServerMessage, TerminalSize};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn summary() -> Summary {
         Summary {
-            run: SessionRunId(run),
-            archived: false,
-            id: Id(id),
-            session: SessionId(id + 10),
-            provider: OperatorProvider::ChatGpt,
-            model: "fixture".into(),
-            title: format!("chat-{id}"),
-            worker_stopped: stopped,
-            current_turn: Some(OperatorTurn {
-                identity: OperatorTurnIdentity {
-                    conversation: Id(id),
-                    turn: OperatorTurnId(run),
-                    session: SessionId(id + 10),
-                    run: SessionRunId(run),
-                },
-                state,
-                sequence: 1,
-            }),
+            run: SessionRunId(1),
+            worker_stopped: true,
+            id: Id(1),
+            session: SessionId(11),
+            model: None,
+            title: "Operator".into(),
+            current_turn: None,
         }
     }
-    fn request_id(requests: &[ClientMessage], id: u64) -> u64 {
-        requests
-            .iter()
-            .find_map(|message| match &message.request {
-                Request::Operator(OperatorRequest::Read { conversation, .. })
-                    if *conversation == Id(id) =>
-                {
-                    Some(message.request_id)
-                }
-                _ => None,
-            })
-            .unwrap()
+    fn with_model(mut value: Summary) -> Summary {
+        value.model = Some(OperatorModel {
+            provider: "openai".into(),
+            id: "gpt-6.1-sol".into(),
+        });
+        value
     }
-    fn setup() -> (Dashboard, Vec<ClientMessage>) {
-        let mut d = Dashboard::new(TerminalSize {
+    fn turn(run: u64, state: OperatorTurnState) -> OperatorTurn {
+        OperatorTurn {
+            identity: OperatorTurnIdentity {
+                conversation: Id(1),
+                turn: OperatorTurnId(run),
+                session: SessionId(11),
+                run: SessionRunId(run),
+            },
+            state,
+            sequence: 1,
+        }
+    }
+    fn busy() -> Summary {
+        let mut value = summary();
+        value.run = SessionRunId(2);
+        value.worker_stopped = false;
+        value.current_turn = Some(turn(2, OperatorTurnState::Running));
+        value
+    }
+    fn stop_unconfirmed() -> Summary {
+        let mut value = summary();
+        value.worker_stopped = false;
+        value.current_turn = Some(turn(1, OperatorTurnState::Complete));
+        value
+    }
+    fn dashboard() -> Dashboard {
+        Dashboard::new(TerminalSize {
             rows: 24,
             cols: 140,
-        });
-        d.key(KeyCode::Char('o'));
-        let requests = d.drain_outbox();
-        let list = requests
+        })
+    }
+    fn operator_requests(messages: &[ClientMessage]) -> Vec<&OperatorRequest> {
+        messages
+            .iter()
+            .filter_map(|message| match &message.request {
+                Request::Operator(request) => Some(request),
+                _ => None,
+            })
+            .collect()
+    }
+    fn open(d: &mut Dashboard) -> ClientMessage {
+        d.open_operator();
+        d.drain_outbox()
+            .into_iter()
+            .find(|message| matches!(message.request, Request::Operator(OperatorRequest::Open)))
+            .expect("the full view sends Open")
+    }
+    fn respond(
+        d: &mut Dashboard,
+        request_id: u64,
+        response: OperatorResponse,
+    ) -> Vec<ClientMessage> {
+        d.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Operator(response),
+        })
+    }
+    fn opened(d: &mut Dashboard, value: Summary) -> Vec<ClientMessage> {
+        let request = open(d);
+        respond(d, request.request_id, OperatorResponse::Opened(value))
+    }
+    fn read_request(messages: &[ClientMessage]) -> ClientMessage {
+        messages
             .iter()
             .find(|message| {
                 matches!(
                     message.request,
-                    Request::Operator(OperatorRequest::List { .. })
+                    Request::Operator(OperatorRequest::Read { .. })
                 )
             })
-            .unwrap();
-        let reads = d.handle_server_message(ServerMessage::Response {
-            request_id: list.request_id,
-            response: Response::Operator(OperatorResponse::Conversations(vec![
-                summary(1, 1, OperatorTurnState::Running, false),
-                summary(2, 1, OperatorTurnState::Running, false),
-            ])),
-        });
-        d.operator_select(Id(1));
-        (d, reads)
+            .cloned()
+            .expect("a dirty journal is read")
     }
-    fn quick_create(d: &mut Dashboard) -> ClientMessage {
-        d.ctrl('o');
-        d.event_action(Event::Paste("first message".into()));
-        assert!(
-            d.drain_outbox().is_empty(),
-            "opening and paste cannot send requests"
-        );
-        d.key(KeyCode::Enter);
-        d.drain_outbox()
-            .into_iter()
-            .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
-            .expect("Enter creates a quick conversation")
-    }
-    #[test]
-    fn operator_quick_cancel_restores_underlying_state() {
-        let (mut d, _) = setup();
-        d.operator_insert("underlying draft");
-        d.operator_scroll(-10);
-        let cursor = d.operator.chats[&1].cursor;
-        let scroll = d.operator.chats[&1].scroll;
-        d.drain_outbox();
-        d.ctrl('o');
-        d.event_action(Event::Paste("popup text".into()));
-        assert!(draw(&mut d, 140, 24).contains("Quick message"));
-        d.key(KeyCode::Esc);
-        assert_eq!(d.operator.selected, Some(Id(1)));
-        assert_eq!(d.operator.chats[&1].draft, "underlying draft");
-        assert_eq!(
-            d.operator.chats[&1].cursor.position("underlying draft"),
-            cursor.position("underlying draft")
-        );
-        assert_eq!(d.operator.chats[&1].scroll, scroll);
-        assert!(d.operator_is_editing());
-        assert!(d.drain_outbox().is_empty());
-        let heading = d.sidebar_rects(d.outer_area).operator;
-        d.mouse_action(
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: heading.right() - 2,
-                row: heading.y,
-                modifiers: KeyModifiers::NONE,
-            },
-            d.outer_area,
-        );
-        assert!(d.operator_quick_visible());
-        d.key(KeyCode::Esc);
-        assert!(!d.operator.list_focus);
-        assert_eq!(d.operator.chats[&1].draft, "underlying draft");
-        assert!(d.drain_outbox().is_empty());
-    }
-    #[test]
-    fn operator_quick_creates_then_submits_once() {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        let create = quick_create(&mut d);
-        for kind in [
-            KeyEventKind::Repeat,
-            KeyEventKind::Release,
-            KeyEventKind::Press,
-        ] {
-            d.key_action(KeyEvent::new_with_kind(
-                KeyCode::Enter,
-                KeyModifiers::NONE,
-                kind,
-            ));
-        }
-        assert!(d.drain_outbox().is_empty());
-        let mut created = summary(7, 4, OperatorTurnState::Complete, true);
-        created.model = "gpt-6.1-sol".into();
-        created.current_turn.as_mut().unwrap().identity.run = SessionRunId(2);
-        let outgoing = d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Operator(OperatorResponse::Created(created.clone())),
-        });
-        let submit = outgoing
-            .iter()
-            .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
-            .collect::<Vec<_>>();
-        assert_eq!(submit.len(), 1);
-        assert!(
-            matches!(&submit[0].request, Request::Operator(OperatorRequest::Submit { conversation: Id(7), expected_run: SessionRunId(4), text, .. }) if text == "first message")
-        );
-        assert!(
-            d.handle_server_message(ServerMessage::Response {
-                request_id: create.request_id,
-                response: Response::Operator(OperatorResponse::Created(created)),
-            })
-            .is_empty()
-        );
-    }
-    #[test]
-    fn operator_quick_late_receipt_does_not_steal_focus() {
-        let (mut d, _) = setup();
-        d.drain_outbox();
-        let create = quick_create(&mut d);
-        d.key(KeyCode::Esc);
-        d.operator_select(Id(2));
-        let outgoing = d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Operator(OperatorResponse::Created({
-                let mut created = summary(7, 0, OperatorTurnState::Complete, true);
-                created.model = "gpt-6.1-sol".into();
-                created.current_turn = None;
-                created
-            })),
-        });
-        assert_eq!(d.operator.selected, Some(Id(2)));
-        assert_eq!(
-            outgoing
-                .iter()
-                .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
-                .count(),
-            1
-        );
-    }
-    #[test]
-    fn operator_quick_failure_retains_first_message() {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        let create = quick_create(&mut d);
-        d.key(KeyCode::Esc);
-        d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "fixture refusal".into(),
-            },
-        });
-        d.ctrl('o');
-        let screen = draw(&mut d, 140, 24);
-        assert!(
-            screen.contains("first message") && screen.contains("fixture refusal"),
-            "{screen}"
-        );
-        assert!(d.drain_outbox().is_empty());
-    }
-    fn quick_summary(id: u64) -> Summary {
-        let mut created = summary(id, 0, OperatorTurnState::Complete, true);
-        created.current_turn = None;
-        created.model = "gpt-6.1-sol".into();
-        created
-    }
-    fn quick_ack_create(d: &mut Dashboard, create: ClientMessage, id: u64) -> ClientMessage {
-        d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Operator(OperatorResponse::Created(quick_summary(id))),
+    fn history_of(
+        value: Summary,
+        messages: Vec<OperatorMessage>,
+        next_after: Option<u64>,
+    ) -> OperatorResponse {
+        OperatorResponse::History(OperatorHistory {
+            conversation: value,
+            messages,
+            next_after,
         })
-        .into_iter()
-        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
-        .unwrap()
-    }
-    #[test]
-    fn operator_quick_created_preserves_same_run_empty_archive_and_first_message() {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        let create = quick_create(&mut d);
-        let mut archived = quick_summary(7);
-        archived.archived = true;
-        d.operator_summary(archived.clone());
-        let outgoing = d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Operator(OperatorResponse::Created(quick_summary(7))),
-        });
-        assert_eq!(
-            d.operator.chats[&7].summary, archived,
-            "Created cannot revive a same-run tombstone"
-        );
-        assert!(
-            !outgoing
-                .iter()
-                .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
-        );
-        assert!(d.operator.chats[&7].draft.is_empty());
-        assert_eq!(d.operator.chats[&7].context, OperatorContext::default());
-        assert!(d.operator.quick.as_ref().unwrap().error.is_some());
-        d.key(KeyCode::Esc);
-        d.ctrl('o');
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-        d.key(KeyCode::Enter);
-        assert!(
-            d.drain_outbox().is_empty(),
-            "archived retry can neither Create nor Submit"
-        );
-        assert_eq!(d.operator.chats[&7].summary, archived);
-    }
-    #[test]
-    fn operator_quick_created_advanced_authority_retries_captured_target_and_payload() {
-        for other_draft in ["independent draft", "first message"] {
-            let mut d = Dashboard::new(TerminalSize {
-                rows: 24,
-                cols: 140,
-            });
-            let create = quick_create(&mut d);
-            let captured_context = d.operator.quick.as_ref().unwrap().context.clone();
-            let mut retained = summary(7, 2, OperatorTurnState::Running, false);
-            retained.model = "gpt-6.1-sol".into();
-            d.operator_summary(retained.clone());
-            let other_context = OperatorContext {
-                project: Some("retained-project".into()),
-                ..OperatorContext::default()
-            };
-            let chat = d.operator.chats.get_mut(&7).unwrap();
-            chat.draft = other_draft.into();
-            chat.context = other_context.clone();
-            let retained = chat.summary.clone();
-            let outgoing = d.handle_server_message(ServerMessage::Response {
-                request_id: create.request_id,
-                response: Response::Operator(OperatorResponse::Created(quick_summary(7))),
-            });
-            assert!(
-                !outgoing.iter().any(|m| matches!(
-                    m.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                ))
-            );
-            assert!(
-                d.operator.quick.as_ref().unwrap().conversation.is_some(),
-                "successful Create keeps its retry target"
-            );
-            assert!(d.operator.quick.as_ref().unwrap().error.is_some());
-            assert_eq!(d.operator.chats[&7].summary, retained);
-            assert_eq!(d.operator.chats[&7].draft, other_draft);
-            assert_eq!(d.operator.chats[&7].context, other_context);
-            d.key(KeyCode::Esc);
-            d.ctrl('o');
-            assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-            d.ctrl('c');
-            assert!(d.operator.quick.as_ref().unwrap().text.is_empty());
-            assert_eq!(d.operator.chats[&7].draft, other_draft);
-            d.event_action(Event::Paste("first message".into()));
-            d.ctrl('w');
-            assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
-            assert_eq!(d.operator.chats[&7].draft, other_draft);
-            d.event_action(Event::Paste("message".into()));
-            d.event_action(Event::Paste("!".into()));
-            d.key(KeyCode::Backspace);
-            assert_eq!(d.operator.chats[&7].draft, other_draft);
-            d.key(KeyCode::Enter);
-            assert!(
-                d.drain_outbox().is_empty(),
-                "busy retry cannot create a second chat or submit"
-            );
-            let mut stopped = summary(7, 2, OperatorTurnState::Complete, true);
-            stopped.model = "gpt-6.1-sol".into();
-            d.operator_summary(stopped);
-            d.key(KeyCode::Enter);
-            let requests = d.drain_outbox();
-            assert_eq!(requests.len(), 1);
-            assert_eq!(
-                requests[0].request,
-                Request::Operator(OperatorRequest::Submit {
-                    conversation: Id(7),
-                    expected_run: SessionRunId(2),
-                    text: "first message".into(),
-                    context: captured_context
-                })
-            );
-            assert_eq!(d.operator.chats[&7].draft, other_draft);
-            assert_eq!(d.operator.chats[&7].context, other_context);
-            d.handle_server_message(ServerMessage::Response {
-                request_id: requests[0].request_id,
-                response: Response::Operator(OperatorResponse::Submitted(
-                    summary(7, 3, OperatorTurnState::Running, false)
-                        .current_turn
-                        .unwrap(),
-                )),
-            });
-            assert_eq!(
-                d.operator.chats[&7].draft, other_draft,
-                "unseeded quick payload cannot clear another draft, even with equal text"
-            );
-            assert_eq!(d.operator.chats[&7].context, other_context);
-        }
-    }
-    fn quick_created_conflict_refuses_retry(retained: Summary) {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        let create = quick_create(&mut d);
-        d.operator_summary(retained.clone());
-        let outgoing = d.handle_server_message(ServerMessage::Response {
-            request_id: create.request_id,
-            response: Response::Operator(OperatorResponse::Created(quick_summary(7))),
-        });
-        assert_eq!(d.operator.chats[&7].summary, retained);
-        assert!(outgoing.is_empty());
-        d.key(KeyCode::Esc);
-        d.ctrl('o');
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-        d.key(KeyCode::Enter);
-        assert!(
-            d.drain_outbox().is_empty(),
-            "retry cannot adopt conflicting authority or create again: {retained:?}"
-        );
-        assert_eq!(d.operator.chats[&7].summary, retained);
-        assert!(d.operator.quick.as_ref().unwrap().error.is_some());
-        assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Editing);
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-        assert!(d.operator.chats[&7].draft.is_empty());
-    }
-    #[test]
-    fn operator_quick_created_session_conflict_cannot_retarget_explicit_retry() {
-        let mut retained = quick_summary(7);
-        retained.session = SessionId(999);
-        quick_created_conflict_refuses_retry(retained);
-    }
-    #[test]
-    fn operator_quick_created_provider_conflict_cannot_retarget_explicit_retry() {
-        let mut retained = quick_summary(7);
-        retained.provider = OperatorProvider::Grok;
-        quick_created_conflict_refuses_retry(retained);
-    }
-    #[test]
-    fn operator_quick_created_model_conflict_cannot_retarget_explicit_retry() {
-        let mut retained = quick_summary(7);
-        retained.model = "conflicting-model".into();
-        quick_created_conflict_refuses_retry(retained);
-    }
-    #[test]
-    fn operator_quick_wrong_identity_retains_message_and_explicit_retry_reuses_chat() {
-        for wrong in 0..4 {
-            let mut d = Dashboard::new(TerminalSize {
-                rows: 24,
-                cols: 140,
-            });
-            let create = quick_create(&mut d);
-            let submit = quick_ack_create(&mut d, create, 7);
-            let mut turn = summary(7, 1, OperatorTurnState::Running, false)
-                .current_turn
-                .unwrap();
-            match wrong {
-                0 => turn.identity.conversation = Id(8),
-                1 => turn.identity.session = SessionId(999),
-                2 => turn.identity.run = SessionRunId(2),
-                _ => turn.identity.turn = OperatorTurnId(0),
-            }
-            assert!(
-                d.handle_server_message(ServerMessage::Response {
-                    request_id: submit.request_id,
-                    response: Response::Operator(OperatorResponse::Submitted(turn))
-                })
-                .is_empty()
-            );
-            assert_eq!(d.operator.chats[&7].draft, "first message");
-            assert_eq!(d.operator.chats[&7].summary.run, SessionRunId(0));
-            assert!(d.operator.quick.as_ref().unwrap().error.is_some());
-            d.key(KeyCode::Enter);
-            let outgoing = d.drain_outbox();
-            assert_eq!(outgoing.len(), 1);
-            assert!(matches!(
-                outgoing[0].request,
-                Request::Operator(OperatorRequest::Submit {
-                    conversation: Id(7),
-                    ..
-                })
-            ));
-        }
-    }
-    #[test]
-    fn operator_quick_dismissed_submit_error_reopens_and_preserves_newer_chat_draft() {
-        let (mut d, _) = setup();
-        d.drain_outbox();
-        let create = quick_create(&mut d);
-        let submit = quick_ack_create(&mut d, create, 7);
-        d.key(KeyCode::Esc);
-        d.operator_select(Id(2));
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "submit refused".into(),
-            },
-        });
-        assert_eq!(d.operator.chats[&7].draft, "first message");
-        assert_eq!(d.operator.selected, Some(Id(2)));
-        d.operator.chats.get_mut(&7).unwrap().draft = "newer chat draft".into();
-        d.ctrl('o');
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "newer chat draft");
-        d.key(KeyCode::Backspace);
-        d.key(KeyCode::Char('!'));
-        d.key(KeyCode::Enter);
-        let outgoing = d.drain_outbox();
-        assert_eq!(outgoing.len(), 1);
-        assert!(
-            matches!(&outgoing[0].request, Request::Operator(OperatorRequest::Submit { conversation: Id(7), text, .. }) if text == "newer chat draf!")
-        );
-    }
-    #[test]
-    fn operator_quick_slot_frees_on_acceptance_and_old_receipts_cannot_touch_new_generation() {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        let create = quick_create(&mut d);
-        let generation = d.operator.quick.as_ref().unwrap().generation;
-        let submit = quick_ack_create(&mut d, create, 7);
-        let response = Response::Operator(OperatorResponse::Submitted(
-            summary(7, 1, OperatorTurnState::Running, false)
-                .current_turn
-                .unwrap(),
-        ));
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response: response.clone(),
-        });
-        assert!(d.operator.quick.is_none());
-        assert!(d.operator.chats[&7].draft.is_empty());
-        assert!(!d.operator.chats[&7].summary.worker_stopped);
-        d.drain_outbox();
-        d.ctrl('o');
-        assert!(d.operator.quick.as_ref().unwrap().generation > generation);
-        d.event_action(Event::Paste("second".into()));
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response,
-        });
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "second");
-        d.key(KeyCode::Enter);
-        assert_eq!(
-            d.drain_outbox()
-                .iter()
-                .filter(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
-                .count(),
-            1
-        );
-    }
-    #[test]
-    fn operator_quick_freezes_selected_chat_context_defaults_and_ignores_manual_create() {
-        let (mut d, _) = setup();
-        d.operator.chats.get_mut(&1).unwrap().context = OperatorContext {
-            session: Some(SessionId(55)),
-            run: Some(SessionRunId(8)),
-            ..OperatorContext::default()
-        };
-        d.ctrl('n');
-        d.key(KeyCode::Enter);
-        let manual = d
-            .drain_outbox()
-            .into_iter()
-            .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Create { .. })))
-            .unwrap();
-        let quick = quick_create(&mut d);
-        d.settings.operator.provider = OperatorProvider::Grok;
-        d.settings.operator.chat_gpt_model = Some("changed".into());
-        d.handle_server_message(ServerMessage::Response {
-            request_id: manual.request_id,
-            response: Response::Operator(OperatorResponse::Created(quick_summary(8))),
-        });
-        assert_eq!(d.operator.selected, Some(Id(1)));
-        assert!(d.operator.new.is_some());
-        d.drain_outbox();
-        let submit = quick_ack_create(&mut d, quick, 7);
-        assert!(matches!(
-            submit.request,
-            Request::Operator(OperatorRequest::Submit {
-                context: OperatorContext {
-                    session: Some(SessionId(55)),
-                    run: Some(SessionRunId(8)),
-                    ..
-                },
-                ..
-            })
-        ));
-    }
-    #[test]
-    fn operator_quick_empty_text_controls_graphemes_and_byte_limit() {
-        let mut d = Dashboard::new(TerminalSize {
-            rows: 24,
-            cols: 140,
-        });
-        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-            d.key_action(KeyEvent::new_with_kind(
-                KeyCode::Char('o'),
-                KeyModifiers::CONTROL,
-                kind,
-            ));
-            assert!(d.operator.quick.is_none());
-        }
-        d.ctrl('o');
-        d.event_action(Event::Paste(" \r\n\u{1b}\0".into()));
-        d.key(KeyCode::Enter);
-        assert!(d.drain_outbox().is_empty());
-        d.key(KeyCode::Esc);
-        d.ctrl('o');
-        d.event_action(Event::Paste("e\u{301}界".into()));
-        d.key(KeyCode::Left);
-        d.key(KeyCode::Backspace);
-        assert!(
-            d.drain_outbox().is_empty(),
-            "draft paste must not publish a request"
-        );
-        d.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "\n界");
-        d.key(KeyCode::Esc);
-        d.ctrl('o');
-        d.event_action(Event::Paste("x".repeat(MAX_OPERATOR_TEXT_BYTES)));
-        d.key(KeyCode::Char('界'));
-        assert_eq!(
-            d.operator.quick.as_ref().unwrap().text.len(),
-            MAX_OPERATOR_TEXT_BYTES
-        );
-    }
-    #[test]
-    fn operator_quick_reopen_tracks_progress_and_late_acceptance_preserves_newer_draft_and_archive()
-    {
-        for archive in [false, true] {
-            let (mut d, _) = setup();
-            d.drain_outbox();
-            let create = quick_create(&mut d);
-            d.key(KeyCode::Esc);
-            d.ctrl('o');
-            assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Creating);
-            assert!(d.drain_outbox().is_empty());
-            let submit = quick_ack_create(&mut d, create, 7);
-            d.key(KeyCode::Esc);
-            d.ctrl('o');
-            assert!(d.operator.quick.as_ref().unwrap().phase == QuickPhase::Submitting);
-            d.key(KeyCode::Enter);
-            assert!(d.drain_outbox().is_empty());
-            d.key(KeyCode::Esc);
-            d.operator_select(Id(2));
-            d.operator.chats.get_mut(&7).unwrap().draft = "a newer draft".into();
-            let mut retained = quick_summary(7);
-            retained.run = SessionRunId(3);
-            retained.archived = archive;
-            d.operator_summary(retained.clone());
-            d.handle_server_message(ServerMessage::Response {
-                request_id: submit.request_id,
-                response: Response::Operator(OperatorResponse::Submitted(
-                    summary(7, 1, OperatorTurnState::Running, false)
-                        .current_turn
-                        .unwrap(),
-                )),
-            });
-            assert_eq!(d.operator.chats[&7].summary, retained);
-            assert_eq!(d.operator.chats[&7].draft, "a newer draft");
-            assert_eq!(d.operator.selected, Some(Id(2)));
-            assert!(d.operator.quick.is_none());
-        }
-    }
-    #[test]
-    fn operator_quick_obscures_unread_tail_and_preserves_cursor_at_floor_sizes() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![completed(1)],
-            None,
-        );
-        d.ctrl('o');
-        for (cols, rows) in [(140, 24), (80, 24), (60, 16), (59, 15), (1, 1), (0, 0)] {
-            draw(&mut d, cols, rows);
-            assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
-        }
-        d.key(KeyCode::Esc);
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&1].unread.is_none());
-    }
-    #[test]
-    fn operator_original_maximum_newlines_keeps_six_composer_rows() {
-        let (mut d, _) = setup();
-        d.operator_insert(&"\n".repeat(65535));
-        assert_eq!(d.operator.chats[&1].draft.len(), 65535);
-        assert_eq!(d.operator_layout(d.outer_area).composer.height, 6);
-    }
-    #[test]
-    fn operator_original_first_down_selects_first_expandable_receipt() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![
-                message(
-                    1,
-                    OperatorMessageContent::User {
-                        text: "first".into(),
-                        context: OperatorContext::default(),
-                    },
-                ),
-                message(
-                    2,
-                    OperatorMessageContent::User {
-                        text: "second".into(),
-                        context: OperatorContext::default(),
-                    },
-                ),
-            ],
-            None,
-        );
-        d.operator.transcript_focus = true;
-        d.operator.chats.get_mut(&1).unwrap().entry_focus = None;
-        d.key(KeyCode::Down);
-        assert_eq!(d.operator.chats[&1].entry_focus, Some(1));
     }
     fn message(ordinal: u64, content: OperatorMessageContent) -> OperatorMessage {
         OperatorMessage {
@@ -2449,32 +1582,12 @@ mod tests {
     fn completed(ordinal: u64) -> OperatorMessage {
         message(
             ordinal,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(OperatorModelHistory {
-                version: 1,
-                json: "[]".into(),
-            })),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
         )
-    }
-    fn history(
-        d: &mut Dashboard,
-        request: u64,
-        summary: Summary,
-        messages: Vec<OperatorMessage>,
-        next_after: Option<u64>,
-    ) -> Vec<ClientMessage> {
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request,
-            response: Response::Operator(OperatorResponse::History(OperatorHistory {
-                conversation: summary,
-                messages,
-                next_after,
-            })),
-        })
     }
     fn draw(d: &mut Dashboard, cols: u16, rows: u16) -> String {
         d.install_area(Rect::new(0, 0, cols, rows));
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
         d.draw(&mut terminal).unwrap();
         terminal
             .backend()
@@ -2484,607 +1597,933 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect()
     }
-    #[test]
-    fn operator_prose_uses_available_width_after_resize() {
-        let (mut d, _) = setup();
-        let text = "x".repeat(240);
-        d.operator.chats.get_mut(&1).unwrap().messages = vec![
-            message(
-                1,
-                OperatorMessageContent::User {
-                    text: text.clone(),
-                    context: OperatorContext::default(),
-                },
-            ),
-            delta(2, &text),
-        ];
-        for cols in [180, 80, 140] {
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, 40)).unwrap();
-            d.install_area(Rect::new(0, 0, cols, 40));
-            d.draw(&mut terminal).unwrap();
-            let area = d.operator_layout(d.outer_area).transcript;
-            let width = usize::from(area.width - 2);
-            let rows = transcript_rows(&d.operator.chats[&1], area.width, 0);
-            for ordinal in [1, 2] {
-                let row = rows
-                    .iter()
-                    .position(|(_, anchor)| *anchor == Some((ordinal, 3, 0)))
-                    .unwrap();
-                assert_eq!(rows[row].0.width(), usize::from(area.width));
-                assert_eq!(rows[row + 1].1, Some((ordinal, 3, width)));
-                let y = area.y + row as u16;
-                assert_eq!(
-                    terminal.backend().buffer()[(area.right() - 1, y)].symbol(),
-                    "x"
-                );
-            }
-        }
-    }
-    #[test]
-    fn operator_journal_theme_geometry_and_receipts() {
-        use crate::theme::ThemeTokens;
-        use ovrcr_protocol::{Settings, ThemeId};
-        for theme in [ThemeId::default(), ThemeId::ALL[1]] {
-            let tokens = ThemeTokens::for_id(theme);
-            let (mut d, _) = setup();
-            d.install_settings(Settings {
-                theme,
-                ..Default::default()
-            });
-            let chat = d.operator.chats.get_mut(&1).unwrap();
-            chat.summary.title = "REPEATED_REQUEST".into();
-            chat.messages = vec![
-                message(
-                    1,
-                    OperatorMessageContent::User {
-                        text: "Inspect 界é🙂".into(),
-                        context: OperatorContext::default(),
-                    },
-                ),
-                delta(2, "I will inspect."),
-                message(
-                    3,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                        id: "FULL_CALL_ID".into(),
-                        name: "Bash".into(),
-                        arguments: "FULL_ARGUMENTS".into(),
-                    }),
-                ),
-                message(
-                    4,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                        id: "FULL_CALL_ID".into(),
-                        output: String::new(),
-                        truncated: true,
-                        status: OperatorToolStatus::Failed { exit_code: Some(9) },
-                    }),
-                ),
-            ];
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
-            d.install_area(Rect::new(0, 0, 140, 40));
-            d.draw(&mut terminal).unwrap();
-            let layout = d.operator_layout(d.outer_area);
-            let b = terminal.backend().buffer();
-            let header: String = (layout.header.x..layout.header.right())
-                .map(|x| b[(x, layout.header.y)].symbol())
-                .collect();
-            assert!(
-                !header.contains("REPEATED_REQUEST"),
-                "journal identity: {header}"
-            );
-            assert_eq!(b[(0, 0)].bg, tokens.base, "quiet Operator title fill");
-            assert_eq!(b[(layout.composer.x, layout.composer.y - 1)].symbol(), "─");
-            assert_eq!(
-                b[(layout.composer.x, layout.composer.y - 1)].fg,
-                tokens.mauve
-            );
-            assert_eq!(
-                b[(layout.composer.x, layout.composer.bottom())].fg,
-                tokens.surface2
-            );
-            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
-            assert!(
-                rows.iter()
-                    .any(|(line, _)| line.to_string().starts_with("❯ "))
-            );
-            assert!(
-                rows.iter()
-                    .any(|(line, _)| line.to_string().starts_with("│ "))
-            );
-            assert!(
-                b.content()
-                    .iter()
-                    .any(|cell| cell.symbol() == "│" && cell.fg == tokens.surface2)
-            );
-            for (anchor, color, bold) in [
-                ((1, 0, 0), tokens.mauve, true),
-                ((1, 3, 0), tokens.text, false),
-                ((2, 3, 0), tokens.text, false),
-            ] {
-                let row = rows
-                    .iter()
-                    .position(|(_, source)| *source == Some(anchor))
-                    .unwrap();
-                let cell = &b[(layout.transcript.x + 2, layout.transcript.y + row as u16)];
-                assert_eq!(cell.fg, color);
-                assert_eq!(cell.modifier.contains(Modifier::BOLD), bold);
-            }
-            let compact = rows
-                .iter()
-                .map(|(line, _)| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(!compact.contains("FULL_CALL_ID"));
-            assert!(
-                compact.contains("failed (exit 9)")
-                    && compact.contains("(no output)")
-                    && compact.contains("truncated")
-            );
-            let call = rows
-                .iter()
-                .position(|(_, a)| a.is_some_and(|a| a.0 == 3))
-                .unwrap();
-            let output = rows
-                .iter()
-                .position(|(_, a)| a.is_some_and(|a| a.0 == 4))
-                .unwrap();
-            assert_eq!(output, call + 1, "adjacent independent receipts");
-            d.key(KeyCode::Tab);
-            d.key(KeyCode::Tab);
-            d.key(KeyCode::Home);
-            d.key(KeyCode::Down);
-            d.key(KeyCode::Enter);
-            assert_eq!(d.operator.chats[&1].entry_focus, Some(3));
-            assert!(d.operator.chats[&1].expanded.contains(&3));
-            assert!(!d.operator.chats[&1].expanded.contains(&4));
-            let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
-            assert!(rows.iter().any(|(line, a)| a.is_some_and(|a| a.0 == 3)
-                && line.to_string().contains("FULL_CALL_ID")));
-            let row = rows
-                .iter()
-                .position(|(_, a)| a.is_some_and(|a| a.0 == 4))
-                .unwrap();
-            d.mouse_action(
-                MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: layout.transcript.x + 2,
-                    row: layout.transcript.y + row as u16,
-                    modifiers: KeyModifiers::NONE,
-                },
-                d.outer_area,
-            );
-            assert!(d.operator.chats[&1].expanded.contains(&4));
-            assert!(
-                transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0)
-                    .iter()
-                    .any(|(line, a)| a.is_some_and(|a| a.0 == 4)
-                        && line.to_string().contains("FULL_CALL_ID"))
-            );
-            d.operator.visible = false;
-            d.draw(&mut terminal).unwrap();
-            assert_eq!(
-                terminal.backend().buffer()[(0, 0)].bg,
-                tokens.mauve,
-                "ordinary title unchanged"
-            );
-        }
-    }
-    #[test]
-    fn operator_journal_quick_content_height_and_modal_consumption() {
-        let (mut d, _) = setup();
-        d.operator_insert("underlying draft");
-        d.drain_outbox();
-        d.ctrl('o');
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
-        d.install_area(Rect::new(0, 0, 140, 40));
-        let long_unicode = format!("{}é🙂", "界".repeat(500));
-        for (text, expected_height, error) in [
-            ("", 7, None),
-            ("界é🙂", 7, None),
-            ("a\nb", 7, None),
-            ("a\nb", 8, Some("FAILED")),
-            ("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11", 16, None),
-            (&long_unicode, 16, Some("FAILED")),
-            ("short", 7, None),
-        ] {
-            let quick = d.operator.quick.as_mut().unwrap();
-            quick.text = text.into();
-            quick.cursor.key(&mut quick.text, KeyCode::End);
-            quick.error = error.map(str::to_owned);
-            d.draw(&mut terminal).unwrap();
-            let b = terminal.backend().buffer();
-            let top = (0..40)
-                .find(|y| (0..140).any(|x| b[(x, *y)].symbol() == "┌"))
-                .unwrap();
-            let bottom = (0..40)
-                .find(|y| (0..140).any(|x| b[(x, *y)].symbol() == "└"))
-                .unwrap();
-            assert_eq!(bottom - top + 1, expected_height, "quick text {text:?}");
-            let left = (0..140).find(|x| b[(*x, top)].symbol() == "┌").unwrap();
-            let right = (0..140).find(|x| b[(*x, top)].symbol() == "┐").unwrap();
-            assert_eq!(right - left + 1, 80);
-            let cursor =
-                ratatui::backend::Backend::get_cursor_position(terminal.backend_mut()).unwrap();
-            assert!(cursor.x > left && cursor.x < right);
-            assert!(
-                cursor.y >= top + 3 && cursor.y < bottom - 1 - u16::from(error.is_some()),
-                "editor cursor: {cursor:?}"
-            );
-            assert!(!matches!(
-                d.mouse_action(
-                    MouseEvent {
-                        kind: MouseEventKind::Down(MouseButton::Left),
-                        column: 1,
-                        row: 0,
-                        modifiers: KeyModifiers::NONE
-                    },
-                    d.outer_area
-                ),
-                DashboardAction::PtyBytes(_)
-            ));
-            assert_eq!(d.operator.selected, Some(Id(1)));
-            assert_eq!(d.operator.chats[&1].draft, "underlying draft");
-            assert!(d.drain_outbox().is_empty());
-        }
-        let minimum = draw(&mut d, 60, 16);
-        assert!(
-            minimum.contains("Ctrl-c Clear") && minimum.contains("Esc Dismiss"),
-            "{minimum}"
-        );
-    }
-    #[test]
-    fn operator_original_typed_event_matrix_and_context_details() {
-        let (mut d, _) = setup();
-        let context = OperatorContext {
-            project: Some("project".repeat(14)),
-            workspace: Some("workspace".repeat(14)),
-            workspace_id: Some("stable-workspace".into()),
-            cwd: Some(std::path::PathBuf::from("/private/a/very/long/path")),
-            session: Some(SessionId(11)),
-            run: Some(SessionRunId(7)),
-        };
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.context = context.clone();
-        chat.summary.title = "long-title-".repeat(80);
-        chat.summary.model = "long-model-".repeat(80);
-        chat.messages = vec![
-            message(
-                1,
-                OperatorMessageContent::User {
-                    text: "hello\n\n界é🙂".into(),
-                    context: context.clone(),
-                },
-            ),
-            message(
-                2,
-                OperatorMessageContent::User {
-                    text: "same context".into(),
-                    context: context.clone(),
-                },
-            ),
-            message(
-                3,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                    id: "bash".into(),
-                    name: "Bash".into(),
-                    arguments: "{\"command\":\"pwd\",\"cwd\":\"/private\"}".into(),
-                }),
-            ),
-        ];
-        for (i, status) in [
-            OperatorToolStatus::Succeeded,
-            OperatorToolStatus::Failed { exit_code: Some(9) },
-            OperatorToolStatus::TimedOut,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            chat.messages.push(message(
-                4 + i as u64,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                    id: "bash".into(),
-                    output: if i == 0 {
-                        String::new()
-                    } else {
-                        "\u{1b}[31munsafe\u{202e}\n\nlast".into()
-                    },
-                    truncated: i == 2,
-                    status,
-                }),
-            ));
-        }
-        chat.messages.push(message(
-            7,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(OperatorModelHistory {
-                version: 1,
-                json: "[\"PRIVATE_MODEL_HISTORY\"]".into(),
-            })),
-        ));
-        let compact = transcript_lines(chat)
-            .iter()
-            .map(Line::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert_eq!(compact.matches("Context ·").count(), 1);
-        for status in [
-            "succeeded",
-            "(no output)",
-            "failed (exit 9)",
-            "timed out",
-            "truncated at 64 KiB",
-        ] {
-            assert!(compact.contains(status), "{compact}");
-        }
-        assert!(
-            !compact.contains("[bash]"),
-            "collapsed receipts hide raw IDs"
-        );
-        assert!(!compact.contains("PRIVATE_MODEL_HISTORY") && !compact.contains("\"command\""));
-        chat.expanded.extend([1, 3, 5, 6]);
-        let expanded = transcript_lines(chat)
-            .iter()
-            .map(Line::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        for value in [
-            "Bash [bash]",
-            "Output [bash]",
-            "stable-workspace",
-            "/private/a/very/long/path",
-            "session: 11 · run: 7",
-            "\"command\":\"pwd\"",
-            "\\u{1b}",
-            "\\u{202e}",
-            "\n  \n  last",
-            "hello\n\n界é🙂",
-        ] {
-            assert!(expanded.contains(value), "missing {value}: {expanded}");
-        }
-        assert!(
-            !expanded.contains('\u{1b}')
-                && !expanded.contains('\u{202e}')
-                && !expanded.contains("PRIVATE_MODEL_HISTORY")
-        );
-        // Rendered failure uses semantic error styling independently of snapshots.
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
-        d.install_area(Rect::new(0, 0, 140, 40));
-        d.operator.chats.get_mut(&1).unwrap().expanded.clear();
+    fn frame_lines(d: &mut Dashboard, cols: u16, rows: u16) -> String {
+        d.install_area(Rect::new(0, 0, cols, rows));
+        let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
         d.draw(&mut terminal).unwrap();
-        let buffer = terminal.backend().buffer();
-        let header: String = (40..140).map(|x| buffer[(x, 1)].symbol()).collect();
-        assert!(
-            header.contains("ChatGPT")
-                && !header.contains("chat_gpt")
-                && header.contains("running")
-                && header.contains("Stop Ctrl-x"),
-            "long header: {header}"
-        );
-        assert!(
-            buffer
-                .content()
-                .iter()
-                .any(|cell| cell.symbol() == "f" && cell.fg == super::super::render::RED())
-        );
-        assert!(
-            buffer
-                .content()
-                .iter()
-                .any(|cell| cell.symbol() == "▌" && cell.bg == super::super::render::SURFACE0())
-        );
-        assert!(
-            buffer
-                .content()
-                .iter()
-                .any(|cell| cell.symbol() == "s" && cell.fg == super::super::render::GREEN()),
-            "successful receipts use work/success color"
-        );
-        let caption: String = (0..140)
-            .map(|x| buffer[(x, d.operator_layout(d.outer_area).context.y)].symbol())
-            .collect();
-        assert!(caption.contains("#11 run 7"), "context suffix: {caption}");
+        let buffer = terminal.backend().buffer().clone();
+        (0..rows)
+            .map(|row| {
+                (0..cols)
+                    .map(|col| buffer[(col, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
     }
-    #[test]
-    fn operator_original_composer_geometry_focus_and_unread_guards() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![delta(1, "answer"), completed(2)],
-            None,
-        );
-        d.install_area(Rect::new(0, 0, 60, 16));
-        assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
-        assert_eq!(content_area(&d, d.outer_area).width, 60);
-        d.operator_insert(&"line\n".repeat(20));
-        assert_eq!(d.operator_layout(d.outer_area).composer.height, 4);
-        d.key(KeyCode::Tab);
-        assert!(d.operator.list_focus && !d.operator.transcript_focus);
-        assert!(content_area(&d, d.outer_area).width < 60);
-        draw(&mut d, 60, 16);
-        assert!(d.operator.chats[&1].unread.is_some());
-        d.key(KeyCode::Tab);
-        assert!(d.operator.transcript_focus && !d.operator.list_focus);
-        let draft = d.operator.chats[&1].draft.clone();
-        d.key(KeyCode::Char('x'));
-        d.event_action(Event::Paste("ignored".into()));
-        assert_eq!(d.operator.chats[&1].draft, draft);
-        d.key(KeyCode::Tab);
-        assert!(!d.operator.transcript_focus && !d.operator.list_focus);
-        d.key(KeyCode::Char('x'));
-        assert!(d.operator.chats[&1].draft.ends_with('x'));
-        draw(&mut d, 60, 15);
-        assert!(d.operator.chats[&1].unread.is_some());
-        draw(&mut d, 60, 16);
-        assert!(d.operator.chats[&1].unread.is_none());
-        assert!(!draw(&mut d, 100, 24).contains("[Stop Ctrl-x]"));
-        assert_eq!(
-            d.sidebar_width, None,
-            "responsive hiding cannot alter saved width"
-        );
-        d.operator.hovered = Some(Id(1));
-        d.event_action(Event::FocusLost);
-        assert_eq!(d.operator.hovered, None);
-        d.operator.hovered = Some(Id(1));
-        d.toggle_sidebar();
-        assert_eq!(d.operator.hovered, None);
-        d.ctrl('l');
-        assert!(d.operator.list_focus);
-        assert!(
-            content_area(&d, d.outer_area).width < d.outer_area.width,
-            "on-demand sidebar opens even with a saved hidden preference"
-        );
-        assert!(
-            d.sidebar_hidden,
-            "opening on demand cannot overwrite hidden preference"
-        );
-        d.ctrl('l');
-        assert_eq!(content_area(&d, d.outer_area).width, d.outer_area.width);
-        assert!(d.sidebar_hidden);
-    }
-    #[test]
-    fn operator_original_keyboard_expands_a_visible_focused_receipt() {
-        let (mut d, _) = setup();
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.messages = vec![message(
-            1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                id: "call".into(),
-                name: "Bash".into(),
-                arguments: "FULL_COMMAND_CWD".into(),
-            }),
-        )];
-        d.key(KeyCode::Tab);
-        d.key(KeyCode::Tab);
-        d.key(KeyCode::Home);
-        assert!(d.operator.transcript_focus);
-        d.key(KeyCode::Enter);
-        assert!(draw(&mut d, 140, 24).contains("FULL_COMMAND_CWD"));
-        d.key(KeyCode::Enter);
-        assert!(!draw(&mut d, 140, 24).contains("FULL_COMMAND_CWD"));
-    }
-    #[test]
-    fn operator_user_context_expansion_keeps_its_own_prose_anchor() {
-        let (mut d, _) = setup();
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.messages = vec![message(
-            1,
-            OperatorMessageContent::User {
-                text: (0..50).map(|i| format!("PROSE_{i:02}\n")).collect(),
-                context: OperatorContext::default(),
+    fn click(d: &mut Dashboard, column: u16, row: u16) {
+        d.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
             },
-        )];
-        draw(&mut d, 140, 24);
-        d.operator_scroll(-10);
-        let before = draw(&mut d, 140, 24);
-        let marker = (0..50)
-            .find(|i| before.contains(&format!("PROSE_{i:02}")))
-            .unwrap();
-        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
-        let after = draw(&mut d, 80, 24);
-        assert!(after.contains(&format!("PROSE_{marker:02}")), "{after}");
+            d.outer_area,
+        );
     }
+
     #[test]
-    fn operator_original_layout_floor_frames() {
-        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
-            let (mut d, _) = setup();
-            d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-            d.operator_summary(summary(2, 1, OperatorTurnState::Complete, true));
-            d.operator.chats.get_mut(&1).unwrap().messages = vec![
-                message(
-                    1,
-                    OperatorMessageContent::User {
-                        text: "Review this workspace.".into(),
-                        context: OperatorContext::default(),
-                    },
-                ),
-                delta(2, "I will inspect its sessions."),
-                message(
-                    3,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                        id: "inspect".into(),
-                        output: String::new(),
-                        truncated: false,
-                        status: OperatorToolStatus::Succeeded,
-                    }),
-                ),
-            ];
-            let screen = draw(&mut d, cols, rows);
-            let header = d.operator_layout(d.outer_area).header;
-            let header_text = screen
-                .chars()
-                .skip(usize::from(header.y * cols + header.x))
-                .take(usize::from(header.width))
-                .collect::<String>();
+    fn operator_is_one_navigation_row_and_opens_the_singleton_directly() {
+        let mut d = dashboard();
+        let row = d.sidebar_rects(d.outer_area).operator;
+        assert_eq!(row.height, 1, "exactly one fixed navigation row");
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("Operator"), "{screen}");
+        for removed in ["[+]", "▸", "[x]", "Chats", "New Conversation"] {
             assert!(
-                header_text.starts_with(if cols < 100 {
-                    "chat-1 ·"
-                } else {
-                    "Operator ·"
-                }),
-                "selected identity at {cols}x{rows}: {header_text}"
+                !screen.contains(removed),
+                "no conversation list or creation controls: {removed}"
+            );
+        }
+        click(&mut d, row.x + 1, row.y);
+        assert!(d.operator.visible);
+        let requests = d.drain_outbox();
+        assert_eq!(operator_requests(&requests), [&OperatorRequest::Open]);
+        assert_eq!(
+            d.operator
+                .pending
+                .values()
+                .filter(|pending| matches!(pending, Pending::Open { .. }))
+                .count(),
+            1,
+            "the row click sent exactly one Open"
+        );
+        // Ctrl-n is not a shortcut: it neither creates a conversation nor edits text.
+        d.key(KeyCode::Char('o'));
+        let before = d.operator.chat.as_ref().map(|chat| chat.draft.clone());
+        assert!(before.is_none());
+        d.ctrl('n');
+        assert!(d.drain_outbox().is_empty());
+        assert!(d.operator.chat.is_none());
+    }
+
+    #[test]
+    fn startup_current_creates_nothing_and_repeated_open_keeps_state() {
+        let mut d = dashboard();
+        d.operator_start_current();
+        let current = d.drain_outbox();
+        assert_eq!(operator_requests(&current), [&OperatorRequest::Current]);
+        let out = respond(
+            &mut d,
+            current[0].request_id,
+            OperatorResponse::Current(None),
+        );
+        assert!(out.is_empty());
+        assert!(d.operator.chat.is_none());
+        assert!(d.drain_outbox().is_empty());
+
+        let first = open(&mut d);
+        let out = respond(
+            &mut d,
+            first.request_id,
+            OperatorResponse::Opened(summary()),
+        );
+        let read = read_request(&out);
+        assert_eq!(read.request_id, out[0].request_id);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        assert_eq!(d.operator.chat.as_ref().unwrap().summary.id, Id(1));
+        d.operator.chat.as_mut().unwrap().draft = "keep me".into();
+
+        let again = open(&mut d);
+        let out = respond(
+            &mut d,
+            again.request_id,
+            OperatorResponse::Opened(summary()),
+        );
+        assert!(out.is_empty(), "a repeated Open resets and reloads nothing");
+        let chat = d.operator.chat.as_ref().unwrap();
+        assert_eq!(
+            chat.summary.run,
+            SessionRunId(1),
+            "repeated Open resets nothing"
+        );
+        assert_eq!(chat.draft, "keep me", "the draft survives reopening");
+        assert!(d.operator.visible && d.operator.editing && !d.operator.transcript_focus);
+    }
+
+    #[test]
+    fn header_shows_pi_and_the_selected_model_only_once_known() {
+        let mut d = dashboard();
+        d.config_dir = std::path::PathBuf::from("/instance");
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        let context = OperatorContext {
+            project: Some("proj".into()),
+            workspace: Some("work".into()),
+            cwd: Some("/captured/cwd".into()),
+            session: Some(SessionId(7)),
+            run: Some(SessionRunId(3)),
+            ..Default::default()
+        };
+        let out = respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                summary(),
+                vec![
+                    message(
+                        1,
+                        OperatorMessageContent::User {
+                            text: "Review this.".into(),
+                            context,
+                        },
+                    ),
+                    message(
+                        2,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(
+                            OperatorModel {
+                                provider: "openai".into(),
+                                id: "gpt-6.1-sol".into(),
+                            },
+                        )),
+                    ),
+                    delta(3, "Inspecting."),
+                ],
+                None,
+            ),
+        );
+        assert!(out.is_empty());
+        let screen = draw(&mut d, 140, 24);
+        assert!(
+            screen.contains("Operator · pi · openai/gpt-6.1-sol · ready"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Context · proj / work"),
+            "the journal keeps each message's captured context: {screen}"
+        );
+        assert!(
+            screen.contains("Managing global"),
+            "the composer names the next message's target, not older history: {screen}"
+        );
+        assert!(
+            !screen.contains("Managing proj / work"),
+            "a loaded message never retargets the next Send: {screen}"
+        );
+        assert!(
+            !screen.contains("ModelSelected"),
+            "the selected model is metadata, not a journal row"
+        );
+        let chat = d.operator.chat.as_mut().unwrap();
+        chat.expanded.insert(1);
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("captured cwd: /captured/cwd"), "{screen}");
+        assert!(
+            screen.contains("agent workdir: /instance/operator-workdir"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn unknown_model_placeholder_and_setup_errors_never_show_a_bogus_identifier() {
+        let mut d = dashboard();
+        let mut placeholder = summary();
+        placeholder.model = Some(OperatorModel {
+            provider: "unknown".into(),
+            id: "unknown".into(),
+        });
+        opened(&mut d, placeholder);
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("Operator · pi · ready"), "{screen}");
+        assert!(
+            !screen.contains("unknown"),
+            "the placeholder stays hidden: {screen}"
+        );
+
+        // The worker's fixed setup failures are shown verbatim, with their command.
+        let mut d = dashboard();
+        let open = open(&mut d);
+        respond(&mut d, open.request_id, OperatorResponse::Opened(summary()));
+        d.operator.error = Some("No Pi model selected; run ovrcr operator setup.".into());
+        let screen = draw(&mut d, 140, 24);
+        assert!(
+            screen.contains("No Pi model selected; run ovrcr operator setup."),
+            "{screen}"
+        );
+        for failure in [
+            "Configured Operator model is unavailable in the dedicated Pi profile.",
+            "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+        ] {
+            let chat = d.operator.chat.as_mut().unwrap();
+            chat.messages = vec![message(
+                1,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(failure.into())),
+            )];
+            chat.dirty = false;
+            chat.confirmed_tail = Some(1);
+            let screen = draw(&mut d, 140, 24);
+            assert!(screen.contains(failure), "{screen}");
+        }
+    }
+
+    #[test]
+    fn header_without_a_model_never_guesses_one() {
+        let mut d = dashboard();
+        opened(&mut d, summary());
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("Operator · pi"), "{screen}");
+        assert!(!screen.contains("openai"), "no invented model identifier");
+        assert!(
+            !screen.contains("gpt-6.1-sol"),
+            "no invented model identifier"
+        );
+    }
+
+    #[test]
+    fn quick_creates_nothing_when_cancelled_and_shares_the_singleton() {
+        let mut d = dashboard();
+        d.ctrl('o');
+        d.event_action(Event::Paste("abandoned".into()));
+        d.key(KeyCode::Esc);
+        assert!(
+            d.operator.quick.is_none(),
+            "cancelled unsent Quick is discarded"
+        );
+        assert!(d.drain_outbox().is_empty());
+        assert!(d.operator.chat.is_none());
+        assert!(!d.operator.visible);
+
+        d.ctrl('o');
+        d.event_action(Event::Paste("first message".into()));
+        d.key(KeyCode::Enter);
+        let out = d.drain_outbox();
+        assert_eq!(
+            operator_requests(&out),
+            [&OperatorRequest::Open],
+            "the first explicit Send opens the single conversation"
+        );
+        let out = respond(
+            &mut d,
+            out[0].request_id,
+            OperatorResponse::Opened(summary()),
+        );
+        let submits = out
+            .iter()
+            .filter(|message| {
+                matches!(
+                    &message.request,
+                    Request::Operator(OperatorRequest::Submit {
+                        conversation: Id(1),
+                        expected_run: SessionRunId(1),
+                        text,
+                        ..
+                    }) if text == "first message"
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(submits.len(), 1);
+        assert!(matches!(
+            &out[0].request,
+            Request::Operator(OperatorRequest::Submit { .. })
+        ));
+        // Acceptance reuses the singleton, shows the accepted turn and clears only that draft.
+        respond(
+            &mut d,
+            submits[0].request_id,
+            OperatorResponse::Submitted(turn(2, OperatorTurnState::Running)),
+        );
+        assert!(d.operator.visible);
+        assert!(d.operator.quick.is_none());
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "");
+        assert_eq!(
+            d.operator
+                .chat
+                .as_ref()
+                .unwrap()
+                .summary
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .state,
+            OperatorTurnState::Running
+        );
+        assert_eq!(
+            d.operator
+                .pending
+                .values()
+                .filter(|pending| matches!(pending, Pending::Read { .. }))
+                .count(),
+            1,
+            "the in-flight read is the only catch-up"
+        );
+    }
+
+    #[test]
+    fn quick_draft_survives_startup_attach_and_a_busy_refusal() {
+        let mut d = dashboard();
+        d.operator_start_current();
+        let current = d.drain_outbox();
+        assert_eq!(operator_requests(&current), [&OperatorRequest::Current]);
+        // Quick can open while the startup `Current` is still unanswered, so its
+        // text exists only in the overlay until the singleton resolves.
+        d.ctrl('o');
+        d.event_action(Event::Paste("kept text".into()));
+        let out = respond(
+            &mut d,
+            current[0].request_id,
+            OperatorResponse::Current(Some(busy())),
+        );
+        assert!(
+            out.iter().any(|message| matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Read { .. })
+            )),
+            "attach reads the singleton journal: {out:?}"
+        );
+        assert_eq!(
+            d.operator.chat.as_ref().unwrap().draft,
+            "kept text",
+            "the overlay draft is adopted into the one shared draft"
+        );
+        // The attached conversation is busy, so Send refuses and keeps the draft.
+        d.key(KeyCode::Enter);
+        assert!(d.drain_outbox().is_empty(), "nothing is queued or created");
+        let quick = d.operator.quick.as_ref().unwrap();
+        assert_eq!(quick.text, "kept text");
+        assert_eq!(quick.error.as_deref(), Some(BUSY_REASON));
+        // Dismissing and reopening must not replace it with an empty full draft.
+        d.key(KeyCode::Esc);
+        assert!(!d.operator_quick_visible());
+        d.ctrl('o');
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "kept text");
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "kept text");
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("kept text"), "{screen}");
+        assert!(screen.contains(BUSY_REASON), "{screen}");
+        // The adopted cursor continues the draft where the user left it.
+        d.key(KeyCode::Backspace);
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "kept tex");
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "kept tex");
+    }
+
+    #[test]
+    fn busy_or_stop_unconfirmed_send_preserves_the_draft_with_a_reason() {
+        for value in [busy(), stop_unconfirmed()] {
+            let mut d = dashboard();
+            let out = opened(&mut d, value);
+            d.drain_outbox();
+            assert!(!d.operator_submit_available());
+            d.operator.chat.as_mut().unwrap().draft = "keep this".into();
+            d.key(KeyCode::Enter);
+            assert!(d.drain_outbox().is_empty(), "never queues or steers");
+            let chat = d.operator.chat.as_ref().unwrap();
+            assert_eq!(chat.draft, "keep this");
+            assert_eq!(chat.error.as_deref(), Some(BUSY_REASON));
+            assert!(!chat.submitting);
+
+            // Quick shares the same draft and refuses with its own visible reason.
+            let _ = out;
+            d.ctrl('o');
+            d.key(KeyCode::Enter);
+            assert!(d.drain_outbox().is_empty());
+            let quick = d.operator.quick.as_ref().unwrap();
+            assert_eq!(quick.text, "keep this");
+            assert_eq!(quick.error.as_deref(), Some(BUSY_REASON));
+            assert_eq!(d.operator.chat.as_ref().unwrap().draft, "keep this");
+        }
+    }
+
+    #[test]
+    fn late_quick_receipt_after_dismissal_never_steals_the_view() {
+        let mut d = dashboard();
+        d.ctrl('o');
+        d.event_action(Event::Paste("later".into()));
+        d.key(KeyCode::Enter);
+        let open = d.drain_outbox().remove(0);
+        d.key(KeyCode::Esc);
+        assert!(!d.operator_quick_visible());
+        assert!(!d.operator.visible);
+        let out = respond(&mut d, open.request_id, OperatorResponse::Opened(summary()));
+        assert!(
+            out.iter().any(|message| matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Submit { .. })
+            )),
+            "the accepted Send still submits exactly once"
+        );
+        assert!(
+            !d.operator.visible,
+            "a dismissed overlay cannot open the view"
+        );
+        let submit = out
+            .iter()
+            .find(|message| {
+                matches!(
+                    message.request,
+                    Request::Operator(OperatorRequest::Submit { .. })
+                )
+            })
+            .unwrap();
+        respond(
+            &mut d,
+            submit.request_id,
+            OperatorResponse::Submitted(turn(2, OperatorTurnState::Running)),
+        );
+        assert!(!d.operator.visible, "acceptance cannot steal the view");
+        assert!(d.operator.quick.is_none());
+    }
+
+    #[test]
+    fn wrong_authority_receipts_retain_drafts_and_exact_identity() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        d.operator.chat.as_mut().unwrap().draft = "one".into();
+        d.key(KeyCode::Enter);
+        let submit = d.drain_outbox().remove(0);
+        // A receipt for another session/run cannot clear the captured draft.
+        let mut wrong = turn(2, OperatorTurnState::Running);
+        wrong.identity.session = SessionId(99);
+        respond(
+            &mut d,
+            submit.request_id,
+            OperatorResponse::Submitted(wrong),
+        );
+        let chat = d.operator.chat.as_ref().unwrap();
+        assert_eq!(chat.draft, "one");
+        assert!(!chat.submitting);
+        assert!(chat.summary.current_turn.is_none());
+        assert_eq!(d.operator.error.as_deref(), Some(UNAVAILABLE_REASON));
+    }
+
+    #[test]
+    fn accepted_submission_clears_its_draft_and_stop_proof_gates_the_next_send() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        d.operator.chat.as_mut().unwrap().draft = "one".into();
+        d.key(KeyCode::Enter);
+        let submit = d.drain_outbox().remove(0);
+        respond(
+            &mut d,
+            submit.request_id,
+            OperatorResponse::Submitted(turn(2, OperatorTurnState::Running)),
+        );
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "");
+        assert!(!d.operator_submit_available());
+        // Complete without controlled-stop proof still cannot submit.
+        let mut finishing = with_model(summary());
+        finishing.run = SessionRunId(2);
+        finishing.worker_stopped = false;
+        finishing.current_turn = Some(turn(2, OperatorTurnState::Complete));
+        d.operator_attach(finishing.clone(), OperatorContext::default());
+        d.operator.chat.as_mut().unwrap().draft = "two".into();
+        d.key(KeyCode::Enter);
+        assert!(d.drain_outbox().is_empty());
+        assert_eq!(
+            d.operator.chat.as_ref().unwrap().error.as_deref(),
+            Some(BUSY_REASON)
+        );
+        // The refreshed summary carries the exact-run stop proof and unlocks Send.
+        let mut certified = finishing;
+        certified.worker_stopped = true;
+        d.operator_attach(certified, OperatorContext::default());
+        d.key(KeyCode::Enter);
+        let out = d.drain_outbox();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0].request,
+            Request::Operator(OperatorRequest::Submit {
+                expected_run: SessionRunId(2),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn ctrl_x_stops_the_exact_turn_from_composer_and_transcript() {
+        let mut d = dashboard();
+        opened(&mut d, busy());
+        d.drain_outbox();
+        d.ctrl('x');
+        let out = d.drain_outbox();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0].request,
+            Request::Operator(OperatorRequest::Stop { identity })
+                if identity == turn(2, OperatorTurnState::Running).identity
+        ));
+        assert!(d.operator.chat.as_ref().unwrap().stopping);
+        // Once stopping, Ctrl-x does not repeat the request.
+        d.ctrl('x');
+        assert!(d.drain_outbox().is_empty());
+        // Transcript focus keeps the same exact-turn Stop.
+        let mut d = dashboard();
+        opened(&mut d, busy());
+        d.drain_outbox();
+        d.key(KeyCode::Tab);
+        assert!(d.operator.transcript_focus);
+        d.ctrl('x');
+        let out = d.drain_outbox();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0].request,
+            Request::Operator(OperatorRequest::Stop { .. })
+        ));
+        // A ready conversation has nothing to stop.
+        let mut d = dashboard();
+        opened(&mut d, summary());
+        d.drain_outbox();
+        d.ctrl('x');
+        assert!(d.drain_outbox().is_empty());
+    }
+
+    #[test]
+    fn ctrl_c_clears_before_stopping_and_quick_empty_ctrl_c_is_a_noop() {
+        let mut d = dashboard();
+        opened(&mut d, busy());
+        d.drain_outbox();
+        d.operator.chat.as_mut().unwrap().draft = "text".into();
+        d.ctrl('c');
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "");
+        assert!(d.drain_outbox().is_empty(), "clearing is not a Stop");
+        d.ctrl('c');
+        let out = d.drain_outbox();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0].request,
+            Request::Operator(OperatorRequest::Stop { identity }) if identity == turn(2, OperatorTurnState::Running).identity
+        ));
+        // Quick's empty Ctrl-c does nothing at all.
+        d.ctrl('o');
+        d.ctrl('c');
+        d.ctrl('c');
+        assert!(d.drain_outbox().is_empty());
+        assert!(d.operator_quick_visible());
+    }
+
+    #[test]
+    fn paged_history_scrolls_receipts_and_escapes_controls() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        let out = respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                summary(),
+                vec![
+                    message(
+                        1,
+                        OperatorMessageContent::User {
+                            text: "run it".into(),
+                            context: OperatorContext::default(),
+                        },
+                    ),
+                    message(
+                        2,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                            id: "call-1".into(),
+                            name: "bash".into(),
+                            arguments: "{\"cmd\":\"ls\"}".into(),
+                        }),
+                    ),
+                ],
+                Some(2),
+            ),
+        );
+        // A paged read marks the journal dirty again and continues from the last ordinal.
+        let next = read_request(&out);
+        assert!(matches!(
+            next.request,
+            Request::Operator(OperatorRequest::Read { after: 2, .. })
+        ));
+        let out = respond(
+            &mut d,
+            next.request_id,
+            history_of(
+                summary(),
+                vec![
+                    message(
+                        3,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                            id: "call-1".into(),
+                            output: "a\u{1b}]52;c;INJECTED\u{7}".into(),
+                            truncated: false,
+                            status: OperatorToolStatus::Succeeded,
+                        }),
+                    ),
+                    completed(4),
+                ],
+                None,
+            ),
+        );
+        assert!(out.is_empty());
+        let chat = d.operator.chat.as_ref().unwrap();
+        assert_eq!(chat.ordinal, 4);
+        assert_eq!(chat.confirmed_tail, Some(4));
+        let screen = draw(&mut d, 140, 24);
+        assert!(!screen.contains("Team"));
+        assert!(screen.contains("run it"), "{screen}");
+        assert!(screen.contains("Turn complete"), "{screen}");
+        assert!(
+            !screen.contains("\u{1b}]52;c;INJECTED\u{7}"),
+            "collapsed receipts do not leak tool output"
+        );
+        // Expanding keeps the source escaped and expands under its own ordinal.
+        d.operator.chat.as_mut().unwrap().expanded.insert(3);
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("succeeded"), "{screen}");
+        assert!(screen.contains("\\u{1b}]52;c;INJECTED\\u{7}"), "{screen}");
+        assert!(
+            !screen.contains("\u{1b}]52;c;INJECTED\u{7}}"),
+            "no active control reaches the terminal"
+        );
+        // Scrolling to older rows keeps a durable anchor; returning to the tail follows again.
+        d.operator_scroll(-10);
+        assert!(!d.operator.chat.as_ref().unwrap().follow);
+        let anchor = d.operator.chat.as_ref().unwrap().anchor;
+        assert!(anchor.is_some());
+        d.operator_scroll(40);
+        assert!(d.operator.chat.as_ref().unwrap().follow);
+    }
+
+    #[test]
+    fn unread_clears_only_after_the_loaded_tail_is_drawn() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                with_model(summary()),
+                vec![
+                    message(
+                        1,
+                        OperatorMessageContent::User {
+                            text: "go".into(),
+                            context: OperatorContext::default(),
+                        },
+                    ),
+                    delta(2, "done"),
+                    completed(3),
+                ],
+                None,
+            ),
+        );
+        assert_eq!(
+            d.operator.chat.as_ref().unwrap().unread,
+            Some(OperatorTurnId(1))
+        );
+        // A too-small view cannot acknowledge the tail.
+        draw(&mut d, 40, 12);
+        assert_eq!(
+            d.operator.chat.as_ref().unwrap().unread,
+            Some(OperatorTurnId(1))
+        );
+        let screen = draw(&mut d, 140, 24);
+        assert!(screen.contains("1 unread"), "{screen}");
+        assert_eq!(d.operator.chat.as_ref().unwrap().unread, None);
+        let screen = draw(&mut d, 140, 24);
+        assert!(!screen.contains("1 unread"), "{screen}");
+    }
+
+    #[test]
+    fn narrow_and_wide_layouts_keep_the_composer_and_floor_guidance() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        d.operator.chat.as_mut().unwrap().draft = "preserve draft".into();
+        // Wide: the ordinary sidebar keeps its width.
+        draw(&mut d, 140, 40);
+        assert_eq!(content_area(&d, d.outer_area).x, 40);
+        // Narrow: the conversation wins; Ctrl-l reveals the ordinary sidebar only.
+        draw(&mut d, 80, 24);
+        assert_eq!(content_area(&d, d.outer_area).x, 0);
+        assert!(!d.operator.sidebar_open);
+        d.ctrl('l');
+        assert!(d.operator.sidebar_open);
+        let screen = draw(&mut d, 80, 24);
+        assert!(!screen.contains("Chats") && !screen.contains("Conversation"));
+        d.ctrl('l');
+        assert!(!d.operator.sidebar_open);
+        // Below the 60x16 floor the view asks for a resize and keeps the draft.
+        for (cols, rows) in [(59, 16), (60, 15)] {
+            let screen = draw(&mut d, cols, rows);
+            assert!(screen.contains("60×16"), "{cols}x{rows}: {screen}");
+            assert_eq!(d.operator.chat.as_ref().unwrap().draft, "preserve draft");
+        }
+        // The composer keeps its two-row minimum at the floor.
+        draw(&mut d, 60, 16);
+        assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
+    }
+
+    #[test]
+    fn frames_at_floor_and_wide_sizes_match_the_singleton_layout() {
+        let mut d = dashboard();
+        let out = opened(&mut d, with_model(summary()));
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                with_model(summary()),
+                vec![
+                    message(
+                        1,
+                        OperatorMessageContent::User {
+                            text: "Review this workspace.".into(),
+                            context: OperatorContext::default(),
+                        },
+                    ),
+                    delta(2, "I will inspect its sessions."),
+                    message(
+                        3,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                            id: "inspect".into(),
+                            output: String::new(),
+                            truncated: false,
+                            status: OperatorToolStatus::Succeeded,
+                        }),
+                    ),
+                ],
+                None,
+            ),
+        );
+        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
+            let frame = frame_lines(&mut d, cols, rows);
+            let mut first = frame.lines();
+            let header = first.next().unwrap();
+            assert!(
+                header.contains("Operator"),
+                "title bar identifies Operator at {cols}x{rows}: {header}"
             );
             let content = content_area(&d, d.outer_area);
-            let lines = screen.chars().collect::<Vec<_>>();
-            let main: String = lines
-                .chunks(cols as usize)
+            let main: String = frame
+                .lines()
                 .skip(content.y as usize)
                 .take(content.height as usize)
-                .flat_map(|row| row[content.x as usize..].iter())
+                .map(|line| line.chars().skip(content.x as usize).collect::<String>())
                 .collect();
             assert!(
-                !main.contains('┌') && !main.contains('┐'),
-                "full frames at {cols}x{rows}: {main}"
+                main.contains("Operator · pi · openai/gpt-6.1-sol · ready"),
+                "conversation header at {cols}x{rows}: {main}"
             );
-            let snapshot = lines
-                .chunks(cols as usize)
-                .map(|line| line.iter().collect::<String>().trim_end().to_owned())
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
-            let expected = match (cols, rows) {
-                (140, 40) => include_str!("operator/snapshots/original-140x40.txt"),
-                (100, 24) => include_str!("operator/snapshots/original-100x24.txt"),
-                (80, 24) => include_str!("operator/snapshots/original-80x24.txt"),
-                (60, 24) => include_str!("operator/snapshots/original-60x24.txt"),
-                (60, 16) => include_str!("operator/snapshots/original-60x16.txt"),
-                _ => unreachable!(),
-            };
-            assert_eq!(snapshot, expected, "Working journal frame {cols}x{rows}");
-            assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
-            if cols < 100 {
-                assert_eq!(content.x, 0, "conversation wins at {cols}");
+            assert!(
+                !main.contains('┌') && !main.contains('┐'),
+                "no full frame at {cols}x{rows}: {main}"
+            );
+            assert!(main.contains("Review this workspace."));
+            let snapshot = frame;
+            let path = format!(
+                "{}/src/dashboard/operator/snapshots/singleton-{cols}x{rows}.txt",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            if std::env::var_os("OVRCR_TUI_UPDATE_SNAPSHOTS").is_some() {
+                std::fs::write(&path, &snapshot).unwrap();
+            } else {
+                let expected = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {path}: {error}"));
+                assert_eq!(snapshot, expected, "singleton frame {cols}x{rows}");
             }
+            assert_eq!(d.operator_layout(d.outer_area).composer.height, 2);
         }
-        let (mut d, _) = setup();
-        d.operator_insert("preserve draft");
-        assert!(draw(&mut d, 59, 16).contains("60×16"));
-        assert!(draw(&mut d, 60, 15).contains("60×16"));
-        assert_eq!(d.operator.chats[&1].draft, "preserve draft");
     }
+
     #[test]
-    fn operator_original_styled_wrapping_retains_spans() {
+    fn sidebar_geometry_reserves_one_row_and_has_no_close_target() {
+        let mut d = dashboard();
+        opened(&mut d, busy());
+        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 16), (40, 12)] {
+            d.install_area(Rect::new(0, 0, cols, rows));
+            let rects = d.sidebar_rects(d.outer_area);
+            assert!(rects.operator.height <= 1, "one row at {cols}x{rows}");
+            if rects.operator.height == 1 {
+                assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
+            }
+            assert_eq!(
+                rects.tree.y,
+                rects.operator.y + rects.operator.height,
+                "the tree starts under the row"
+            );
+        }
+        d.install_area(Rect::new(0, 0, 140, 24));
+        let row = d.sidebar_rects(d.outer_area).operator;
+        // The right edge is navigation, never a close hit target.
+        click(&mut d, row.right() - 1, row.y);
+        assert!(d.palette.is_none(), "no close confirmation");
+        assert!(d.operator.visible);
+        // The busy row animates and the view is worth the spinner cadence.
+        assert!(d.operator_sidebar_busy());
+        assert!(d.operator_conversation_busy());
+    }
+
+    #[test]
+    fn quick_editing_is_unicode_grapheme_and_byte_bounded() {
+        let mut d = dashboard();
+        d.ctrl('o');
+        d.event_action(Event::Paste("界e\u{301}🙂".into()));
+        let quick = d.operator.quick.as_ref().unwrap();
+        assert_eq!(quick.text, "界e\u{301}🙂");
+        d.key(KeyCode::Backspace);
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "界e\u{301}");
+        d.key(KeyCode::Backspace);
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "界");
+        d.key(KeyCode::Char('a'));
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "界a");
+        d.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "界a\n");
+        d.ctrl('c');
+        assert_eq!(d.operator.quick.as_ref().unwrap().text, "");
+        let huge = "x".repeat(MAX_OPERATOR_TEXT_BYTES + 10);
+        d.event_action(Event::Paste(huge));
+        assert!(
+            d.operator.quick.as_ref().unwrap().text.len() <= MAX_OPERATOR_TEXT_BYTES,
+            "the protocol text bound holds"
+        );
+        assert!(d.drain_outbox().is_empty(), "paste only edits");
+    }
+
+    #[test]
+    fn operator_changed_loads_only_the_singleton_and_ignores_legacy_ids() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        let out =
+            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(9))));
+        assert!(out.is_empty(), "legacy rows stay hidden");
+        let out =
+            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0].request,
+            Request::Operator(OperatorRequest::Read {
+                conversation: Id(1),
+                after: 0,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn styled_wrapping_keeps_spans_and_the_real_cursor_on_wide_graphemes() {
         let style = Style::default().fg(super::super::render::RED());
-        let rows = wrapped_lines(vec![Line::from(vec![Span::styled("界é界", style)])], 3);
+        let rows = wrapped_lines(
+            vec![Line::from(vec![Span::styled("界e\u{301}界", style)])],
+            3,
+        );
         assert_eq!(
             rows.iter().map(Line::to_string).collect::<Vec<_>>(),
-            ["界é", "界"]
+            ["界e\u{301}", "界"]
         );
         assert!(
             rows.iter()
                 .all(|line| line.spans.iter().all(|span| span.style.fg == style.fg))
         );
-    }
-    #[test]
-    fn operator_original_cursor_keeps_wide_graphemes_visible() {
-        let (mut d, _) = setup();
-        d.operator_insert(&format!("{}é🙂", "界".repeat(160)));
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![delta(1, "wide 界 text")];
+        assert!(
+            transcript_lines(&chat)
+                .iter()
+                .any(|line| line.to_string().contains("wide 界 text"))
+        );
+
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        {
+            let chat = d.operator.chat.as_mut().unwrap();
+            let text = format!("{}e\u{301}🙂", "界".repeat(160));
+            chat.cursor.insert(&mut chat.draft, &text);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
         d.install_area(Rect::new(0, 0, 60, 16));
         d.draw(&mut terminal).unwrap();
         let cursor =
@@ -3102,2187 +2541,46 @@ mod tests {
                 .any(|cell| cell.symbol() == "🙂")
         );
     }
-    #[test]
-    fn operator_receipt_resize_preserves_message_anchor() {
-        let (mut d, reads) = setup();
-        let mut messages = vec![message(
-            1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                id: "cmd".into(),
-                name: "bash".into(),
-                arguments: "very long command ".repeat(80),
-            }),
-        )];
-        messages.extend((2..30).map(|n| delta(n, &format!("MESSAGE_{n:02}\n"))));
-        messages.push(completed(30));
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            messages,
-            None,
-        );
-        assert!(
-            !transcript_lines(&d.operator.chats[&1])
-                .iter()
-                .any(|line| line.to_string().contains("very long command")),
-            "receipt must start compact"
-        );
-        d.operator_scroll(-12);
-        let before = draw(&mut d, 140, 24);
-        let marker = (2..30)
-            .find(|n| before.contains(&format!("MESSAGE_{n:02}")))
-            .unwrap();
-        // Expanding a receipt before the viewport must not move its durable anchor.
-        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
-        assert!(
-            transcript_lines(&d.operator.chats[&1])
-                .iter()
-                .any(|line| line.to_string().contains("very long command")),
-            "expanded receipt retains full command details"
-        );
-        let resized = draw(&mut d, 80, 24);
-        assert!(
-            resized.contains(&format!("MESSAGE_{marker:02}")),
-            "anchor lost: {resized}"
-        );
-        assert!(!d.operator.chats[&1].follow);
-        assert_eq!(
-            d.operator.chats[&1].unread,
-            Some(OperatorTurnId(1)),
-            "unseen durable tail must remain Unread"
-        );
-    }
-    #[test]
-    fn operator_native_quick_header_control_has_action_control_contrast() {
-        for visible in [false, true] {
-            let (mut d, _) = setup();
-            d.operator.visible = visible;
-            let area = Rect::new(0, 0, 120, 24);
-            d.install_area(area);
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
-            d.draw(&mut terminal).unwrap();
-            let buffer = terminal.backend().buffer();
-            let quick = d.operator_quick_header_rect(area);
-            let (actions, _) = super::super::render::action_controls(area);
-            let reference = &buffer[(actions.x, actions.y)];
-            for column in quick.x..quick.right() {
-                let cell = &buffer[(column, quick.y)];
-                assert_ne!(
-                    cell.fg, cell.bg,
-                    "quick control must contrast with its background"
-                );
-                assert_eq!(
-                    (cell.fg, cell.bg),
-                    (reference.fg, reference.bg),
-                    "quick control must match adjacent action controls"
-                );
-            }
-        }
-    }
-    #[test]
-    fn operator_native_sidebar_heading_matches_project_blue_and_muted_rule() {
-        let (mut d, _) = setup();
-        d.install_hierarchy(ovrcr_protocol::HierarchySnapshot {
-            projects: vec![ovrcr_protocol::ProjectSummary {
-                name: "style-project".into(),
-                workspaces: vec![],
-            }],
-        });
-        let area = Rect::new(0, 0, 120, 24);
-        d.install_area(area);
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
-        d.draw(&mut terminal).unwrap();
-        let buffer = terminal.backend().buffer();
-        let sidebar = d.sidebar_rects(area);
-        let operator = &buffer[(sidebar.operator.x + 1, sidebar.operator.y)];
-        let project = &buffer[(sidebar.tree.x + 1, sidebar.tree.y)];
-        assert_eq!(operator.symbol(), "O");
-        assert_eq!(project.symbol(), "S");
-        assert_eq!(
-            operator.fg, project.fg,
-            "section headings share the blue token"
-        );
-        assert_eq!(operator.fg, super::super::render::BLUE());
-        assert!(operator.modifier.contains(Modifier::BOLD));
-        let rule = &buffer[(sidebar.operator.x + 20, sidebar.operator.y)];
-        assert_eq!(rule.symbol(), "─");
-        assert_eq!(rule.fg, super::super::render::SURFACE2());
-        assert_eq!(
-            buffer[(sidebar.operator.right() - 2, sidebar.operator.y)].fg,
-            super::super::render::MAUVE()
-        );
-        assert_eq!(
-            buffer[(sidebar.operator.x, sidebar.operator.y + 1)].fg,
-            super::super::render::MAUVE()
-        );
-    }
-    #[test]
-    fn operator_sidebar_rows_share_render_and_hit_geometry() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(3, 1, OperatorTurnState::Complete, true));
-        d.operator.visible = false;
-        let rendered = draw(&mut d, 120, 24);
-        let sidebar: Vec<String> = rendered
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(120)
-            .map(|row| row[..39].iter().collect())
-            .collect();
-        assert!(sidebar[1].contains("OPERATOR"), "{sidebar:?}");
-        for id in 1..=3 {
-            assert!(
-                sidebar[id + 1].contains(&format!("chat-{id}")),
-                "{sidebar:?}"
-            );
-            assert!(!sidebar[id + 1].contains("fixture"));
-        }
-    }
-    #[test]
-    fn operator_sidebar_busy_without_project_activity_ticks() {
-        let (mut d, _) = setup();
-        d.operator.visible = false;
-        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
-    }
-    #[test]
-    fn operator_inline_activity_scrolls_with_history_and_has_no_durable_actions() {
-        let (mut d, reads) = setup();
-        d.sidebar_width = Some(0);
-        let mut messages = vec![message(
-            1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                id: "receipt".into(),
-                name: "Bash".into(),
-                arguments: "wrapped receipt ".repeat(40),
-            }),
-        )];
-        messages.push(message(
-            2,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                id: "receipt".into(),
-                output: String::new(),
-                truncated: false,
-                status: OperatorToolStatus::Succeeded,
-            }),
-        ));
-        messages.extend(
-            (3..32).map(|n| delta(n, &format!("ROW_{n:02} 界é🙂 {}\n", "wrapped ".repeat(12)))),
-        );
-        messages.push(delta(32, "LATEST_DURABLE"));
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            messages,
-            None,
-        );
-        assert!(draw(&mut d, 80, 24).contains("Responding"));
-        let layout = d.operator_layout(d.outer_area);
-        let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 0);
-        assert_eq!(rows.iter().filter(|(_, a)| a.is_none()).count(), 1);
-        assert!(
-            rows.last()
-                .unwrap()
-                .0
-                .to_string()
-                .starts_with("  ⠋ Responding")
-        );
-        assert!(
-            rows[rows.len() - 2]
-                .0
-                .to_string()
-                .contains("LATEST_DURABLE")
-        );
-        assert!(rows[rows.len() - 2].1.is_some_and(|a| a.1 != 4));
-        assert!(
-            !transcript_lines(&d.operator.chats[&1])
-                .iter()
-                .any(|l| l.to_string().contains("Responding"))
-        );
-
-        // Clicking the transient row cannot expand the previous durable receipt.
-        let activity_y = layout.transcript.bottom() - 1;
-        d.drain_outbox();
-        click(
-            &mut d,
-            layout.transcript.x + 2,
-            activity_y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        d.key(KeyCode::Enter);
-        assert_eq!(d.operator.chats[&1].entry_focus, None);
-        assert!(d.operator.chats[&1].expanded.is_empty());
-        assert!(d.drain_outbox().is_empty());
-
-        d.key(KeyCode::PageUp);
-        assert!(!draw(&mut d, 80, 24).contains("Responding"));
-        click(
-            &mut d,
-            layout.transcript.x + 2,
-            layout.transcript.y,
-            MouseEventKind::ScrollUp,
-        );
-        assert!(!draw(&mut d, 80, 24).contains("Responding"));
-        let anchor = d.operator.chats[&1]
-            .anchor
-            .expect("scroll stores a durable anchor");
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.messages.push(delta(33, "more stream\n"));
-        chat.ordinal = 33;
-        chat.confirmed_tail = Some(33);
-        chat.expanded.insert(1);
-        let resized = draw(&mut d, 60, 24);
-        assert!(!resized.contains("Responding"));
-        assert!(!d.operator.chats[&1].follow);
-        assert_eq!(d.operator.chats[&1].anchor, Some(anchor));
-        let layout = d.operator_layout(d.outer_area);
-        let rows = transcript_rows(&d.operator.chats[&1], layout.transcript.width, 100);
-        let offset = transcript_offset(
-            &d.operator.chats[&1],
-            &rows,
-            layout.transcript.height as usize,
-        );
-        assert!(
-            rows[offset]
-                .1
-                .is_some_and(|a| a <= anchor && a.0 == anchor.0)
-        );
-
-        for _ in 0..20 {
-            d.key(KeyCode::PageDown);
-        }
-        assert!(d.operator.chats[&1].follow);
-        assert!(draw(&mut d, 60, 24).contains("Responding"));
-        d.key(KeyCode::PageUp);
-        let anchor = d.operator.chats[&1].anchor;
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        assert!(!draw(&mut d, 80, 24).contains("Responding"));
-        assert_eq!(d.operator.chats[&1].anchor, anchor);
-        assert!(!d.operator.chats[&1].follow);
-        let rows = transcript_rows(&d.operator.chats[&1], 80, 0);
-        assert!(rows.iter().all(|(_, a)| a.is_some()));
-        assert!(rows.last().unwrap().1.is_some_and(|a| a.1 == 4));
-
-        // An empty running journal has one row and never acquires focus/ordinal authority.
-        d.operator_select(Id(2));
-        d.operator.chats.get_mut(&2).unwrap().reading = false;
-        d.operator.chats.get_mut(&2).unwrap().confirmed_tail = Some(0);
-        d.operator.list_focus = true;
-        d.key(KeyCode::Tab);
-        assert!(d.operator.transcript_focus);
-        assert_eq!(d.operator.chats[&2].entry_focus, None);
-        let rows = transcript_rows(&d.operator.chats[&2], 60, 0);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1, None);
-        d.drain_outbox();
-        d.key(KeyCode::Enter);
-        let layout = d.operator_layout(d.outer_area);
-        click(
-            &mut d,
-            layout.transcript.x + 2,
-            layout.transcript.y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        d.key(KeyCode::Enter);
-        assert_eq!(d.operator.chats[&2].entry_focus, None);
-        assert!(d.operator.chats[&2].expanded.is_empty());
-        assert!(d.operator.chats[&2].messages.is_empty());
-        assert!(d.drain_outbox().is_empty());
-        d.operator.chats.get_mut(&2).unwrap().draft = "long draft 界🙂 ".repeat(80);
-        draw(&mut d, 60, 16);
-        let layout = d.operator_layout(d.outer_area);
-        assert!(
-            layout.transcript.height >= 4,
-            "three durable rows plus activity"
-        );
-        assert!(layout.composer.height >= 2);
-    }
-    #[test]
-    fn operator_activity_state_and_cadence() {
-        let (mut d, _) = setup();
-        d.sidebar_width = Some(0);
-        let assert_label = |d: &mut Dashboard, expected: &str| {
-            let screen = draw(d, 140, 40);
-            let transcript = d.operator_layout(d.outer_area).transcript;
-            let row: String = (transcript.y..transcript.bottom())
-                .flat_map(|y| {
-                    screen
-                        .chars()
-                        .skip(usize::from(y * 140 + transcript.x))
-                        .take(transcript.width as usize)
-                })
-                .collect();
-            assert!(row.contains(expected), "expected {expected}: {row}");
-        };
-        d.operator.chats.get_mut(&1).unwrap().submitting = true;
-        assert_label(&mut d, "Sending");
-        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.submitting = false;
-        chat.reading = false;
-        chat.dirty = false;
-        chat.confirmed_tail = Some(0);
-        assert_label(&mut d, "Responding");
-        d.operator
-            .chats
-            .get_mut(&1)
-            .unwrap()
-            .messages
-            .push(delta(1, "stream"));
-        assert_label(&mut d, "Responding");
-        let call = |ordinal, id: &str, name: &str| {
-            message(
-                ordinal,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                    id: id.into(),
-                    name: name.into(),
-                    arguments: "{}".into(),
-                }),
-            )
-        };
-        let output = |ordinal, id: &str, status| {
-            message(
-                ordinal,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                    id: id.into(),
-                    output: String::new(),
-                    truncated: false,
-                    status,
-                }),
-            )
-        };
-        d.operator
-            .chats
-            .get_mut(&1)
-            .unwrap()
-            .messages
-            .push(call(2, "one", "bash"));
-        assert_label(&mut d, "Waiting for bash result");
-        let mut wrong_turn = output(3, "one", OperatorToolStatus::Succeeded);
-        wrong_turn.turn = OperatorTurnId(99);
-        d.operator.chats.get_mut(&1).unwrap().messages.extend([
-            wrong_turn,
-            output(4, "wrong-id", OperatorToolStatus::Succeeded),
-            call(5, "two", "inspect"),
-            delta(6, "between calls"),
-        ]);
-        assert_label(&mut d, "Waiting for 2 tool results");
-        d.operator.chats.get_mut(&1).unwrap().messages.push(output(
-            7,
-            "one",
-            OperatorToolStatus::Succeeded,
-        ));
-        assert_label(&mut d, "Waiting for inspect result");
-        for status in [
-            OperatorToolStatus::Succeeded,
-            OperatorToolStatus::Failed { exit_code: Some(2) },
-            OperatorToolStatus::TimedOut,
-        ] {
-            d.operator
-                .chats
-                .get_mut(&1)
-                .unwrap()
-                .messages
-                .push(output(8, "two", status));
-            assert_label(&mut d, "Responding");
-            d.operator.chats.get_mut(&1).unwrap().messages.pop();
-        }
-        for fallback in 0..3 {
-            let chat = d.operator.chats.get_mut(&1).unwrap();
-            chat.reading = fallback == 0;
-            chat.dirty = fallback == 1;
-            chat.confirmed_tail = if fallback == 2 { None } else { Some(0) };
-            assert_label(&mut d, "Responding");
-        }
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.reading = false;
-        chat.dirty = false;
-        chat.confirmed_tail = Some(0);
-        chat.stopping = true;
-        assert_label(&mut d, "Stopping");
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.stopping = false;
-        chat.closing = true;
-        assert_label(&mut d, "Closing");
-        let chat = d.operator.chats.get_mut(&1).unwrap();
-        chat.closing = false;
-        for state in [
-            OperatorTurnState::Complete,
-            OperatorTurnState::Interrupted,
-            OperatorTurnState::Error,
-        ] {
-            d.operator
-                .chats
-                .get_mut(&1)
-                .unwrap()
-                .summary
-                .current_turn
-                .as_mut()
-                .unwrap()
-                .state = state;
-            assert_label(&mut d, "Stop unconfirmed");
-        }
-        assert_eq!(
-            d.redraw_interval(),
-            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
-        );
-        assert!(!d.operator.chats[&1].can_submit());
-        d.operator.chats.get_mut(&1).unwrap().summary.worker_stopped = true;
-        let complete = draw(&mut d, 140, 40);
-        assert!(
-            !complete.contains("Responding")
-                && !complete.contains("Waiting for")
-                && !complete.contains("Stop unconfirmed")
-        );
-        d.operator_select(Id(2));
-        assert_label(&mut d, "Responding");
-        for (cols, rows) in [(140, 40), (80, 24), (60, 24), (60, 16)] {
-            d.install_area(Rect::new(0, 0, cols, rows));
-            assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
-        }
-        d.install_area(Rect::new(0, 0, 59, 16));
-        assert_eq!(
-            d.redraw_interval(),
-            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
-        );
-        d.install_area(Rect::new(0, 0, 140, 40));
-        d.operator.visible = false;
-        assert_eq!(
-            d.redraw_interval(),
-            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
-        );
-        d.operator.visible = true;
-        d.operator_new();
-        assert_eq!(
-            d.redraw_interval(),
-            super::super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL
-        );
-        d.operator.new = None;
-        d.sidebar_width = None;
-        d.operator.collapsed = true;
-        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
-        d.operator.collapsed = false;
-        d.operator.list_offset = 100;
-        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
-    }
-    #[test]
-    fn operator_activity_preserves_context_error_and_review_geometry() {
-        for theme in [
-            ovrcr_protocol::ThemeId::default(),
-            ovrcr_protocol::ThemeId::ALL[1],
-        ] {
-            for (cols, height) in [(140, 40), (80, 24), (60, 24), (60, 16)] {
-                let (mut d, _) = setup();
-                d.install_settings(ovrcr_protocol::Settings {
-                    theme,
-                    ..Default::default()
-                });
-                d.sidebar_width = Some(0);
-                let chat = d.operator.chats.get_mut(&1).unwrap();
-                chat.draft = "retained draft 界".into();
-                chat.context.project = Some("long target 界".repeat(12));
-                chat.context.session = Some(SessionId(11));
-                chat.context.run = Some(SessionRunId(1));
-                chat.messages = vec![message(
-                    1,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                        id: "pending".into(),
-                        name: "bash\u{1b}[31m\n界界界界界界界界界界界".into(),
-                        arguments: "{}".into(),
-                    }),
-                )];
-                chat.ordinal = 1;
-                chat.confirmed_tail = Some(1);
-                chat.reading = false;
-                chat.dirty = false;
-                chat.follow = false;
-                chat.anchor = Some((1, 0, 0));
-                chat.unread = Some(OperatorTurnId(1));
-                let cursor = chat.cursor;
-                d.install_area(Rect::new(0, 0, cols, height));
-                let layout = d.operator_layout(d.outer_area);
-                d.drain_outbox();
-                let mut terminal =
-                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, height))
-                        .unwrap();
-                let mut before = None;
-                for error in [
-                    None,
-                    Some("RETAINED_ERROR ".repeat(20)),
-                    Some("RETAINED_ERROR 界".repeat(20)),
-                ] {
-                    d.operator.chats.get_mut(&1).unwrap().error = error.clone();
-                    for time in [0, 100] {
-                        terminal
-                            .draw(|f| super::super::render::draw_dashboard_at(f, &d, time))
-                            .unwrap();
-                        let b = terminal.backend().buffer();
-                        let row: String = (layout.context.x..layout.context.right())
-                            .map(|x| b[(x, layout.context.y)].symbol())
-                            .collect();
-                        let activity: Vec<_> = (layout.transcript.y..layout.transcript.bottom())
-                            .filter_map(|y| {
-                                let line: String = (layout.transcript.x..layout.transcript.right())
-                                    .map(|x| b[(x, y)].symbol())
-                                    .collect();
-                                line.contains("Waiting for").then_some((y, line))
-                            })
-                            .collect();
-                        assert_eq!(activity.len(), 1, "{cols}×{height}: {b:?}");
-                        assert!(activity[0].1.starts_with("  "));
-                        assert!(activity[0].1.contains("Waiting for bash\\u{1b}"));
-                        assert!(!activity[0].1.contains('\u{1b}'));
-                        assert!(!row.contains("Waiting for"));
-                        if let Some(error) = &error {
-                            assert!(row.starts_with("RETAINED_ERROR"), "{row}");
-                            if error.is_ascii() {
-                                assert_eq!(row, error[..layout.context.width as usize]);
-                            } else {
-                                assert!(row.contains('界'), "retained Unicode error: {row}");
-                            }
-                            assert_eq!(
-                                b[(layout.context.x, layout.context.y)].fg,
-                                crate::theme::ThemeTokens::for_id(theme).red
-                            );
-                        } else {
-                            assert!(
-                                row.contains("#11 run 1"),
-                                "target suffix must survive clipping: {row}"
-                            );
-                        }
-                        if time == 0 {
-                            before = Some(b.clone());
-                        } else {
-                            let changed: Vec<_> = b
-                                .content()
-                                .iter()
-                                .zip(before.as_ref().unwrap().content())
-                                .enumerate()
-                                .filter(|(_, (a, b))| a != b)
-                                .map(|(i, _)| i)
-                                .collect();
-                            assert_eq!(changed.len(), 1, "only the clock glyph may change");
-                            assert_eq!(changed[0] / cols as usize, activity[0].0 as usize);
-                        }
-                    }
-                }
-                let chat = &d.operator.chats[&1];
-                assert_eq!(
-                    chat.cursor.position(&chat.draft),
-                    cursor.position(&chat.draft)
-                );
-                assert_eq!(chat.draft, "retained draft 界");
-                assert_eq!(chat.anchor, Some((1, 0, 0)));
-                assert_eq!(chat.unread, Some(OperatorTurnId(1)));
-                assert!(!chat.follow);
-                assert!(d.drain_outbox().is_empty());
-                d.operator
-                    .chats
-                    .get_mut(&1)
-                    .unwrap()
-                    .summary
-                    .current_turn
-                    .as_mut()
-                    .unwrap()
-                    .state = OperatorTurnState::Complete;
-                d.operator.chats.get_mut(&1).unwrap().summary.worker_stopped = true;
-                assert_eq!(
-                    d.operator_layout(d.outer_area).transcript,
-                    layout.transcript
-                );
-                assert_eq!(d.operator_layout(d.outer_area).composer, layout.composer);
-            }
-        }
-    }
-    fn click(d: &mut Dashboard, column: u16, row: u16, kind: MouseEventKind) {
-        d.mouse_action(
-            MouseEvent {
-                kind,
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            },
-            d.outer_area,
-        );
-    }
-    #[test]
-    fn operator_sidebar_mouse_keyboard_scroll_and_close_share_ids() {
-        let (mut d, _) = setup();
-        for id in 3..=30 {
-            d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
-        }
-        d.install_area(Rect::new(0, 0, 120, 24));
-        d.operator_select(Id(30));
-        let rect = d.sidebar_rects(d.outer_area).operator;
-        assert_eq!(rect.height, 6);
-        let offset = d.operator.list_offset;
-        click(
-            &mut d,
-            rect.x + 3,
-            rect.y + 1,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        assert_eq!(d.operator.selected, Some(Id(offset as u64 + 1)));
-        d.key(KeyCode::Down);
-        assert_eq!(d.operator.selected, Some(Id(offset as u64 + 2)));
-        click(&mut d, rect.x + 3, rect.y + 1, MouseEventKind::ScrollUp);
-        let new_offset = d.operator.list_offset;
-        click(
-            &mut d,
-            rect.x + 3,
-            rect.y + 1,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        assert_eq!(d.operator.selected, Some(Id(new_offset as u64 + 1)));
-        click(&mut d, rect.right() - 1, rect.y + 1, MouseEventKind::Moved);
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
-        d.draw(&mut terminal).unwrap();
-        let last: String = (rect.right() - 3..rect.right())
-            .map(|x| terminal.backend().buffer()[(x, rect.y + 1)].symbol())
-            .collect();
-        assert_eq!(last, "[x]");
-        // Lowercase x never closes; X asks to close the selected conversation.
-        d.key(KeyCode::Char('x'));
-        assert!(d.palette.is_none());
-        d.key(KeyCode::Char('X'));
-        assert!(d.palette.is_some());
-        assert!(draw(&mut d, 120, 24).contains("unconfirmed"));
-        d.key(KeyCode::Esc);
-        assert!(d.palette.is_none());
-        assert_eq!(d.operator.selected, Some(Id(new_offset as u64 + 1)));
-    }
-    #[test]
-    fn operator_close_confirmation_preserves_cancel_error_and_another_selection() {
-        let (mut d, _) = setup();
-        d.operator_insert("discard this draft");
-        d.operator.chats.get_mut(&1).unwrap().summary.run = SessionRunId(5);
-        d.open_close_operator_for(Id(1));
-        let rendered = draw(&mut d, 140, 24);
-        assert!(rendered.contains("draft will be discarded"));
-        d.key(KeyCode::Esc);
-        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
-        d.open_close_operator_for(Id(1));
-        d.key(KeyCode::Enter);
-        let close = d
-            .drain_outbox()
-            .into_iter()
-            .find(|request| {
-                matches!(
-                    request.request,
-                    Request::Operator(OperatorRequest::Close { .. })
-                )
-            })
-            .unwrap();
-        assert_eq!(
-            close.request,
-            Request::Operator(OperatorRequest::Close {
-                conversation: Id(1),
-                expected_run: SessionRunId(5)
-            })
-        );
-        assert!(d.operator.chats[&1].closing);
-        d.operator_insert("blocked");
-        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
-        d.handle_server_message(ServerMessage::Response {
-            request_id: close.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "stop uncertain".into(),
-            },
-        });
-        assert!(!d.operator.chats[&1].closing);
-        assert_eq!(d.operator.chats[&1].draft, "discard this draft");
-        d.open_close_operator_for(Id(1));
-        d.key(KeyCode::Enter);
-        let close = d
-            .drain_outbox()
-            .into_iter()
-            .find(|request| {
-                matches!(
-                    request.request,
-                    Request::Operator(OperatorRequest::Close { .. })
-                )
-            })
-            .unwrap();
-        d.open_operator_conversation(Id(2));
-        d.operator_insert("keep B");
-        let mut closed = d.operator.chats[&1].summary.clone();
-        closed.run = SessionRunId(6);
-        closed.archived = true;
-        closed.worker_stopped = true;
-        d.handle_server_message(ServerMessage::Response {
-            request_id: close.request_id,
-            response: Response::Operator(OperatorResponse::Closed(closed)),
-        });
-        assert!(d.operator.chats[&1].draft.is_empty());
-        assert_eq!(d.operator_ids(), vec![Id(2)]);
-        assert_eq!(d.operator.selected, Some(Id(2)));
-        assert_eq!(d.operator.chats[&2].draft, "keep B");
-        assert!(
-            d.operator.chats.contains_key(&1),
-            "archive retains the authority tombstone"
-        );
-    }
-    #[test]
-    fn operator_sidebar_focus_reveals_a_selected_row_from_new_conversation() {
-        let (mut d, _) = setup();
-        d.operator_new();
-        d.operator.collapsed = true;
-        d.ctrl('l');
-        assert!(d.operator_sidebar_focused());
-        assert!(!d.operator.collapsed);
-        assert!(d.operator.new.is_none());
-        assert!(d.operator.selected.is_some());
-    }
-    #[test]
-    fn operator_close_rejects_a_receipt_for_another_retained_run() {
-        let (mut d, _) = setup();
-        d.operator_insert("keep");
-        d.open_close_operator_for(Id(1));
-        d.key(KeyCode::Enter);
-        let close = d
-            .drain_outbox()
-            .into_iter()
-            .find(|request| {
-                matches!(
-                    request.request,
-                    Request::Operator(OperatorRequest::Close { .. })
-                )
-            })
-            .unwrap();
-        let mut wrong = summary(1, 99, OperatorTurnState::Interrupted, true);
-        wrong.archived = true;
-        d.handle_server_message(ServerMessage::Response {
-            request_id: close.request_id,
-            response: Response::Operator(OperatorResponse::Closed(wrong)),
-        });
-        assert_eq!(d.operator.chats[&1].draft, "keep");
-        assert!(!d.operator.chats[&1].summary.archived);
-        assert_eq!(d.operator_ids(), vec![Id(1), Id(2)]);
-    }
-    #[test]
-    fn operator_composer_x_is_text_and_collapsing_or_scrolling_keeps_background_unread() {
-        let (mut d, _) = setup();
-        d.operator.chats.get_mut(&2).unwrap().unread = Some(OperatorTurnId(1));
-        d.key(KeyCode::Char('x'));
-        assert_eq!(d.operator.chats[&1].draft, "x");
-        assert!(d.palette.is_none());
-        let rect = d.sidebar_rects(d.outer_area).operator;
-        click(
-            &mut d,
-            rect.right() - 1,
-            rect.y + 1,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        assert!(
-            d.palette.is_none(),
-            "undrawn close marks are not hit targets"
-        );
-        click(
-            &mut d,
-            rect.x + 1,
-            rect.y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        assert_eq!(d.sidebar_rects(d.outer_area).operator.height, 1);
-        assert!(draw(&mut d, 140, 24).contains("▸ 2"));
-        assert!(d.operator.chats[&2].unread.is_some());
-        click(
-            &mut d,
-            rect.x + 1,
-            rect.y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        click(&mut d, rect.x + 1, rect.y + 1, MouseEventKind::ScrollDown);
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&2].unread.is_some());
-    }
-    #[test]
-    fn operator_sidebar_geometry_preserves_quota_and_tiny_rectangles() {
-        let (mut d, _) = setup();
-        for id in 3..=30 {
-            d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
-        }
-        for width in [0, 1, 6, 60, 80, 120] {
-            for height in 0..=25 {
-                let area = Rect::new(2, 3, width, height);
-                let rects = d.sidebar_rects(area);
-                assert!(rects.operator.bottom() <= rects.tree.y);
-                assert!(rects.tree.bottom() <= rects.quota.y);
-                assert!(rects.quota.bottom() <= area.bottom());
-                if height >= 6 {
-                    assert!(rects.tree.height >= 3);
-                }
-                assert!(rects.operator.height <= 6);
-                d.install_area(area);
-            }
-        }
-        d.operator.collapsed = true;
-        assert!(!d.operator_sidebar_busy());
-        d.operator.collapsed = false;
-        d.sidebar_hidden = true;
-        assert!(!d.operator_sidebar_busy());
-    }
-    #[test]
-    fn concurrent_histories_follow_ids_through_a_terminal_b_a_navigation() {
-        let (mut d, reads) = setup();
-        d.event_action(Event::Paste("draft A\n界e\u{301}".into()));
-        d.operator_scroll(-3);
-        let context_a = OperatorContext {
-            project: Some("a".into()),
-            ..Default::default()
-        };
-        d.operator.chats.get_mut(&1).unwrap().context = context_a.clone();
-        d.operator.visible = false; // Navigate away; protocol dispatch remains live.
-        history(
-            &mut d,
-            request_id(&reads, 2),
-            summary(2, 1, OperatorTurnState::Complete, false),
-            vec![delta(1, "B token"), completed(2)],
-            None,
-        );
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            vec![delta(1, "A token")],
-            None,
-        );
-        d.open_operator();
-        d.operator_select(Id(2));
-        d.event_action(Event::Paste("draft B".into()));
-        let rendered = draw(&mut d, 140, 24);
-        assert!(rendered.contains("B token") && !rendered.contains("A token"));
-        assert!(d.operator.chats[&2].unread.is_none());
-        d.operator_select(Id(1));
-        assert_eq!(d.operator.chats[&1].draft, "draft A\n界e\u{301}");
-        assert!(!d.operator.chats[&1].follow);
-        assert_eq!(d.operator.chats[&1].scroll, 3);
-        assert_eq!(d.operator.chats[&1].context, context_a);
-        assert_eq!(d.operator.chats[&2].draft, "draft B");
-        assert_eq!(d.operator.chats[&1].messages, vec![delta(1, "A token")]);
-    }
-    #[test]
-    fn operator_input_commands_edit_only_message_graphemes_and_logical_lines() {
-        use KeyModifiers as M;
-        // Byte positions deliberately include CJK, combining and ZWJ graphemes.
-        let cases = [
-            ("", 0, 'a', M::CONTROL, "", 0),
-            ("", 0, 'd', M::CONTROL, "", 0),
-            (
-                "one\n界e\u{301}🙂 end\ntail",
-                16,
-                'a',
-                M::CONTROL,
-                "one\n界e\u{301}🙂 end\ntail",
-                4,
-            ),
-            (
-                "one\n界e\u{301}🙂 end\ntail",
-                4,
-                'e',
-                M::CONTROL,
-                "one\n界e\u{301}🙂 end\ntail",
-                18,
-            ),
-            ("界e\u{301}👩‍💻", 17, 'b', M::CONTROL, "界e\u{301}👩‍💻", 6),
-            ("界e\u{301}👩‍💻", 3, 'f', M::CONTROL, "界e\u{301}👩‍💻", 6),
-            ("界e\u{301}👩‍💻", 6, 'h', M::CONTROL, "界👩‍💻", 3),
-            ("界e\u{301}👩‍💻", 6, 'd', M::CONTROL, "界e\u{301}", 6),
-            (
-                "a\n界e\u{301}🙂 end\nz",
-                8,
-                'u',
-                M::CONTROL,
-                "a\n🙂 end\nz",
-                2,
-            ),
-            (
-                "a\n界e\u{301}🙂 end\nz",
-                8,
-                'k',
-                M::CONTROL,
-                "a\n界e\u{301}\nz",
-                8,
-            ),
-            ("a\nword  \nz", 8, 'w', M::CONTROL, "a\n\nz", 2),
-            (
-                "a\n界e\u{301}🙂,  tail\nz",
-                14,
-                'w',
-                M::CONTROL,
-                "a\n tail\nz",
-                2,
-            ),
-            ("a\nword  tail\nz", 12, 'w', M::CONTROL, "a\nword  \nz", 8),
-            ("a\nword  tail\nz", 8, 'b', M::ALT, "a\nword  tail\nz", 2),
-            ("a\nword  tail\nz", 3, 'f', M::ALT, "a\nword  tail\nz", 6),
-            ("a\nword  tail\nz", 6, 'f', M::ALT, "a\nword  tail\nz", 12),
-            ("a\n界　🙂\nz", 12, 'b', M::ALT, "a\n界　🙂\nz", 8),
-            ("a\n界　🙂\nz", 5, 'f', M::ALT, "a\n界　🙂\nz", 12),
-            ("a\nb\nz", 2, 'u', M::CONTROL, "a\nb\nz", 2),
-            ("a\nb\nz", 3, 'k', M::CONTROL, "a\nb\nz", 3),
-            ("a\nb\nz", 2, 'w', M::CONTROL, "a\nb\nz", 2),
-            ("a\nb\nz", 2, 'b', M::ALT, "a\nb\nz", 2),
-            ("a\nb\nz", 3, 'f', M::ALT, "a\nb\nz", 3),
-            ("a\nb", 2, 'h', M::CONTROL, "ab", 1),
-            ("a\nb", 1, 'd', M::CONTROL, "ab", 1),
-            ("a\n  \tb\nz", 5, 'w', M::CONTROL, "a\nb\nz", 2),
-            ("a\n\nz", 2, 'e', M::CONTROL, "a\n\nz", 2),
-            ("界", 0, 'h', M::CONTROL, "界", 0),
-            ("界", 3, 'd', M::CONTROL, "界", 3),
-            ("界", 0, 'b', M::CONTROL, "界", 0),
-            ("界", 3, 'f', M::CONTROL, "界", 3),
-            ("keep", 2, 'a', M::CONTROL | M::ALT, "keep", 2),
-            ("keep", 2, 'b', M::ALT | M::SHIFT, "keep", 2),
-            ("keep", 2, 'q', M::ALT, "keep", 2),
-            ("keep", 2, 'e', M::SUPER, "keep", 2),
-        ];
-        for quick in [false, true] {
-            for (text, position, ch, modifiers, expected, target) in cases {
-                let (mut d, _) = setup();
-                d.drain_outbox();
-                let mut cursor = TextCursor::default();
-                cursor.key(&mut String::new(), KeyCode::Home);
-                let mut initial = text.to_owned();
-                while cursor.position(&initial) < position {
-                    cursor.key(&mut initial, KeyCode::Right);
-                }
-                assert_eq!(cursor.position(&initial), position);
-                if quick {
-                    d.ctrl('o');
-                    let q = d.operator.quick.as_mut().unwrap();
-                    q.text = text.into();
-                    q.cursor = cursor;
-                } else {
-                    let chat = d.operator.chats.get_mut(&1).unwrap();
-                    chat.draft = text.into();
-                    chat.cursor = cursor;
-                }
-                let action = d.key_action(KeyEvent::new(KeyCode::Char(ch), modifiers));
-                assert!(!matches!(
-                    action,
-                    DashboardAction::PtyBytes(_) | DashboardAction::Detach
-                ));
-                let (actual, cursor) = if quick {
-                    let q = d.operator.quick.as_ref().unwrap();
-                    (&q.text, q.cursor)
-                } else {
-                    let chat = &d.operator.chats[&1];
-                    (&chat.draft, chat.cursor)
-                };
-                assert_eq!(
-                    actual, expected,
-                    "quick={quick} {ch:?} {modifiers:?} at {position}"
-                );
-                assert_eq!(
-                    cursor.position(actual),
-                    target,
-                    "quick={quick} {ch:?} {modifiers:?} at {position}"
-                );
-                assert!(d.drain_outbox().is_empty());
-                assert!(d.operator.chats[&2].draft.is_empty());
-            }
-        }
-    }
-    #[test]
-    fn operator_input_commands_preserve_home_end_and_repeat_policy() {
-        for quick in [false, true] {
-            let (mut d, _) = setup();
-            d.drain_outbox();
-            if quick {
-                d.ctrl('o');
-            }
-            d.event_action(Event::Paste("first\n界e\u{301}🙂".into()));
-            d.key(KeyCode::Home);
-            d.key(KeyCode::Char('>'));
-            d.key(KeyCode::End);
-            d.key(KeyCode::Char('<'));
-            for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-                d.key_action(KeyEvent::new_with_kind(
-                    KeyCode::Char('h'),
-                    KeyModifiers::CONTROL,
-                    kind,
-                ));
-            }
-            let expected = if quick {
-                ">first\n界e\u{301}🙂<"
-            } else {
-                ">first\n界e\u{301}🙂"
-            };
-            let actual = if quick {
-                &d.operator.quick.as_ref().unwrap().text
-            } else {
-                &d.operator.chats[&1].draft
-            };
-            assert_eq!(actual, expected);
-            assert!(d.drain_outbox().is_empty());
-        }
-    }
-    #[test]
-    fn operator_quick_commands_freeze_pending_payloads_and_sync_seeded_retry_only() {
-        let (mut d, _) = setup();
-        d.drain_outbox();
-        let create = quick_create(&mut d);
-        for ch in ['c', 'u', 'w'] {
-            d.ctrl(ch);
-        }
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-        assert!(d.drain_outbox().is_empty());
-        let submit = quick_ack_create(&mut d, create, 7);
-        for ch in ['c', 'u', 'w'] {
-            d.ctrl(ch);
-        }
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first message");
-        assert!(d.drain_outbox().is_empty());
-        assert!(
-            matches!(&submit.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "first message")
-        );
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "retry".into(),
-            },
-        });
-        d.ctrl('w');
-        assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
-        assert_eq!(d.operator.chats[&7].draft, "first ");
-        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-            d.key_action(KeyEvent::new_with_kind(
-                KeyCode::Char('c'),
-                KeyModifiers::CONTROL,
-                kind,
-            ));
-            assert_eq!(d.operator.quick.as_ref().unwrap().text, "first ");
-        }
-        d.ctrl('c');
-        d.ctrl('c');
-        assert!(d.operator_quick_visible());
-        assert!(d.operator.quick.as_ref().unwrap().text.is_empty());
-        assert!(d.operator.chats[&7].draft.is_empty());
-        assert!(!d.operator.chats[&1].stopping && !d.operator.chats[&2].stopping);
-        assert!(d.drain_outbox().is_empty());
-    }
-    #[test]
-    fn operator_ctrl_c_clears_before_press_only_exact_stop_and_respects_focus() {
-        let (mut d, _) = setup();
-        d.drain_outbox();
-        d.operator_insert(" \n\t");
-        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-            d.key_action(KeyEvent::new_with_kind(
-                KeyCode::Char('c'),
-                KeyModifiers::CONTROL,
-                kind,
-            ));
-            assert_eq!(d.operator.chats[&1].draft, " \n\t");
-            assert!(d.drain_outbox().is_empty());
-        }
-        d.ctrl('c');
-        assert!(d.operator.chats[&1].draft.is_empty());
-        assert!(d.drain_outbox().is_empty());
-        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
-            d.key_action(KeyEvent::new_with_kind(
-                KeyCode::Char('c'),
-                KeyModifiers::CONTROL,
-                kind,
-            ));
-        }
-        assert!(d.drain_outbox().is_empty());
-        d.ctrl('c');
-        d.ctrl('c');
-        let requests = d.drain_outbox();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].request,
-            Request::Operator(OperatorRequest::Stop {
-                identity: d.operator.chats[&1]
-                    .summary
-                    .current_turn
-                    .as_ref()
-                    .unwrap()
-                    .identity,
-            })
-        );
-        assert!(!d.operator.chats[&2].stopping);
-        d.operator_select(Id(2));
-        d.operator_insert("other usable");
-        assert_eq!(d.operator.chats[&2].draft, "other usable");
-        for focus in 0..4 {
-            let (mut d, _) = setup();
-            d.drain_outbox();
-            d.operator_insert("preserved");
-            match focus {
-                0 => d.operator.list_focus = true,
-                1 => d.operator.transcript_focus = true,
-                2 => d.operator_new(),
-                _ => d.operator.chats.get_mut(&1).unwrap().closing = true,
-            }
-            let model = d.operator.new.as_ref().map(|form| form.model.clone());
-            for ch in ['a', 'c', 'u', 'w'] {
-                d.ctrl(ch);
-            }
-            assert_eq!(
-                d.operator.new.as_ref().map(|form| form.model.clone()),
-                model
-            );
-            d.key_action(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
-            assert_eq!(
-                d.operator.new.as_ref().map(|form| form.model.clone()),
-                model.map(|model| model + "b"),
-                "the separate model field retains its original Alt-key handling"
-            );
-
-            assert_eq!(d.operator.chats[&1].draft, "preserved");
-            assert!(d.drain_outbox().is_empty());
-        }
-        d.operator_summary(summary(2, 1, OperatorTurnState::Complete, true));
-        d.operator.chats.get_mut(&2).unwrap().draft.clear();
-        d.ctrl('c');
-        assert!(
-            d.drain_outbox().is_empty(),
-            "empty idle composer is a no-op"
-        );
-    }
-    #[test]
-    fn paste_unicode_and_shift_enter_only_edit_native_draft_even_while_busy() {
-        let (mut d, _) = setup();
-        assert!(!matches!(
-            d.event_action(Event::Paste("one\r\n界e\u{301}\u{1b}[31m".into())),
-            DashboardAction::PtyBytes(_)
-        ));
-        d.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
-        d.key(KeyCode::Char('z'));
-        d.key(KeyCode::Backspace);
-        assert_eq!(d.operator.chats[&1].draft, "one\n界e\u{301}[31m\n");
-        d.key(KeyCode::Enter);
-        assert!(!d.drain_outbox().iter().any(|message| matches!(
-            message.request,
-            Request::Operator(OperatorRequest::Submit { .. })
-        )));
-        d.ctrl('g');
-        assert_eq!(d.operator.chats[&1].draft, "one\n界e\u{301}[31m\n");
-        assert!(!d.operator_is_editing());
-    }
-    #[test]
-    fn complete_turn_does_not_enable_submit_until_certified_stop_and_rejection_retains_draft() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, false));
-        d.operator_insert("next");
-        d.key(KeyCode::Enter);
-        assert!(!d.operator.chats[&1].can_submit());
-        assert!(d.drain_outbox().is_empty());
-        assert!(status(&d.operator.chats[&1]).contains("finishing"));
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.key(KeyCode::Enter);
-        let requests = d.drain_outbox();
-        let request = requests
-            .iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "busy".into(),
-            },
-        });
-        assert_eq!(d.operator.chats[&1].draft, "next");
-        assert!(!d.operator.chats[&1].submitting);
-    }
-    #[test]
-    fn accepted_submission_clears_only_its_captured_text_and_stop_keeps_exact_identity() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.operator_insert("send");
-        d.key(KeyCode::Enter);
-        let requests = d.drain_outbox();
-        let submit = requests
-            .iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        d.ctrl('u');
-        assert!(d.operator.chats[&1].draft.is_empty());
-        d.operator_insert("throw away");
-        d.ctrl('c');
-        assert!(d.operator.chats[&1].draft.is_empty());
-        assert!(!d.operator.chats[&1].stopping);
-        assert!(
-            matches!(&submit.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "send")
-        );
-        assert!(
-            matches!(&d.operator.pending[&submit.request_id], Pending::Submit { text, .. } if text == "send")
-        );
-        d.operator_insert("send plus draft");
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response: Response::Operator(OperatorResponse::Submitted(
-                summary(1, 2, OperatorTurnState::Running, false)
-                    .current_turn
-                    .unwrap(),
-            )),
-        });
-        assert_eq!(d.operator.chats[&1].draft, "send plus draft");
-        d.ctrl('x');
-        let stop = d
-            .drain_outbox()
-            .into_iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Stop { .. })
-                )
-            })
-            .unwrap();
-        d.operator_select(Id(2));
-        assert_eq!(
-            stop.request,
-            Request::Operator(OperatorRequest::Stop {
-                identity: summary(1, 2, OperatorTurnState::Running, false)
-                    .current_turn
-                    .unwrap()
-                    .identity
-            })
-        );
-        assert!(!d.operator.chats[&2].stopping);
-    }
-    #[test]
-    fn dirty_during_pagination_and_inflight_read_is_caught_without_duplicates() {
-        let (mut d, reads) = setup();
-        d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        let more = history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            vec![delta(1, "one")],
-            Some(1),
-        );
-        let next = request_id(&more, 1);
-        d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        let more = history(
-            &mut d,
-            next,
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![delta(2, "two"), completed(3)],
-            None,
-        );
-        let final_read = request_id(&more, 1);
-        history(
-            &mut d,
-            final_read,
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![],
-            None,
-        );
-        history(
-            &mut d,
-            next,
-            summary(1, 1, OperatorTurnState::Running, false),
-            vec![delta(2, "duplicate")],
-            None,
-        );
-        assert_eq!(d.operator.chats[&1].messages.len(), 3);
-        assert!(d.operator.chats[&1].summary.worker_stopped);
-        assert!(!d.operator.chats[&1].reading);
-    }
-    #[test]
-    fn completion_unread_is_reviewed_only_after_successful_unobscured_tail_draw() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![delta(1, "answer"), completed(2)],
-            None,
-        );
-        assert!(d.operator.chats[&1].unread.is_some());
-        d.operator_scroll(-1);
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&1].unread.is_some());
-        d.operator_scroll(1);
-        d.open_palette();
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&1].unread.is_some());
-        d.palette = None;
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&1].unread.is_none());
-        assert!(d.operator.chats[&1].reviewed.is_some());
-    }
-    #[test]
-    fn foreign_history_and_old_summary_cannot_retarget_current_run() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(2, 1, OperatorTurnState::Running, false),
-            vec![delta(1, "foreign")],
-            None,
-        );
-        assert!(d.operator.chats[&1].messages.is_empty());
-        d.operator_summary(summary(1, 2, OperatorTurnState::Running, false));
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        assert_eq!(
-            d.operator.chats[&1]
-                .summary
-                .current_turn
-                .as_ref()
-                .unwrap()
-                .identity
-                .run,
-            SessionRunId(2)
-        );
-    }
-    #[test]
-    fn restored_summary_submits_current_retained_run_and_late_receipt_cannot_unarchive() {
-        let (mut d, _) = setup();
-        let mut restored = summary(1, 1, OperatorTurnState::Complete, true);
-        restored.run = SessionRunId(3);
-        d.operator_summary(restored.clone());
-        d.operator_insert("next");
-        d.operator_submit();
-        let requests = d.drain_outbox();
-        let submit = requests
-            .iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        assert!(matches!(
-            submit.request,
-            Request::Operator(OperatorRequest::Submit {
-                expected_run: SessionRunId(3),
-                ..
-            })
-        ));
-        let mut archived = restored;
-        archived.run = SessionRunId(5);
-        archived.archived = true;
-        archived.current_turn = Some(OperatorTurn {
-            identity: OperatorTurnIdentity {
-                run: SessionRunId(4),
-                turn: OperatorTurnId(2),
-                ..archived.current_turn.as_ref().unwrap().identity
-            },
-            state: OperatorTurnState::Complete,
-            sequence: 2,
-        });
-        let accepted = OperatorTurn {
-            state: OperatorTurnState::Running,
-            sequence: 0,
-            ..archived.current_turn.clone().unwrap()
-        };
-        d.operator_summary(archived.clone());
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.handle_server_message(ServerMessage::Response {
-            request_id: submit.request_id,
-            response: Response::Operator(OperatorResponse::Submitted(accepted)),
-        });
-        assert_eq!(d.operator.chats[&1].summary, archived);
-        assert!(!d.operator.chats[&1].can_submit());
-    }
 
     #[test]
-    fn tool_result_including_empty_success_and_controls_is_native_text() {
-        let (mut d, reads) = setup();
-        let output = message(
-            2,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                id: "bash".into(),
-                output: String::new(),
-                truncated: false,
-                status: OperatorToolStatus::Succeeded,
-            }),
-        );
-        let call = message(
-            1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                id: "bash".into(),
-                name: "Bash".into(),
-                arguments: "{\"command\":\"pwd\",\"cwd\":\"/tmp\"}".into(),
-            }),
-        );
-        history(
+    fn multiline_up_down_keeps_graphemes_and_shift_enter_inserts_newlines() {
+        let mut d = dashboard();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
             &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![
-                call,
-                output,
-                delta(3, "\u{1b}]52;c;evil\u{7}\u{9b}31m\u{202e}safe"),
-            ],
-            None,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
         );
-        // Original starts compact; expansion preserves the complete command/cwd.
-        d.operator.chats.get_mut(&1).unwrap().expanded.insert(1);
-        let lines = transcript_lines(&d.operator.chats[&1]);
-        let text = lines
-            .iter()
-            .map(Line::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(text.contains("succeeded") && text.contains("(no output)") && text.contains("cwd"));
-        assert!(
-            !text.contains('\u{1b}')
-                && !text.contains('\u{7}')
-                && !text.contains('\u{9b}')
-                && !text.contains('\u{202e}')
-        );
-        assert!(text.contains("\\u{1b}"));
-    }
-    #[test]
-    fn defaults_are_editable_provider_specific_and_tiny_layouts_do_not_panic() {
-        let (mut d, _) = setup();
-        d.settings.operator.provider = OperatorProvider::Grok;
-        d.settings.operator.grok_model = Some("configured-model".into());
-        d.ctrl('n');
-        assert_eq!(d.operator.new.as_ref().unwrap().model, "configured-model");
-        d.key(KeyCode::Backspace);
-        d.key(KeyCode::Char('x'));
-        assert_eq!(d.operator.new.as_ref().unwrap().model, "configured-modex");
-        for (cols, rows) in [(0, 0), (1, 1), (20, 3), (55, 15), (140, 24)] {
-            draw(&mut d, cols, rows);
-        }
-        d.operator_select(Id(1));
-        d.key(KeyCode::Tab);
-        let list = draw(&mut d, 55, 15);
-        assert!(list.contains("chat-1") && list.contains("chat-2"));
-        d.key(KeyCode::Tab);
-        let chat = draw(&mut d, 55, 15);
-        assert!(
-            chat.contains("60×16"),
-            "undersized conversation keeps work and draft"
-        );
-    }
-    #[test]
-    fn native_keys_and_paste_obey_existing_overlay_priority() {
-        let (mut d, _) = setup();
-        d.ctrl('g');
-        d.key(KeyCode::Char(':'));
-        assert!(d.palette.is_some());
-        d.event_action(Event::Paste("palette filter".into()));
-        for ch in ['a', 'c', 'u', 'w'] {
-            d.ctrl(ch);
-        }
-        d.key_action(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
-        assert!(d.palette.is_some());
-        assert!(!d.operator.chats[&1].stopping);
-        assert_eq!(d.operator.chats[&1].draft, "");
-        d.key(KeyCode::Esc);
-        // Ctrl-g left Operator for the terminals; `o` returns to the same draft.
-        assert!(!d.operator.visible);
-        d.key(KeyCode::Char('o'));
-        assert!(d.operator_is_editing());
-        for key in [
-            KeyCode::Char('a'),
-            KeyCode::Enter,
-            KeyCode::Backspace,
-            KeyCode::Tab,
-        ] {
-            assert!(!matches!(d.key(key), DashboardAction::PtyBytes(_)));
-        }
-    }
-    #[test]
-    fn narrow_new_form_can_toggle_to_history_and_restore_selected_chat() {
-        let (mut d, _) = setup();
-        d.ctrl('n');
-        d.ctrl('l');
-        let rendered = draw(&mut d, 55, 15);
-        assert!(
-            rendered.contains("chat-1"),
-            "history must be reachable from narrow creation: {rendered}"
-        );
-        d.key(KeyCode::Down);
-        d.key(KeyCode::Enter);
-        assert_eq!(d.operator.selected, Some(Id(2)));
-        assert!(d.operator.new.is_none());
-        assert!(d.operator_is_editing());
-    }
-    #[test]
-    fn completion_in_tiny_hidden_transcript_remains_unread() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![completed(1)],
-            None,
-        );
-        draw(&mut d, 55, 3);
-        assert!(d.operator.chats[&1].unread.is_some());
-        draw(&mut d, 140, 24);
-        assert!(d.operator.chats[&1].unread.is_none());
-    }
-    #[test]
-    fn large_multiline_transcript_reaches_actual_tail_and_scrolls_in_cells() {
-        let (mut d, reads) = setup();
-        let mut messages: Vec<_> = (1..=8)
-            .map(|ordinal| delta(ordinal, &"line\n".repeat(9000)))
-            .collect();
-        messages.push(delta(9, "ACTUAL_TAIL"));
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            messages,
-            None,
-        );
-        let rendered = draw(&mut d, 140, 24);
-        assert!(rendered.contains("ACTUAL_TAIL"));
-    }
-    #[test]
-    fn multiline_up_down_moves_cursor_without_losing_graphemes() {
-        let (mut d, _) = setup();
-        d.event_action(Event::Paste("abc\n界xy".into()));
+        d.event_action(Event::Paste("one\n界e\u{301}🙂".into()));
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "one\n界e\u{301}🙂");
         d.key(KeyCode::Up);
-        d.key(KeyCode::Char('!'));
-        assert_eq!(d.operator.chats[&1].draft, "abc!\n界xy");
-        d.key(KeyCode::Down);
-        d.key(KeyCode::Char('?'));
-        assert_eq!(d.operator.chats[&1].draft, "abc!\n界xy?");
-    }
-
-    #[test]
-    fn late_submit_receipt_cannot_regress_newer_completed_run_or_stop_proof() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.operator_insert("send");
-        d.key(KeyCode::Enter);
-        let request = d
-            .drain_outbox()
-            .into_iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        let mut newer = summary(1, 2, OperatorTurnState::Complete, true);
-        newer.current_turn.as_mut().unwrap().sequence = 5;
-        d.operator_summary(newer);
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request.request_id,
-            response: Response::Operator(OperatorResponse::Submitted(
-                summary(1, 2, OperatorTurnState::Running, false)
-                    .current_turn
-                    .unwrap(),
-            )),
-        });
-        assert!(d.operator.chats[&1].summary.worker_stopped);
-        assert_eq!(
-            d.operator.chats[&1]
-                .summary
-                .current_turn
-                .as_ref()
-                .unwrap()
-                .state,
-            OperatorTurnState::Complete
-        );
-    }
-
-    #[test]
-    fn clicking_transcript_title_does_not_stop_without_the_explicit_control() {
-        let (mut d, _) = setup();
-        let right = content_area(&d, d.outer_area);
-        d.operator_mouse(
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: right.x + 2,
-                row: right.y,
-                modifiers: KeyModifiers::NONE,
-            },
-            d.outer_area,
-        );
-        assert!(!d.drain_outbox().iter().any(|message| matches!(
-            message.request,
-            Request::Operator(OperatorRequest::Stop { .. })
+        d.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
         )));
+        let draft = d.operator.chat.as_ref().unwrap().draft.clone();
+        assert!(draft.starts_with("one\n"), "{draft:?}");
+        assert!(draft.contains("界e\u{301}🙂"), "{draft:?}");
+        assert_eq!(draft.matches('\n').count(), 2);
+        d.ctrl('c');
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "");
     }
 
     #[test]
-    fn wrong_session_submit_receipt_cannot_clear_draft_or_install_turn() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.operator_insert("keep");
-        d.key(KeyCode::Enter);
-        let request = d
-            .drain_outbox()
+    fn footer_and_keymap_describe_only_singleton_actions() {
+        let mut d = dashboard();
+        opened(&mut d, summary());
+        let groups = super::super::keymap::keymap(&d);
+        let labels: Vec<&str> = groups
             .into_iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        let mut turn = summary(1, 2, OperatorTurnState::Running, false)
-            .current_turn
-            .unwrap();
-        turn.identity.session = SessionId(999);
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request.request_id,
-            response: Response::Operator(OperatorResponse::Submitted(turn)),
-        });
-        assert_eq!(d.operator.chats[&1].draft, "keep");
-        assert_eq!(
-            d.operator.chats[&1]
-                .summary
-                .current_turn
-                .as_ref()
-                .unwrap()
-                .identity
-                .run,
-            SessionRunId(1)
-        );
-    }
-    #[test]
-    fn conversation_list_mouse_uses_the_same_scrolled_rows_as_rendering() {
-        let (mut d, _) = setup();
-        for id in 3..=30 {
-            d.operator_summary(summary(id, 1, OperatorTurnState::Running, false));
-        }
-        d.operator_select(Id(30));
-        let area = Rect::new(0, 0, 140, 24);
-        d.install_area(area);
-        d.operator_ensure_visible();
-        let list = d.sidebar_rects(area).operator;
-        let offset = d.operator.list_offset;
-        d.operator_mouse(
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: list.x + 2,
-                row: list.y + 1,
-                modifiers: KeyModifiers::NONE,
-            },
-            area,
-        );
-        assert_eq!(d.operator.selected, Some(Id(offset as u64 + 1)));
-        assert!(draw(&mut d, 140, 24).contains("OPERATOR"));
-    }
-    #[test]
-    fn explicit_mouse_stop_targets_only_selected_turn() {
-        let (mut d, _) = setup();
-        let right = content_area(&d, d.outer_area);
-        let button = stop_rect(right);
-        d.operator_mouse(
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: button.x + 1,
-                row: button.y,
-                modifiers: KeyModifiers::NONE,
-            },
-            d.outer_area,
-        );
-        assert!(d.drain_outbox().iter().any(|message| matches!(message.request, Request::Operator(OperatorRequest::Stop { identity }) if identity.conversation == Id(1))));
-        assert!(!d.operator.chats[&2].stopping);
-    }
-    #[test]
-    fn late_mutation_error_stays_with_its_conversation_after_navigation() {
-        let (mut d, _) = setup();
-        d.operator_summary(summary(1, 1, OperatorTurnState::Complete, true));
-        d.operator_insert("send");
-        d.key(KeyCode::Enter);
-        let request = d
-            .drain_outbox()
-            .into_iter()
-            .find(|message| {
-                matches!(
-                    message.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )
-            })
-            .unwrap();
-        d.operator_select(Id(2));
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request.request_id,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "A_REFUSAL".into(),
-            },
-        });
-        assert!(!draw(&mut d, 140, 24).contains("A_REFUSAL"));
-        d.operator_select(Id(1));
-        assert!(draw(&mut d, 140, 24).contains("A_REFUSAL"));
-    }
-    #[test]
-    fn operator_journal_final_send_offer_tracks_submission_eligibility() {
-        let (mut d, _) = setup();
-        d.operator_insert("retained message");
-        d.drain_outbox();
-        for (name, state, stopped, pending, closing, archived, available) in [
-            (
-                "eligible",
-                OperatorTurnState::Complete,
-                true,
-                false,
-                false,
-                false,
-                true,
-            ),
-            (
-                "running",
-                OperatorTurnState::Running,
-                false,
-                false,
-                false,
-                false,
-                false,
-            ),
-            (
-                "pending submit",
-                OperatorTurnState::Complete,
-                true,
-                true,
-                false,
-                false,
-                false,
-            ),
-            (
-                "unconfirmed stop",
-                OperatorTurnState::Complete,
-                false,
-                false,
-                false,
-                false,
-                false,
-            ),
-            (
-                "closing",
-                OperatorTurnState::Complete,
-                true,
-                false,
-                true,
-                false,
-                false,
-            ),
-            (
-                "archived",
-                OperatorTurnState::Complete,
-                true,
-                false,
-                false,
-                true,
-                false,
-            ),
-            (
-                "eligible again",
-                OperatorTurnState::Complete,
-                true,
-                false,
-                false,
-                false,
-                true,
-            ),
-        ] {
-            let chat = d.operator.chats.get_mut(&1).unwrap();
-            chat.summary = summary(1, 1, state, stopped);
-            chat.summary.archived = archived;
-            chat.submitting = pending;
-            chat.closing = closing;
-            let binding = d
-                .key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-                .unwrap();
-            assert_eq!(binding.enabled(), available, "Send binding in {name}");
-            let screen = draw(&mut d, 140, 24);
-            let footer: String = screen.chars().skip(140 * 23).collect();
-            assert_eq!(
-                footer.contains("Enter Send"),
-                available,
-                "footer in {name}: {footer}"
-            );
-            let groups = super::super::keymap::keymap(&d);
-            let send = groups
-                .iter()
-                .flat_map(|group| &group.keys)
-                .find(|key| key.name == "Send")
-                .unwrap();
-            assert_eq!(
-                send.enabled(),
-                available,
-                "menu shares Send guard in {name}"
-            );
-            if !available {
-                d.key(KeyCode::Enter);
-                assert!(!d.drain_outbox().iter().any(|request| matches!(
-                    request.request,
-                    Request::Operator(OperatorRequest::Submit { .. })
-                )));
-                assert_eq!(d.operator.chats[&1].draft, "retained message");
-            }
-        }
-        d.operator.chats.get_mut(&1).unwrap().draft.clear();
-        assert!(
-            !d.key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-                .unwrap()
-                .enabled(),
-            "empty draft cannot Send"
-        );
-        d.operator_insert("eligible again");
-        d.key(KeyCode::Enter);
-        let requests = d.drain_outbox();
-        assert_eq!(requests.iter().filter(|request| matches!(&request.request, Request::Operator(OperatorRequest::Submit { text, .. }) if text == "eligible again")).count(), 1);
-        assert_eq!(
-            d.operator.chats[&1].draft, "eligible again",
-            "pending acceptance retains draft"
-        );
-    }
-    #[test]
-    fn operator_journal_final_selected_title_tracks_actual_sidebar_row() {
-        let (mut d, reads) = setup();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![delta(1, &"retained history\n".repeat(50)), completed(2)],
-            None,
-        );
-        for id in 3..=8 {
-            d.operator_summary(summary(id, 1, OperatorTurnState::Complete, true));
-        }
-        d.operator_insert("retained draft");
-        d.key(KeyCode::PageUp);
-        let anchor = d.operator.chats[&1].anchor;
-        let area = Rect::new(0, 0, 140, 24);
-        d.install_area(area);
-        let header = |d: &mut Dashboard| {
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 24)).unwrap();
-            d.draw(&mut terminal).unwrap();
-            let rect = d.operator_layout(area).header;
-            (rect.x..rect.right())
-                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
-                .collect::<String>()
-        };
-        assert!(header(&mut d).starts_with("Operator ·"));
-        let sidebar = d.sidebar_rects(area).operator;
-        click(
-            &mut d,
-            sidebar.x + 2,
-            sidebar.y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        d.ctrl('l');
-        assert!(d.operator.collapsed);
-        assert!(
-            header(&mut d).starts_with("chat-1 ·"),
-            "collapsed heading does not identify selected chat"
-        );
-        click(
-            &mut d,
-            sidebar.x + 2,
-            sidebar.y,
-            MouseEventKind::Down(MouseButton::Left),
-        );
-        d.ctrl('l');
-        assert!(
-            header(&mut d).starts_with("Operator ·"),
-            "visible selected row restores quiet identity"
-        );
-        click(
-            &mut d,
-            sidebar.x + 2,
-            sidebar.y + 1,
-            MouseEventKind::ScrollDown,
-        );
-        d.ctrl('l');
-        assert!(d.operator.list_offset > 0);
-        assert!(
-            header(&mut d).starts_with("chat-1 ·"),
-            "offscreen selected row needs identity fallback"
-        );
-        click(
-            &mut d,
-            sidebar.x + 2,
-            sidebar.y + 1,
-            MouseEventKind::ScrollUp,
-        );
-        d.ctrl('l');
-        assert!(header(&mut d).starts_with("Operator ·"));
-        assert_eq!(d.operator.selected, Some(Id(1)));
-        assert_eq!(d.operator.chats[&1].draft, "retained draft");
-        assert_eq!(d.operator.chats[&1].anchor, anchor);
-        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
-        assert!(!d.operator.chats[&1].follow);
-    }
-    #[test]
-    fn native_footer_and_palette_bindings_describe_the_actual_composer_keys() {
-        let (mut d, _) = setup();
-        let footer = super::super::hints::footer(&d, 140);
-        assert!(
-            footer.starts_with("OPERATOR")
-                && !footer.contains("Enter Send")
-                && footer.contains("Shift-Enter")
-                && footer.contains("Ctrl-g"),
-            "{footer}"
-        );
-        assert!(!footer.contains("Space Menu"));
-        for (ch, modifiers) in [
-            ('a', KeyModifiers::CONTROL),
-            ('e', KeyModifiers::CONTROL),
-            ('u', KeyModifiers::CONTROL),
-            ('k', KeyModifiers::CONTROL),
-            ('w', KeyModifiers::CONTROL),
-            ('b', KeyModifiers::ALT),
-            ('f', KeyModifiers::ALT),
-            ('c', KeyModifiers::CONTROL),
-        ] {
-            let binding = d
-                .key_binding_for(KeyEvent::new(KeyCode::Char(ch), modifiers))
-                .unwrap();
-            assert!(binding.enabled());
-            assert!(!binding.matches(KeyEvent::new(
-                KeyCode::Char(ch),
-                modifiers | KeyModifiers::SUPER
-            )));
-            if ch == 'c' {
-                assert!(!binding.matches(KeyEvent::new_with_kind(
-                    KeyCode::Char(ch),
-                    modifiers,
-                    KeyEventKind::Repeat
-                )));
-            }
-        }
-        d.operator_insert("one two");
-        let word = d
-            .key_binding_for(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
-            .unwrap();
-        d.run(word.action);
-        assert_eq!(
-            d.operator.chats[&1]
-                .cursor
-                .position(&d.operator.chats[&1].draft),
-            4
-        );
-        let clear = d
-            .key_binding_for(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-            .unwrap();
-        d.run(clear.action);
-        assert!(d.operator.chats[&1].draft.is_empty());
-        assert!(d.drain_outbox().is_empty());
-        let binding = d
-            .key_binding_for(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
-            .unwrap();
-        d.run(binding.action);
-        assert!(d.drain_outbox().iter().any(|message| matches!(
-            message.request,
-            Request::Operator(OperatorRequest::Stop { .. })
-        )));
-    }
-    #[test]
-    fn operator_review_round1_unread_waits_for_the_final_durable_page_to_be_drawn() {
-        let (mut d, reads) = setup();
-        let later = summary(1, 2, OperatorTurnState::Running, false);
-        let more = history(
-            &mut d,
-            request_id(&reads, 1),
-            later.clone(),
-            vec![completed(1)],
-            Some(1),
-        );
-        assert!(draw(&mut d, 140, 24).contains("Turn complete"));
-        assert_eq!(
-            d.operator.chats[&1].unread,
-            Some(OperatorTurnId(1)),
-            "an older completion is not a caught-up durable tail"
-        );
-        assert_eq!(d.operator.chats[&1].reviewed, None);
-        let mut next_user = message(
-            2,
-            OperatorMessageContent::User {
-                text: "next turn".into(),
-                context: OperatorContext::default(),
-            },
-        );
-        next_user.turn = OperatorTurnId(2);
-        let mut next_delta = delta(3, "LATER_DURABLE_OUTPUT");
-        next_delta.turn = OperatorTurnId(2);
-        history(
-            &mut d,
-            request_id(&more, 1),
-            later,
-            vec![next_user, next_delta],
-            None,
-        );
-        assert!(draw(&mut d, 140, 24).contains("LATER_DURABLE_OUTPUT"));
-        assert_eq!(d.operator.chats[&1].unread, None);
-        assert_eq!(d.operator.chats[&1].reviewed, Some(OperatorTurnId(1)));
-    }
-    #[test]
-    fn operator_review_round1_unread_waits_for_dirty_read_confirmation_even_after_failure() {
-        let (mut d, reads) = setup();
-        let complete = summary(1, 1, OperatorTurnState::Complete, true);
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            complete.clone(),
-            vec![completed(1)],
-            None,
-        );
-        let catchup =
-            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        let request = request_id(&catchup, 1);
-        d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        assert!(d.operator.chats[&1].reading && d.operator.chats[&1].dirty);
-        draw(&mut d, 140, 24);
-        assert_eq!(
-            d.operator.chats[&1].unread,
-            Some(OperatorTurnId(1)),
-            "a dirty-triggered read must confirm the durable tail before review"
-        );
-        d.handle_server_message(ServerMessage::Response {
-            request_id: request,
-            response: Response::Error {
-                code: ovrcr_protocol::ErrorCode::Conflict,
-                message: "read unavailable".into(),
-            },
-        });
-        draw(&mut d, 140, 24);
-        assert_eq!(
-            d.operator.chats[&1].unread,
-            Some(OperatorTurnId(1)),
-            "a failed read is not tail confirmation"
-        );
-        let retry =
-            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        history(&mut d, request_id(&retry, 1), complete, vec![], None);
-        draw(&mut d, 140, 24);
-        assert_eq!(d.operator.chats[&1].unread, None);
-    }
-    #[test]
-    fn operator_review_round1_exact_width_multiline_draft_keeps_cursor_visible() {
-        for cols in [60, 140] {
-            let (mut d, _) = setup();
-            d.install_area(Rect::new(0, 0, cols, 24));
-            let right = content_area(&d, d.outer_area);
-            let width = right.width.saturating_sub(2) as usize;
-            let line = "界".repeat(width / 2) + &"x".repeat(width % 2);
-            let draft = std::iter::repeat_n(line, 5).collect::<Vec<_>>().join("\n");
-            d.event_action(Event::Paste(draft.clone()));
-            let rendered = draw(&mut d, cols, 24);
-            assert_eq!(d.operator.chats[&1].draft, draft);
-            assert!(
-                rendered.contains('▏'),
-                "cursor must remain visible after five full composer rows at width {cols}"
-            );
-        }
-    }
-    #[test]
-    fn final_review_success_summary_marks_unread_without_sdk_history_message() {
-        let (mut d, reads) = setup();
-        let next = history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![delta(1, "durable answer")],
-            Some(1),
-        );
-        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
-        draw(&mut d, 140, 24);
-        assert_eq!(d.operator.chats[&1].unread, Some(OperatorTurnId(1)));
-        history(
-            &mut d,
-            request_id(&next, 1),
-            summary(1, 1, OperatorTurnState::Complete, true),
-            vec![],
-            None,
-        );
-        draw(&mut d, 140, 24);
-        assert_eq!(d.operator.chats[&1].unread, None);
-        assert_eq!(d.operator.chats[&1].reviewed, Some(OperatorTurnId(1)));
-    }
-    #[test]
-    fn final_review_older_interrupted_page_does_not_replace_successful_current_turn_unread() {
-        let (mut d, reads) = setup();
-        let mut old = message(1, OperatorMessageContent::Interrupted);
-        old.turn = OperatorTurnId(1);
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 2, OperatorTurnState::Complete, true),
-            vec![old],
-            Some(1),
-        );
-        assert_eq!(
-            d.operator.chats[&1].unread,
-            Some(OperatorTurnId(2)),
-            "older journal pages must preserve the exact successful current turn marker"
-        );
-    }
-    #[test]
-    fn final_review_scrolled_wrapped_transcript_stays_anchored_across_stream_switch_and_resize() {
-        let (mut d, reads) = setup();
-        let text = (0..45)
-            .map(|n| format!("ROW_{n:02} {}\n", "界".repeat(50)))
-            .collect::<String>();
-        history(
-            &mut d,
-            request_id(&reads, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            vec![delta(1, &text)],
-            None,
-        );
-        draw(&mut d, 140, 24);
-        d.operator_scroll(-16);
-        let before = draw(&mut d, 140, 24);
-        let visible_rows = |screen: &str| {
-            (0..45)
-                .filter(|n| screen.contains(&format!("ROW_{n:02}")))
-                .collect::<Vec<_>>()
-        };
-        let rows = visible_rows(&before);
-        assert!(!rows.is_empty());
-        d.operator_select(Id(2));
-        let requests =
-            d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(Id(1))));
-        history(
-            &mut d,
-            request_id(&requests, 1),
-            summary(1, 1, OperatorTurnState::Running, false),
-            vec![delta(2, &"STREAMED wrapped continuation ".repeat(80))],
-            None,
-        );
-        d.operator_select(Id(1));
-        assert_eq!(
-            visible_rows(&draw(&mut d, 140, 24)),
-            rows,
-            "streaming moved the historical viewport"
-        );
-        let resized = draw(&mut d, 110, 24);
-        assert!(
-            resized.contains(&format!("ROW_{:02}", rows[0])),
-            "resize lost the top logical text anchor: {resized}"
-        );
-        assert_eq!(
-            visible_rows(&draw(&mut d, 140, 24)),
-            rows,
-            "resize round trip lost the anchor"
-        );
-        d.operator_scroll(isize::MAX);
-        assert!(d.operator.chats[&1].follow);
-        assert!(draw(&mut d, 140, 24).contains("STREAMED wrapped continuation"));
-    }
-    #[test]
-    fn final_review_new_conversation_names_the_selected_provider_login_command() {
-        let (mut d, _) = setup();
-        d.ctrl('n');
-        assert!(draw(&mut d, 180, 32).contains("ovrcr operator login chatgpt"));
-        d.operator.new.as_mut().unwrap().provider = OperatorProvider::Grok;
-        assert!(draw(&mut d, 180, 32).contains("ovrcr operator login grok"));
+            .flat_map(|group| group.keys)
+            .map(|binding| binding.name)
+            .collect();
+        assert!(!labels.iter().any(|label| label.contains("Conversation")));
+        assert!(!labels.iter().any(|label| label.contains("Close")));
+        assert!(!labels.iter().any(|label| label.contains("Chats")));
+        assert!(labels.contains(&"Send"));
+        assert!(labels.contains(&"Toggle sidebar"));
     }
 }

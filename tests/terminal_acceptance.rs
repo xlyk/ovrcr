@@ -1189,14 +1189,20 @@ fn operator_quick_outer_pty_modifiers_paste_escape_restore_terminal() -> Result<
         ovrcr::config::database_path(&fixture.config),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
-    let conversations: i64 =
-        database.query_row("SELECT count(*) FROM operator_conversations", [], |row| {
-            row.get(0)
-        })?;
-    assert_eq!(
-        conversations, 0,
-        "paste/newline/Escape created a conversation"
-    );
+    for table in [
+        "operator_conversations",
+        "operator_turns",
+        "operator_messages",
+    ] {
+        let count: i64 =
+            database.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(
+            count, 0,
+            "paste/newline/Escape created an Operator {table} row"
+        );
+    }
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())

@@ -1,0 +1,46 @@
+OVRCR GUI
+d OVRCR Operator [o]
+[Ctrl-o]
+[Commands] [Menul
+Operator
+ready Operator • pi • ready
+CONSIGINT
+P main
+root
+$ Local
+} gui-consigint-auth-handoff
+$ Local
+- review auth handoff
+grok:4.6
+f gui-consigint-worktree-lifecycle
+$ Local
+- implement lifecycle cleanup
+- review websocket shutdown
+- plan snapshot restore
+pi
+SPACELIFT-AGENT
+P main
+root
+$ Local
+} gui-spacelift-agent-pipeline-progr.
+$ local
+- build pipeline progress
+claude
+} gui-spacelift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+QUOTA LEFT
+Claude
+•checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry 4m
+Grok
+wk -
+49%
+> I
+Cursor
+usage off
+OPERATOR
+Shift-Enter Newline Ctrl-g Browse

@@ -1,0 +1,63 @@
+OVRCR GUI
+® OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+complete Operator • pi • fixture/operator-fixture • complete
+CONSIGINT
+) You
+P main
+root
+• Context • consigint / main / #1 run 1
+$ Local
+REQUEST_ONE_REAL_TOOLS
+} gui-consigint-auth-handoff
+$ Local
+• write
+- review auth
+handoff
+grok:4.6
+• succeeded • Output
+f gui-consigint-worktree-lifecycle
+• read
+$ Local
+• succeeded • Output
+- implement lifecycle cleanup
+• edit
+- review websocket shutdown
+succeeded • Output
+- plan snapshot restore
+pi
+• bash
+bash [call-bash]
+SPACELIFT-AGENT
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-dB0LsN/operator-target' && printf 'BASH
+} main
+root
+' && \"$0VRCR_EXECUTABLE\" --json project list"}
+$ Local
+• succeeded • Output
+} gui-spacelift-agent-pipeline-progr…
+TURNLONE_DONE
+$ Local
+- build pipeline progress claude
+} gui-spacelift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+QUOTA LEFT
+Claude
+• checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry 1m
+Grok
+wk -
+49%
+Cursor
+usage off
+OPERATOR
+Enter Expand details
+Ctrl-g Browse
+Ctrl hold Jump to visible Agent

@@ -9719,16 +9719,12 @@ fn expect_settings_reading(stream: &mut UnixStream, state: &ServerState) {
 }
 
 #[test]
-fn operator_global_history_stays_in_inventory_without_fake_workspaces_or_recovery_spawn() {
+fn operator_singleton_stays_in_inventory_without_fake_workspaces_or_recovery_spawn() {
     let state = test_state(None, None);
     let conversation = state
         .retained
         .lock()
-        .create_operator_conversation(
-            ovrcr_protocol::OperatorProvider::ChatGpt,
-            "fixture-model",
-            Path::new("/tmp/operator-fixture"),
-        )
+        .open_operator_conversation(Path::new("/tmp/operator-fixture"))
         .unwrap();
     let (registry, sessions) = state.inventory();
     assert!(registry.projects.is_empty());

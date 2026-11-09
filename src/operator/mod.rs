@@ -1,4 +1,3 @@
-pub mod auth;
-pub mod bash;
-pub mod login;
+pub mod pi;
+pub mod rpc;
 pub mod worker;

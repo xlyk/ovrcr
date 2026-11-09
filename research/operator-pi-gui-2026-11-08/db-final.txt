@@ -1,0 +1,22 @@
+Captured with sqlite3 against /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-dB0LsN/registry.sqlite3
+after the reconnect check and before closing the GUI (root removed on clean shutdown).
+
+operator_conversations:
+id  session  provider  model             pi_checkpoint_turn  singleton
+1   13       fixture   operator-fixture  7                   1
+
+operator_turns:
+id  run  state
+1   1    Complete
+2   2    Complete
+3   3    Complete
+4   4    Complete
+5   5    Complete
+6   6    Interrupted
+7   7    Complete
+
+checkpoint header (operator-pi/turns/7/session.jsonl first line):
+{"type":"session","version":3,"id":"operator-1","timestamp":"2026-11-08T08:19:44.405Z","cwd":"<fixture>/operator-workdir"}
+
+attempt directories at close: 6 (interrupted attempt evidence, 20241-byte session.jsonl) and 7 (checkpoint).
+Superseded checkpoints (T1-T5 dirs) had been removed as later turns promoted.

@@ -1,0 +1,55 @@
+OVRCR GUI
+• OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+complete
+Local
+(#1)
+shell
+• 26m
+pid 47861
+CONSIGINT
+f main
+root
+consigint › printf 'CUA_GUI_0K\n'
+$ Local
+CUA_GUI_OK
+} gui-consigint-auth-handoff
+consigint ›
+$ local
+- review auth handoff
+grok:4.6
+f gui-consigint-worktree-lifecycle
+$ Local
+- implement lifecycle cleanup
+- review websocket shutdown
+- plan snapshot restore
+pi
+SPACELIFT-AGENT
+j main
+root
+$ local
+} gui-spacelift-agent-pipeline-progr.
+$ Local
+- build pipeline progress claude
+gui-spacelift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+QUOTA LEFT
+Claude
+• checking
+Codex • unavailable • retry
+10m
+Grok
+wk
+39%
+Cursor
+usage off
+Terminal mode
+Ctrl-g browse
+Ctrl hold Jump to visible Agent
+then s Agents, Ctrl-o Quick message

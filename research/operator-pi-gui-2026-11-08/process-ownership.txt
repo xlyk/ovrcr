@@ -1,0 +1,20 @@
+Run 1 (root ovrcr-gui-dB0LsN, canonical /private/.../ovrcr-gui-dB0LsN)
+  launcher service pid 43699, pgid 43699 (rtk proxy just gui)
+    rtk proxy ./ovrcr-gui pid 43708, pgid 43699
+    OVRCR GUI pid 46176, pgid 43699
+    ovrcr server pid 47785, pgid 43699
+    dashboard client pid 50332 (before detach), later replaced on restart
+  provider 1 test pid 70178 (exit 0), provider 2 test pid 65067 (exit 0)
+  at close: `os.kill(-43699, 0)` -> ProcessLookupError; fixture root and server.sock gone;
+  no ovrcr-gui/server/dashboard/provider/pi processes remained.
+
+Run 2 (root ovrcr-gui-USVhMB, canonical /private/.../ovrcr-gui-USVhMB)
+  launcher service pid 86425, pgid 86425
+    OVRCR GUI pid 86864, pgid 86425
+    dashboard client pid 92972
+  provider 3 test pid 98264 (exit 0)
+  at close: `os.kill(-86425, 0)` -> ProcessLookupError; fixture root gone;
+  background Bash child pid 5678 gone; no stray processes.
+
+Pre-existing fixture roots ovrcr-gui-QKzcsP and ovrcr-gui-WkBuzd (Nov 5/6) were
+observed and left untouched; they are not part of this run.

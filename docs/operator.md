@@ -1,73 +1,93 @@
 # Use the built-in operator
 
-## Connect your subscription
+OVRCR's Operator is one persistent conversation per OVRCR instance, run by the
+installed [pi](https://github.com/earendil-works/pi) coding agent through its RPC
+protocol. There is one conversation, not one per project or workspace: the
+workspace or session you capture is sent with each message, so the same
+conversation can work on different targets without losing its history.
 
-Use the same instance configuration as your Dashboard:
+## Connect your own pi profile
 
-```sh
-ovrcr operator login chatgpt
-ovrcr operator models chatgpt
-```
-
-Replace `chatgpt` with `grok` for Grok. Complete the browser or device-code sign-in,
-then choose a model returned by the command. Each instance connects one account
-per provider.
-
-To inspect or disconnect that account:
+Operator uses a dedicated pi profile inside the instance directory, separate from
+your personal pi account. Start it with:
 
 ```sh
-ovrcr operator status chatgpt
-ovrcr operator logout chatgpt
+ovrcr operator setup
 ```
 
-Use the global `--json` flag for status, models or logout, for example
-`ovrcr --json operator status grok`.
+That command needs an interactive terminal and rejects `--json`. It explains the
+native pi commands and starts pi in the dedicated profile, where you can:
 
-## Run concurrent conversations
+- `/login` — sign in with a subscription account, or refresh it
+- `/model` — choose this profile's default model
+- `/logout` — remove the account from this profile
 
-Press `Ctrl-o` from any Dashboard view, including Tasks or another dialog, to
-open **Quick message**. In Terminal mode `Ctrl-o` goes to the program (Oh My Pi
-expands tool output, Claude Code opens its transcript), so press `Ctrl-g` then
-`Ctrl-o`. The title-bar `[Ctrl-o]` control, sidebar `[+]`
-and Quick message palette action open the same form. It captures the current
-workspace/session run (or selected chat context) and configured provider/model
-defaults when opened. Type a message and press Enter to create and send once.
-`Shift-Enter` adds a newline; paste only edits. Empty messages cannot send.
-The dialog starts at seven rows, grows with wrapped input and errors up to sixteen
-rows, and stays at most eighty columns wide. Outside clicks remain modal.
+Leave that session when you are done. OVRCR records the profile's current default
+model; it never copies your personal pi profile, its credentials or its settings.
 
-Esc before sending discards only the quick draft and restores the underlying view.
-Esc after sending dismisses the form while creation/submission continues; its late
-receipt cannot switch your view. `Ctrl-o` reopens that transaction's progress or
-retained error. A failed first submission keeps the message, and an explicit retry
-reuses the created chat. After submission is accepted, another quick conversation
-can start while earlier conversations keep running. Below 60×16, resize guidance
-preserves the form and active work.
+List the models the dedicated profile can currently discover:
 
-1. In the Dashboard, press `Ctrl-g` to reach Browse, then `o`, or click the
-   **Operator** control in the title bar. Saved conversations load above Projects
-   in the existing sidebar before you open Operator.
-2. Create a conversation with `Ctrl-n`. Choose ChatGPT or Grok and edit the model
-   identifier if needed. Press Enter to create it.
-3. Type your request and press Enter. The operator executes requested Bash and
-   OVRCR CLI actions without per-command approval dialogs; existing CLI guards apply.
-4. Use `Ctrl-l` to switch between the composer and conversation sidebar, then
-   Up/Down and Enter to choose a conversation. Tab cycles the sidebar, transcript
-   and composer; Enter expands a focused context or tool receipt in the transcript.
-   Click a row to open it. Use `Ctrl-n` for manual provider/model creation while
-   another conversation continues streaming.
+```sh
+ovrcr operator models
+ovrcr --json operator models
+```
 
-The sidebar shows up to five one-line conversations. Scroll to browse longer lists;
-click the Operator heading or use Left/Right with sidebar focus to collapse/expand.
-The collapsed heading retains the conversation count. Provider/model details stay
-in the conversation view.
+Text output is `provider/id<TAB>name`; JSON is
+`{"models":[{"provider":"...","id":"...","name":"..."}]}`. An empty list prints no
+invented defaults and points back to `ovrcr operator setup`. Discovery proves a
+model is visible in the profile, not that the account may run it.
 
-Each conversation keeps its own draft, captured workspace/session context, scroll
-position and status. Provider and model stay fixed after creation. Selecting a
-different chat or returning to a terminal does not pause active work.
+The model pi uses for a turn is either the profile's current default or the
+`operator.model` setting; there is no per-conversation model form.
 
-`Shift-Enter` inserts a newline; paste edits the draft without submitting.
-Both message inputs support these editing commands:
+## One conversation in the Dashboard
+
+The shared sidebar has one fixed **Operator** row above Projects. It shows the
+conversation's activity and Unread state; it has no count, collapse arrow, plus
+button, child row or close control. Click the row, press `o` in Browse, or click
+the **Operator** control in the title bar to open the one conversation with the
+composer focused.
+
+`Ctrl-o` from any Dashboard view opens **Quick message** for that same conversation.
+In Terminal mode `Ctrl-o` goes to the program (Oh My Pi expands tool output, Claude
+Code opens its transcript), so press `Ctrl-g` then `Ctrl-o`. The title-bar
+`[Ctrl-o]` control and the Quick message palette action open the same overlay.
+
+Quick message captures the current workspace/session target each time it opens an
+editable draft. Type a message and press Enter to send it once. If the conversation
+has never been opened, the first Send also creates the durable conversation; a
+cancelled unsent draft creates nothing. `Shift-Enter` adds a newline; paste only
+edits. Empty messages cannot send. The dialog starts at seven rows, grows with
+wrapped input and errors up to sixteen rows, and stays at most eighty columns
+wide. Outside clicks remain modal.
+
+Opening Quick message or the full view captures the current selection for the next
+message while keeping the draft text; the target caption shows what Send will
+carry, so check it before sending a retained draft. A Quick overlay that is
+already opening or submitting keeps the context frozen by that explicit Send, and
+a message that was sent keeps the target recorded in its journal entry.
+
+Esc discards an unsent Quick draft only while it is unseeded and error-free: that
+is, before the conversation exists, where a cancelled draft creates nothing and
+restores the underlying view. Once the conversation exists, both entry points edit
+the same draft, so Esc only hides the overlay and the draft stays. Esc after
+sending dismisses the form while sending continues; its late receipt cannot switch
+your view. `Ctrl-o` reopens the same draft or retained error. If the conversation
+is busy, or its previous worker's stop is unconfirmed, Send keeps the draft and
+explains why. It never queues the message, steers the running turn, starts another
+conversation or resubmits later by itself. Below 60×16, resize guidance preserves
+the form and the draft.
+
+## Composer and journal
+
+Type your request and press Enter. The operator runs pi's native `read`, `bash`,
+`edit` and `write` tools against the target you captured; it does not ask for a
+separate approval for each command. Durable tool calls and results appear in the
+journal before the model continues, so a crash cannot lose an accepted step.
+Existing OVRCR CLI guards still apply.
+
+`Shift-Enter` inserts a newline; paste edits the draft without submitting. Both
+message inputs support these editing commands:
 
 | Keys | Action |
 | --- | --- |
@@ -77,111 +97,114 @@ Both message inputs support these editing commands:
 | Ctrl+U / Ctrl+K | Delete the line prefix / suffix, retaining newlines |
 | Ctrl+W | Delete preceding whitespace and the preceding word within the line |
 | Alt+B / Alt+F | Previous / next whitespace-delimited word boundary within the line |
-| Ctrl+C | Clear the draft, including whitespace; a separate press in an empty full composer stops the selected response |
+| Ctrl+C | Clear the draft, including whitespace; a separate press in an empty full composer stops the current turn |
 
 Word commands treat punctuation as part of a word and never cross a newline.
-Home/End still move to the start/end of the whole draft; Up/Down move between
-logical lines. The native GUI ignores held Ctrl+C repeats, so holding the key
-cannot turn a clear into Stop there. Legacy external terminals may report repeats
-as fresh presses; in those terminals a held Ctrl+C can clear and then stop.
-Empty Quick Message Ctrl+C does nothing and never stops the underlying chat.
-Pending Quick creation or submission stays frozen; retry edits keep their original
-target. These editing commands apply only to message inputs. Terminal Ctrl+C keeps
-its usual interrupt byte; the native GUI sends one initial interrupt per hold.
-Control-only keys and ordinary key repetition remain unchanged. Native alphabetic
-Control keys retain Alt/Shift modifiers, so mixed chords such as Ctrl+Alt+C or
-Ctrl+Shift+U do not clear, stop or edit either message input.
-The full composer's existing key menu and palette list the editing actions;
-Ctrl+X remains the explicit Stop shortcut.
+Home/End move to the start or end of the whole draft; Up/Down move between logical
+lines. Empty Quick message Ctrl+C does nothing and never stops the conversation.
+Native alphabetic Control keys with Alt or Shift remain modifiers, so mixed chords
+such as Ctrl+Alt+C or Ctrl+Shift+U do not clear, stop or edit either message input.
+The native GUI ignores held Ctrl+C repeats; legacy external terminals may report
+each held byte as a fresh press. The full composer's key menu and palette list the
+editing actions; `Ctrl+X` is the explicit Stop shortcut.
 
-Send is offered only for a nonempty draft when the selected conversation can accept
-it; running, pending and unconfirmed-worker-stop states keep the draft.
+Send is offered only for a nonempty draft when the conversation can accept it.
+Running, sending and unconfirmed-worker-stop states keep the draft.
+
 A single activity row follows the latest message or tool receipt in the journal.
-It shows `Sending` while submission acceptance is pending, then `Responding`
-while the assistant's turn is running, including quiet periods. `Waiting for <tool> result` (or a count) means a recorded call has no
-matching result in the current turn's caught-up history. It does not certify
-that an operation is executing. Paging history uses `Responding`. These labels
-scroll away with older history and return when you scroll to the tail; hiding or
-collapsing the sidebar does not affect them. The row cannot be selected or expanded.
-The context/error row above the composer keeps its full width. Stopping
-and closing have their own labels; `Stop unconfirmed` is static until stop proof
-arrives. Completion with confirmed worker stop removes the activity indicator.
+It shows `Sending` while submission acceptance is pending, then `Responding` while
+the turn is running, including quiet periods. `Waiting for <tool> result` (or a
+count) means a recorded call has no matching result in the current turn's
+caught-up history; it does not certify that an operation is still executing.
+Paging history falls back to `Responding`. These labels scroll away with older
+history and return when you scroll to the tail. Stopping has its own label, and
+`Stop unconfirmed` is static until stop proof arrives.
 
-`PageUp` and `PageDown` scroll the transcript. The Working journal marks user
-prompts and joins assistant/tool activity with a fine guide in the current theme.
-Tool call and output receipts remain independently expandable, with adjacent rows
-and raw IDs hidden until expanded. Failures, timeouts, truncation and empty output
-remain explicit. Expanded details retain full IDs, command, cwd, captured context
-and output. With the sidebar hidden, the local header retains the selected chat's
-title. This also applies when its sidebar row is collapsed or scrolled out of view;
-a rendered selected row supplies that identity at wider sizes.
-`Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping every
-draft; `o` returns to it. Completed background replies stay Unread until their
-loaded tail is actually shown.
+`PageUp` and `PageDown` scroll the journal. User prompts are marked, and assistant
+and tool activity share a fine guide. Tool call and output receipts stay
+independently expandable: adjacent rows keep their own details and raw IDs appear
+only when expanded. Failures, timeouts, truncation and empty output remain
+explicit. Expanded details retain the full IDs, captured context, captured
+directory and output. Control characters in model or tool text are escaped before
+rendering.
 
-The borderless prompt starts at two text rows and grows with the draft, up to six
-rows or one third of the body. Quiet top/bottom rules and one-cell edge padding
-define the editor. The real terminal cursor follows the focused input.
-At widths below 100 columns, the conversation uses the full width; `Ctrl-l` or Tab
-opens the same combined sidebar on demand. At 100 columns and above, the configured
-sidebar width is used. Below 60×16, resize guidance preserves drafts and active work.
+`Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping the
+draft; `o` returns to the same conversation, history and draft. Completed replies
+stay Unread until the loaded tail is actually drawn.
 
-The target shown above the composer is captured with each submitted message.
-Check it before asking about "this workspace" or "this session". Later navigation
-does not change a running turn's captured target.
+`Tab` cycles the transcript and composer. With the transcript focused, Up/Down
+select a context or tool entry and Enter expands it. `Ctrl-l` shows or hides the
+ordinary Projects sidebar; it never opens a conversation list. At widths below 100
+columns the conversation uses the full width by default. Below 60×16, resize
+guidance preserves drafts and active work.
 
-## Set defaults and reopen history
+The header reads `Operator · pi · provider/id` once a model has been selected, and
+`Operator · pi` before that; it never guesses an identifier from settings or a
+catalog. The row above the composer shows the target the next message will carry:
+the workspace/session selection captured when the composer opened, not an older
+message's target. The agent's working directory is fixed for the life of the
+conversation and is shown separately in a user message's expanded context, so it
+never silently follows the Dashboard selection.
 
-Change Operator defaults in Settings, or in the instance's `dashboard.toml`:
+## Model, compaction and checkpoints
+
+Change the model in Settings, or in the instance's `dashboard.toml`:
 
 ```toml
 [operator]
-provider = "chat_gpt"
-chat_gpt_model = "gpt-6.1-sol"
-grok_model = "grok-4.7"
+model = "provider/model"
 ```
 
-These values prefill new conversations; they do not change existing ones.
-A model's presence in the selector or catalog does not prove that your account
-can use it.
+The value is one exact `provider/model` identifier; the model id may contain
+further slashes. Leave it unset to use the dedicated pi profile's current default
+before each turn. An explicit value is captured with the accepted message, so a
+later settings edit cannot change a turn that is already running. Model
+availability is checked against the profile's own catalog; there is no fallback to
+another model. A missing model is fixed with `ovrcr operator setup`, not by editing
+an identifier you guessed.
 
-Conversation history survives Server restart. Opening saved history starts no
-worker. New Conversation starts fresh model context and keeps previous chats.
-If model context reaches its supported limit, start a new conversation.
-
-Each active turn uses one of the existing fifty live-session slots. Saved idle
-conversations use none. At capacity, stop or close an existing session through
-the normal controls, then retry the preserved draft.
+pi compacts the conversation automatically when its context fills, so the
+conversation keeps working without a Reset or New action. After each successful
+turn, OVRCR keeps that turn's completed pi session as the context checkpoint for
+the next turn. A failed, interrupted or uncertain turn keeps its partial journal
+and attempt files as evidence but never becomes the checkpoint: the next explicit
+message resumes from the last completed turn. This rolls back model context only.
+It never replays a prompt and never rolls back files, commands or terminal input
+that already ran.
 
 ## Stop or recover a turn
 
-Select the conversation and use its **Stop** control or `Ctrl-x`. Stop affects
-that turn's model and Bash work; an OVRCR operation already accepted may finish.
-Visible partial text and command outcomes remain in history. Generic
-`terminal kill` and `terminal close` refuse Operator conversations; use native Stop.
+Use the **Stop** control, `Ctrl-x`, or `Ctrl-c` in an empty full composer to stop
+the current turn. Stop affects that exact turn's model work; an OVRCR operation
+already accepted may finish. Visible partial text and command outcomes remain in
+history. Generic `terminal kill` and `terminal close` refuse Operator scope, and
+there is no archive, unarchive or delete route for Operator conversations.
 
-To close a conversation, focus its sidebar row and press `X`, or hover and click
-`[x]`. Confirming stops its exact retained run and archives the conversation while
-preserving model history and the journal. A nonempty draft is discarded only after
-archive is acknowledged. Cancellation or failure retains it. Closing one chat leaves
-other conversations usable. Lowercase `x` never closes a conversation; in the
-message or model field it remains text.
-Archived sessions offers Unarchive for saved Operator conversations.
-
-Wait for confirmed worker stop before submitting again. **Finishing / stop
-unconfirmed** is not confirmation. After a crash, inspect the Operator rows with
-`ovrcr --json terminal list`. Their `scope` identifies the conversation.
-
-Only after independently confirming the old worker and background processes have
-stopped, acknowledge its retained session:
+Wait for confirmed worker stop before sending again. **Finishing / stop
+unconfirmed** is not confirmation. If an old turn is uncertain after a crash,
+inspect it with `ovrcr --json terminal list`; its `scope` identifies the
+conversation. Only after you independently confirm its worker and background
+processes have stopped, acknowledge the retained session:
 
 ```sh
 ovrcr terminal acknowledge-stopped SESSION_ID
 ```
 
-Acknowledgement also marks an unfinished turn Interrupted. Then submit fresh
-instructions. Interrupted or uncertain commands are never
-automatically replayed.
+Acknowledgement marks an unfinished turn Interrupted and unlocks the next message.
+Interrupted or uncertain commands are never automatically replayed.
 
-See the [runtime and authentication reference](development/operator.md) for Bash
-limits, credential storage, provider contracts and offline acceptance.
+Each running Operator turn uses one of the existing fifty live-session slots; an
+idle conversation uses none and at most one Operator turn runs at a time. At
+capacity, stop or close an ordinary session through the normal controls, then
+retry the preserved draft.
+
+## Existing data
+
+Legacy Operator conversations, their journals, credentials and recovery evidence
+stay on disk untouched. The Dashboard hides legacy Operator rows, and the Archived
+palette does not offer them, so there is no way to reopen or archive them from the
+UI. Their records still appear in terminal diagnostics for inspection and
+`acknowledge-stopped` still works for them.
+
+See the [runtime and authentication reference](development/operator.md) for the
+worker, pi transport and checkpoint contracts.

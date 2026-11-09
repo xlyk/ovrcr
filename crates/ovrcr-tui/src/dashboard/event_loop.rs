@@ -86,7 +86,7 @@ pub fn run_dashboard(
         )?;
     }
 
-    dashboard.operator_start_listing();
+    dashboard.operator_start_current();
     flush(&mut stream, &mut dashboard)?;
 
     let mut guard = TerminalGuard::enter()?;
@@ -1826,9 +1826,8 @@ mod operator_loop_tests {
     use super::*;
     use crate::protocol::{
         OperatorConversationId, OperatorConversationSummary, OperatorHistory, OperatorMessage,
-        OperatorMessageContent, OperatorProvider, OperatorRequest, OperatorResponse, OperatorTurn,
-        OperatorTurnId, OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, ServerEvent,
-        SessionId, SessionRunId,
+        OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorTurnId,
+        OperatorWorkerEvent, ServerEvent, SessionId, SessionRunId,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{TerminalOptions, Viewport};
@@ -1847,26 +1846,15 @@ mod operator_loop_tests {
             Ok(())
         }
     }
-    fn summary(id: u64) -> OperatorConversationSummary {
+    fn summary(run: u64) -> OperatorConversationSummary {
         OperatorConversationSummary {
-            run: SessionRunId(1),
-            archived: false,
-            worker_stopped: false,
-            id: OperatorConversationId(id),
-            session: SessionId(id + 10),
-            provider: OperatorProvider::ChatGpt,
-            model: "offline-fixture".into(),
-            title: format!("socket-chat-{id}"),
-            current_turn: Some(OperatorTurn {
-                identity: OperatorTurnIdentity {
-                    conversation: OperatorConversationId(id),
-                    turn: OperatorTurnId(1),
-                    session: SessionId(id + 10),
-                    run: SessionRunId(1),
-                },
-                state: OperatorTurnState::Running,
-                sequence: 1,
-            }),
+            run: SessionRunId(run),
+            worker_stopped: true,
+            id: OperatorConversationId(1),
+            session: SessionId(11),
+            model: None,
+            title: "Operator".into(),
+            current_turn: None,
         }
     }
     fn inbound(
@@ -1881,6 +1869,17 @@ mod operator_loop_tests {
         let mut byte = [0];
         wake.read_exact(&mut byte).unwrap();
         assert!(next_dashboard_messages(messages, d, stream).unwrap());
+    }
+    fn screen_writer() -> (ScreenWriter, Arc<Mutex<ovrcr_terminal::vt100::Parser>>) {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let parser = Arc::new(Mutex::new(ovrcr_terminal::vt100::Parser::new(24, 140, 0)));
+        (
+            ScreenWriter {
+                bytes,
+                parser: parser.clone(),
+            },
+            parser,
+        )
     }
     #[test]
     fn operator_quick_production_dispatch_keeps_key_paste_mouse_resize_off_pty() {
@@ -1903,12 +1902,7 @@ mod operator_loop_tests {
         wake.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let reader = thread::spawn(move || read_messages(reader_stream, sender, reader_wake));
-        let bytes = Arc::new(Mutex::new(Vec::new()));
-        let parser = Arc::new(Mutex::new(ovrcr_terminal::vt100::Parser::new(24, 140, 0)));
-        let mut writer = ScreenWriter {
-            bytes,
-            parser: parser.clone(),
-        };
+        let (mut writer, parser) = screen_writer();
         let mut terminal = Terminal::with_options(
             CrosstermBackend::new(&mut writer),
             TerminalOptions {
@@ -2003,7 +1997,7 @@ mod operator_loop_tests {
             "Quick Ctrl+C must clear only its draft"
         );
         assert!(crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err());
-        // Close the empty form so the original modal/key/paste coverage starts fresh.
+        // Quick's empty Ctrl-c is a no-op even when the singleton is busy.
         dispatch_dashboard_event(
             &mut terminal,
             &mut stream,
@@ -2052,14 +2046,14 @@ mod operator_loop_tests {
             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         )
         .unwrap();
-        let create: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let open: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
         assert!(matches!(
-            create.request,
-            Request::Operator(OperatorRequest::Create { .. })
+            open.request,
+            Request::Operator(OperatorRequest::Open)
         ));
         assert!(
             crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
-            "one Enter emits exactly one Create, no PTY input"
+            "one Enter emits exactly one Open, no PTY input"
         );
         for ch in ['c', 'u', 'w'] {
             assert!(
@@ -2081,11 +2075,6 @@ mod operator_loop_tests {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         )
         .unwrap();
-        let mut created = summary(7);
-        created.model = "gpt-6.1-sol".into();
-        created.run = SessionRunId(0);
-        created.current_turn = None;
-        created.worker_stopped = true;
         inbound(
             &mut peer,
             &mut wake,
@@ -2093,8 +2082,8 @@ mod operator_loop_tests {
             &mut d,
             &mut stream,
             ServerMessage::Response {
-                request_id: create.request_id,
-                response: Response::Operator(OperatorResponse::Created(created)),
+                request_id: open.request_id,
+                response: Response::Operator(OperatorResponse::Opened(summary(1))),
             },
         );
         let mut requests = Vec::new();
@@ -2107,8 +2096,8 @@ mod operator_loop_tests {
                 .filter(|m| matches!(
                     m.request,
                     Request::Operator(OperatorRequest::Submit {
-                        conversation: OperatorConversationId(7),
-                        expected_run: SessionRunId(0),
+                        conversation: OperatorConversationId(1),
+                        expected_run: SessionRunId(1),
                         ref text,
                         ..
                     }) if text == "xfirst\n界]52;c;INJECTED"
@@ -2138,6 +2127,7 @@ mod operator_loop_tests {
         let (mut d, _) = super::unread_review_tests::fixture();
         let area = Rect::new(0, 0, 140, 24);
         d.install_area(area);
+        d.install_screen(SessionId(1), &[]);
         let (mut stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
@@ -2146,12 +2136,7 @@ mod operator_loop_tests {
         wake.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let reader = thread::spawn(move || read_messages(reader_stream, sender, reader_wake));
-        let bytes = Arc::new(Mutex::new(Vec::new()));
-        let parser = Arc::new(Mutex::new(ovrcr_terminal::vt100::Parser::new(24, 140, 0)));
-        let mut writer = ScreenWriter {
-            bytes: bytes.clone(),
-            parser: parser.clone(),
-        };
+        let (mut writer, parser) = screen_writer();
         let mut terminal = Terminal::with_options(
             CrosstermBackend::new(&mut writer),
             TerminalOptions {
@@ -2162,10 +2147,10 @@ mod operator_loop_tests {
         let mut mouse = false;
         let action = d.key(KeyCode::Char('o'));
         send_dashboard_action(&mut terminal, &mut stream, &mut d, &mut mouse, action).unwrap();
-        let list: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let open: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
         assert!(matches!(
-            list.request,
-            Request::Operator(OperatorRequest::List { .. })
+            open.request,
+            Request::Operator(OperatorRequest::Open)
         ));
         inbound(
             &mut peer,
@@ -2174,332 +2159,91 @@ mod operator_loop_tests {
             &mut d,
             &mut stream,
             ServerMessage::Response {
-                request_id: list.request_id,
-                response: Response::Operator(OperatorResponse::Conversations(vec![
-                    summary(1),
-                    summary(2),
-                ])),
+                request_id: open.request_id,
+                response: Response::Operator(OperatorResponse::Opened(summary(1))),
             },
         );
-        let mut reads = Vec::new();
-        for _ in 0..2 {
-            reads.push(crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap());
-        }
-        for id in [2, 1] {
-            let read = reads.iter().find(|request| matches!(request.request, Request::Operator(OperatorRequest::Read { conversation, .. }) if conversation == OperatorConversationId(id))).unwrap();
-            inbound(
-                &mut peer,
-                &mut wake,
-                &messages,
-                &mut d,
-                &mut stream,
-                ServerMessage::Response {
-                    request_id: read.request_id,
-                    response: Response::Operator(OperatorResponse::History(OperatorHistory {
-                        conversation: summary(id),
-                        messages: vec![OperatorMessage {
-                            ordinal: 1,
-                            turn: OperatorTurnId(1),
-                            content: OperatorMessageContent::Worker(
-                                OperatorWorkerEvent::AssistantDelta(format!(
-                                    "STREAM_{id} \u{1b}]52;c;INJECTED\u{7}"
-                                )),
+        let read = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
+        assert!(matches!(
+            read.request,
+            Request::Operator(OperatorRequest::Read {
+                conversation: OperatorConversationId(1),
+                after: 0,
+                limit: 100,
+            })
+        ));
+        inbound(
+            &mut peer,
+            &mut wake,
+            &messages,
+            &mut d,
+            &mut stream,
+            ServerMessage::Response {
+                request_id: read.request_id,
+                response: Response::Operator(OperatorResponse::History(OperatorHistory {
+                    conversation: summary(1),
+                    messages: vec![OperatorMessage {
+                        ordinal: 1,
+                        turn: OperatorTurnId(1),
+                        content: OperatorMessageContent::Worker(
+                            OperatorWorkerEvent::AssistantDelta(
+                                "STREAM \u{1b}]52;c;INJECTED\u{7}".into(),
                             ),
-                        }],
-                        next_after: None,
-                    })),
-                },
-            );
-        }
+                        ),
+                    }],
+                    next_after: None,
+                })),
+            },
+        );
         for event in [
             Event::Key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             Event::Paste("DRAFT_A\n界".into()),
             Event::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
-            Event::Key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
         ] {
             let action = d.event_action(event);
             assert!(!matches!(action, DashboardAction::PtyBytes(_)));
             send_dashboard_action(&mut terminal, &mut stream, &mut d, &mut mouse, action).unwrap();
         }
         d.draw(&mut terminal).unwrap();
+        let visible = parser.lock().unwrap().screen().contents();
+        assert!(visible.contains("DRAFT_A"), "{visible}");
+        assert!(
+            visible.contains("STREAM \\u{1b}]52;c;INJECTED\\u{7}"),
+            "control escapes render literally: {visible}"
+        );
         assert!(
             crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
             "native draft editing cannot send Input or Submit"
         );
-        for extra in [
-            KeyModifiers::ALT,
-            KeyModifiers::SHIFT,
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-        ] {
-            for ch in ['c', 'u', 'k', 'w'] {
-                assert!(
-                    !dispatch_dashboard_event(
-                        &mut terminal,
-                        &mut stream,
-                        &mut d,
-                        &mut mouse,
-                        Event::Key(KeyEvent::new(
-                            KeyCode::Char(ch),
-                            KeyModifiers::CONTROL | extra
-                        ))
-                    )
-                    .unwrap()
-                );
-            }
-        }
-        d.draw(&mut terminal).unwrap();
-        assert!(
-            parser
-                .lock()
-                .unwrap()
-                .screen()
-                .contents()
-                .contains("DRAFT_A")
-        );
-        assert!(
-            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
-            "mixed full controls cannot emit any request"
-        );
-        for kind in [
-            crossterm::event::KeyEventKind::Repeat,
-            crossterm::event::KeyEventKind::Release,
-        ] {
-            assert!(
-                !dispatch_dashboard_event(
-                    &mut terminal,
-                    &mut stream,
-                    &mut d,
-                    &mut mouse,
-                    Event::Key(KeyEvent::new_with_kind(
-                        KeyCode::Char('c'),
-                        KeyModifiers::CONTROL,
-                        kind
-                    ))
-                )
-                .unwrap()
-            );
-        }
-        d.draw(&mut terminal).unwrap();
-        assert!(
-            parser
-                .lock()
-                .unwrap()
-                .screen()
-                .contents()
-                .contains("DRAFT_A")
-        );
-        for kind in [
-            crossterm::event::KeyEventKind::Press,
-            crossterm::event::KeyEventKind::Repeat,
-            crossterm::event::KeyEventKind::Release,
-        ] {
-            assert!(
-                !dispatch_dashboard_event(
-                    &mut terminal,
-                    &mut stream,
-                    &mut d,
-                    &mut mouse,
-                    Event::Key(KeyEvent::new_with_kind(
-                        KeyCode::Char('c'),
-                        KeyModifiers::CONTROL,
-                        kind
-                    ))
-                )
-                .unwrap()
-            );
-        }
-        d.draw(&mut terminal).unwrap();
-        assert!(
-            !parser
-                .lock()
-                .unwrap()
-                .screen()
-                .contents()
-                .contains("DRAFT_A")
-        );
-        assert!(
-            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
-            "clear/repeat/release cannot send Stop or PTY requests"
-        );
-        for _ in 0..2 {
-            assert!(
-                !dispatch_dashboard_event(
-                    &mut terminal,
-                    &mut stream,
-                    &mut d,
-                    &mut mouse,
-                    Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-                )
-                .unwrap()
-            );
-        }
-        let stop: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        // Ctrl-g returns to the terminal; ordinary input is independent again.
+        dispatch_dashboard_event(
+            &mut terminal,
+            &mut stream,
+            &mut d,
+            &mut mouse,
+            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+        )
+        .unwrap();
+        // The acknowledged view is re-installed because opening Operator retargets the pane.
+        d.install_screen(SessionId(1), &[]);
+        d.key(KeyCode::Enter);
         assert_eq!(
-            stop.request,
-            Request::Operator(OperatorRequest::Stop {
-                identity: summary(1).current_turn.unwrap().identity,
-            })
+            d.key(KeyCode::Char('p')),
+            DashboardAction::PtyBytes(b"p".to_vec())
         );
-        assert!(
-            crate::protocol::read_frame::<ClientMessage>(&mut peer).is_err(),
-            "exact selected Stop is emitted once"
-        );
-        assert!(
-            !dispatch_dashboard_event(
-                &mut terminal,
-                &mut stream,
-                &mut d,
-                &mut mouse,
-                Event::Paste("DRAFT_A\n界".into())
-            )
-            .unwrap()
-        );
-        d.install_focus(SessionId(1));
-        emit_view_request(&mut stream, &mut d, area).unwrap();
-        let view: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
-        let Request::SetView { view: target } = view.request else {
-            panic!("view request");
-        };
-        for pane in &target.panes {
-            inbound(
-                &mut peer,
-                &mut wake,
-                &messages,
-                &mut d,
-                &mut stream,
-                ServerMessage::Response {
-                    request_id: view.request_id,
-                    response: Response::Screen {
-                        session: pane.session,
-                        run: pane.run,
-                        revision: target.revision,
-                        size: pane.size,
-                        bytes: b"TERMINAL_ALIVE".to_vec(),
-                    },
-                },
-            );
-        }
         inbound(
             &mut peer,
             &mut wake,
             &messages,
             &mut d,
             &mut stream,
-            ServerMessage::Response {
-                request_id: view.request_id,
-                response: Response::Ok,
-            },
+            ServerMessage::Event(ServerEvent::OperatorChanged(OperatorConversationId(1))),
         );
-        let action = d.key(KeyCode::Enter);
-        send_dashboard_action(&mut terminal, &mut stream, &mut d, &mut mouse, action).unwrap();
-        let action = d.key(KeyCode::Char('x'));
-        assert_eq!(action, DashboardAction::PtyBytes(vec![b'x']));
-        send_dashboard_action(&mut terminal, &mut stream, &mut d, &mut mouse, action).unwrap();
-        let input: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        let catch_up = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
         assert!(matches!(
-            input.request,
-            Request::Input {
-                session: SessionId(1),
-                ..
-            }
+            catch_up.request,
+            Request::Operator(OperatorRequest::Read { after: 1, .. })
         ));
-        assert!(
-            !dispatch_dashboard_event(
-                &mut terminal,
-                &mut stream,
-                &mut d,
-                &mut mouse,
-                Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-            )
-            .unwrap()
-        );
-        let interrupt: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
-        assert!(
-            matches!(interrupt.request, Request::Input { session: SessionId(1), ref bytes, .. } if bytes == &[3])
-        );
-        inbound(
-            &mut peer,
-            &mut wake,
-            &messages,
-            &mut d,
-            &mut stream,
-            ServerMessage::Event(ServerEvent::OperatorChanged(OperatorConversationId(2))),
-        );
-        let refresh: Vec<_> = (0..2)
-            .map(|_| crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap())
-            .collect();
-        assert!(refresh.iter().any(|request| matches!(
-            request.request,
-            Request::Operator(OperatorRequest::Read {
-                conversation: OperatorConversationId(2),
-                after: 1,
-                ..
-            })
-        )));
-        for request in &refresh {
-            let response = match request.request {
-                Request::Operator(OperatorRequest::List { .. }) => {
-                    Response::Operator(OperatorResponse::Conversations(vec![
-                        summary(1),
-                        summary(2),
-                    ]))
-                }
-                Request::Operator(OperatorRequest::Read { conversation, .. }) => {
-                    Response::Operator(OperatorResponse::History(OperatorHistory {
-                        conversation: summary(conversation.0),
-                        messages: vec![OperatorMessage {
-                            ordinal: 2,
-                            turn: OperatorTurnId(1),
-                            content: OperatorMessageContent::Worker(
-                                OperatorWorkerEvent::AssistantDelta("STREAM_2_LATE".into()),
-                            ),
-                        }],
-                        next_after: None,
-                    }))
-                }
-                _ => panic!("only native refresh requests"),
-            };
-            inbound(
-                &mut peer,
-                &mut wake,
-                &messages,
-                &mut d,
-                &mut stream,
-                ServerMessage::Response {
-                    request_id: request.request_id,
-                    response,
-                },
-            );
-        }
-        d.ctrl('g');
-        d.key(KeyCode::Char('o'));
-        d.ctrl('l');
-        d.key(KeyCode::Down);
-        d.key(KeyCode::Enter);
-        d.event_action(Event::Paste("DRAFT_B".into()));
-        d.draw(&mut terminal).unwrap();
-        let b = parser.lock().unwrap().screen().contents();
-        assert!(b.contains("STREAM_2_LATE") && b.contains("DRAFT_B"), "{b}");
-        d.ctrl('l');
-        d.key(KeyCode::Up);
-        d.key(KeyCode::Enter);
-        d.draw(&mut terminal).unwrap();
-        let a = parser.lock().unwrap().screen().contents();
-        assert!(
-            a.contains("STREAM_1") && a.contains("DRAFT_A") && !a.contains("DRAFT_B"),
-            "{a}"
-        );
-        drop(terminal);
-        let bytes = bytes.lock().unwrap();
-        let emitted = String::from_utf8_lossy(&bytes);
-        assert!(
-            emitted.contains("STREAM_1") && emitted.contains("DRAFT_A") && emitted.contains("?")
-        );
-        assert!(
-            !emitted.contains("\u{1b}]52;c;INJECTED"),
-            "model text cannot emit clipboard controls"
-        );
         peer.shutdown(std::net::Shutdown::Both).unwrap();
         reader.join().unwrap();
     }
