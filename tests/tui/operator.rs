@@ -617,6 +617,7 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
 
     // Drawing Browse, including the dock, never acknowledges the tail.
     for _ in 0..2 {
+        let _ = reviewed_screen(&mut dashboard, 120, 40);
         let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
         assert!(dock.contains("1 unread"), "{dock:?}");
     }
