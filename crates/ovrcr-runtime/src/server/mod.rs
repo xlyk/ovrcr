@@ -759,6 +759,17 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        // Operator history is not a terminal lifecycle. Refuse explicitly instead of
+        // letting a legacy row reach a foreign-key or run mismatch failure.
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator conversations cannot be archived or restored",
+            ));
+        }
         if summary.run != expected || !summary.archived {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -766,9 +777,6 @@ impl ServerState {
             ));
         }
         self.retained.lock().set_archived(id, expected, false)?;
-        if let ovrcr_protocol::SessionScope::OperatorConversation { conversation } = summary.scope {
-            self.operator_changed(conversation);
-        }
         Ok(())
     }
 
@@ -1744,6 +1752,17 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        // Operator history is retained for recovery and is not a terminal lifecycle;
+        // removing the retained session would fail on its conversation reference.
+        if matches!(
+            summary.scope,
+            ovrcr_protocol::SessionScope::OperatorConversation { .. }
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator history deletion is unavailable",
+            ));
+        }
         if summary.phase.is_live() {
             return Err(lifecycle_error(
                 ErrorCode::SessionRunning,

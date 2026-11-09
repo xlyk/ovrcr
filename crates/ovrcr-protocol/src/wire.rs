@@ -2687,18 +2687,15 @@ mod wire_snapshot {
         };
         let summary = OperatorConversationSummary {
             run: identity.run,
-            archived: false,
             worker_stopped: false,
             id: identity.conversation,
             session: identity.session,
-            provider: OperatorProvider::ChatGpt,
-            model: "model".into(),
+            model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "model".into(),
+            }),
             title: "hello".into(),
             current_turn: Some(turn.clone()),
-        };
-        let history = OperatorModelHistory {
-            version: 1,
-            json: "[]".into(),
         };
         let auth = crate::SupervisorAuth {
             session: identity.session,
@@ -2710,20 +2707,8 @@ mod wire_snapshot {
             duplicate: false,
         };
         for (name, request) in [
-            (
-                "Create",
-                OperatorRequest::Create {
-                    provider: OperatorProvider::Grok,
-                    model: "model".into(),
-                },
-            ),
-            (
-                "List",
-                OperatorRequest::List {
-                    after: 1,
-                    limit: 10,
-                },
-            ),
+            ("Current", OperatorRequest::Current),
+            ("Open", OperatorRequest::Open),
             (
                 "Read",
                 OperatorRequest::Read {
@@ -2742,13 +2727,6 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
-            (
-                "Close",
-                OperatorRequest::Close {
-                    conversation: identity.conversation,
-                    expected_run: SessionRunId(0),
-                },
-            ),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2777,7 +2755,14 @@ mod wire_snapshot {
                     status: OperatorToolStatus::Succeeded,
                 },
             ),
-            ("Completed", OperatorWorkerEvent::Completed(history.clone())),
+            (
+                "ModelSelected",
+                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                    provider: "openai".into(),
+                    id: "model".into(),
+                }),
+            ),
+            ("Completed", OperatorWorkerEvent::Completed),
             ("Failed", OperatorWorkerEvent::Failed("error".into())),
         ] {
             all.push((
@@ -2806,11 +2791,12 @@ mod wire_snapshot {
             ));
         }
         for (name, response) in [
-            ("Created", OperatorResponse::Created(summary.clone())),
+            ("CurrentNone", OperatorResponse::Current(None)),
             (
-                "Conversations",
-                OperatorResponse::Conversations(vec![summary.clone()]),
+                "CurrentSome",
+                OperatorResponse::Current(Some(summary.clone())),
             ),
+            ("Opened", OperatorResponse::Opened(summary.clone())),
             (
                 "History",
                 OperatorResponse::History(OperatorHistory {
@@ -2826,7 +2812,6 @@ mod wire_snapshot {
                     next_after: Some(1),
                 }),
             ),
-            ("Closed", OperatorResponse::Closed(summary)),
             ("Submitted", OperatorResponse::Submitted(turn.clone())),
             (
                 "Stopped",
@@ -2850,11 +2835,10 @@ mod wire_snapshot {
             encode(&Response::OperatorWorker(OperatorWorkerResult::Start(
                 Box::new(OperatorWorkerStart {
                     identity,
-                    provider: OperatorProvider::ChatGpt,
-                    model: "model".into(),
+                    model: Some("openai/model".into()),
                     text: "hello".into(),
                     context,
-                    history: Some(history),
+                    checkpoint_turn: Some(OperatorTurnId(2)),
                 }),
             ))),
         ));
@@ -3950,13 +3934,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044b017301630168016c0104",
+            "2a044c017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044b017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044c017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4006,18 +3990,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044b0000"),
+        ("Response::NotificationNavigation", "0d044c0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044b017301630168016c0104",
+            "0e01016e044c017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044b017301630168016c0164",
+            "0f010708090101690101044c017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044b010708090101690101044b017301630168016c0164",
+            "10044c010708090101690101044c017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4048,7 +4032,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c050000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -4057,7 +4041,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044b017301630168016c0104",
+            "08016e044c017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4514,15 +4498,14 @@ mod wire_snapshot {
             "Response::AssignedRead",
             "18016901770163010174010101720102010303010004040472656164",
         ),
-        ("Request::Operator::Create", "390001056d6f64656c"),
-        ("Request::Operator::List", "3901010a"),
+        ("Request::Operator::Current", "3900"),
+        ("Request::Operator::Open", "3901"),
         ("Request::Operator::Read", "390201010a"),
         (
             "Request::Operator::Submit",
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
-        ("Request::Operator::Close", "39050100"),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -4536,12 +4519,16 @@ mod wire_snapshot {
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101020463616c6c066f75747075740100",
         ),
         (
+            "Request::OperatorExchange::ModelSelected",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010103066f70656e6169056d6f64656c",
+        ),
+        (
             "Request::OperatorExchange::Completed",
-            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010301025b5d",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104",
         ),
         (
             "Request::OperatorExchange::Failed",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104056572726f72",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010105056572726f72",
         ),
         (
             "Request::OperatorWorker::Start",
@@ -4555,28 +4542,25 @@ mod wire_snapshot {
             "Request::OperatorWorker::Stop",
             "3b0307070707070707070707070707070707070707070707070707070707070707070201020304",
         ),
+        ("Response::Operator::CurrentNone", "190000"),
         (
-            "Response::Operator::Created",
-            "1900040000010300056d6f64656c0568656c6c6f01010203040000",
+            "Response::Operator::CurrentSome",
+            "1900010400010301066f70656e6169056d6f64656c0568656c6c6f01010203040000",
         ),
         (
-            "Response::Operator::Conversations",
-            "190101040000010300056d6f64656c0568656c6c6f01010203040000",
+            "Response::Operator::Opened",
+            "19010400010301066f70656e6169056d6f64656c0568656c6c6f01010203040000",
         ),
         (
             "Response::Operator::History",
-            "1902040000010300056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
-        ),
-        (
-            "Response::Operator::Closed",
-            "1905040000010300056d6f64656c0568656c6c6f01010203040000",
+            "19020400010301066f70656e6169056d6f64656c0568656c6c6f01010203040000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b000102030400056d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101025b5d",
+            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060102",
         ),
         ("Response::OperatorWorker::Retired", "1b0101020304"),
         ("ServerEvent::OperatorChanged", "0c01"),

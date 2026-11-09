@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 28;
+const SCHEMA_VERSION: i64 = 29;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -436,6 +436,17 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         }
         transaction.pragma_update(None, "user_version", 28)?;
     }
+    if schema_identity(&transaction)?.1 < 29 {
+        // Legacy Operator journals stay intact; only structure widens.
+        crate::retained::operator::migrate_singleton_conversation(&transaction)?;
+        if transaction
+            .prepare("PRAGMA foreign_key_check")?
+            .exists([])?
+        {
+            bail!("registry migration would leave invalid foreign keys");
+        }
+        transaction.pragma_update(None, "user_version", 29)?;
+    }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
@@ -491,6 +502,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 25
                 | 26
                 | 27
+                | 28
                 | SCHEMA_VERSION
         )
     {
