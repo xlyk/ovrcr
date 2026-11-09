@@ -56,17 +56,17 @@ cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
-Pull requests and pushes to `main` run `macOS checks` (three shards),
+Pull requests and pushes to `main` run `macOS checks` (four shards),
 `macOS offline Cursor preflight`, and the required `checks` aggregate.
 
-`macOS checks` is a three-leg matrix. Each leg runs the same nextest invocation
+`macOS checks` is a four-leg matrix. Each leg runs the same nextest invocation
 for its slice of the selection, so the suite runs in parallel instead of
 serially:
 
 ```sh
 cargo nextest run --workspace --all-targets --all-features --profile ci \
   -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
-  --partition hash:$SHARD/3
+  --partition hash:$SHARD/4
 ```
 
 Hash partitioning assigns by binary ID and test name, so a new test or a new
@@ -82,11 +82,13 @@ extension batch, Pi provisioning, and the two exact ignored installed-Pi
 parents with their nested Node children. Those stay single so no packaging or
 installed-host coverage is duplicated.
 
-The shard count is a queueing decision, not a parallelism one. Four shards plus
-the offline Cursor job sat exactly on the five-concurrent-macOS-job limit and
-one leg waited 421s for an arm64 runner, which became the run's critical path;
-three shards leave headroom. More shards shorten test execution but increase the
-chance that a leg spends its time waiting for a machine.
+The shard count trades per-leg work against runner-queue exposure. Measured on
+the same selection: four shards took 991s end to end with the slowest leg at
+714s, though one leg waited 421s for an arm64 runner; three shards removed all
+queueing (every leg started within 4s) but grew per-leg test work more than that
+saved, finishing in 1029s with the slowest leg at 1022s. Four shards win on both
+the measured result and the ceiling, because halving the legs halves the work
+each one carries.
 
 Each leg keeps its 45-minute limit, and the offline Cursor suite keeps its own
 budget. Shards record `hw.logicalcpu` and the resolved `cargo nextest` version,

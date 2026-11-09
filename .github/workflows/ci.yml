@@ -16,15 +16,15 @@ env:
 
 jobs:
   macos_checks:
-    name: macOS checks (${{ matrix.shard }}/3)
+    name: macOS checks (${{ matrix.shard }}/4)
     # macOS covers the GUI feature as well as the headless workspace.
-    # The nextest selection is hash-partitioned across three shards so the suite
+    # The nextest selection is hash-partitioned across four shards so the suite
     # runs in parallel instead of serially. Everything that is not the test run
     # stays on shard 1, so packaging, doctests and the installed-Pi cases still
-    # execute exactly once. Three shards plus the offline Cursor job stays under
-    # the five-concurrent-macOS-job limit on the GitHub Free plan, which leaves
-    # headroom for runner-capacity queueing: at four shards one leg waited 421 s
-    # for an arm64 machine, and that queue became the run's critical path.
+    # execute exactly once. Four shards plus the offline Cursor job is the
+    # five-concurrent-macOS-job limit on the GitHub Free plan. Three shards were
+    # measured too: they removed all runner queueing but grew per-leg test work
+    # more than that saved (1029s total against 991s here).
     runs-on: macos-latest
     timeout-minutes: 45
     strategy:
@@ -32,7 +32,7 @@ jobs:
       # run shows whether the failure is broad or confined to one partition.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -78,12 +78,12 @@ jobs:
       # Hash partitioning assigns by binary ID and test name, so new tests and
       # new binaries join a shard automatically, and the large pi_delegation
       # binary is divided rather than landing whole on one job.
-      - name: Test (shard ${{ matrix.shard }} of 3)
+      - name: Test (shard ${{ matrix.shard }} of 4)
         run: |
           cargo nextest run --workspace --all-targets --all-features \
             --profile ci \
             -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
-            --partition hash:${{ matrix.shard }}/3
+            --partition hash:${{ matrix.shard }}/4
       - name: Doc tests
         if: matrix.shard == 1
         run: cargo test --workspace --doc
