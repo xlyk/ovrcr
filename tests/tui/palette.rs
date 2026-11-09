@@ -2688,15 +2688,18 @@ fn palette_finds_settings_by_label_or_key_and_opens_that_row() {
         "Settings opens on the Theme row: {theme}"
     );
     dashboard.key(KeyCode::Esc);
-    // A key finds its row too, and the provider reads as people name it.
-    palette_search(&mut dashboard, "operator.provider");
+    // A key finds its row too; the Operator model is one optional Pi identity.
+    palette_search(&mut dashboard, "operator.model");
     dashboard.key(KeyCode::Enter);
     let rows = rendered_rows(&dashboard, 120, 60);
-    let provider = rows
+    let model = rows
         .iter()
-        .find(|row| row.contains("Provider") && row.contains('›'))
-        .unwrap_or_else(|| panic!("Settings opens on the Provider row: {rows:?}"));
-    assert!(provider.contains("ChatGPT"), "{provider}");
+        .find(|row| row.contains("Model") && row.contains('›'))
+        .unwrap_or_else(|| panic!("Settings opens on the Operator Model row: {rows:?}"));
+    assert!(
+        model.contains("unset"),
+        "an unset override reads unset: {model}"
+    );
     assert!(!rows.join("\n").contains("chat_gpt"), "{rows:?}");
 }
 
@@ -4338,15 +4341,13 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
         let confirmation = shutdown_navigation_confirmation(&mut dashboard, &offer);
         dashboard.ctrl('o');
         dashboard.event_action(Event::Paste("captured before navigation".into()));
-        let create = if submitted {
+        let open = if submitted {
             dashboard.key(KeyCode::Enter);
             Some(
                 dashboard
                     .drain_outbox()
                     .into_iter()
-                    .find(|m| {
-                        matches!(m.request, Request::Operator(OperatorRequest::Create { .. }))
-                    })
+                    .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
                     .unwrap(),
             )
         } else {
@@ -4359,19 +4360,17 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
         assert!(!palette_text(&dashboard).contains("Quick message"));
         assert_eq!(dashboard.focused_session(), Some(offer.ticket.session));
         dashboard.drain_outbox();
-        if let Some(create) = create {
+        if let Some(open) = open {
             let outgoing = dashboard.handle_server_message(ServerMessage::Response {
-                request_id: create.request_id,
-                response: Response::Operator(OperatorResponse::Created(
+                request_id: open.request_id,
+                response: Response::Operator(OperatorResponse::Opened(
                     ovrcr_protocol::OperatorConversationSummary {
                         id: ovrcr_protocol::OperatorConversationId(7),
                         session: SessionId(99),
                         run: ovrcr_protocol::SessionRunId(0),
-                        archived: false,
                         worker_stopped: true,
-                        provider: ovrcr_protocol::OperatorProvider::ChatGpt,
-                        model: "gpt-6.1-sol".into(),
-                        title: "Quick".into(),
+                        model: None,
+                        title: "Operator".into(),
                         current_turn: None,
                     },
                 )),

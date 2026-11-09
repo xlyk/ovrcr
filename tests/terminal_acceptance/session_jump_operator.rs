@@ -41,16 +41,16 @@ fn operator_control_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"o")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("New Conversation"),
-        wait_deadline(),
-    )?;
-    // Create only a local Operator conversation; no model turn is submitted.
-    dashboard.send(b"\r")?;
+    // The full view opens the one conversation directly; no form or chat list exists.
     dashboard.wait_for_screen(
         |screen| screen.contains("Operator ·") && screen.contains("ready"),
         wait_deadline(),
     )?;
+    assert!(
+        !dashboard.rendered().contains("New Conversation"),
+        "the singleton has no creation form: {}",
+        dashboard.rendered()
+    );
     dashboard.send(b"OPERATOR_DRAFT")?;
     dashboard.wait_for_screen(|screen| screen.contains("OPERATOR_DRAFT"), wait_deadline())?;
 
@@ -65,6 +65,20 @@ fn operator_control_jump_uses_the_live_agent_and_preserves_its_unsent_draft() ->
         },
         wait_deadline(),
     )?;
+    // The fixed Operator navigation row is not a conversation to jump into.
+    let held = dashboard.rendered();
+    let singleton_row = held
+        .lines()
+        .find(|line| {
+            line.split('│').next().is_some_and(|sidebar| {
+                sidebar.contains("Operator") && !sidebar.contains("operator-agent")
+            })
+        })
+        .context("fixed Operator navigation row")?;
+    assert!(
+        !singleton_row.contains("[1]"),
+        "the Operator conversation is not a jump target: {singleton_row}"
+    );
     dashboard.send(&control_digit('1', 1))?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Session selected"),

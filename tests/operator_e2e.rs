@@ -1,10 +1,82 @@
-//! Production worker acceptance; every network endpoint and process is fixture-owned.
+//! Operator acceptance on the real application path.
+//!
+//! The singleton lifecycle, turn/checkpoint authority and process-stop proof are
+//! driven through the compiled Server, a managed worker and a deterministic
+//! fake Pi RPC peer. `installed_pi_operator_single_conversation` is the
+//! separate opt-in proof against the installed `pi`, and
+//! `operator_pi_gui_provider` scripts the same scenarios for the GUI smoke.
+//!
+//! Every fixture owns a temporary HOME/OVRCR_HOME/socket/Git workspace, its
+//! private Pi profile and its own processes. No personal instance or real
+//! credentials are ever used.
+
+#[path = "support/fake_pi.rs"]
+mod fake_pi;
 #[path = "support/live.rs"]
 mod live;
+#[path = "support/operator_harness.rs"]
+mod operator_harness;
+#[cfg(feature = "acceptance-diagnostics")]
+#[path = "support/operator_provider.rs"]
+mod operator_provider;
+
+use fake_pi::{FakePi, Scenario, Step};
+use live::Live;
+use operator_harness::{OperatorClient, Registry, has_assistant, tool_calls, tool_outputs};
+use ovrcr::protocol::{
+    OperatorMessageContent, OperatorRequest, OperatorTurnState, OperatorWorkerEvent, Request,
+    Response, SessionId,
+};
+use serde_json::json;
+use std::{
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::PathBuf,
+    time::Duration,
+};
+
+fn fixture(scenario: &Scenario) -> (Live, FakePi, OperatorClient) {
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    fake.script(scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let client = OperatorClient::connect(&live);
+    (live, fake, client)
+}
+
+fn turn_dir(live: &Live, turn: u64) -> PathBuf {
+    live.config.join("operator-pi/turns").join(turn.to_string())
+}
+
+fn checkpoint_file(live: &Live, turn: u64) -> PathBuf {
+    turn_dir(live, turn).join("session.jsonl")
+}
+
+fn state(history: &ovrcr::protocol::OperatorHistory) -> OperatorTurnState {
+    history.conversation.current_turn.as_ref().unwrap().state
+}
+
+fn fail_message(history: &ovrcr::protocol::OperatorHistory) -> Option<String> {
+    history
+        .messages
+        .iter()
+        .find_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) => Some(text.clone()),
+            _ => None,
+        })
+}
+
+fn complete(
+    client: &mut OperatorClient,
+    conversation: ovrcr::protocol::OperatorConversationId,
+) -> ovrcr::protocol::OperatorHistory {
+    let history = client.wait_terminal(conversation);
+    assert_eq!(state(&history), OperatorTurnState::Complete, "{history:#?}");
+    client.wait_stopped(conversation)
+}
 
 #[test]
-fn operator_cli_is_a_real_entry_point() {
-    let live = live::Live::idle();
+fn operator_cli_is_the_native_profile_entry_point() {
+    let live = Live::idle();
     let output = live
         .command()
         .args(["operator", "--help"])
@@ -12,86 +84,719 @@ fn operator_cli_is_a_real_entry_point() {
         .unwrap();
     assert!(
         output.status.success(),
-        "operator CLI missing: {}",
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("login"));
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("setup"), "{help}");
+    assert!(help.contains("models"), "{help}");
+    assert!(!help.contains("worker"), "worker is hidden: {help}");
+}
+
+#[test]
+fn current_never_creates_and_open_yields_one_durable_conversation() {
+    let scenario = Scenario::new();
+    let (live, _fake, mut client) = fixture(&scenario);
+
+    assert!(
+        client.current().is_none(),
+        "Current must not create a record"
+    );
+    let registry = Registry::of(&live);
+    assert!(
+        registry.conversation_ids().is_empty(),
+        "Current must not insert a conversation"
+    );
+    assert!(
+        !live.config.join("operator-pi/turns").exists(),
+        "Current must not prepare attempt directories"
+    );
+
+    let opened = client.open();
+    assert_eq!(opened.title, "Operator");
+    assert_eq!(opened.run.0, 0);
+    assert!(opened.model.is_none());
+    assert!(opened.current_turn.is_none());
+    assert!(opened.worker_stopped);
+    assert_eq!(client.current().as_ref(), Some(&opened));
+    assert_eq!(client.open(), opened, "repeated Open keeps the same IDs");
+    let ids = Registry::of(&live).conversation_ids();
+    assert_eq!(ids, vec![opened.id.0], "exactly one durable conversation");
+    assert!(!ids.is_empty());
+
+    // Open never starts Pi: no worker process and no attempt directory.
+    let session = client.session(opened.session);
+    assert!(
+        session.pid.is_none(),
+        "Open must not start a worker: {session:#?}"
+    );
+    assert!(
+        !live
+            .config
+            .join("operator-pi/turns")
+            .read_dir()
+            .is_ok_and(|mut entries| entries.next().is_some()),
+        "Open must not create attempt directories"
+    );
+
+    // A reconnect reads the same singleton and still starts nothing.
+    drop(client);
+    let mut reconnected = OperatorClient::connect(&live);
+    assert_eq!(reconnected.current(), Some(opened.clone()));
+    assert!(reconnected.session(opened.session).pid.is_none());
+    assert_eq!(Registry::of(&live).conversation_ids(), vec![opened.id.0]);
+}
+
+#[test]
+fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("fixture-marker");
+    let mut first = Scenario::new();
+    first.steps(vec![
+        Step::Tool {
+            id: "call-write".into(),
+            name: "write".into(),
+            input: json!({"path": marker.display().to_string(), "content": "first-answer"}),
+            output: "wrote fixture-marker".into(),
+            status: "succeeded",
+            truncated: false,
+            marker: Some(marker.clone()),
+        },
+        Step::assistant("first answer"),
+        Step::Settle,
+    ]);
+    let (live, fake, mut client) = fixture(&first);
+    let opened = client.open();
+    let turn_one = client.submit_turn(&opened, "first");
+    let history = complete(&mut client, opened.id);
+    assert!(has_assistant(&history, "first answer"));
+    let calls = tool_calls(&history);
+    assert_eq!(calls.len(), 1, "one durable tool receipt: {calls:?}");
+    assert_eq!(calls[0].1, "write");
+    assert_eq!(tool_outputs(&history).len(), 1);
+    assert!(marker.exists(), "the admitted write executed");
+
+    let registry = Registry::of(&live);
+    let turn_one_id = turn_one.identity.turn.0;
+    assert_eq!(registry.checkpoint(opened.id.0), Some(turn_one_id as i64));
+    assert!(
+        !registry.batch_digests(turn_one_id).is_empty(),
+        "a completed turn has committed batch receipts"
+    );
+    let checkpoint = checkpoint_file(&live, turn_one_id);
+    assert!(checkpoint.is_file());
+    assert_eq!(
+        std::fs::symlink_metadata(&checkpoint).unwrap().mode() & 0o777,
+        0o600
+    );
+
+    // A failing turn never promotes its checkpoint.
+    let mut failing = Scenario::new();
+    failing.steps(vec![Step::Event(
+        json!({"type": "extension_error", "message": "provider"}),
+    )]);
+    fake.script(&failing);
+    fake.clear_log();
+    let summary = client.current().unwrap();
+    let turn_two = client.submit_turn(&summary, "second");
+    let failed = client.wait_terminal(opened.id);
+    assert_eq!(state(&failed), OperatorTurnState::Error);
+    assert_eq!(
+        fail_message(&failed).as_deref(),
+        Some("Pi request failed; inspect the partial journal before retrying.")
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_one_id as i64),
+        "a non-Completed turn leaves the checkpoint untouched"
+    );
+    let attempt_two = turn_dir(&live, turn_two.identity.turn.0);
+    assert!(
+        attempt_two.is_dir(),
+        "failed attempt evidence must be preserved"
+    );
+    // The resumed attempt holds only the copied base context plus this attempt's
+    // own writes; it is never adopted as the checkpoint.
+    assert!(
+        std::fs::read_to_string(attempt_two.join("session.jsonl"))
+            .unwrap()
+            .contains("first answer"),
+        "a resumed attempt starts from the completed checkpoint copy"
+    );
+    let registry = Registry::of(&live);
+    assert!(
+        !registry.batch_digests(turn_two.identity.turn.0).is_empty(),
+        "the failing turn's receipt is durable"
+    );
+    assert!(
+        !registry
+            .batch_digests(turn_two.identity.turn.0)
+            .iter()
+            .any(|(_, digest)| {
+                registry
+                    .batch_digests(turn_one_id)
+                    .iter()
+                    .any(|(_, first)| first == digest)
+            }),
+        "each turn has its own receipt digest"
+    );
+    client.wait_stopped(opened.id);
+
+    // An interrupted turn keeps its partial journal and no checkpoint.
+    let mut interrupting = Scenario::new();
+    interrupting.steps(vec![
+        Step::Start,
+        Step::Delta("partial interruption".into()),
+        Step::Hold,
+    ]);
+    fake.script(&interrupting);
+    let summary = client.current().unwrap();
+    let turn_three = client.submit_turn(&summary, "third");
+    client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial interruption")
+    });
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+    let stopped = client.stop_turn(turn_three.identity);
+    assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+    let interrupted = client.wait_stopped(opened.id);
+    assert_eq!(state(&interrupted), OperatorTurnState::Interrupted);
+    assert!(has_assistant(&interrupted, "partial interruption"));
+    assert!(operator_harness::interrupted(&interrupted));
+    operator_harness::assert_group_absent(&live, pgid);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_one_id as i64),
+        "an interrupted turn is not a context checkpoint"
+    );
+    assert!(
+        std::fs::read_to_string(checkpoint_file(&live, turn_three.identity.turn.0))
+            .unwrap()
+            .contains("first answer"),
+        "the interrupted attempt kept only its checkpoint copy"
+    );
+
+    // The follow-up resumes only the last completed checkpoint.
+    let mut follow_up = Scenario::new();
+    follow_up.default_model("fixture", "alternate");
+    // A fresh profile thinking level that differs from the checkpoint's, so the
+    // two possible resolutions are distinguishable in the fake's command log.
+    follow_up.set("thinking_level", json!("high"));
+    follow_up.steps(vec![Step::assistant("follow up answer"), Step::Settle]);
+    fake.script(&follow_up);
+    fake.clear_log();
+    let summary = client.current().unwrap();
+    let turn_four = client.submit_turn(&summary, "fourth");
+    let history = complete(&mut client, opened.id);
+    assert!(has_assistant(&history, "follow up answer"));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_four.identity.turn.0 as i64)
+    );
+    assert!(
+        !checkpoint.exists(),
+        "the superseded checkpoint copy is removed only after the new receipt"
+    );
+    let log = fake.log();
+    let switch = log
+        .iter()
+        .find(|line| line["event"] == "switch")
+        .expect("the follow-up resumes a checkpoint");
+    assert_eq!(switch["exists"], true);
+    let copied = std::fs::read_to_string(switch["path"].as_str().unwrap()).unwrap();
+    assert!(
+        copied.contains("first answer"),
+        "the resumed context is the last completed turn, not the failed/interrupted ones: {copied}"
+    );
+    assert!(!copied.contains("partial interruption"));
+    // The fake restores the resumed session's own model/thinking from the
+    // checkpoint, so a worker that reads the post-switch state instead of the
+    // fresh profile defaults is detectable rather than accidentally correct.
+    assert!(
+        copied.contains("\"modelId\":\"default\""),
+        "the checkpoint records the previous turn's model: {copied}"
+    );
+    assert!(
+        copied.contains("\"thinkingLevel\":\"medium\""),
+        "the checkpoint records the previous turn's thinking level: {copied}"
+    );
+    let selected: Vec<(String, String)> = log
+        .iter()
+        .filter(|line| line["event"] == "command" && line["command"] == "set_model")
+        .map(|line| {
+            (
+                line["provider"].as_str().unwrap_or_default().to_owned(),
+                line["modelId"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        selected,
+        vec![("fixture".to_owned(), "alternate".to_owned())],
+        "the follow-up applies the fresh profile default, not the resumed model"
+    );
+    let levels: Vec<String> = log
+        .iter()
+        .filter(|line| line["event"] == "command" && line["command"] == "set_thinking_level")
+        .filter_map(|line| line["level"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        levels,
+        vec!["high".to_owned()],
+        "the follow-up restores the fresh profile thinking level, not the resumed one"
+    );
+    let resumed_session = checkpoint_file(&live, turn_four.identity.turn.0);
+    assert!(
+        std::fs::read_to_string(&resumed_session)
+            .unwrap()
+            .contains("first answer"),
+        "the promoted native session keeps the completed history"
+    );
+    assert_eq!(
+        history
+            .conversation
+            .model
+            .as_ref()
+            .map(|model| model.id.clone()),
+        Some("alternate".into()),
+        "the fresh profile default applies to the follow-up"
+    );
+}
+
+#[test]
+fn a_natural_worker_exit_is_not_stop_proof_and_blocks_the_next_turn() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::Delta("killed evidence".into()),
+        Step::Hold,
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "crash me");
+    client.wait_history(opened.id, |history| {
+        has_assistant(history, "killed evidence")
+    });
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+
+    // The test kills the owned group directly: this is a crash, not a Server stop.
+    assert_eq!(unsafe { libc::kill(-pgid, libc::SIGKILL) }, 0);
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(10)));
+    live.forget_group(pgid);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let session = client.session(opened.session);
+        if session.pid.is_none() && !session.phase.is_live() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "killed worker stayed live"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // A Running turn with a dead process is still not a certified stop.
+    let running = client.read(opened.id.0, 0, 100);
+    assert_eq!(state(&running), OperatorTurnState::Running);
+    assert!(!running.conversation.worker_stopped);
+    // Stop cannot certify a process the Server no longer owns; it interrupts the
+    // turn but leaves `worker_stopped` false.
+    assert!(matches!(
+        client.stop(turned.identity),
+        Response::Error { .. }
+    ));
+    let history = client.read(opened.id.0, 0, 100);
+    assert_eq!(state(&history), OperatorTurnState::Interrupted);
+    assert!(
+        !history.conversation.worker_stopped,
+        "a terminal turn state is never inferred as controlled process-stop proof"
+    );
+    assert!(matches!(
+        client.submit(&history.conversation, "do not replay"),
+        Response::Error { .. }
+    ));
+
+    // Exact-run acknowledgement is the independent recovery path.
+    assert_eq!(
+        client.exchange(Request::AcknowledgeSessionStopped {
+            session: opened.session,
+            expected_run: turned.identity.run,
+        }),
+        Response::Ok
+    );
+    let acknowledged = client.wait_stopped(opened.id);
+    assert_eq!(state(&acknowledged), OperatorTurnState::Interrupted);
+    assert!(has_assistant(&acknowledged, "killed evidence"));
+
+    let mut next = Scenario::new();
+    next.steps(vec![Step::assistant("after crash"), Step::Settle]);
+    fake.script(&next);
+    fake.clear_log();
+    let summary = client.current().unwrap();
+    let follow_up = client.submit_turn(&summary, "after the crash");
+    let history = complete(&mut client, opened.id);
+    assert!(has_assistant(&history, "after crash"));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(follow_up.identity.turn.0 as i64)
+    );
+    assert!(
+        fake.log().iter().all(|line| line["event"] != "switch"),
+        "with no completed checkpoint the next attempt starts empty"
+    );
+    let killed_attempt = turn_dir(&live, turned.identity.turn.0);
+    assert!(
+        killed_attempt.is_dir(),
+        "the killed attempt keeps its evidence"
+    );
+}
+
+#[test]
+fn a_worker_that_exits_after_settling_never_promotes_a_checkpoint() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::assistant("streamed then gone"),
+        Step::Settle,
+        Step::Exit(0),
+    ]);
+    let (live, _fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "exit early");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(state(&history), OperatorTurnState::Error);
+    assert!(
+        has_assistant(&history, "streamed then gone"),
+        "already-committed visible text is preserved"
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        None,
+        "an exit before the native file is verified cannot promote a checkpoint"
+    );
+    assert!(!checkpoint_file(&live, turned.identity.turn.0).exists());
+    client.wait_stopped(opened.id);
+}
+
+#[test]
+fn a_damaged_checkpoint_fails_closed_and_preserves_its_bytes() {
+    for damage in ["missing", "corrupt", "body", "nonprivate", "symlink"] {
+        let mut first = Scenario::new();
+        first.steps(vec![Step::assistant("checkpoint base"), Step::Settle]);
+        let (live, fake, mut client) = fixture(&first);
+        let opened = client.open();
+        let turn_one = client.submit_turn(&opened, "base");
+        complete(&mut client, opened.id);
+        let checkpoint = checkpoint_file(&live, turn_one.identity.turn.0);
+        let original = std::fs::read(&checkpoint).unwrap();
+        let preserved = match damage {
+            "missing" => {
+                std::fs::remove_file(&checkpoint).unwrap();
+                Vec::new()
+            }
+            "corrupt" => {
+                std::fs::write(&checkpoint, b"{\"type\":\"session\",\"version\":9}\n").unwrap();
+                std::fs::read(&checkpoint).unwrap()
+            }
+            "body" => {
+                // The header stays valid; a later record is malformed. Pi's
+                // session manager would skip it and resume a shortened history.
+                let mut damaged = original.clone();
+                if !damaged.ends_with(b"\n") {
+                    damaged.push(b'\n');
+                }
+                damaged.extend_from_slice(b"not-json\n");
+                std::fs::write(&checkpoint, damaged).unwrap();
+                std::fs::read(&checkpoint).unwrap()
+            }
+            "nonprivate" => {
+                std::fs::set_permissions(&checkpoint, std::fs::Permissions::from_mode(0o644))
+                    .unwrap();
+                original.clone()
+            }
+            "symlink" => {
+                let other = live.root.path().join("checkpoint-target");
+                std::fs::write(&other, &original).unwrap();
+                std::fs::remove_file(&checkpoint).unwrap();
+                std::os::unix::fs::symlink(&other, &checkpoint).unwrap();
+                original.clone()
+            }
+            _ => unreachable!(),
+        };
+
+        let mut second = Scenario::new();
+        second.steps(vec![Step::assistant("must not resume")]);
+        fake.script(&second);
+        fake.clear_log();
+        let summary = client.current().unwrap();
+        let turn_two = client.submit_turn(&summary, "resume");
+        let history = client.wait_terminal(opened.id);
+        assert_eq!(state(&history), OperatorTurnState::Error, "{damage}");
+        assert_eq!(
+            fail_message(&history).as_deref(),
+            Some("Operator Pi context is unavailable; saved data was preserved."),
+            "{damage}"
+        );
+        assert!(!has_assistant(&history, "must not resume"), "{damage}");
+        assert_eq!(
+            Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_one.identity.turn.0 as i64),
+            "{damage}: the checkpoint reference is unchanged"
+        );
+        let attempt = turn_dir(&live, turn_two.identity.turn.0);
+        assert!(!attempt.join("session.jsonl").exists(), "{damage}");
+        match damage {
+            "missing" => assert!(!checkpoint.exists()),
+            "symlink" => assert!(
+                std::fs::symlink_metadata(&checkpoint)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            ),
+            _ => assert_eq!(std::fs::read(&checkpoint).unwrap(), preserved, "{damage}"),
+        }
+        assert!(
+            fake.log().iter().all(|line| line["event"] != "prompt"),
+            "{damage}: no prompt may follow a failed resume"
+        );
+        client.wait_stopped(opened.id);
+    }
+}
+
+#[test]
+fn an_existing_attempt_directory_is_never_replayed() {
+    let mut first = Scenario::new();
+    first.steps(vec![Step::assistant("base"), Step::Settle]);
+    let (live, fake, mut client) = fixture(&first);
+    let opened = client.open();
+    let turn_one = client.submit_turn(&opened, "base");
+    complete(&mut client, opened.id);
+
+    // SQLite assigns the next turn id sequentially; pre-create its attempt.
+    let next_turn = turn_one.identity.turn.0 + 1;
+    let attempt = turn_dir(&live, next_turn);
+    std::fs::create_dir_all(&attempt).unwrap();
+    std::fs::set_permissions(&attempt, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let marker = attempt.join("prior-attempt-marker");
+    std::fs::write(&marker, b"uncertain prior attempt").unwrap();
+
+    let mut second = Scenario::new();
+    second.steps(vec![Step::assistant("must not replay")]);
+    fake.script(&second);
+    let summary = client.current().unwrap();
+    let submitted = client.submit_turn(&summary, "resume into an existing attempt");
+    assert_eq!(submitted.identity.turn.0, next_turn);
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(state(&history), OperatorTurnState::Error);
+    assert_eq!(
+        fail_message(&history).as_deref(),
+        Some("Operator Pi context is unavailable; saved data was preserved.")
+    );
+    assert_eq!(std::fs::read(&marker).unwrap(), b"uncertain prior attempt");
+    assert!(!has_assistant(&history, "must not replay"));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_one.identity.turn.0 as i64)
+    );
+    client.wait_stopped(opened.id);
+}
+
+#[test]
+fn stale_run_submits_and_terminal_lifecycle_routes_are_refused() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("done"), Step::Settle]);
+    let (live, _fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "one");
+    complete(&mut client, opened.id);
+
+    // A stale observed run cannot submit again.
+    let response = client.exchange(Request::Operator(OperatorRequest::Submit {
+        conversation: opened.id,
+        expected_run: opened.run,
+        text: "stale".into(),
+        context: ovrcr::protocol::OperatorContext::default(),
+    }));
+    assert!(matches!(response, Response::Error { .. }), "{response:?}");
+
+    // Operator history is not a terminal lifecycle.
+    for request in [
+        Request::CloseTerminal {
+            session: opened.session,
+            expected_run: turned.identity.run,
+        },
+        Request::UnarchiveSession {
+            session: opened.session,
+            expected_run: turned.identity.run,
+        },
+        Request::DeleteArchivedSession {
+            session: opened.session,
+            expected_run: turned.identity.run,
+        },
+        Request::RemoveSession {
+            session: opened.session,
+        },
+    ] {
+        // The public terminal lifecycle path is a control request (no Dashboard
+        // ownership), so its refusal is synchronous rather than deferred.
+        let response = live.request(request.clone());
+        assert!(
+            matches!(response, Response::Error { .. }),
+            "{request:?} must be refused, got {response:?}"
+        );
+    }
+    assert_eq!(
+        Registry::of(&live).conversation_ids(),
+        vec![opened.id.0],
+        "refused lifecycle routes preserve the conversation row"
+    );
+    assert!(client.session(opened.session).id == opened.session);
+}
+
+/// The structured restore payload must not be an alias for another session.
+#[test]
+fn operator_session_identity_is_the_conversation_session() {
+    let scenario = Scenario::new();
+    let (live, _fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let session: SessionId = opened.session;
+    assert_eq!(session, client.session(session).id);
+    let summary = ovrcr::retained::load_session_summaries(&live.config).unwrap();
+    let row = summary
+        .into_iter()
+        .find(|summary| summary.id == session)
+        .expect("retained operator session");
+    assert!(matches!(
+        row.scope,
+        ovrcr::protocol::SessionScope::OperatorConversation { conversation } if conversation == opened.id
+    ));
+    assert!(!row.archived);
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
-#[path = "support/operator_provider.rs"]
-mod operator_provider;
-
-#[cfg(feature = "acceptance-diagnostics")]
-mod compiled_worker {
-    use super::{
-        live,
-        operator_provider::{Provider, cli_array},
-    };
+mod installed_pi {
+    use super::{live, operator_harness, operator_provider};
     use crossterm::event::{Event, KeyCode};
-    use ovrcr::{
-        protocol::{
-            self, ClientMessage, OperatorConversationId, OperatorConversationSummary,
-            OperatorHistory, OperatorMessageContent, OperatorProvider, OperatorRequest,
-            OperatorResponse, OperatorToolStatus, OperatorTurn, OperatorTurnState,
-            OperatorWorkerEvent, Request, Response, ServerEvent, ServerMessage, SessionPhase,
-            SessionSummary, TerminalSize,
-        },
-        tui::{Dashboard, DashboardAction, Settings},
+    use operator_provider::{Chunk, Plan, Provider};
+    use ovrcr::protocol::{
+        self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorMessageContent,
+        OperatorToolStatus, OperatorTurnState, OperatorWorkerEvent, Request, Response,
+        ServerMessage, SessionPhase, TerminalSize,
     };
+    use ovrcr::tui::{Dashboard, Settings};
+    use serde_json::{Value, json};
     use std::{
-        collections::{HashSet, VecDeque},
-        ffi::OsStr,
-        os::unix::net::UnixStream,
+        collections::{HashMap, VecDeque},
+        ffi::{OsStr, OsString},
+        os::unix::{
+            fs::{MetadataExt, PermissionsExt},
+            net::UnixStream,
+        },
+        path::{Path, PathBuf},
+        process::Command,
+        sync::{Arc, Mutex},
         thread,
         time::{Duration, Instant},
     };
 
-    const BUDGET: Duration = Duration::from_secs(15);
+    const BUDGET: Duration = Duration::from_secs(30);
 
-    /// Actual Dashboard model/outbox, production frames/socket, actual Server responses/events.
-    struct DashboardClient {
+    /// Inherited provider/session credentials the launcher must strip before
+    /// Pi — and therefore before the admitted Bash child — sees them. Every
+    /// value is a unique fixture sentinel, never a real credential.
+    const DENIED_ENV: &[(&str, &str)] = &[
+        (
+            "ANTHROPIC_API_KEY",
+            "SENTINEL_ANTHROPIC_9f3a2c_fixture_only",
+        ),
+        ("OPENAI_API_KEY", "SENTINEL_OPENAI_5c17bd_fixture_only"),
+        (
+            "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+            "SENTINEL_AWS_a41e0_fixture_only",
+        ),
+        ("PI_SESSION_ID", "SENTINEL_PI_SESSION_7be2_fixture_only"),
+        (
+            "PI_CODING_AGENT_SESSION_DIR",
+            "SENTINEL_PI_DIR_2d8f_fixture_only",
+        ),
+    ];
+
+    /// An ordinary tool credential, not a provider credential: it must survive
+    /// into the admitted Bash child as the positive control for the denylist.
+    const ORDINARY_ENV: (&str, &str) = ("GITHUB_TOKEN", "SENTINEL_GITHUB_64c9_fixture_only");
+
+    /// Every fixture sentinel, denied first and the ordinary control last.
+    fn fixture_sentinels() -> impl Iterator<Item = (&'static str, &'static str)> {
+        DENIED_ENV.iter().copied().chain([ORDINARY_ENV])
+    }
+
+    /// The launcher environment for the compiled Server: the installed Pi plus
+    /// the inherited credential sentinels the dedicated profile must drop.
+    fn launcher_environment(pi: &Path) -> Vec<(&'static str, &OsStr)> {
+        let mut environment = vec![("OVRCR_PI_EXECUTABLE", pi.as_os_str())];
+        for (key, value) in fixture_sentinels() {
+            environment.push((key, OsStr::new(value)));
+        }
+        environment
+    }
+
+    fn pi_executable() -> PathBuf {
+        let value = std::env::var_os("OVRCR_TEST_PI_EXECUTABLE")
+            .filter(|value| !value.is_empty())
+            .expect("set OVRCR_TEST_PI_EXECUTABLE to the installed pi binary");
+        let path = PathBuf::from(value);
+        assert!(path.is_file(), "installed pi not found: {}", path.display());
+        path
+    }
+
+    /// The real Dashboard model on a real socket: open, composer edits and
+    /// submissions come from its outbox, never from hand-built Submit requests.
+    struct DashboardDriver {
         stream: UnixStream,
         dashboard: Dashboard,
         pending: VecDeque<ClientMessage>,
-        manual_id: u64,
-        changed: HashSet<OperatorConversationId>,
+        next_id: u64,
     }
-    impl DashboardClient {
+
+    impl DashboardDriver {
         fn connect(live: &live::Live) -> Self {
             let mut stream = protocol::connect_server(&live.socket).unwrap();
             stream.set_read_timeout(Some(BUDGET)).unwrap();
             stream.set_write_timeout(Some(BUDGET)).unwrap();
-            let Response::Hierarchy(hierarchy) =
-                protocol::client::request(&mut stream, 900_000, Request::DashboardHello).unwrap()
-            else {
-                panic!("Dashboard handshake")
-            };
+            let hierarchy =
+                match protocol::client::request(&mut stream, 900_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
             let mut dashboard = Dashboard::new(TerminalSize {
                 rows: 50,
                 cols: 160,
             });
             dashboard.install_hierarchy(hierarchy);
             dashboard.install_area(ratatui::layout::Rect::new(0, 0, 160, 50));
+            let mut settings = Settings::default();
+            settings.operator.model = None;
+            dashboard.install_settings(settings);
             Self {
                 stream,
                 dashboard,
                 pending: VecDeque::new(),
-                manual_id: 900_001,
-                changed: HashSet::new(),
+                next_id: 900_001,
             }
         }
-        fn receive(&mut self, message: ServerMessage) {
-            if let ServerMessage::Event(ServerEvent::OperatorChanged(id)) = &message {
-                self.changed.insert(*id);
-            }
-            self.pending
-                .extend(self.dashboard.handle_server_message(message));
-            self.pending.extend(self.dashboard.drain_outbox());
-        }
-        fn exchange(&mut self, message: ClientMessage) -> Response {
-            let id = message.request_id;
-            protocol::write_frame(&mut self.stream, &message).unwrap();
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_id += 1;
+            let id = self.next_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
             loop {
                 let message: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
                 let response = match &message {
@@ -101,1863 +806,1548 @@ mod compiled_worker {
                     } if *request_id == id => Some(response.clone()),
                     _ => None,
                 };
-                self.receive(message);
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+                self.pending.extend(self.dashboard.drain_outbox());
                 if let Some(response) = response {
                     return response;
                 }
             }
         }
-        /// Hold a real mutation receipt outside the Dashboard until the test releases it.
-        fn hold(&mut self, request: ClientMessage) -> ServerMessage {
-            protocol::write_frame(&mut self.stream, &request).unwrap();
-            loop {
-                let message: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
-                if matches!(&message, ServerMessage::Response { request_id, .. } if *request_id == request.request_id)
-                {
-                    return message;
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
                 }
-                self.receive(message);
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
             }
+            panic!("Dashboard outbox did not converge");
         }
-        fn take_operator_request(&mut self) -> ClientMessage {
-            self.pending.extend(self.dashboard.drain_outbox());
-            let index = self
-                .pending
-                .iter()
-                .position(|message| {
-                    matches!(
-                        message.request,
-                        Request::Operator(
-                            OperatorRequest::Create { .. } | OperatorRequest::Submit { .. }
-                        )
-                    )
-                })
-                .expect("public input emitted mutation");
-            self.pending.remove(index).unwrap()
-        }
-        fn flush(&mut self) -> Vec<Response> {
-            self.pending.extend(self.dashboard.drain_outbox());
-            let mut replies = Vec::new();
-            while let Some(message) = self.pending.pop_front() {
-                assert!(replies.len() < 500, "Dashboard catch-up did not converge");
-                let response = self.exchange(message);
-                assert!(
-                    !matches!(response, Response::Error { .. }),
-                    "Dashboard request failed: {response:?}"
-                );
-                replies.push(response);
-            }
-            replies
-        }
-        fn request(&mut self, request: Request) -> Response {
-            self.manual_id += 1;
-            let response = self.exchange(ClientMessage {
-                request_id: self.manual_id,
-                request,
-            });
+
+        fn open(&mut self) {
+            self.dashboard.key(KeyCode::Char('o'));
             self.flush();
-            response
         }
-        fn key(&mut self, code: KeyCode) {
-            let action = self.dashboard.key(code);
-            assert!(
-                !matches!(action, DashboardAction::PtyBytes(_)),
-                "native chat emitted terminal input"
-            );
+
+        /// Drain unsolicited server events so the Dashboard sees completion and
+        /// stop proof before the next composer action.
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(2)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream.set_read_timeout(Some(BUDGET)).unwrap();
             self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
         }
-        fn ctrl(&mut self, code: char) {
-            let action = self.dashboard.ctrl(code);
-            assert!(!matches!(action, DashboardAction::PtyBytes(_)));
-        }
-        fn paste(&mut self, text: &str) {
+
+        fn submit(&mut self, text: &str) {
+            self.pump();
             assert!(
                 !matches!(
                     self.dashboard.event_action(Event::Paste(text.into())),
-                    DashboardAction::PtyBytes(_)
+                    ovrcr::tui::DashboardAction::PtyBytes(_)
                 ),
                 "paste must only edit the native draft"
             );
-            assert!(
-                self.dashboard.drain_outbox().is_empty(),
-                "paste submitted a request"
-            );
-        }
-        fn create(&mut self, model: &str, first: bool) -> OperatorConversationSummary {
-            self.create_provider(OperatorProvider::Grok, model, first)
-        }
-        fn create_provider(
-            &mut self,
-            provider: OperatorProvider,
-            model: &str,
-            first: bool,
-        ) -> OperatorConversationSummary {
-            let mut settings = Settings::default();
-            settings.operator.provider = provider;
-            settings.operator.grok_model = Some(model.into());
-            settings.operator.chat_gpt_model = Some(model.into());
-            self.dashboard.install_settings(settings);
-            if first {
-                self.key(KeyCode::Char('o'));
-            } else {
-                self.ctrl('n');
-            }
+            self.dashboard.key(KeyCode::Enter);
             self.flush();
-            self.key(KeyCode::Enter);
-            self.flush()
-                .into_iter()
-                .find_map(|response| match response {
-                    Response::Operator(OperatorResponse::Created(summary)) => Some(summary),
-                    _ => None,
-                })
-                .expect("native New Conversation reached real Server create")
         }
-        fn submit(&mut self, text: &str) -> OperatorTurn {
-            self.paste(text);
-            self.key(KeyCode::Enter);
-            self.flush()
-                .into_iter()
-                .find_map(|response| match response {
-                    Response::Operator(OperatorResponse::Submitted(turn)) => Some(turn),
-                    _ => None,
-                })
-                .expect("native Enter reached real Server submit")
-        }
+
         fn history(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
-            let response = self.request(Request::Operator(OperatorRequest::Read {
+            match self.exchange(Request::Operator(ovrcr::protocol::OperatorRequest::Read {
                 conversation,
                 after: 0,
                 limit: 100,
-            }));
-            let Response::Operator(OperatorResponse::History(history)) = response else {
-                panic!("durable history: {response:?}")
-            };
-            history
+            })) {
+                Response::Operator(ovrcr::protocol::OperatorResponse::History(history)) => history,
+                other => panic!("operator history: {other:?}"),
+            }
         }
+
         fn wait_history(
             &mut self,
-            provider: &Provider,
             conversation: OperatorConversationId,
             predicate: impl Fn(&OperatorHistory) -> bool,
         ) -> OperatorHistory {
             let deadline = Instant::now() + BUDGET;
             loop {
-                provider.assert_healthy();
                 let history = self.history(conversation);
                 if predicate(&history) {
                     return history;
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "operator history deadline: {history:?}"
+                    "operator history deadline: {history:#?}"
                 );
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(20));
             }
         }
-        fn rendered(&mut self) -> String {
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 50)).unwrap();
-            self.dashboard.draw(&mut terminal).unwrap();
-            terminal
-                .backend()
-                .buffer()
-                .content()
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect()
-        }
-        fn select_previous(&mut self) {
-            self.ctrl('l');
-            self.key(KeyCode::Up);
-            self.key(KeyCode::Enter);
-            self.flush();
-        }
-        fn select_next(&mut self) {
-            self.ctrl('l');
-            self.key(KeyCode::Down);
-            self.key(KeyCode::Enter);
-            self.flush();
-        }
-    }
 
-    fn start(live: &live::Live, provider: &Provider) {
-        start_with_log(live, provider, None);
-    }
-    fn start_with_log(live: &live::Live, provider: &Provider, log: Option<&std::path::Path>) {
-        // Empty every inherited provider credential/endpoint and proxy; HOME/profile paths are
-        // private in Live. The only inference endpoint is the feature-gated loopback seam.
-        let environment = [
-            ("OVRCR_OPERATOR_TEST_API_BASE", OsStr::new(&provider.base)),
-            ("OPENAI_API_KEY", OsStr::new("")),
-            ("XAI_API_KEY", OsStr::new("")),
-            ("GROK_API_KEY", OsStr::new("")),
-            ("ANTHROPIC_API_KEY", OsStr::new("")),
-            ("OPENAI_ACCESS_TOKEN", OsStr::new("")),
-            ("OPENAI_REFRESH_TOKEN", OsStr::new("")),
-            ("OPENAI_AUTH_TOKEN", OsStr::new("")),
-            ("CHATGPT_ACCESS_TOKEN", OsStr::new("")),
-            ("CHATGPT_REFRESH_TOKEN", OsStr::new("")),
-            ("CHATGPT_TOKEN", OsStr::new("")),
-            ("XAI_ACCESS_TOKEN", OsStr::new("")),
-            ("XAI_REFRESH_TOKEN", OsStr::new("")),
-            ("GROK_ACCESS_TOKEN", OsStr::new("")),
-            ("GROK_REFRESH_TOKEN", OsStr::new("")),
-            ("GROK_TOKEN", OsStr::new("")),
-            ("OPENAI_BASE_URL", OsStr::new("")),
-            ("XAI_BASE_URL", OsStr::new("")),
-            ("HTTP_PROXY", OsStr::new("")),
-            ("HTTPS_PROXY", OsStr::new("")),
-            ("ALL_PROXY", OsStr::new("")),
-            ("http_proxy", OsStr::new("")),
-            ("https_proxy", OsStr::new("")),
-            ("all_proxy", OsStr::new("")),
-            ("NO_PROXY", OsStr::new("*")),
-            ("no_proxy", OsStr::new("*")),
-        ];
-        if let Some(log) = log {
-            live.start_binary_logged(&environment, log);
-        } else {
-            live.start_binary_env(&environment);
-        }
-    }
-    fn has_text(history: &OperatorHistory, needle: &str) -> bool {
-        history.messages.iter().any(|message| matches!(&message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) if text.contains(needle)))
-    }
-    fn assert_tool(history: &OperatorHistory, label: &str) {
-        assert!(history.messages.iter().any(|message| matches!(&message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { name, arguments, .. }) if name == "bash" && arguments.contains("OVRCR_EXECUTABLE"))));
-        assert!(history.messages.iter().any(|message| matches!(&message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, truncated: false, status: OperatorToolStatus::Succeeded, .. }) if output.contains(&format!("E2E_{label}_TOOL")) && cli_array(output).is_ok_and(|value| value == serde_json::json!([])))));
-    }
-    fn inventory(live: &live::Live, summary: &OperatorConversationSummary) -> SessionSummary {
-        let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
-            panic!("inventory")
-        };
-        sessions
-            .into_iter()
-            .find(|session| session.id == summary.session)
-            .unwrap()
-    }
-    fn own_worker(live: &live::Live, summary: &OperatorConversationSummary) -> libc::pid_t {
-        let session = inventory(live, summary);
-        assert!(session.phase.is_live());
-        let pid = session.pid.expect("real compiled worker PID");
-        let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-        live.own_group(pgid);
-        pgid
-    }
-    fn assert_retired(live: &live::Live, history: &OperatorHistory, pgid: libc::pid_t) {
-        let summary = &history.conversation;
-        assert!(
-            summary.worker_stopped,
-            "retained exact-run controlled stop proof is required"
-        );
-        assert!(
-            live::wait_group_absent(pgid, BUDGET),
-            "owned operator group still exists: {pgid}"
-        );
-        live.forget_group(pgid);
-        let session = inventory(live, summary);
-        assert!(
-            !session.phase.is_live(),
-            "controlled worker remains live: {session:?}"
-        );
-    }
-
-    #[test]
-    #[ignore = "exact subprocess fixture; the E2E test supplies its private loopback endpoints"]
-    fn seed_grok_auth() {
-        let base = std::env::var("OVRCR_OPERATOR_E2E_AUTH_BASE").unwrap();
-        let instance = std::env::var_os("OVRCR_OPERATOR_E2E_AUTH_INSTANCE").unwrap();
-        super::operator_provider::sign_in_local(&base, std::path::Path::new(&instance));
-    }
-
-    fn demo_instance(
-        parent: &std::path::Path,
-        candidate: &std::path::Path,
-    ) -> std::io::Result<std::path::PathBuf> {
-        let parent = parent.canonicalize()?;
-        let candidate = candidate.canonicalize()?;
-        let registry = std::fs::symlink_metadata(candidate.join("registry.sqlite3"))?;
-        if candidate.parent() != Some(parent.as_path())
-            || !candidate
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("ovrcr-gui-")
-            || !registry.is_file()
-            || registry.file_type().is_symlink()
-        {
-            return Err(std::io::Error::other(
-                "Demo must be an immediate private TMPDIR child with its real registry",
-            ));
-        }
-        Ok(candidate)
-    }
-
-    #[test]
-    fn native_holder_accepts_only_the_supplied_demo_parent_and_real_registry() {
-        let parent = tempfile::tempdir().unwrap();
-        let other = tempfile::tempdir().unwrap();
-        for (root, name, registry, accepted) in [
-            (parent.path(), "ovrcr-gui-good", true, true),
-            (other.path(), "ovrcr-gui-foreign", true, false),
-            (parent.path(), "unrelated", true, false),
-            (parent.path(), "ovrcr-gui-incomplete", false, false),
-        ] {
-            let demo = root.join(name);
-            std::fs::create_dir(&demo).unwrap();
-            if registry {
-                std::fs::write(demo.join("registry.sqlite3"), b"fixture").unwrap();
-            }
-            assert_eq!(demo_instance(parent.path(), &demo).is_ok(), accepted);
-        }
-    }
-
-    /// Provider only: root owns the actual GUI, Demo Server, launcher and all their cleanup.
-    #[test]
-    #[ignore = "manual native CUA provider holder; requires explicit private rendezvous/TMPDIR"]
-    fn native_provider_holder() {
-        use std::{
-            fs,
-            os::unix::fs::PermissionsExt,
-            path::{Path, PathBuf},
-        };
-        let control = PathBuf::from(std::env::var_os("OVRCR_OPERATOR_E2E_HOLDER").unwrap())
-            .canonicalize()
-            .unwrap();
-        assert_eq!(
-            fs::metadata(&control).unwrap().permissions().mode() & 0o077,
-            0,
-            "private rendezvous required"
-        );
-        let parent = PathBuf::from(std::env::var_os("OVRCR_OPERATOR_E2E_DEMO_PARENT").unwrap())
-            .canonicalize()
-            .unwrap();
-        let duration = Duration::from_secs(600);
-        let deadline = Instant::now() + duration;
-        let provider = Provider::new(&control, duration);
-        fs::write(control.join("base.json"), serde_json::json!({"api_base":provider.base,"holder_pid":std::process::id(),"deadline_seconds":duration.as_secs()}).to_string()).unwrap();
-        let mut seeded = false;
-        while !control.join("finish").exists() {
-            assert!(
-                Instant::now() < deadline,
-                "native provider holder exceeded ten minutes"
-            );
-            if !seeded && control.join("demo-instance").exists() {
-                let path = fs::read_to_string(control.join("demo-instance")).unwrap();
-                let instance = demo_instance(&parent, Path::new(path.trim()))
-                    .expect("refuse foreign or incomplete Demo");
-                provider.sign_in(&instance);
-                fs::write(
-                    control.join("auth-ready.json"),
-                    serde_json::json!({"instance":instance,"provider":"grok","signed_in":true})
-                        .to_string(),
-                )
-                .unwrap();
-                seeded = true;
-            }
-            for (marker, model) in [
-                ("release-a", "fixture-a"),
-                ("release-b", "fixture-b"),
-                ("release-b-followup", "fixture-b-followup"),
-                ("release-quick", "fixture-quick"),
-                ("release-activity-start", "fixture-activity-start"),
-                ("release-activity", "fixture-activity"),
-            ] {
-                if control.join(marker).exists() {
-                    provider.release(model);
-                }
-            }
-            provider.assert_healthy();
-            thread::sleep(Duration::from_millis(25));
-        }
-        fs::write(control.join("finished.json"), serde_json::json!({"seeded":seeded,"a_requests":provider.requests("fixture-a").len(),"b_requests":provider.requests("fixture-b").len(),"quick_requests":provider.requests("fixture-quick").len(),"activity_requests":provider.requests("fixture-activity").len()}).to_string()).unwrap();
-    }
-
-    #[test]
-    fn siwc_missing_content_type_preserves_completed_success_and_validation_failures() {
-        use sha2::{Digest, Sha256};
-        use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        let mut credential = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(
-                live.config
-                    .join("operator-auth")
-                    .join(format!("chatgpt-{:x}.json", Sha256::digest(b"default"))),
-            )
-            .unwrap();
-        write!(credential, "{}", serde_json::json!({"client_id":"fixture","subject":"fixture","issuer":"https://auth.openai.com","access_token":"operator-e2e-oauth-only","expires_at":4102444800u64,"scopes":["chatgpt.tokens.use.direct"]})).unwrap();
-        drop(credential);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        for (index, (provider_kind, model, success)) in [
-            (OperatorProvider::ChatGpt, "fixture-siwc-missing", true),
-            (OperatorProvider::ChatGpt, "fixture-siwc-wrong", false),
-            (OperatorProvider::ChatGpt, "fixture-siwc-malformed", false),
-            (OperatorProvider::ChatGpt, "fixture-siwc-incomplete", false),
-            (OperatorProvider::ChatGpt, "fixture-siwc-error", false),
-            (OperatorProvider::Grok, "fixture-siwc-grok-missing", false),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let conversation = ui.create_provider(provider_kind, model, index == 0);
-            ui.submit("Complete the isolated header fixture once");
-            let group = own_worker(&live, &conversation);
-            provider.release(model);
-            let history = ui.wait_history(&provider, conversation.id, |history| {
-                history.conversation.worker_stopped
-            });
-            assert_retired(&live, &history, group);
-            assert_eq!(
-                history.conversation.current_turn.as_ref().unwrap().state,
-                if success {
-                    OperatorTurnState::Complete
-                } else {
-                    OperatorTurnState::Error
-                },
-                "headerless subscription completion must work while counterexamples remain failures"
-            );
-            let database = rusqlite::Connection::open_with_flags(
-                ovrcr::config::database_path(&live.config),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )
-            .unwrap();
-            let saved: i64 = database
-                .query_row(
-                    "SELECT count(*) FROM operator_model_history WHERE conversation=?1",
-                    [i64::try_from(conversation.id.0).unwrap()],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(saved, i64::from(success));
-            assert!(!history.messages.iter().any(|message| matches!(
-                message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
-            )));
-            if success {
-                assert!(
-                    has_text(&history, "HEADERLESS_E2E_OK")
-                        && ui.rendered().contains("HEADERLESS_E2E_OK")
-                );
-            } else {
-                assert!(history.messages.iter().any(|message| matches!(
-                    message.content,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(_))
-                )));
-            }
-            if model == "fixture-siwc-error" {
-                assert!(history.messages.iter().any(|message| matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) if text.contains("HTTP 400"))));
-            }
-            assert_eq!(provider.requests(model).len(), 1);
-        }
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn diagnostic_real_worker_classifies_provider_failures_without_retaining_remote_secrets() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        let log = live.root.path().join("provider-errors.log");
-        start_with_log(&live, &provider, Some(&log));
-        let mut ui = DashboardClient::connect(&live);
-        for (index, (model, kind, status, guidance)) in [
-            (
-                "fixture-error-http-400",
-                "provider_response",
-                Some(400),
-                "request",
-            ),
-            (
-                "fixture-error-http-401",
-                "provider_response",
-                Some(401),
-                "authorization",
-            ),
-            (
-                "fixture-error-http-403",
-                "provider_response",
-                Some(403),
-                "permission",
-            ),
-            (
-                "fixture-error-http-429",
-                "provider_response",
-                Some(429),
-                "usage",
-            ),
-            (
-                "fixture-error-http-503",
-                "provider_response",
-                Some(503),
-                "temporarily",
-            ),
-            (
-                "fixture-error-failed",
-                "provider_response",
-                None,
-                "response",
-            ),
-            ("fixture-error-incomplete", "cancelled", None, "complete"),
-            ("fixture-error-parse", "json", None, "response"),
-            ("fixture-error-transport", "http", None, "connection"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let conversation = ui.create(model, index == 0);
-            ui.submit("Diagnose the isolated provider fixture once");
-            let group = own_worker(&live, &conversation);
-            provider.release(model);
-            let history = ui.wait_history(&provider, conversation.id, |history| {
-                history.conversation.worker_stopped
-            });
-            assert_retired(&live, &history, group);
-            assert_eq!(
-                history.conversation.current_turn.as_ref().unwrap().state,
-                OperatorTurnState::Error
-            );
-            let failure = history
-                .messages
-                .iter()
-                .find_map(|message| match &message.content {
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(message)) => {
-                        Some(message)
-                    }
-                    _ => None,
-                })
-                .expect("actual worker persisted its failure");
-            assert!(
-                failure.contains(&format!("kind={kind}")),
-                "missing fixed classification for {model}"
-            );
-            if let Some(status) = status {
-                assert!(
-                    failure.contains(&format!("HTTP {status}")),
-                    "missing actual HTTP status for {model}"
-                );
-            }
-            assert!(
-                failure.to_ascii_lowercase().contains(guidance),
-                "missing actionable fixed guidance for {model}"
-            );
-            assert!(
-                !failure.contains("New Conversation"),
-                "provider errors must not universally ask for a fresh conversation"
-            );
-            for message in &history.messages {
-                assert!(
-                    !serde_json::to_string(message)
-                        .unwrap()
-                        .contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
-                    "remote secret reached durable history"
-                );
-            }
-            let rendered = ui.rendered();
-            assert!(
-                !rendered.contains("starts fresh context"),
-                "native error surfaces must retain the failure-specific guidance"
-            );
-            assert!(
-                !rendered.contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
-                "remote secret reached native output"
-            );
-            if model == "fixture-error-http-400" {
-                assert!(
-                    failure.contains("code=subscription_sharing_unsupported_capability")
-                        && failure.contains("param=tools")
-                );
-            }
-            if model == "fixture-error-http-401" {
-                assert!(
-                    failure.contains("body=detail"),
-                    "admission detail bodies need a safe structural label"
-                );
-            }
-            let Response::TerminalText { session, text, .. } =
-                live.request(Request::ReadTerminal {
-                    session: conversation.session,
-                    max_lines: None,
-                })
-            else {
-                panic!("worker diagnostic PTY must remain readable");
-            };
-            assert_eq!(session, conversation.session);
-            assert!(
-                !text.contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
-                "remote secret reached worker diagnostic PTY"
-            );
-            assert!(
-                !std::fs::read_to_string(&log)
-                    .unwrap()
-                    .contains("FAKE_BEARER_PRIVATE_TOKEN_AND_PROMPT"),
-                "remote secret reached server logs"
-            );
-            assert_eq!(
-                provider.requests(model).len(),
-                1,
-                "failure must never retry inference"
-            );
-            assert!(!history.messages.iter().any(|message| matches!(
-                message.content,
-                OperatorMessageContent::Worker(
-                    OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::Completed(_)
-                )
-            )));
-        }
-        let database = rusqlite::Connection::open_with_flags(
-            ovrcr::config::database_path(&live.config),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        let saved: i64 = database
-            .query_row("SELECT count(*) FROM operator_model_history", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(
-            saved, 0,
-            "failed requests must not save completed model context"
-        );
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn final_review_public_terminal_lifecycle_refuses_operator_then_native_stop_allows_next_turn() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-lifecycle", true);
-        let turn = ui.submit("A exercise public lifecycle refusal");
-        let group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| {
-            has_text(history, "LIFECYCLE waiting")
-        });
-        for action in ["kill", "close"] {
-            let output = live
-                .command()
-                .args([
-                    "--json",
-                    "terminal",
-                    action,
-                    &conversation.session.0.to_string(),
-                ])
-                .output()
-                .unwrap();
-            assert!(
-                !output.status.success(),
-                "generic terminal {action} must refuse an Operator conversation"
-            );
-            let error = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                error.contains("Operator") && error.contains("Stop"),
-                "{error}"
-            );
-            let history = ui.history(conversation.id);
-            assert_eq!(
-                history.conversation.current_turn.as_ref().unwrap().state,
-                OperatorTurnState::Running
-            );
-            assert!(!history.conversation.worker_stopped && live::group_exists(group));
-            assert!(!inventory(&live, &conversation).archived);
-        }
-        ui.ctrl('x');
-        ui.flush();
-        let stopped = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            stopped.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Interrupted
-        );
-        assert_retired(&live, &stopped, group);
-        let next = ui.submit("A supported next turn");
-        assert_eq!(next.identity.run.0, turn.identity.run.0 + 1);
-        let next_group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| {
-            history.messages.iter().any(|message| message.turn == next.identity.turn && matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) if text.contains("LIFECYCLE waiting")))
-        });
-        ui.ctrl('x');
-        ui.flush();
-        let stopped = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_retired(&live, &stopped, next_group);
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn final_review_acknowledged_unexpected_worker_exit_interrupts_exact_turn_and_allows_next() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-lifecycle", true);
-        let turn = ui.submit("Independently confirm fixture worker exit");
-        let group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| {
-            has_text(history, "LIFECYCLE waiting")
-        });
-        assert!(
-            matches!(
-                ui.request(Request::AcknowledgeSessionStopped {
-                    session: conversation.session,
-                    expected_run: turn.identity.run
-                }),
-                Response::Error {
-                    code: protocol::ErrorCode::SessionRunning,
-                    ..
-                }
-            ),
-            "live worker cannot be acknowledged stopped"
-        );
-        assert_eq!(unsafe { libc::kill(-group, libc::SIGKILL) }, 0);
-        assert!(
-            live::wait_group_absent(group, BUDGET),
-            "owned fixture group is not independently confirmed absent"
-        );
-        live.forget_group(group);
-        let deadline = Instant::now() + BUDGET;
-        while inventory(&live, &conversation).phase.is_live() {
-            assert!(
-                Instant::now() < deadline,
-                "Server did not observe its worker exit"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-        let before = ui.history(conversation.id);
-        assert!(
-            !before.conversation.worker_stopped,
-            "unexpected exit must retain ownership uncertainty before explicit acknowledgement"
-        );
-        assert_eq!(
-            before.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Running
-        );
-        assert!(
-            matches!(
-                ui.request(Request::AcknowledgeSessionStopped {
-                    session: conversation.session,
-                    expected_run: protocol::SessionRunId(turn.identity.run.0 + 1)
-                }),
-                Response::Error {
-                    code: protocol::ErrorCode::Conflict,
-                    ..
-                }
-            ),
-            "stale run cannot reconcile or acknowledge the current turn"
-        );
-        let output = live
-            .command()
-            .args([
-                "--json",
-                "terminal",
-                "acknowledge-stopped",
-                &conversation.session.0.to_string(),
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let acknowledged = ui.history(conversation.id);
-        assert!(acknowledged.conversation.worker_stopped);
-        let closed = acknowledged.conversation.current_turn.as_ref().unwrap();
-        assert_eq!(closed.identity, turn.identity);
-        assert_eq!(
-            closed.state,
-            OperatorTurnState::Interrupted,
-            "acknowledged dead worker must not wedge the journal in Running"
-        );
-        assert_eq!(
-            acknowledged
-                .messages
-                .iter()
-                .filter(|message| message.turn == turn.identity.turn
-                    && matches!(message.content, OperatorMessageContent::Interrupted))
-                .count(),
-            1
-        );
-        let next = ui.submit("Explicit next instructions after independent stop confirmation");
-        assert_eq!(next.identity.run.0, turn.identity.run.0 + 1);
-        let group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| history.messages.iter().any(|message| message.turn == next.identity.turn && matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) if text.contains("LIFECYCLE waiting"))));
-        ui.ctrl('x');
-        ui.flush();
-        let stopped = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_retired(&live, &stopped, group);
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn final_review_real_journal_success_is_unread_until_paginated_tail_is_presented() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-a", true);
-        ui.submit("A durable success pagination");
-        let group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| {
-            has_text(history, "A partial waiting")
-        });
-        ui.create("fixture-b", false);
-        provider.release("fixture-a");
-        let done = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            done.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Complete
-        );
-        assert!(!done.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_))
-        )));
-        assert_retired(&live, &done, group);
-        assert!(
-            ui.rendered().contains("✓ A durable success pagination"),
-            "background successful journal reply has no Unread marker"
-        );
-        drop(ui);
-        let mut ui = DashboardClient::connect(&live);
-        ui.key(KeyCode::Char('o'));
-        ui.pending.extend(ui.dashboard.drain_outbox());
-        let mut pages = 0;
-        while let Some(mut request) = ui.pending.pop_front() {
-            if let Request::Operator(OperatorRequest::Read { limit, .. }) = &mut request.request {
-                *limit = 1;
-            }
-            let response = ui.exchange(request);
-            if matches!(
-                &response,
-                Response::Operator(OperatorResponse::Conversations(_))
-            ) {
-                ui.ctrl('l');
-                ui.key(KeyCode::Enter);
-            }
-            if let Response::Operator(OperatorResponse::History(history)) = response
-                && history.conversation.id == conversation.id
-            {
-                pages += 1;
-                let screen = ui.rendered();
-                if history.next_after.is_some() {
-                    assert!(
-                        screen.contains("✓ A durable success pagination"),
-                        "intermediate durable page cleared Unread"
-                    );
-                }
+        fn terminal_text(&mut self, session: ovrcr::protocol::SessionId) -> String {
+            match self.exchange(Request::ReadTerminal {
+                session,
+                max_lines: Some(400),
+            }) {
+                Response::TerminalText { text, size, .. } => format!("{size:?}\n{text}"),
+                other => format!("{other:?}"),
             }
         }
-        assert!(pages > 2, "real journal pagination must run");
-        assert!(
-            !ui.rendered().contains("✓ A durable success pagination"),
-            "presented confirmed tail retained Unread"
-        );
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
 
-    #[test]
-    fn compiled_incomplete_response_preserves_partial_but_never_saves_completed_context() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-incomplete", true);
-        let turn = ui.submit("Show the incomplete response once");
-        let group = own_worker(&live, &conversation);
-        ui.wait_history(&provider, conversation.id, |history| {
-            has_text(history, "INCOMPLETE partial visible")
-        });
-        assert!(ui.rendered().contains("INCOMPLETE partial visible"));
-        provider.release("fixture-incomplete");
-        let history = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_retired(&live, &history, group);
-        let database = rusqlite::Connection::open_with_flags(
-            ovrcr::config::database_path(&live.config),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        let saved: i64 = database
-            .query_row(
-                "SELECT count(*) FROM operator_model_history WHERE conversation=?1",
-                [i64::try_from(conversation.id.0).unwrap()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let terminal = history.conversation.current_turn.as_ref().unwrap();
-        eprintln!(
-            "INCOMPLETE_OUTCOME state={:?} completed_history_rows={saved}",
-            terminal.state
-        );
-        assert_eq!(terminal.identity, turn.identity);
-        assert_eq!(
-            terminal.state,
-            OperatorTurnState::Error,
-            "incomplete provider termination must not become Complete"
-        );
-        assert!(has_text(&history, "INCOMPLETE partial visible"));
-        assert!(history.messages.iter().any(|message| matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) if !text.is_empty())));
-        assert!(!history.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(
-                OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::Completed(_)
-            )
-        )));
-        assert_eq!(
-            saved, 0,
-            "incomplete response must not become reusable completed model context"
-        );
-        assert_eq!(provider.requests("fixture-incomplete").len(), 1);
-        assert_eq!(provider.inference_attempts(), 1);
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn compiled_missing_auth_is_visible_and_controlled_retired_without_provider_http() {
-        use sha2::{Digest, Sha256};
-        use std::{
-            fs::OpenOptions,
-            os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
-        };
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config); // Grok only; ChatGPT remains signed out.
-        // Existing credential serialization holds the worker alive for owned-PGID capture.
-        let path = live
-            .config
-            .join("operator-auth")
-            .join(format!("chatgpt-{:x}.lock", Sha256::digest(b"default")));
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(path)
-            .unwrap();
-        assert_eq!(
-            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-            0
-        );
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create_provider(OperatorProvider::ChatGpt, "fixture-a", true);
-        let turn = ui.submit("Show the signed-out setup failure");
-        let group = own_worker(&live, &conversation);
-        drop(lock);
-        let history = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            history.conversation.current_turn.as_ref().unwrap().identity,
-            turn.identity
-        );
-        assert_eq!(
-            history.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Error
-        );
-        assert!(history.messages.iter().any(|message| matches!(&message.content, OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(text)) if text.contains("sign in"))));
-        assert!(!history.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(
-                OperatorWorkerEvent::ToolCall { .. } | OperatorWorkerEvent::Completed(_)
-            )
-        )));
-        assert!(
-            ui.rendered().contains("sign in"),
-            "signed-out failure must be visible in the native transcript"
-        );
-        assert_retired(&live, &history, group);
-        assert_eq!(
-            provider.inference_attempts(),
-            0,
-            "missing auth must fail before any model HTTP request"
-        );
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn operator_quick_message_records_one_captured_first_message() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        live.ready("feature/quick");
-        let Response::CreatedSession(other) =
-            live.request(Request::CreateSession(protocol::CreateSessionRequest {
-                project: live::PROJECT.into(),
-                workspace: live::WORKSPACE.into(),
-                name: "other".into(),
-                label: None,
-                argv: vec!["/bin/sh".into()],
-                kind: protocol::SessionKind::Terminal,
+        fn stop(&mut self, identity: ovrcr::protocol::OperatorTurnIdentity) -> Response {
+            self.exchange(Request::Operator(ovrcr::protocol::OperatorRequest::Stop {
+                identity,
             }))
-        else {
-            panic!("second real terminal")
-        };
-        let mut ui = DashboardClient::connect(&live);
-        let background = ui.create("fixture-b", true);
-        ui.submit("Background completion while quick receipts wait");
-        let background_group = own_worker(&live, &background);
-        ui.wait_history(&provider, background.id, |history| {
-            has_text(history, "B partial waiting")
-        });
-        ui.key(KeyCode::Esc);
-        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
-            panic!("hierarchy")
-        };
-        let terminal = hierarchy
-            .projects
-            .iter()
-            .flat_map(|p| &p.workspaces)
-            .flat_map(|w| &w.sessions)
-            .find(|s| s.name == "local")
-            .unwrap()
-            .clone();
-        ui.dashboard.install_hierarchy(hierarchy);
-        ui.dashboard.install_focus(terminal.id);
-        ui.flush();
-        let mut settings = Settings::default();
-        settings.operator.provider = OperatorProvider::Grok;
-        settings.operator.grok_model = Some("fixture-quick".into());
-        ui.dashboard.install_settings(settings);
-        ui.ctrl('o');
-        ui.ctrl('c');
-        ui.paste("discard 界e\u{301}🙂");
-        ui.ctrl('w');
-        ui.ctrl('c');
-        assert!(!ui.rendered().contains("discard"));
-        assert!(ui.dashboard.drain_outbox().is_empty());
-        ui.paste("Frozen first\nmessage 界🙂");
-        ui.key(KeyCode::Enter);
-        let create = ui.take_operator_request();
-        assert!(matches!(
-            create.request,
-            Request::Operator(OperatorRequest::Create { .. })
-        ));
-        let created = ui.hold(create);
-        let ServerMessage::Response {
-            response: Response::Operator(OperatorResponse::Created(summary)),
-            ..
-        } = &created
-        else {
-            panic!("create receipt")
-        };
-        let conversation = summary.clone();
-        for ch in ['c', 'u', 'w'] {
-            ui.ctrl(ch);
         }
-        assert!(ui.rendered().contains("Frozen first"));
-        assert!(ui.dashboard.drain_outbox().is_empty());
-        ui.key(KeyCode::Esc);
-        assert!(!ui.rendered().contains("Quick message · Ctrl-o"));
-        ui.dashboard.install_focus(other.id);
-        ui.flush();
-        assert_eq!(ui.dashboard.focused_session(), Some(other.id));
-        provider.release("fixture-b");
-        let completed =
-            ui.wait_history(&provider, background.id, |h| h.conversation.worker_stopped);
-        assert_retired(&live, &completed, background_group);
-        assert!(
-            ui.history(conversation.id).messages.is_empty(),
-            "held Create must not submit"
-        );
-        ui.receive(created);
-        let submit = ui.take_operator_request();
-        let Request::Operator(OperatorRequest::Submit { text, context, .. }) = &submit.request
-        else {
-            panic!("quick submit")
-        };
-        assert_eq!(text, "Frozen first\nmessage 界🙂");
-        let frozen = context.clone();
-        assert_eq!(
-            frozen,
-            protocol::OperatorContext {
-                project: Some(live::PROJECT.into()),
-                workspace: Some("feature/quick".into()),
-                workspace_id: Some(live::WORKSPACE.into()),
-                cwd: Some(terminal.cwd.clone()),
-                session: Some(terminal.id),
-                run: Some(terminal.run),
-            },
-            "late Create recaptured the newly selected terminal"
-        );
-        let submitted = ui.hold(submit);
-        let group = own_worker(&live, &conversation);
-        ui.ctrl('o');
-        for ch in ['c', 'u', 'w'] {
-            ui.ctrl(ch);
+
+        fn conversation(&mut self) -> ovrcr::protocol::OperatorConversationSummary {
+            match self.exchange(Request::Operator(ovrcr::protocol::OperatorRequest::Current)) {
+                Response::Operator(ovrcr::protocol::OperatorResponse::Current(Some(summary))) => {
+                    summary
+                }
+                other => panic!("operator current: {other:?}"),
+            }
         }
-        assert!(ui.rendered().contains("Frozen first"));
-        ui.key(KeyCode::Enter);
-        ui.key(KeyCode::Esc);
-        assert!(
-            ui.dashboard.drain_outbox().is_empty(),
-            "pending Enter must not create/submit again"
-        );
-        provider.release("fixture-quick");
-        let done = ui.wait_history(&provider, conversation.id, |h| {
-            h.conversation.worker_stopped
-        });
-        assert_retired(&live, &done, group);
-        ui.receive(submitted);
-        ui.flush();
-        let users: Vec<_> = done
+
+        fn session(&mut self, id: ovrcr::protocol::SessionId) -> ovrcr::protocol::SessionSummary {
+            self.exchange(Request::Inspect)
+                .pipe_inspect()
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("inspect reports the operator session")
+        }
+    }
+
+    fn session_header(path: &Path) -> Value {
+        let text = std::fs::read_to_string(path).unwrap();
+        serde_json::from_str(text.lines().next().unwrap()).unwrap()
+    }
+
+    fn delta_text(history: &OperatorHistory) -> String {
+        history
             .messages
             .iter()
-            .filter_map(|m| {
-                if let OperatorMessageContent::User { text, context } = &m.content {
-                    Some((text.as_str(), context))
-                } else {
-                    None
-                }
+            .filter_map(|message| match &message.content {
+                ovrcr::protocol::OperatorMessageContent::Worker(
+                    ovrcr::protocol::OperatorWorkerEvent::AssistantDelta(text),
+                ) => Some(text.clone()),
+                _ => None,
             })
-            .collect();
-        assert_eq!(users, vec![("Frozen first\nmessage 界🙂", &frozen)]);
-        assert_eq!(provider.requests("fixture-quick").len(), 1);
-        assert_eq!(
-            provider.inference_attempts(),
-            3,
-            "two B tool requests plus one quick inference"
-        );
-        let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
-            session: terminal.id,
-            max_lines: None,
-        }) else {
-            panic!("terminal read")
-        };
-        assert!(!text.contains("Frozen first") && !text.contains("message 界🙂"));
-        assert_eq!(
-            ui.dashboard.focused_session(),
-            Some(other.id),
-            "late receipts stole terminal focus"
-        );
-        // Real create failure is delivered after dismissal without retry or focus theft.
-        ui.ctrl('o');
-        ui.paste("failed create");
-        ui.key(KeyCode::Enter);
-        let mut rejected = ui.take_operator_request();
-        let Request::Operator(OperatorRequest::Create { model, .. }) = &mut rejected.request else {
-            panic!("create")
-        };
-        *model = " ".into();
-        let failure = ui.hold(rejected);
-        assert!(matches!(
-            &failure,
-            ServerMessage::Response {
-                response: Response::Error { .. },
-                ..
-            }
-        ));
-        ui.key(KeyCode::Esc);
-        ui.receive(failure);
-        ui.flush();
-        assert_eq!(provider.requests("fixture-quick").len(), 1);
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
+            .collect()
     }
 
-    #[test]
-    fn operator_close_archive_restores_history_without_replay() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        live.ready("feature/close");
-        let mut ui = DashboardClient::connect(&live);
-        let a = ui.create("fixture-close-a", true);
-        let first = ui.submit("A hold a real Bash child");
-        let a_group = own_worker(&live, &a);
-        let b = ui.create("fixture-close-b", false);
-        ui.submit("B hold a separate real Bash child");
-        let b_group = own_worker(&live, &b);
-        let children: Vec<libc::pid_t> =
-            [("fixture-close-a", a_group), ("fixture-close-b", b_group)]
-                .into_iter()
-                .map(|(model, group)| {
-                    let deadline = Instant::now() + BUDGET;
-                    loop {
-                        if let Ok(text) =
-                            std::fs::read_to_string(live.root.path().join(format!("{model}.pid")))
-                            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
-                        {
-                            assert!(pid > 1 && pid != group);
-                            assert_eq!(unsafe { libc::getpgid(pid) }, group);
-                            eprintln!(
-                                "OPERATOR_CLOSE_OWNED_CHILD model={model} pid={pid} pgid={group}"
-                            );
-                            break pid;
-                        }
-                        provider.assert_healthy();
-                        assert!(
-                            Instant::now() < deadline,
-                            "real Bash child did not publish PID"
-                        );
-                        thread::yield_now();
-                    }
-                })
-                .collect();
-        let closed = ui.request(Request::Operator(OperatorRequest::Close {
-            conversation: a.id,
-            expected_run: first.identity.run,
-        }));
-        let Response::Operator(OperatorResponse::Closed(closed)) = closed else {
-            panic!("close receipt")
-        };
-        assert!(closed.archived && closed.worker_stopped);
-        let archived = ui.history(a.id);
-        assert_retired(&live, &archived, a_group);
-        assert_eq!(unsafe { libc::kill(children[0], 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
-        assert_eq!(
-            unsafe { libc::kill(children[1], 0) },
-            0,
-            "close A killed B's Bash child"
-        );
-        assert!(live::group_exists(b_group));
-        assert!(!ui.history(b.id).conversation.worker_stopped);
-        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
-            panic!("hierarchy")
-        };
-        let terminal = hierarchy
-            .projects
+    fn tool_names(history: &OperatorHistory) -> Vec<String> {
+        history
+            .messages
             .iter()
-            .flat_map(|p| &p.workspaces)
-            .flat_map(|w| &w.sessions)
-            .find(|s| s.name == "local")
-            .unwrap()
-            .id;
-        let output = live
-            .command()
-            .args([
-                "terminal",
-                "send",
-                &terminal.0.to_string(),
-                "--text",
-                "printf 'CLOSE_%s\n' TERMINAL_OK\n",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "unrelated terminal input refused: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let deadline = Instant::now() + BUDGET;
-        loop {
-            let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
-                session: terminal,
-                max_lines: None,
-            }) else {
-                panic!("terminal read")
-            };
-            if text.lines().any(|line| line.trim() == "CLOSE_TERMINAL_OK") {
-                break;
+            .filter_map(|message| match &message.content {
+                ovrcr::protocol::OperatorMessageContent::Worker(
+                    ovrcr::protocol::OperatorWorkerEvent::ToolCall { name, .. },
+                ) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn tool_names_for(history: &OperatorHistory, turn: u64) -> Vec<String> {
+        history
+            .messages
+            .iter()
+            .filter(|message| message.turn.0 == turn)
+            .filter_map(|message| match &message.content {
+                ovrcr::protocol::OperatorMessageContent::Worker(
+                    ovrcr::protocol::OperatorWorkerEvent::ToolCall { name, .. },
+                ) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn tool_outputs_for(history: &OperatorHistory, turn: u64) -> Vec<(String, String)> {
+        history
+            .messages
+            .iter()
+            .filter(|message| message.turn.0 == turn)
+            .filter_map(|message| match &message.content {
+                ovrcr::protocol::OperatorMessageContent::Worker(
+                    ovrcr::protocol::OperatorWorkerEvent::ToolOutput { id, output, .. },
+                ) => Some((id.clone(), output.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Durable tool outputs with their recorded status.
+    fn tool_outputs_with_status(
+        history: &OperatorHistory,
+    ) -> Vec<(String, String, OperatorToolStatus)> {
+        history
+            .messages
+            .iter()
+            .filter_map(|message| match &message.content {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                    id,
+                    output,
+                    status,
+                    ..
+                }) => Some((id.clone(), output.clone(), status.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_completed(history: &OperatorHistory) -> bool {
+        history.messages.iter().any(|message| {
+            matches!(
+                message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+            )
+        })
+    }
+
+    /// The provider body as structured messages: text content, tool-call names
+    /// and arguments, and tool results. A content-only extraction would hide a
+    /// leaked `tool_calls[].function.arguments` from the context assertions.
+    fn structured_request_text(body: &Value) -> String {
+        let mut parts = Vec::new();
+        for message in body["messages"].as_array().into_iter().flatten() {
+            parts.push(operator_provider::content_text(&message["content"]));
+            for call in message["tool_calls"].as_array().into_iter().flatten() {
+                if let Some(name) = call["function"]["name"].as_str() {
+                    parts.push(name.to_owned());
+                }
+                if let Some(arguments) = call["function"]["arguments"].as_str() {
+                    parts.push(arguments.to_owned());
+                }
             }
-            assert!(
-                Instant::now() < deadline,
-                "unrelated terminal did not answer: {text}"
-            );
-            thread::yield_now();
         }
-        std::fs::write(
-            live.root.path().join("fixture-close-b.bash-release"),
-            b"release",
-        )
-        .unwrap();
-        provider.release("fixture-close-b");
-        let completed_b = ui.wait_history(&provider, b.id, |h| h.conversation.worker_stopped);
-        assert_eq!(
-            completed_b
+        parts.join("\n")
+    }
+
+    /// Only the arguments strings of assistant tool calls, the part of the
+    /// structured request a content-only extraction cannot see.
+    fn tool_call_arguments_text(body: &Value) -> String {
+        body["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|message| message["tool_calls"].as_array().into_iter().flatten())
+            .filter_map(|call| call["function"]["arguments"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn assert_no_fixture_sentinel(label: &str, text: &str) {
+        for (key, sentinel) in fixture_sentinels() {
+            assert!(
+                !text.contains(sentinel),
+                "{label} contains the {key} fixture sentinel"
+            );
+        }
+    }
+
+    /// Every regular file under `root` (the private Pi profile and its attempt
+    /// sessions) is inspected for a fixture sentinel.
+    fn scan_profile_for_sentinels(root: &Path, label: &str) {
+        let mut stack = vec![root.to_path_buf()];
+        let mut inspected = 0usize;
+        while let Some(directory) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+                    continue;
+                }
+                inspected += 1;
+                let bytes = std::fs::read(&path).unwrap();
+                assert_no_fixture_sentinel(
+                    &format!("{label} {}", path.display()),
+                    &String::from_utf8_lossy(&bytes),
+                );
+            }
+        }
+        assert!(inspected > 0, "{label} had no files to inspect");
+    }
+
+    fn attempt_evidence(live: &live::Live, turn: u64) -> String {
+        let root = live.config.join("operator-pi");
+        let attempt = root.join("turns").join(turn.to_string());
+        let mut evidence = format!("attempt={}\n", attempt.display());
+        if let Ok(entries) = std::fs::read_dir(&attempt) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                evidence.push_str(&format!("  {} ({size} bytes)\n", path.display()));
+                if let Ok(text) = std::fs::read_to_string(&path)
+                    && text.len() < 200_000
+                {
+                    evidence.push_str(&text.replace('\n', "\n  "));
+                    evidence.push('\n');
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                evidence.push_str(&format!("profile: {}\n", entry.path().display()));
+            }
+        }
+        for name in [
+            "models.json",
+            "settings.json",
+            "models-store.json",
+            "auth.json",
+        ] {
+            if let Ok(text) = std::fs::read_to_string(root.join(name)) {
+                evidence.push_str(&format!("{name}: {text}\n"));
+            }
+        }
+        evidence
+    }
+
+    fn wait_terminal(
+        driver: &mut DashboardDriver,
+        conversation: OperatorConversationId,
+        provider: &Provider,
+        live: &live::Live,
+    ) -> OperatorHistory {
+        let history = driver.wait_history(conversation, |history| {
+            history
                 .conversation
                 .current_turn
                 .as_ref()
-                .unwrap()
-                .state,
-            OperatorTurnState::Complete,
-            "B did not continue after A close: {completed_b:?}"
-        );
-        assert!(completed_b.messages.iter().any(|m| matches!(&m.content, OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK"))), "actual B Bash result was not committed");
-        assert_eq!(provider.requests("fixture-close-b").len(), 2);
-        assert_retired(&live, &completed_b, b_group);
-        assert_eq!(unsafe { libc::kill(children[1], 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
-        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        assert_eq!(ui.history(a.id), archived);
-        assert_eq!(provider.requests("fixture-close-a").len(), 1);
-        assert_eq!(
-            ui.request(Request::UnarchiveSession {
-                session: a.session,
-                expected_run: closed.run
-            }),
-            Response::Ok
-        );
-        let restored = ui.history(a.id);
-        assert!(!restored.conversation.archived && restored.conversation.worker_stopped);
-        assert_eq!(restored.messages, archived.messages);
-        assert_eq!(
-            provider.requests("fixture-close-a").len(),
-            1,
-            "restore replayed inference"
-        );
-        let Response::Operator(OperatorResponse::Submitted(next)) =
-            ui.request(Request::Operator(OperatorRequest::Submit {
-                conversation: a.id,
-                expected_run: restored.conversation.run,
-                text: "Explicit retained follow-up".into(),
-                context: Default::default(),
-            }))
-        else {
-            panic!("explicit submit")
-        };
-        assert_eq!(next.identity.session, a.session);
-        assert!(next.identity.run.0 > first.identity.run.0);
-        let group = own_worker(&live, &a);
-        provider.release("fixture-close-a");
-        let done = ui.wait_history(&provider, a.id, |h| h.conversation.worker_stopped);
-        assert_retired(&live, &done, group);
-        assert_eq!(done.messages.iter().filter(|m| matches!(&m.content, OperatorMessageContent::User { text, .. } if text == "Explicit retained follow-up")).count(), 1);
-        assert_eq!(
-            provider.requests("fixture-close-a").len(),
-            2,
-            "restored result: {done:?}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(live.root.path().join("fixture-close-a.executions")).unwrap(),
-            "started\n",
-            "restoration replayed Bash"
-        );
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-    }
-
-    #[test]
-    fn compiled_worker_timeout_stops_the_actual_bash_descendant_without_retry() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-timeout", true);
-        let turn = ui.submit("Run the bounded timeout fixture once");
-        let group = own_worker(&live, &conversation);
-        let pid_path = live.root.path().join("timeout.pid");
-        let deadline = Instant::now() + BUDGET;
-        let child: libc::pid_t = loop {
-            if let Ok(text) = std::fs::read_to_string(&pid_path)
-                && let Ok(pid) = text.trim().parse()
-            {
-                break pid;
-            }
-            provider.assert_healthy();
-            assert!(
-                Instant::now() < deadline,
-                "Bash never published its real child PID"
-            );
-            thread::sleep(Duration::from_millis(5));
-        };
-        assert!(child > 1);
-        assert_ne!(child, group);
-        assert_eq!(
-            unsafe { libc::getpgid(child) },
-            group,
-            "Bash must remain in its managed worker group"
-        );
-        assert_eq!(
-            unsafe { libc::kill(child, 0) },
-            0,
-            "capture the actual child while alive"
-        );
-        eprintln!("OPERATOR_TIMEOUT_OWNED_CHILD pid={child} pgid={group}");
-        let history = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped
+                .is_some_and(|turn| turn.state != OperatorTurnState::Running)
         });
         assert_eq!(
-            history.conversation.current_turn.as_ref().unwrap().identity,
-            turn.identity
-        );
-        assert_eq!(
             history.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Interrupted
+            OperatorTurnState::Complete,
+            "{history:#?}\nterminal: {}\nevidence:\n{}\nprovider diagnostics: {:?}\nprovider requests: {:#?}",
+            driver.terminal_text(history.conversation.session),
+            attempt_evidence(
+                live,
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .unwrap()
+                    .identity
+                    .turn
+                    .0
+            ),
+            provider.diagnostics(),
+            provider.requests()
         );
-        assert_eq!(
+        history
+    }
+
+    fn wait_stopped(driver: &mut DashboardDriver, conversation: OperatorConversationId) {
+        driver.wait_history(conversation, |history| history.conversation.worker_stopped);
+    }
+
+    /// Submit through the Dashboard composer and prove a *new* turn was accepted.
+    fn submit_next(
+        driver: &mut DashboardDriver,
+        conversation: OperatorConversationId,
+        text: &str,
+        previous_turn: u64,
+        provider: &Provider,
+        live: &live::Live,
+    ) -> OperatorHistory {
+        driver.submit(text);
+        driver.wait_history(conversation, |history| {
             history
-                .messages
-                .iter()
-                .filter(|message| matches!(
-                    message.content,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
-                ))
-                .count(),
-            1
-        );
-        assert_eq!(
-            history
-                .messages
-                .iter()
-                .filter(|message| matches!(
-                    message.content,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
-                        status: OperatorToolStatus::TimedOut,
-                        ..
-                    })
-                ))
-                .count(),
-            1,
-            "actual timeout result must be durable before worker Stop"
-        );
-        assert!(!history.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_))
-        )));
-        assert_retired(&live, &history, group);
-        assert_eq!(unsafe { libc::kill(child, 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH),
-            "timeout child remains or absence is unproven"
-        );
-        assert_eq!(
-            provider.requests("fixture-timeout").len(),
-            1,
-            "timeout retried a model/tool request"
-        );
-        assert_eq!(
-            std::fs::read_to_string(live.root.path().join("timeout.executions")).unwrap(),
-            "started\n"
-        );
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity.turn.0 != previous_turn)
+        });
+        wait_terminal(driver, conversation, provider, live)
+    }
+
+    fn process_alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    /// Scripted operator/tool scenario shared by the installed-pi test and the
+    /// GUI provider. Every turn is identified by its user request marker.
+    pub(super) fn scenario_handler(
+        workspace: PathBuf,
+        marker: PathBuf,
+        background_pid: PathBuf,
+    ) -> operator_provider::Handler {
+        let counters: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+        Box::new(move |body: &Value, _index: usize| {
+            if operator_provider::is_compaction_request(body) {
+                return Plan::text("FIXTURE_COMPACTION_SUMMARY");
+            }
+            let user = operator_provider::last_user_text(body);
+            let key = [
+                "REQUEST_ONE_REAL_TOOLS",
+                "REQUEST_TWO_RESUME",
+                "REQUEST_THREE_HELD",
+                "REQUEST_FOUR_BACKGROUND",
+                "REQUEST_FIVE_AFTER_INTERRUPT",
+                "REQUEST_SIX_TWO_TOOLS",
+                "REQUEST_SEVEN_TIMEOUT",
+                "COMPACT_ONE",
+                "COMPACT_TWO",
+            ]
+            .into_iter()
+            .find(|marker| user.contains(marker))
+            .unwrap_or("OTHER")
+            .to_owned();
+            let step = {
+                let mut counters = counters.lock().unwrap();
+                let step = *counters.get(&key).unwrap_or(&0);
+                counters.insert(key.clone(), step + 1);
+                step
+            };
+            let marker_text = marker.display().to_string();
+            let workspace_text = workspace.display().to_string();
+            match (key.as_str(), step) {
+                ("REQUEST_ONE_REAL_TOOLS", 0) => Plan::tool(
+                    "call-write",
+                    "write",
+                    json!({"path": marker_text, "content": "OFFLINE_MARKER_v1\n"}),
+                ),
+                ("REQUEST_ONE_REAL_TOOLS", 1) => {
+                    Plan::tool("call-read", "read", json!({"path": marker_text}))
+                }
+                ("REQUEST_ONE_REAL_TOOLS", 2) => Plan::tool(
+                    "call-edit",
+                    "edit",
+                    json!({
+                        "path": marker_text,
+                        "edits": [{"oldText": "OFFLINE_MARKER_v1", "newText": "OFFLINE_MARKER_v2"}]
+                    }),
+                ),
+                // The admitted Bash child reports which inherited credentials it
+                // sees. `key=SET` stays durable in the journal without copying a
+                // value; the exact values go to a file outside the instance.
+                ("REQUEST_ONE_REAL_TOOLS", 3) => Plan::tool(
+                    "call-bash",
+                    "bash",
+                    json!({
+                        "command": format!(
+                            "cd '{workspace_text}' && printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\\n' \
+                             \"${{ANTHROPIC_API_KEY:+SET}}\" \"${{OPENAI_API_KEY:+SET}}\" \
+                             \"${{AWS_CONTAINER_AUTHORIZATION_TOKEN:+SET}}\" \"${{PI_SESSION_ID:+SET}}\" \
+                             \"${{PI_CODING_AGENT_SESSION_DIR:+SET}}\" \"${{GITHUB_TOKEN:+SET}}\" && \
+                             printf 'ANTHROPIC_API_KEY=%s\\nOPENAI_API_KEY=%s\\nAWS_CONTAINER_AUTHORIZATION_TOKEN=%s\\nPI_SESSION_ID=%s\\nPI_CODING_AGENT_SESSION_DIR=%s\\nGITHUB_TOKEN=%s\\n' \
+                             \"$ANTHROPIC_API_KEY\" \"$OPENAI_API_KEY\" \"$AWS_CONTAINER_AUTHORIZATION_TOKEN\" \
+                             \"$PI_SESSION_ID\" \"$PI_CODING_AGENT_SESSION_DIR\" \"$GITHUB_TOKEN\" > credential-probe.env && \
+                             printf 'BASH_' && \"$OVRCR_EXECUTABLE\" --json project list"
+                        )
+                    }),
+                ),
+                ("REQUEST_ONE_REAL_TOOLS", 4) => Plan::text("TURN_ONE_DONE"),
+                ("REQUEST_TWO_RESUME", 0) => Plan::text("TURN_TWO_DONE"),
+                ("REQUEST_THREE_HELD", 0) => Plan::text("HELD_BEFORE_RELEASE").holding(),
+                ("REQUEST_FOUR_BACKGROUND", 0) => Plan::tool(
+                    "call-background",
+                    "bash",
+                    json!({
+                        "command": format!(
+                            "cd '{workspace_text}' && sleep 30 >/dev/null 2>&1 & echo $! > '{}'; wait",
+                            background_pid.display()
+                        )
+                    }),
+                ),
+                ("REQUEST_FIVE_AFTER_INTERRUPT", 0) => Plan::text("TURN_FIVE_DONE"),
+                // One assistant message carrying two tool calls. Pi must prepare
+                // and execute them one at a time so both durable admissions hold.
+                ("REQUEST_SIX_TWO_TOOLS", 0) => Plan::new(vec![
+                    Chunk::ToolCall {
+                        id: "call-two-read".into(),
+                        name: "read".into(),
+                        arguments: json!({ "path": marker_text }),
+                    },
+                    Chunk::ToolCall {
+                        id: "call-two-bash".into(),
+                        name: "bash".into(),
+                        arguments: json!({
+                            "command": format!(
+                                "cd '{workspace_text}' && printf TWO_TOOL_BASH"
+                            )
+                        }),
+                    },
+                ]),
+                ("REQUEST_SIX_TWO_TOOLS", 1) => Plan::text("TWO_TOOL_TURN_DONE"),
+                // A real attached Bash call with a short native timeout. The
+                // background descendant keeps writing, so the shell never
+                // finishes on its own; the tool must time out at the deadline.
+                ("REQUEST_SEVEN_TIMEOUT", 0) => Plan::tool(
+                    "call-timeout",
+                    "bash",
+                    json!({
+                        "command": format!(
+                            "cd '{workspace_text}' && {{ {{ while :; do printf x >> timeout-writer.out; sleep 0.02; done; }} & \
+                             echo $! > timeout-writer.pid; wait; }}"
+                        ),
+                        "timeout": 2
+                    }),
+                ),
+                // A second model request for this turn is the exact failure the
+                // test guards against; its text is unique and asserted absent.
+                ("REQUEST_SEVEN_TIMEOUT", 1) => Plan::text("TIMEOUT_CONTINUATION_MUST_NOT_APPEAR"),
+                ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
+                ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
+                _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
+            }
+        })
     }
 
     #[test]
-    fn operator_activity_waits_for_real_model_and_tool() {
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_single_conversation() {
+        let pi = pi_executable();
         let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let conversation = ui.create("fixture-activity", true);
-        ui.paste("ACTIVITY run one held Bash");
-        ui.key(KeyCode::Enter);
-        let submit = ui.take_operator_request();
-        let receipt = ui.hold(submit);
-        assert!(ui.rendered().contains("Sending"));
-        ui.receive(receipt);
-        ui.flush();
-        let group = own_worker(&live, &conversation);
-        let running = ui.wait_history(&provider, conversation.id, |history| {
-            !provider.requests("fixture-activity").is_empty()
+        let workspace = live.root.path().join("operator-target");
+        std::fs::create_dir(&workspace).unwrap();
+        let marker = workspace.join("fixture-marker.txt");
+        let background_pid = workspace.join("background.pid");
+        let provider = Provider::start(scenario_handler(
+            workspace.clone(),
+            marker.clone(),
+            background_pid.clone(),
+        ));
+        provider.seed_profile(&live.config);
+        // The Server inherits these; the worker inherits them from the Server;
+        // the dedicated Pi profile must strip them before Pi or Bash sees them.
+        live.start_binary_env(&launcher_environment(&pi));
+
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let opened = driver.conversation();
+        assert_eq!(opened.title, "Operator");
+        assert_eq!(
+            operator_harness::Registry::of(&live).conversation_ids(),
+            vec![opened.id.0]
+        );
+
+        // Turn one: real read/write/edit/Bash operations and CLI output.
+        driver.submit("REQUEST_ONE_REAL_TOOLS");
+        let first = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert_eq!(
+            tool_names(&first),
+            vec!["write", "read", "edit", "bash"],
+            "the four native tools ran in order: {first:#?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "OFFLINE_MARKER_v2\n"
+        );
+        let outputs = operator_harness::tool_outputs(&first);
+        assert_eq!(outputs.len(), 4, "{outputs:#?}");
+        assert!(outputs[0].1.contains("fixture-marker.txt"), "{outputs:#?}");
+        assert!(outputs[1].1.contains("OFFLINE_MARKER_v1"), "{outputs:#?}");
+        assert!(
+            outputs[3].1.contains("BASH_") && outputs[3].1.contains("[]"),
+            "Bash observed the instance CLI: {outputs:#?}"
+        );
+        // The inherited provider/session credentials are stripped before Pi, so
+        // the admitted Bash child cannot see them; an ordinary tool credential
+        // still arrives. The durable journal proves both without copying values.
+        assert!(
+            outputs[3].1.contains(
+                "CREDENTIAL_PROBE anthropic= openai= aws= pi_session= pi_session_dir= github=SET"
+            ),
+            "Bash inherited a denied credential or lost the ordinary one: {outputs:#?}"
+        );
+        let probe = std::fs::read_to_string(workspace.join("credential-probe.env"))
+            .expect("the admitted Bash wrote its credential probe");
+        let probed: HashMap<String, String> = probe
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+        for (key, _) in DENIED_ENV {
+            assert_eq!(
+                probed.get(*key).map(String::as_str),
+                Some(""),
+                "the {key} fixture sentinel reached the admitted Bash child: {probe}"
+            );
+        }
+        assert_eq!(
+            probed.get(ORDINARY_ENV.0).map(String::as_str),
+            Some(ORDINARY_ENV.1),
+            "an ordinary tool credential must reach the admitted Bash child: {probe}"
+        );
+        assert!(delta_text(&first).contains("TURN_ONE_DONE"));
+
+        let requests = provider.wait_requests(5, BUDGET);
+        assert!(requests.len() >= 5, "one provider request per model step");
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.authorization.as_deref()
+                    == Some("Bearer fixture-synthetic-key")),
+            "the dedicated profile's synthetic auth is the only credential"
+        );
+        assert!(
+            requests
+                .iter()
+                .map(|request| operator_provider::request_text(&request.body))
+                .any(|text| text.contains("BASH_"))
+                || requests
+                    .iter()
+                    .flat_map(|request| operator_provider::tool_result_texts(&request.body))
+                    .any(|text| text.contains("BASH_")),
+            "the provider observed the CLI result: {requests:#?}"
+        );
+
+        let registry = operator_harness::Registry::of(&live);
+        let turn_one = first
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        assert_eq!(registry.checkpoint(opened.id.0), Some(turn_one as i64));
+        let attempt = live
+            .config
+            .join("operator-pi/turns")
+            .join(turn_one.to_string());
+        let header = session_header(&attempt.join("session.jsonl"));
+        let session_header_id = format!("operator-{}", opened.id.0);
+        assert_eq!(header["id"], session_header_id);
+        assert_eq!(header["type"], "session");
+        wait_stopped(&mut driver, opened.id);
+
+        // Turn two: the same Pi session and prior successful messages.
+        let second = submit_next(
+            &mut driver,
+            opened.id,
+            "REQUEST_TWO_RESUME",
+            turn_one,
+            &provider,
+            &live,
+        );
+        let turn_two = second
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        assert!(delta_text(&second).contains("TURN_TWO_DONE"));
+        assert!(delta_text(&second).contains("TURN_ONE_DONE"));
+        let resumed = provider.requests();
+        let last_body = &resumed.last().unwrap().body;
+        let resumed_text = structured_request_text(last_body);
+        assert!(resumed_text.contains("TURN_ONE_DONE"), "{resumed_text}");
+        assert!(
+            resumed_text.contains("OFFLINE_MARKER_v1"),
+            "the read result from turn one is prior context: {resumed_text}"
+        );
+        // The structured extraction must include `tool_calls[].function.arguments`,
+        // not only message content: turn one's write arguments are prior context.
+        let resumed_arguments = tool_call_arguments_text(last_body);
+        assert!(
+            resumed_arguments
+                .lines()
+                .any(|line| line.contains("\"content\"") && line.contains("OFFLINE_MARKER_v1")),
+            "turn one's write arguments are prior context: {resumed_arguments}"
+        );
+        assert_eq!(
+            operator_harness::Registry::of(&live).conversation_ids(),
+            vec![opened.id.0],
+            "one conversation for the whole lifecycle"
+        );
+        let header = session_header(
+            &live
+                .config
+                .join("operator-pi/turns")
+                .join(turn_two.to_string())
+                .join("session.jsonl"),
+        );
+        assert_eq!(header["id"], session_header_id, "same native Pi session id");
+        wait_stopped(&mut driver, opened.id);
+
+        // Turn three: streamed output is visible before the provider finishes.
+        driver.submit("REQUEST_THREE_HELD");
+        let held = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity.turn.0 != turn_two)
+                && delta_text(history).contains("HELD_BEFORE_RELEASE")
+        });
+        assert_eq!(
+            held.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Running,
+            "the held stream is still running"
+        );
+        assert!(
+            !held.conversation.worker_stopped,
+            "a held stream is not a stop"
+        );
+        let before_release = provider.requests().len();
+        provider.release();
+        let third = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(provider.requests().len() >= before_release);
+        assert!(delta_text(&third).contains("HELD_BEFORE_RELEASE"));
+        let turn_three = third
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        wait_stopped(&mut driver, opened.id);
+        assert_eq!(
+            operator_harness::Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_three as i64)
+        );
+
+        // Turn four: an interrupted attached Bash command with a background child.
+        driver.submit("REQUEST_FOUR_BACKGROUND");
+        let pending = driver.wait_history(opened.id, |history| {
+            !operator_harness::tool_calls(history).is_empty()
                 && history
                     .conversation
                     .current_turn
                     .as_ref()
                     .is_some_and(|turn| turn.state == OperatorTurnState::Running)
         });
-        assert!(!running.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_))
-        )));
-        assert!(ui.rendered().contains("Responding"));
-        provider.release("fixture-activity-start");
-        let pending = ui.wait_history(&provider, conversation.id, |history| {
-            history.messages.iter().any(|message| {
-                matches!(
-                    message.content,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
-                )
-            })
-        });
-        assert!(!pending.messages.iter().any(|message| matches!(
-            message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { .. })
-        )));
-        assert!(ui.rendered().contains("Waiting for bash result"));
-        std::fs::write(
-            live.root.path().join("fixture-activity.bash-release"),
-            b"release",
-        )
-        .unwrap();
-        let matched = ui.wait_history(&provider, conversation.id, |history| {
-            history.messages.iter().any(|message| matches!(&message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { output, status: OperatorToolStatus::Succeeded, .. }) if output.contains("CLOSE_BASH_OK")))
-        });
-        assert_eq!(
-            matched.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Running
-        );
-        assert!(ui.rendered().contains("Responding"));
-        provider.release("fixture-activity");
-        let complete = ui.wait_history(&provider, conversation.id, |history| {
-            history.conversation.worker_stopped && has_text(history, "ACTIVITY final")
-        });
-        assert_eq!(
-            complete.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Complete
-        );
-        let rendered = ui.rendered();
+        let identity = pending.conversation.current_turn.as_ref().unwrap().identity;
+        let deadline = Instant::now() + BUDGET;
+        while !background_pid.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "bash never spawned its background child"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let child: u32 = std::fs::read_to_string(&background_pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(
-            !rendered.contains("Responding")
-                && !rendered.contains("Waiting for")
-                && !rendered.contains("Sending"),
-            "{rendered}"
+            process_alive(child),
+            "background child {child} must be alive"
         );
-        assert_eq!(provider.requests("fixture-activity").len(), 2);
-        provider.assert_healthy();
-        assert_eq!(ui.request(Request::Shutdown { kill: true }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-        assert_eq!(unsafe { libc::kill(-group, 0) }, -1);
+
+        let stopped = match driver.stop(identity) {
+            Response::Operator(ovrcr::protocol::OperatorResponse::Stopped(turn)) => turn,
+            other => panic!("operator stop: {other:?}"),
+        };
+        assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+        let interrupted =
+            driver.wait_history(opened.id, |history| history.conversation.worker_stopped);
         assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
+            interrupted
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .state,
+            OperatorTurnState::Interrupted
+        );
+        assert!(operator_harness::has_assistant(&interrupted, ""));
+        let deadline = Instant::now() + BUDGET;
+        while process_alive(child) {
+            assert!(
+                Instant::now() < deadline,
+                "the owned background child {child} survived the stop"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let session = driver
+            .exchange(Request::Inspect)
+            .pipe_inspect()
+            .into_iter()
+            .find(|session| session.id == opened.session)
+            .unwrap();
+        assert!(
+            !matches!(session.phase, SessionPhase::Running),
+            "the controlled stop retired the worker: {session:#?}"
+        );
+
+        // Turn five: only the last successful checkpoint is provider context.
+        let fifth = submit_next(
+            &mut driver,
+            opened.id,
+            "REQUEST_FIVE_AFTER_INTERRUPT",
+            turn_three,
+            &provider,
+            &live,
+        );
+        assert!(delta_text(&fifth).contains("TURN_FIVE_DONE"));
+        let after = provider.requests();
+        let context = structured_request_text(&after.last().unwrap().body);
+        assert!(
+            context.contains("TURN_THREE_DONE") || context.contains("HELD_BEFORE_RELEASE"),
+            "the last successful checkpoint is prior context: {context}"
+        );
+        assert!(
+            !context.contains("REQUEST_FOUR_BACKGROUND"),
+            "the interrupted request is not model context: {context}"
+        );
+        assert!(
+            !context.contains("sleep 30"),
+            "the interrupted tool call is not model context: {context}"
+        );
+        // `sleep 30` appears only inside a tool call's arguments in the
+        // interrupted session, so this is the assertion that a content-only
+        // extraction (or a resumed interrupted attempt) would weaken.
+        let interrupted_arguments = tool_call_arguments_text(&after.last().unwrap().body);
+        assert!(
+            !interrupted_arguments.contains("sleep 30"),
+            "the interrupted tool-call arguments are not model context: {interrupted_arguments}"
+        );
+        let interrupted_journal = operator_harness::history_text(&interrupted);
+        assert!(
+            interrupted_journal.contains("REQUEST_FOUR_BACKGROUND")
+                && interrupted_journal.contains("sleep 30"),
+            "the visible interrupted journal remains: {interrupted:#?}"
+        );
+        assert!(!operator_harness::tool_calls(&interrupted).is_empty());
+        wait_stopped(&mut driver, opened.id);
+
+        // Turn six: one assistant message with two tool calls. Pi prepares every
+        // admission before executing anything unless the tools are sequential,
+        // so this fails the turn unless the extension registered all four.
+        let fifth_turn = fifth
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        let requests_before = provider.requests().len();
+        let sixth = submit_next(
+            &mut driver,
+            opened.id,
+            "REQUEST_SIX_TWO_TOOLS",
+            fifth_turn,
+            &provider,
+            &live,
+        );
+        let sixth_turn = sixth
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        assert!(delta_text(&sixth).contains("TWO_TOOL_TURN_DONE"));
+        assert_eq!(
+            tool_names_for(&sixth, sixth_turn),
+            vec!["read", "bash"],
+            "both calls of one assistant message journal in order: {sixth:#?}"
+        );
+        let two_tool_outputs = tool_outputs_for(&sixth, sixth_turn);
+        let read_output = two_tool_outputs
+            .iter()
+            .find(|(id, _)| id == "call-two-read")
+            .map(|(_, output)| output.clone())
+            .expect("read receipt for the batch");
+        let bash_output = two_tool_outputs
+            .iter()
+            .find(|(id, _)| id == "call-two-bash")
+            .map(|(_, output)| output.clone())
+            .expect("bash receipt for the batch");
+        assert!(
+            read_output.contains("OFFLINE_MARKER_v2"),
+            "the read executed after the write: {read_output}"
+        );
+        assert!(
+            bash_output.contains("TWO_TOOL_BASH"),
+            "the bash executed after the read: {bash_output}"
+        );
+        let after_six = provider.requests();
+        assert!(
+            after_six.len() >= requests_before + 2,
+            "one request per model step of the batch: {:#?}",
+            after_six.len()
+        );
+        let batch_results = operator_provider::tool_result_texts(&after_six.last().unwrap().body);
+        assert!(
+            batch_results
+                .iter()
+                .any(|text| text.contains("OFFLINE_MARKER_v2"))
+                && batch_results
+                    .iter()
+                    .any(|text| text.contains("TWO_TOOL_BASH")),
+            "both tool results reached the follow-up model request: {batch_results:#?}"
+        );
+        eprintln!(
+            "INSTALLED_PI_TWO_TOOL_CALLS PASS turn={} tools={:?} read={} bash={} provider_requests={}",
+            sixth_turn,
+            tool_names_for(&sixth, sixth_turn),
+            read_output.lines().next().unwrap_or_default(),
+            bash_output.lines().next().unwrap_or_default(),
+            provider.requests().len()
+        );
+        wait_stopped(&mut driver, opened.id);
+
+        // Turn seven: a real attached Bash call with a short native timeout. It
+        // spawns a descendant that keeps writing, so only the timeout ends the
+        // tool; the durable TimedOut receipt must stop the turn without another
+        // provider request and without promoting this attempt as a checkpoint.
+        let timeout_output = workspace.join("timeout-writer.out");
+        let timeout_pid = workspace.join("timeout-writer.pid");
+        let requests_before_timeout = provider.requests().len();
+        // The timeout turn must leave whatever checkpoint the previous completed
+        // turn promoted untouched, without assuming which turn that was here.
+        let checkpoint_before_timeout =
+            operator_harness::Registry::of(&live).checkpoint(opened.id.0);
+        driver.submit("REQUEST_SEVEN_TIMEOUT");
+        let pending_timeout = driver.wait_history(opened.id, |history| {
+            let Some(turn) = history.conversation.current_turn.as_ref() else {
+                return false;
+            };
+            turn.state == OperatorTurnState::Running
+                && turn.identity.turn.0 > sixth_turn
+                && tool_names_for(history, turn.identity.turn.0)
+                    .iter()
+                    .any(|name| name == "bash")
+        });
+        let timeout_turn = pending_timeout
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        let pid = driver
+            .session(opened.session)
+            .pid
+            .expect("the timed-out turn owns a worker");
+        let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+        assert!(pgid > 1, "the worker has no process group: {pgid}");
+        live.own_group(pgid);
+        let deadline = Instant::now() + BUDGET;
+        while !timeout_pid.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "the timed bash command never spawned its descendant"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let descendant: u32 = std::fs::read_to_string(&timeout_pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_ne!(descendant, pid, "the descendant is a real child");
+        assert!(
+            process_alive(descendant),
+            "the background descendant must be alive while the command is attached"
+        );
+        let written = std::fs::metadata(&timeout_output)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        thread::sleep(Duration::from_millis(150));
+        let grown = std::fs::metadata(&timeout_output)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        assert!(
+            grown > written,
+            "the background descendant must keep writing: {written} -> {grown}"
+        );
+
+        let timed_out = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state != OperatorTurnState::Running)
+        });
+        assert_eq!(
+            timed_out.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Interrupted,
+            "a timed-out tool stops the turn through controlled stop: {timed_out:#?}"
+        );
+        assert!(
+            operator_harness::interrupted(&timed_out),
+            "the timed-out turn is interrupted: {timed_out:#?}"
+        );
+        assert!(
+            !has_completed(&timed_out),
+            "a timed-out tool never completes the turn"
+        );
+        let timed_outputs = tool_outputs_with_status(&timed_out);
+        let receipt = timed_outputs
+            .iter()
+            .find(|(id, _, _)| id == "call-timeout")
+            .unwrap_or_else(|| panic!("durable TimedOut receipt missing: {timed_outputs:#?}"));
+        assert_eq!(
+            receipt.2,
+            OperatorToolStatus::TimedOut,
+            "the durable receipt records the timeout: {receipt:#?}"
+        );
+        assert!(
+            receipt.1.contains("timed out"),
+            "Pi's native timeout text is the durable output: {receipt:#?}"
+        );
+        let timeout_calls: Vec<(String, String, String)> = operator_harness::tool_calls(&timed_out)
+            .into_iter()
+            .filter(|(id, _, _)| id == "call-timeout")
+            .collect();
+        assert_eq!(
+            timeout_calls.len(),
+            1,
+            "one durable admission: {timeout_calls:?}"
+        );
+        assert!(
+            timeout_calls[0].2.contains("\"timeout\":2"),
+            "the admitted arguments carry the native timeout: {timeout_calls:?}"
+        );
+        assert!(
+            !delta_text(&timed_out).contains("TIMEOUT_CONTINUATION_MUST_NOT_APPEAR"),
+            "the agent loop was released after the timeout: {timed_out:#?}"
+        );
+        assert_eq!(
+            provider.requests().len(),
+            requests_before_timeout + 1,
+            "a timed-out tool must not make Pi ask the provider again"
+        );
+        wait_stopped(&mut driver, opened.id);
+        let session = driver.session(opened.session);
+        assert!(
+            !matches!(session.phase, SessionPhase::Running),
+            "the controlled stop retired the worker: {session:#?}"
+        );
+        let deadline = Instant::now() + BUDGET;
+        while process_alive(descendant) {
+            assert!(
+                Instant::now() < deadline,
+                "the owned descendant {descendant} survived the stop"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let settled = std::fs::metadata(&timeout_output)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        thread::sleep(Duration::from_millis(250));
+        assert_eq!(
+            std::fs::metadata(&timeout_output)
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            settled,
+            "the descendant stopped writing after the owned group terminated"
+        );
+        operator_harness::assert_group_absent(&live, pgid);
+        assert_eq!(
+            operator_harness::Registry::of(&live).checkpoint(opened.id.0),
+            checkpoint_before_timeout,
+            "a timed-out attempt is never a context checkpoint"
+        );
+        assert_eq!(
+            checkpoint_before_timeout,
+            Some(sixth_turn as i64),
+            "the timeout turn follows the completed sixth turn"
+        );
+        let timeout_attempt = live
+            .config
+            .join("operator-pi/turns")
+            .join(timeout_turn.to_string());
+        assert!(
+            timeout_attempt.is_dir(),
+            "the attempt evidence is preserved"
+        );
+        assert!(
+            timeout_attempt.join("session.jsonl").is_file(),
+            "the timed-out native session is preserved: {timeout_attempt:?}"
+        );
+        eprintln!(
+            "INSTALLED_PI_TIMEOUT PASS turn={} descendant={} pgid={} provider_requests={} checkpoint={:?}",
+            timeout_turn,
+            descendant,
+            pgid,
+            provider.requests().len(),
+            operator_harness::Registry::of(&live).checkpoint(opened.id.0)
+        );
+
+        // A settings/model edit is the only way a turn changes model; no fixture
+        // credential sentinel crosses into the journal or settings.
+        let mut journal = String::new();
+        for history in [&first, &second, &third, &interrupted, &fifth, &sixth] {
+            journal.push_str(&operator_harness::history_text(history));
+        }
+        journal.push_str(&operator_harness::history_text(&timed_out));
+        assert!(!journal.contains(operator_provider::API_KEY));
+        assert!(!operator_harness::settings_text(&live).contains(operator_provider::API_KEY));
+        assert_no_fixture_sentinel("journal", &journal);
+        assert_no_fixture_sentinel("settings", &operator_harness::settings_text(&live));
+        assert_no_fixture_sentinel(
+            "registry",
+            &operator_harness::Registry::of(&live).operator_payload(),
+        );
+        let provider_bodies = serde_json::to_string(&provider.request_bodies()).unwrap();
+        assert_no_fixture_sentinel("provider requests", &provider_bodies);
+        scan_profile_for_sentinels(&live.config.join("operator-pi"), "native Pi profile");
+
+        // Automatic compaction keeps one conversation and one native session.
+        check_compaction(&pi);
+
+        eprintln!(
+            "INSTALLED_PI_OPERATOR PASS pi={} conversation={} session={} checkpoints={:?} provider_requests={}",
+            pi.display(),
+            opened.id.0,
+            opened.session.0,
+            operator_harness::Registry::of(&live).checkpoint(opened.id.0),
+            provider.requests().len()
         );
     }
 
-    #[test]
-    fn compiled_workers_stream_tools_stop_independently_and_restart_without_replay() {
-        let live = live::Live::idle().bounded();
-        let provider = Provider::new(live.root.path(), BUDGET);
-        provider.sign_in(&live.config);
-        start(&live, &provider);
-        let mut ui = DashboardClient::connect(&live);
-        let a = ui.create("fixture-a", true);
-        assert!(a.worker_stopped && a.current_turn.is_none());
-        assert!(provider.requests("fixture-a").is_empty());
-        let turn_a = ui.submit("A run the isolated CLI");
-        let a_group = own_worker(&live, &a);
-        let b = ui.create("fixture-b", false);
-        let turn_b = ui.submit("B run the isolated CLI");
-        let b_group = own_worker(&live, &b);
-        assert_ne!(turn_a.identity.session, turn_b.identity.session);
-        let a_running = ui.wait_history(&provider, a.id, |history| {
-            has_text(history, "A partial waiting")
-        });
-        let b_running = ui.wait_history(&provider, b.id, |history| {
-            has_text(history, "B partial waiting")
-        });
-        for (history, label) in [(&a_running, "A"), (&b_running, "B")] {
-            assert_eq!(
-                history.conversation.current_turn.as_ref().unwrap().state,
-                OperatorTurnState::Running
-            );
-            assert!(!history.conversation.worker_stopped);
-            assert_tool(history, label);
-            assert!(!history.messages.iter().any(|message| matches!(
-                &message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_))
-            )));
+    trait InspectExt {
+        fn pipe_inspect(self) -> Vec<ovrcr::protocol::SessionSummary>;
+    }
+    impl InspectExt for Response {
+        fn pipe_inspect(self) -> Vec<ovrcr::protocol::SessionSummary> {
+            match self {
+                Response::Inventory { sessions, .. } => sessions,
+                other => panic!("inspect: {other:?}"),
+            }
         }
-        assert!(!has_text(&a_running, "B partial") && !has_text(&b_running, "A partial"));
-        assert_ne!(a_group, b_group);
-        assert!(
-            ui.changed.contains(&a.id) && ui.changed.contains(&b.id),
-            "real Server dirty events must drive Dashboard catch-up"
+    }
+
+    /// A tiny context window forces Pi's own automatic compaction; the fixture
+    /// provider recognizes the summarization call. The conversation and native
+    /// session must survive it unchanged.
+    fn check_compaction(pi: &Path) {
+        let live = live::Live::idle().bounded();
+        let workspace = live.root.path().join("operator-target");
+        std::fs::create_dir(&workspace).unwrap();
+        let provider = Provider::start(scenario_handler(
+            workspace.clone(),
+            workspace.join("compaction-marker"),
+            workspace.join("compaction-background.pid"),
+        ));
+        provider.seed_profile_with(
+            &live.config,
+            1024,
+            Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
         );
-        ui.paste("B retained draft");
-        ui.key(KeyCode::Enter);
-        assert!(
-            ui.flush()
-                .iter()
-                .all(|reply| !matches!(reply, Response::Operator(OperatorResponse::Submitted(_)))),
-            "busy chat accepted another turn"
-        );
-        ui.select_previous();
-        ui.paste("A retained draft");
-        let a_view = ui.rendered();
-        assert!(
-            a_view.contains("A partial waiting") && a_view.contains("A retained draft"),
-            "A transcript/draft lost: {a_view}"
-        );
-        assert!(!a_view.contains("B partial waiting"));
-        ui.ctrl('c');
-        assert!(!ui.rendered().contains("A retained draft"));
-        assert!(
-            ui.flush()
-                .iter()
-                .all(|reply| !matches!(reply, Response::Operator(OperatorResponse::Stopped(_))))
-        );
-        assert!(live::group_exists(a_group) && live::group_exists(b_group));
-        ui.ctrl('c');
-        let stopped = ui.flush();
-        assert!(stopped.iter().any(|reply| matches!(reply,
-            Response::Operator(OperatorResponse::Stopped(turn)) if turn.identity == turn_a.identity)));
-        let a_stopped = ui.wait_history(&provider, a.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            a_stopped.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Interrupted
-        );
-        assert_eq!(
-            a_stopped
-                .messages
-                .iter()
-                .filter(|message| matches!(message.content, OperatorMessageContent::Interrupted))
-                .count(),
-            1
-        );
-        assert_retired(&live, &a_stopped, a_group);
-        let still_b = ui.history(b.id);
-        assert_eq!(
-            still_b.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Running
-        );
-        assert!(!still_b.conversation.worker_stopped && live::group_exists(b_group));
-        live.ready("feature/stop");
-        let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
-            panic!("hierarchy")
-        };
-        let terminal = hierarchy
-            .projects
-            .iter()
-            .flat_map(|p| &p.workspaces)
-            .flat_map(|w| &w.sessions)
-            .find(|s| s.name == "local")
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let opened = driver.conversation();
+
+        let filler = "x".repeat(6000);
+        driver.submit(&format!("COMPACT_ONE {filler}"));
+        let compaction_first = wait_terminal(&mut driver, opened.id, &provider, &live);
+        let first_turn = compaction_first
+            .conversation
+            .current_turn
+            .as_ref()
             .unwrap()
-            .id;
-        let output = live
-            .command()
-            .args([
-                "terminal",
-                "send",
-                &terminal.0.to_string(),
-                "--text",
-                "printf 'STOP_%s\n' TERMINAL_OK\n",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "unrelated terminal input refused: {}",
-            String::from_utf8_lossy(&output.stderr)
+            .identity
+            .turn
+            .0;
+        wait_stopped(&mut driver, opened.id);
+        let history = submit_next(
+            &mut driver,
+            opened.id,
+            "COMPACT_TWO",
+            first_turn,
+            &provider,
+            &live,
         );
-        let deadline = std::time::Instant::now() + BUDGET;
-        loop {
-            let Response::TerminalText { text, .. } = live.request(Request::ReadTerminal {
-                session: terminal,
-                max_lines: None,
-            }) else {
-                panic!("terminal read")
-            };
-            if text.lines().any(|line| line.trim() == "STOP_TERMINAL_OK") {
+        assert!(delta_text(&history).contains("COMPACT_TWO_DONE"));
+        let requests = provider.requests();
+        assert!(
+            requests
+                .iter()
+                .any(|request| operator_provider::is_compaction_request(&request.body)),
+            "Pi's automatic compaction must call the same provider: {requests:#?}"
+        );
+        assert_eq!(
+            operator_harness::Registry::of(&live).conversation_ids(),
+            vec![opened.id.0],
+            "compaction keeps one conversation"
+        );
+        let checkpoint = operator_harness::Registry::of(&live)
+            .checkpoint(opened.id.0)
+            .unwrap();
+        let header = session_header(
+            &live
+                .config
+                .join("operator-pi/turns")
+                .join(checkpoint.to_string())
+                .join("session.jsonl"),
+        );
+        assert_eq!(header["id"], format!("operator-{}", opened.id.0));
+        eprintln!(
+            "INSTALLED_PI_COMPACTION PASS conversation={} compaction_requests={} provider_requests={}",
+            opened.id.0,
+            requests
+                .iter()
+                .filter(|request| operator_provider::is_compaction_request(&request.body))
+                .count(),
+            requests.len()
+        );
+    }
+
+    // ------------------------------------------------------------ GUI provider
+
+    /// The GUI smoke's scripted provider. It refuses anything but a
+    /// launcher-owned GUI fixture root: `OVRCR_OPERATOR_GUI_HOME` must name a
+    /// private `ovrcr-gui-*` root whose launcher created `operator-pi-fixture-owner`
+    /// (mode 0600) containing this exact root and the matching
+    /// `OVRCR_OPERATOR_GUI_TOKEN`. It seeds only that root's `operator-pi`,
+    /// prints `OPERATOR_PI_GUI_READY`, and serves until the root disappears or a
+    /// private stop marker appears. A private release marker releases a held
+    /// stream.
+    #[test]
+    #[ignore = "manual GUI acceptance helper; requires OVRCR_OPERATOR_GUI_HOME and OVRCR_OPERATOR_GUI_TOKEN"]
+    fn operator_pi_gui_provider() {
+        let root = gui_root();
+        let stop_marker = root.join("operator-pi/fixture-stop");
+        let release_marker = root.join("operator-pi/fixture-release");
+        let workspace = gui_workspace(&root);
+        std::fs::create_dir_all(&workspace).unwrap();
+        let marker = workspace.join("gui-fixture-marker.txt");
+        let background_pid = workspace.join("gui-background.pid");
+        let provider = Provider::start(scenario_handler(
+            workspace.clone(),
+            marker.clone(),
+            background_pid.clone(),
+        ));
+        provider.seed_profile(&root);
+        let _ = std::fs::remove_file(&release_marker);
+        let _ = std::fs::remove_file(&stop_marker);
+        println!(
+            "OPERATOR_PI_GUI_READY base={} root={}",
+            provider.base,
+            root.display()
+        );
+        use std::io::Write as _;
+        std::io::stdout().flush().unwrap();
+        eprintln!(
+            "OPERATOR_PI_GUI_PROVIDER root={} workspace={} marker={}",
+            root.display(),
+            workspace.display(),
+            marker.display()
+        );
+        let deadline = Instant::now() + Duration::from_secs(3600);
+        while root.is_dir() && !stop_marker.exists() {
+            if release_marker.exists() {
+                provider.release();
+            }
+            if Instant::now() >= deadline {
+                eprintln!("OPERATOR_PI_GUI_PROVIDER timeout");
                 break;
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "unrelated terminal did not answer: {text}"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(25));
         }
-        assert!(live::group_exists(b_group), "terminal use cannot retire B");
-        assert_eq!(
-            live.request(Request::KillSession { session: terminal }),
-            Response::Ok
-        );
-        provider.release("fixture-b");
-        let b_done = ui.wait_history(&provider, b.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            b_done.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Complete
-        );
-        assert!(has_text(&b_done, "B final"));
-        assert_retired(&live, &b_done, b_group);
-        ui.select_next();
-        let b_view = ui.rendered();
-        assert!(
-            b_view.contains("B final")
-                && b_view.contains("B retained draft")
-                && b_view.contains("complete"),
-            "B transcript/draft lost: {b_view}"
-        );
-        assert!(!b_view.contains("A partial waiting"));
-        for _ in "B retained draft".chars() {
-            ui.key(KeyCode::Backspace);
-        }
-        let followup = ui.submit("B continue without another command");
-        assert_eq!(followup.identity.conversation, b.id);
-        assert_eq!(followup.identity.session, turn_b.identity.session);
-        assert_eq!(followup.identity.run.0, turn_b.identity.run.0 + 1);
-        ui.wait_history(&provider, b.id, |history| {
-            has_text(history, "B follow-up waiting")
-        });
-        let followup_group = own_worker(&live, &b);
-        let requests = provider.requests("fixture-b");
-        assert_eq!(requests.len(), 3);
-        let input = requests[2]["input"].as_array().unwrap();
-        let serialized = requests[2]["input"].to_string();
-        for text in [
-            "B run the isolated CLI",
-            "B before tool",
-            "B partial waiting B final",
-            "B continue without another command",
-        ] {
-            assert_eq!(
-                serialized.matches(text).count(),
-                1,
-                "saved/new model message missing or duplicated: {text}: {serialized}"
+        // Capture the request evidence beside the fixture before exiting.
+        let evidence = root.join("operator-pi/fixture-requests.jsonl");
+        let mut body = String::new();
+        for request in provider.requests() {
+            body.push_str(
+                &serde_json::to_string(&json!({
+                    "path": request.path,
+                    "authorization": request.authorization,
+                    "body": request.body,
+                }))
+                .unwrap(),
             );
+            body.push('\n');
         }
-        let calls: Vec<_> = input
-            .iter()
-            .filter(|item| item["type"] == "function_call")
-            .collect();
-        let outputs: Vec<_> = input
-            .iter()
-            .filter(|item| item["type"] == "function_call_output")
-            .collect();
-        assert_eq!(
-            calls.len(),
-            1,
-            "saved tool call missing or duplicated: {serialized}"
+        let _ = std::fs::write(&evidence, body);
+        eprintln!(
+            "OPERATOR_PI_GUI_PROVIDER exit root_exists={} stop_marker={} requests={} evidence={}",
+            root.is_dir(),
+            stop_marker.exists(),
+            provider.requests().len(),
+            evidence.display()
         );
-        assert_eq!(
-            outputs.len(),
-            1,
-            "saved tool result missing or duplicated: {serialized}"
-        );
-        assert_eq!(calls[0]["name"], "bash");
-        assert_eq!(calls[0]["call_id"], outputs[0]["call_id"]);
-        assert!(outputs[0]["output"].to_string().contains("E2E_B_TOOL"));
-        assert!(outputs[0]["output"].to_string().contains("[]"));
-        provider.release("fixture-b-followup");
-        let b_done = ui.wait_history(&provider, b.id, |history| {
-            history.conversation.worker_stopped
-        });
-        assert_eq!(
-            b_done.conversation.current_turn.as_ref().unwrap().identity,
-            followup.identity
-        );
-        assert_eq!(
-            b_done.conversation.current_turn.as_ref().unwrap().state,
-            OperatorTurnState::Complete
-        );
-        assert!(has_text(&b_done, "B follow-up final"));
-        assert_eq!(
-            b_done
-                .messages
-                .iter()
-                .filter(|message| matches!(
-                    message.content,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. })
-                ))
-                .count(),
-            1,
-            "follow-up repeated Bash"
-        );
-        assert_retired(&live, &b_done, followup_group);
-        for model in ["fixture-a", "fixture-b"] {
-            assert_eq!(
-                provider.requests(model).len(),
-                if model == "fixture-b" { 3 } else { 2 }
-            );
-            assert_eq!(
-                std::fs::read_to_string(live.root.path().join(format!("{model}.executions")))
-                    .unwrap(),
-                "ran\n"
-            );
-        }
-        assert_eq!(ui.request(Request::Shutdown { kill: false }), Response::Ok);
-        drop(ui);
-        assert!(live.join_within(BUDGET).is_finished());
-        start(&live, &provider);
-        let mut restored = DashboardClient::connect(&live);
-        let a_after = restored.history(a.id);
-        let b_after = restored.history(b.id);
-        assert_eq!(
-            a_after, a_stopped,
-            "restart changed interrupted transcript or replayed work"
-        );
-        assert_eq!(
-            b_after, b_done,
-            "restart changed completed transcript or model history framing"
-        );
-        for summary in [&a, &b] {
-            assert_eq!(inventory(&live, summary).phase, SessionPhase::Stopped);
-        }
-        for model in ["fixture-a", "fixture-b"] {
-            assert_eq!(
-                provider.requests(model).len(),
-                if model == "fixture-b" { 3 } else { 2 },
-                "history/restart launched another model request"
-            );
-            assert_eq!(
-                std::fs::read_to_string(live.root.path().join(format!("{model}.executions")))
-                    .unwrap(),
-                "ran\n",
-                "interrupted Bash replayed"
-            );
-        }
-        provider.assert_healthy();
-        assert_eq!(
-            restored.request(Request::Shutdown { kill: false }),
-            Response::Ok
-        );
-        drop(restored);
-        assert!(live.join_within(BUDGET).is_finished());
     }
+
+    /// The GUI launcher's ownership marker. The provider helper writes a private
+    /// `operator-pi` profile into the root it is given, so it must only ever seed
+    /// a root a launcher explicitly claimed for this task; a sibling task's
+    /// fixture must be refused, not clobbered.
+    const GUI_OWNER_MARKER: &str = "operator-pi-fixture-owner";
+    const GUI_OWNER_VERSION: &str = "ovrcr-operator-gui-fixture v1";
+
+    fn gui_owner_text(root: &Path, token: &str) -> String {
+        format!(
+            "{GUI_OWNER_VERSION}\nroot={}\ntoken={token}\n",
+            root.display()
+        )
+    }
+
+    fn gui_root() -> PathBuf {
+        gui_root_from(
+            std::env::var_os("OVRCR_OPERATOR_GUI_HOME"),
+            std::env::var_os("OVRCR_OPERATOR_GUI_TOKEN"),
+        )
+        .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Validate a launcher-owned GUI fixture root. `home` is
+    /// `OVRCR_OPERATOR_GUI_HOME`; `token` must match the private ownership
+    /// marker the launcher wrote into that root.
+    fn gui_root_from(home: Option<OsString>, token: Option<OsString>) -> Result<PathBuf, String> {
+        let Some(home) = home.filter(|value| !value.is_empty()) else {
+            return Err(
+                "set OVRCR_OPERATOR_GUI_HOME to the launcher-created GUI fixture root".into(),
+            );
+        };
+        let token = token
+            .and_then(|value| value.into_string().ok())
+            .filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 128
+                    && value
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            })
+            .ok_or_else(|| {
+                format!("set OVRCR_OPERATOR_GUI_TOKEN to the token recorded in {GUI_OWNER_MARKER}")
+            })?;
+        let root = PathBuf::from(home)
+            .canonicalize()
+            .map_err(|error| format!("GUI fixture root unavailable: {error}"))?;
+        if !root.is_dir() {
+            return Err(format!(
+                "GUI fixture root is not a directory: {}",
+                root.display()
+            ));
+        }
+        if !root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("ovrcr-gui-"))
+        {
+            return Err(format!(
+                "refusing {}: a launcher-owned GUI fixture root is named ovrcr-gui-*",
+                root.display()
+            ));
+        }
+        let registry = std::fs::symlink_metadata(root.join("registry.sqlite3")).map_err(|_| {
+            format!(
+                "GUI fixture root needs registry.sqlite3: {}",
+                root.display()
+            )
+        })?;
+        if !registry.is_file() || registry.file_type().is_symlink() {
+            return Err(format!(
+                "GUI fixture root needs a regular registry.sqlite3: {}",
+                root.display()
+            ));
+        }
+        if std::fs::symlink_metadata(root.join("server.sock")).is_err() {
+            return Err(format!(
+                "GUI fixture root needs server.sock: {}",
+                root.display()
+            ));
+        }
+        let marker = root.join(GUI_OWNER_MARKER);
+        let expected = gui_owner_text(&root, &token);
+        let metadata = std::fs::symlink_metadata(&marker).map_err(|_| {
+            format!(
+                "refusing {}: the GUI launcher must create {GUI_OWNER_MARKER} (mode 0600) containing:\n{expected}",
+                root.display()
+            )
+        })?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(format!(
+                "refusing {}: {GUI_OWNER_MARKER} must be a regular file, not a symlink",
+                root.display()
+            ));
+        }
+        if metadata.mode() & 0o077 != 0 {
+            return Err(format!(
+                "refusing {}: {GUI_OWNER_MARKER} must be private (mode 0600)",
+                root.display()
+            ));
+        }
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(format!(
+                "refusing {}: {GUI_OWNER_MARKER} is owned by another user",
+                root.display()
+            ));
+        }
+        let recorded = std::fs::read_to_string(&marker)
+            .map_err(|error| format!("refusing {}: {GUI_OWNER_MARKER}: {error}", root.display()))?;
+        if recorded != expected {
+            return Err(format!(
+                "refusing {}: {GUI_OWNER_MARKER} does not bind this root and token; expected exactly:\n{expected}",
+                root.display()
+            ));
+        }
+        Ok(root)
+    }
+
+    /// Proves the ownership guard: another task's GUI fixture is refused and left
+    /// untouched, and only a private marker binding this root and token is
+    /// accepted.
+    #[test]
+    fn operator_gui_fixture_requires_a_launcher_ownership_marker() {
+        let token = "task-owner-token-7f3a";
+        let base = tempfile::tempdir().unwrap();
+
+        // A sibling task's fixture root: right shape, no ownership marker.
+        let foreign = base.path().join("ovrcr-gui-other-task");
+        std::fs::create_dir(&foreign).unwrap();
+        std::fs::write(foreign.join("registry.sqlite3"), b"").unwrap();
+        std::fs::write(foreign.join("server.sock"), b"").unwrap();
+        let foreign_profile = foreign.join("operator-pi");
+        std::fs::create_dir(&foreign_profile).unwrap();
+        std::fs::write(foreign_profile.join("models.json"), b"ANOTHER_TASK").unwrap();
+
+        let error = gui_root_from(None, Some(token.into())).unwrap_err();
+        assert!(error.contains("OVRCR_OPERATOR_GUI_HOME"), "{error}");
+
+        let error = gui_root_from(
+            Some(foreign.clone().into_os_string()),
+            Some("bad token".into()),
+        )
+        .unwrap_err();
+        assert!(error.contains("OVRCR_OPERATOR_GUI_TOKEN"), "{error}");
+
+        let wrong_root = base.path().join("not-a-gui-fixture");
+        std::fs::create_dir(&wrong_root).unwrap();
+        let error =
+            gui_root_from(Some(wrong_root.into_os_string()), Some(token.into())).unwrap_err();
+        assert!(
+            error.contains("a launcher-owned GUI fixture root is named ovrcr-gui-*"),
+            "{error}"
+        );
+
+        let error =
+            gui_root_from(Some(foreign.clone().into_os_string()), Some(token.into())).unwrap_err();
+        assert!(error.contains(GUI_OWNER_MARKER), "{error}");
+
+        // A marker that does not bind this exact root and token is refused, and
+        // a non-private or symlinked marker is refused too.
+        let marker = foreign.join(GUI_OWNER_MARKER);
+        std::fs::write(
+            &marker,
+            gui_owner_text(Path::new("/somewhere/else"), "other-task-token"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let error =
+            gui_root_from(Some(foreign.clone().into_os_string()), Some(token.into())).unwrap_err();
+        assert!(
+            error.contains("does not bind this root and token"),
+            "{error}"
+        );
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let error =
+            gui_root_from(Some(foreign.clone().into_os_string()), Some(token.into())).unwrap_err();
+        assert!(error.contains("must be private"), "{error}");
+        std::fs::remove_file(&marker).unwrap();
+        let target = base.path().join("foreign-owner-target");
+        std::fs::write(&target, gui_owner_text(&foreign, token)).unwrap();
+        std::os::unix::fs::symlink(&target, &marker).unwrap();
+        let error =
+            gui_root_from(Some(foreign.clone().into_os_string()), Some(token.into())).unwrap_err();
+        assert!(
+            error.contains("must be a regular file, not a symlink"),
+            "{error}"
+        );
+
+        // Refusal never seeded anything: the other task's profile is intact.
+        assert_eq!(
+            std::fs::read(foreign_profile.join("models.json")).unwrap(),
+            b"ANOTHER_TASK"
+        );
+        assert!(!foreign_profile.join("settings.json").exists());
+
+        // A private launcher marker binds the canonical root and matching token.
+        let accepted = base
+            .path()
+            .join(format!("ovrcr-gui-fixture-{}", std::process::id()));
+        std::fs::create_dir(&accepted).unwrap();
+        std::fs::write(accepted.join("registry.sqlite3"), b"").unwrap();
+        std::fs::write(accepted.join("server.sock"), b"").unwrap();
+        let accepted = accepted.canonicalize().unwrap();
+        let owner = accepted.join(GUI_OWNER_MARKER);
+        std::fs::write(&owner, gui_owner_text(&accepted, token)).unwrap();
+        std::fs::set_permissions(&owner, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            gui_root_from(Some(accepted.clone().into_os_string()), Some(token.into())).unwrap(),
+            accepted
+        );
+    }
+
+    fn gui_workspace(root: &Path) -> PathBuf {
+        // The GUI owns a disposable fixture root; its operator workdir is private.
+        let candidates = ["operator-target", "workspace", "project"];
+        for candidate in candidates {
+            let path = root.join(candidate);
+            if path.is_dir() {
+                return path;
+            }
+        }
+        let target = root.join("operator-target");
+        let _ = Command::new("mkdir").arg("-p").arg(&target).status();
+        target
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn provider_smoke_streams_openai_chunks() {
+    use std::io::{Read, Write};
+    let provider = operator_provider::Provider::start(Box::new(|_body, _index| {
+        operator_provider::Plan::text("HELLO_PROVIDER")
+    }));
+    let mut stream =
+        std::net::TcpStream::connect(provider.base.trim_start_matches("http://")).unwrap();
+    let body =
+        r#"{"model":"operator-fixture","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+    let request = format!(
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    eprintln!("PROVIDER_SMOKE {response}");
+    assert!(response.contains("HELLO_PROVIDER"), "{response}");
+    assert!(response.contains("[DONE]"), "{response}");
+    assert_eq!(provider.requests().len(), 1);
 }
