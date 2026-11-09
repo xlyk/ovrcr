@@ -470,27 +470,14 @@ impl Loader<'_> {
             self.unknown(delegation, "delegation.");
         }
         if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
-            self.value(
-                &mut operator,
-                "operator.provider",
-                &mut settings.operator.provider,
-            );
-            for (key, slot) in [
-                (
-                    "operator.chat_gpt_model",
-                    &mut settings.operator.chat_gpt_model,
-                ),
-                ("operator.grok_model", &mut settings.operator.grok_model),
-            ] {
-                if let Some(value) = self.take::<String>(&mut operator, key) {
-                    if ovrcr_protocol::validate_operator_model(&value).is_ok() {
-                        self.accept(key, slot, Some(value));
-                    } else {
-                        self.finding(
-                            key,
-                            "expected a nonempty model identifier up to 256 bytes".into(),
-                        );
-                    }
+            if let Some(value) = self.take::<String>(&mut operator, "operator.model") {
+                if ovrcr_protocol::DelegationSettings::valid_model(&value) {
+                    self.accept("operator.model", &mut settings.operator.model, Some(value));
+                } else {
+                    self.finding(
+                        "operator.model",
+                        "expected a provider/model identifier".into(),
+                    );
                 }
             }
             self.unknown(operator, "operator.");
@@ -995,9 +982,7 @@ dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
 
 [operator]
-provider = "grok"
-chat_gpt_model = "chat-model"
-grok_model = "grok-model"
+model = "openai/chat-model"
 
 [delegation]
 progress_deadline_ms = 12345
@@ -1224,9 +1209,7 @@ login = "owner@example.com"
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",
-                "operator.provider",
-                "operator.chat_gpt_model",
-                "operator.grok_model",
+                "operator.model",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -1592,30 +1575,33 @@ mod operator_tests {
     fn operator_settings_validate_independently_and_reject_credentials() {
         let report = parse(
             Path::new("/tmp/settings"),
-            "[operator]\nprovider='grok'\nchat_gpt_model='chat-model'\ngrok_model='grok-model'\n",
+            "[operator]\nmodel='openai/gpt-5.1-codex/mini'\n",
         );
         assert!(report.findings.is_empty(), "{:?}", report.findings);
         assert_eq!(
-            report.settings.operator.provider,
-            ovrcr_protocol::OperatorProvider::Grok
+            report.settings.operator.model.as_deref(),
+            Some("openai/gpt-5.1-codex/mini")
         );
-        assert_eq!(
-            report.settings.operator.grok_model.as_deref(),
-            Some("grok-model")
-        );
-        assert!(report.rows.iter().any(|row| row.key == "operator.provider"
+        assert!(report.rows.iter().any(|row| row.key == "operator.model"
             && row.source == ovrcr_protocol::SettingSource::Document));
         let report = parse(
             Path::new("/tmp/settings"),
-            "[operator]\nprovider='invalid'\nchat_gpt_model=' ' \ngrok_model='valid'\napi_key='forbidden'\n",
+            "[operator]\nmodel=' '\napi_key='forbidden'\n",
         );
-        assert_eq!(report.findings.len(), 3);
+        assert_eq!(report.findings.len(), 2);
         assert_eq!(
             report.settings.operator,
-            ovrcr_protocol::OperatorSettings {
-                grok_model: Some("valid".into()),
-                ..Default::default()
-            }
+            ovrcr_protocol::OperatorSettings::default()
+        );
+        // A bare model id has no provider; the shared syntax splits once at the first slash.
+        let report = parse(
+            Path::new("/tmp/settings"),
+            "[operator]\nmodel='gpt-5.1-codex'\n",
+        );
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.settings.operator,
+            ovrcr_protocol::OperatorSettings::default()
         );
         for invalid in ["[]", "3", "true"] {
             let report = parse(Path::new("/tmp/settings"), &format!("operator={invalid}"));
@@ -1628,16 +1614,16 @@ mod operator_tests {
         let root = tempfile::tempdir().unwrap();
         let document = root.path().join("dashboard.toml");
         std::fs::write(&document, "").unwrap();
-        set(&document, "operator.grok_model", Some("'valid'")).unwrap();
+        set(&document, "operator.model", Some("'openai/model'")).unwrap();
         assert_eq!(
             load_document(root.path(), &document)
                 .settings
                 .operator
-                .grok_model
+                .model
                 .as_deref(),
-            Some("valid")
+            Some("openai/model")
         );
-        assert!(set(&document, "operator.grok_model", Some("' '")).is_err());
+        assert!(set(&document, "operator.model", Some("' '")).is_err());
         assert!(set(&document, "operator.api_key", Some("'forbidden'")).is_err());
     }
 }
