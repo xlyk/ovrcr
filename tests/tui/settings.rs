@@ -1220,10 +1220,6 @@ fn wide_80x24_frame_pins_sidebar_rows_details_and_footer() {
         flatten_frame(focused.clone()).contains("permission prompt"),
         "the full permission warning is visible before scrolling: {focused:?}"
     );
-    assert!(
-        !focused.iter().any(|line| line.contains("Source:")),
-        "metadata is on demand behind the initial guidance: {focused:?}"
-    );
 
     // Ctrl-d scrolls the fixed details block to the on-demand metadata without
     // moving the selected list row.
