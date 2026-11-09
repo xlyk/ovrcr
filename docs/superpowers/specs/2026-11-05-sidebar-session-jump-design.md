@@ -2,6 +2,8 @@
 
 Status: behavior confirmed by Kyle in Q8 on 2026-11-06; implementation subsequently authorized through implement-spec. Source baseline: `8f9569729574b0f0dedb56bd8b9ff1a1384b08fa`.
 
+Status note (2026-11-07): the Ctrl-g revision at the end supersedes the Control-hold interaction described below. [docs/dashboard.md](../../dashboard.md) and [docs/development/tui.md](../../development/tui.md) are the live contract.
+
 Published specification: [OVRCR #401](https://github.com/xlyk/ovrcr/issues/401), labeled `ready-for-agent` through the requested to-spec workflow on 2026-11-06. Publication did not start implementation.
 
 ## Confirmed behavior
@@ -127,3 +129,25 @@ Kyle confirmed this behavior in Q8 on 2026-11-06. The later implement-spec reque
 On 2026-11-06, after trying the GUI, Kyle revised the interaction to use only single digits, superseding the adaptive two-digit codes, zero-padding, prefix display, matching-prefix emphasis, and Backspace prefix editing. Kyle then preferred holding Control instead of Cmd. The active contract is Ctrl+1 through Ctrl+9 for the first nine eligible visible Agent rows; later rows stay visible and unlabelled and remain reachable through scrolling or Agents search. A digit selects immediately. Non-digit Control shortcuts and Command/Super host shortcuts retain their ordinary paths. All other cancellation, readiness, identity, retained-session, Operator, layout, and verified-input-support contracts remain in force. The revision was reflected in published issues #401–#405 before this implementation.
 
 For computer-use verification Kyle directed use of the existing disposable OVRCR TUI testing GUI. Exercise the real Dashboard input boundary there, and keep evidence from other production terminal hosts separate. Implementation acceptance remains open until the actual checks are recorded.
+
+## Dated design revision: Ctrl-g picker
+
+On 2026-11-07 Kyle replaced the Control-hold trigger with `Ctrl-g`. The picker
+opens on a `Ctrl-g` press and stays open until a digit selects, `Esc` or `Ctrl-g`
+closes it, or another key closes it and continues with its ordinary handling.
+Labels use bare digits `1`–`9`; `Ctrl+digit` remains accepted. The mapping is
+captured when the picker opens, and scrolling closes it so a fresh `Ctrl-g`
+labels the new first nine rows.
+
+Because `Ctrl-g` is an ordinary key event every terminal delivers, the feature
+no longer depends on Kitty modifier reporting, verified frontends, the
+`OVRCR_DASHBOARD_INPUT_PROFILE` environment variable, `DashboardInputProfile`,
+or its iTerm2/GUI qualification. From Terminal mode, the `Ctrl-g` that returns
+to Browse also opens the picker; from Operator, the ordinary `Ctrl-g` leaves
+Operator and then labels the Browse sidebar if it is visible.
+
+A selected running destination still waits for the exact view acknowledgement
+and the production input-drain boundary; there is no modifier release to wait
+for. A retained destination still stays in Browse for inspection. All other
+label allocation, identity, cancellation, layout, and no-replay contracts from
+the Control-hold design remain in force.

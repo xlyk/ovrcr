@@ -2749,7 +2749,8 @@ impl Dashboard {
     }
 
     /// Enter on a session that is no longer live. Opens the same confirmation the
-    /// palette's Resume / Reopen entry does, or the unavailable notice.
+    /// palette's Resume / Reopen entry does, or the unavailable notice for a
+    /// provider that has no native picker to fall back to.
     pub(super) fn open_reopen_terminal(&mut self) -> DashboardAction {
         let Some(session) = self
             .action_session()
@@ -2759,6 +2760,7 @@ impl Dashboard {
             return DashboardAction::None;
         };
         let unavailable = matches!(session.kind, SessionKind::Agent { .. })
+            && !native_picker(session)
             && session
                 .recovery
                 .as_ref()
@@ -2986,11 +2988,27 @@ impl Dashboard {
                     .as_ref()
                     .is_some_and(|recovery| recovery.requires_ack);
                 let target = if matches!(session.kind, SessionKind::Agent { .. }) {
-                    if session.recovery.as_ref().is_none_or(|recovery| recovery.conversation.is_none()) {
-                        if acknowledge_stopped {
-                            "Confirm the previous agent and background processes have stopped, then open the agent's native resume picker?"
-                        } else {
-                            "Open the agent's native resume picker?"
+                    // A certified reference is used only while it is available. Otherwise a
+                    // picker-capable provider opens its own menu, so the row is never a dead end.
+                    let picker = native_picker(session)
+                        && (session
+                            .recovery
+                            .as_ref()
+                            .is_none_or(|recovery| recovery.conversation.is_none())
+                            || session
+                                .recovery
+                                .as_ref()
+                                .is_some_and(|recovery| recovery.unavailable.is_some()));
+                    let fallback = session
+                        .recovery
+                        .as_ref()
+                        .is_some_and(|recovery| recovery.unavailable.is_some());
+                    if picker {
+                        match (fallback, acknowledge_stopped) {
+                            (true, true) => "The exact recorded conversation cannot be certified. Confirm the previous agent and background processes have stopped, then open the agent's native resume picker and choose a session?",
+                            (true, false) => "The exact recorded conversation cannot be certified. Open the agent's native resume picker and choose a session?",
+                            (false, true) => "Confirm the previous agent and background processes have stopped, then open the agent's native resume picker?",
+                            (false, false) => "Open the agent's native resume picker?",
                         }
                     } else if acknowledge_stopped {
                         "Confirm the previous agent and background processes have stopped, then resume this exact conversation without a new prompt?"
@@ -3217,6 +3235,7 @@ impl Dashboard {
                             .recovery
                             .as_ref()
                             .is_some_and(|recovery| recovery.unavailable.is_none());
+                        let picker = native_picker(session);
                         entries.push(if available {
                             Entry {
                                 label: if session
@@ -3229,6 +3248,11 @@ impl Dashboard {
                                     "Resume conversation"
                                 }
                                 .into(),
+                                command: Command::ReopenTerminal(id),
+                            }
+                        } else if picker {
+                            Entry {
+                                label: "Open native resume picker".into(),
                                 command: Command::ReopenTerminal(id),
                             }
                         } else {
@@ -8361,6 +8385,17 @@ fn unavailable_agent(name: &str) -> String {
     format!("Agent '{name}' is unavailable. Choose another agent or explicitly select Terminal.")
 }
 
+/// Whether this Agent can open its own resume menu when OVRCR cannot certify
+/// the exact recorded conversation. Providers without a picker keep the
+/// explicit unavailable notice instead of launching an unverifiable command.
+pub(super) fn native_picker(session: &SessionSummary) -> bool {
+    match &session.kind {
+        SessionKind::Agent { name } => crate::protocol::AgentProvider::from_name(name)
+            .is_some_and(crate::protocol::AgentProvider::has_native_resume_picker),
+        SessionKind::Terminal => false,
+    }
+}
+
 /// Why Git would refuse `name` as a branch, following
 /// `git check-ref-format --branch`; `None` when Git accepts it.
 fn branch_name_problem(name: &str) -> Option<&'static str> {
@@ -13189,11 +13224,10 @@ mod launch_tests {
         let mut d = dashboard();
         let mut row = summary(1);
         row.kind = SessionKind::Agent {
-            name: "claude".into(),
+            name: "grok".into(),
         };
         row.phase = SessionPhase::Stopped;
-        let reason =
-            "No certified claude conversation; use managed launch and configured reporting";
+        let reason = "No certified grok conversation; use managed launch and configured reporting";
         row.recovery = Some(SessionRecovery {
             conversation: None,
             attached: false,
@@ -13213,6 +13247,54 @@ mod launch_tests {
         assert!(request.is_none());
         assert!(target.contains(reason), "{target}");
         assert_eq!(submit(&mut d), DashboardAction::Redraw);
+    }
+
+    #[test]
+    fn unavailable_picker_provider_offers_the_native_menu() {
+        let mut d = dashboard();
+        let mut row = summary(1);
+        row.kind = SessionKind::Agent { name: "omp".into() };
+        row.phase = SessionPhase::Stopped;
+        row.recovery = Some(SessionRecovery {
+            conversation: Some("01a1b9f5-74db-7565-8aca-426afe9cf198".into()),
+            attached: false,
+            requires_ack: true,
+            unavailable: Some(
+                "provider conversation changed through an unsupported identity transition".into(),
+            ),
+            failure: Some(
+                "provider history identity does not match the recorded conversation".into(),
+            ),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
+        d.select_session(SessionId(1));
+        let entries = d.palette_entries("", None, None, None, false);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.label == "Open native resume picker"),
+            "{:?}",
+            entries
+                .iter()
+                .map(|entry| entry.label.as_str())
+                .collect::<Vec<_>>()
+        );
+        d.palette = None;
+        let Page::Confirm { request, target } =
+            d.command_page(Command::ReopenTerminal(SessionId(1)))
+        else {
+            panic!("expected the picker confirmation");
+        };
+        assert!(target.contains("cannot be certified"), "{target}");
+        assert!(target.contains("native resume picker"), "{target}");
+        assert_eq!(
+            request.as_deref(),
+            Some(&Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: true,
+            })
+        );
     }
 
     #[test]
@@ -13282,7 +13364,8 @@ mod launch_tests {
             }
         );
 
-        // An explicit unavailable reason still explains instead of launching.
+        // A picker-capable provider opens its own menu even when the exact
+        // reference is unavailable, instead of leaving the row a dead end.
         d.hierarchy.projects[0].workspaces[0].sessions[0].recovery = Some(SessionRecovery {
             conversation: None,
             attached: false,
@@ -13291,6 +13374,38 @@ mod launch_tests {
             failure: None,
         });
         d.palette = None;
+        let enter = d
+            .key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("Enter is bound");
+        assert_eq!(enter.name, "Open native resume picker");
+        assert_eq!(d.run(Action::Reopen), DashboardAction::Redraw);
+        match d.palette.as_ref().map(|palette| &palette.page) {
+            Some(Page::Confirm {
+                request: Some(request),
+                target,
+            }) => {
+                assert!(target.contains("native resume picker"), "{target}");
+                assert_eq!(
+                    request.as_ref(),
+                    &Request::ReopenSession {
+                        session: SessionId(1),
+                        expected_run: crate::protocol::SessionRunId(1),
+                        acknowledge_stopped: false,
+                    }
+                );
+            }
+            _ => panic!("expected the native resume picker confirmation"),
+        }
+
+        // A provider with no native picker keeps the explanation.
+        d.hierarchy.projects[0].workspaces[0].sessions[0].kind = SessionKind::Agent {
+            name: "grok".into(),
+        };
+        d.palette = None;
+        let enter = d
+            .key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("Enter is bound");
+        assert_eq!(enter.name, "Resume unavailable");
         assert_eq!(d.run(Action::Reopen), DashboardAction::Redraw);
         match d.palette.as_ref().map(|palette| &palette.page) {
             Some(Page::Confirm {

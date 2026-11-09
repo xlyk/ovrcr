@@ -9744,3 +9744,35 @@ fn operator_singleton_stays_in_inventory_without_fake_workspaces_or_recovery_spa
     );
     assert!(state.sessions.lock().unwrap().is_empty());
 }
+
+#[test]
+fn agent_reopen_uses_the_native_picker_only_where_one_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let claude =
+        ovrcr_protocol::ConversationReference::Claude(ovrcr_protocol::ClaudeConversation {
+            conversation: "5ebc5f9b-54b5-4928-9955-dc81c23743dd".into(),
+            executable: "/bin/sh".into(),
+            history: root.path().join("missing.jsonl"),
+            config_dir: root.path().to_path_buf(),
+            options: vec![],
+        });
+    // A broken exact reference falls back to the provider's own picker.
+    assert_eq!(
+        agent_resume_command(SessionId(7), "claude", Some(&claude), true).unwrap(),
+        ("'claude' '--resume'\n".to_owned(), false)
+    );
+    // A provider with no picker keeps the original failure instead of a guess.
+    let grok = ovrcr_protocol::ConversationReference::Grok(ovrcr_protocol::GrokConversation {
+        conversation: "01a1b9f5-74db-7565-8aca-426afe9cf198".into(),
+        history: root.path().join("grok.jsonl"),
+    });
+    let error = agent_resume_command(SessionId(7), "grok", Some(&grok), true).unwrap_err();
+    assert!(error.to_string().contains("not available"), "{error:#}");
+    // A picker-capable provider with no reference opens the picker directly.
+    assert_eq!(
+        agent_resume_command(SessionId(7), "omp", None, true).unwrap(),
+        ("'omp' '--resume'\n".to_owned(), false)
+    );
+    // A provider without one still refuses to launch an unverifiable command.
+    assert!(agent_resume_command(SessionId(7), "hermes", None, true).is_err());
+}

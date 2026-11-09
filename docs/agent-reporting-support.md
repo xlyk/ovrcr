@@ -571,8 +571,10 @@ are not persisted and leave resume unavailable. Task prompts are never saved.
 Native trust and approvals remain in force.
 
 Reopen checks the recorded directory, executable, history and configuration
-references. A missing resource leaves an actionable failure; Retry uses the same
-UUID. Unsupported clear/resume/fork observations invalidate recovery through SQLite,
+references. A missing executable, history or matching configuration opens Claude's
+native resume picker; the UUID stays retained, so a later retry still uses it. A
+missing recorded working directory still fails because the shell cannot start.
+Unsupported clear/resume/fork observations invalidate recovery through SQLite,
 retaining the prior UUID only for context. Reporting failures and missing
 callbacks alone preserve a valid reference. Start new conversation creates a
 separate session; other provider rows remain retained with resume unavailable.
@@ -615,9 +617,13 @@ resume. Reporting remains Confirmed Ready for Pi and Observed Ready for OMP.
 These are independent source/CLI checks, not native GUI acceptance. Prior OMP
 reporting acceptance used 18.1.19; it does not establish recovery on 18.2.2.
 The adapter checks a bounded session header for the recorded ID before launching.
-It never searches by prefix, chooses the newest file, or supplies a task prompt.
-Missing history, executable, original working directory or matching configuration
-fails visibly. A new run retains the reference before its first callback.
+Oh My Pi reserves its first line for the editable title slot, so the session header
+is read second there; Pi writes the session header first. The adapter never
+searches by prefix, chooses the newest file, or supplies a task prompt.
+Missing history, executable or matching configuration opens the provider's native
+resume picker; the reason is logged and the reference stays retained for a later
+exact retry. A missing recorded working directory still fails visibly because the
+shell cannot start. A new run retains the reference before its first callback.
 
 History must remain unchanged by external processes between prelaunch validation
 and native attachment. Concurrent deletion, emptying or replacement during that

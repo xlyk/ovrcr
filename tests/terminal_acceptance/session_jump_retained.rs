@@ -79,20 +79,16 @@ fn jump_digit(screen: &str, title: &str) -> Result<char> {
         .with_context(|| format!("title row {title:?} has no jump label:\n{line}"))
 }
 
-fn control_press() -> &'static [u8] {
-    b"\x1b[57442;1:1u"
+fn ctrl_g() -> &'static [u8] {
+    b"\x1b[103;5:1u"
 }
 
-fn control_release() -> &'static [u8] {
-    b"\x1b[57442;1:3u"
-}
-
-fn control_digit(digit: char) -> Vec<u8> {
-    format!("\x1b[{};5:1u", u32::from(digit)).into_bytes()
+fn digit(digit: char) -> Vec<u8> {
+    digit.to_string().into_bytes()
 }
 
 #[test]
-fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post_release_input()
+fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post_ack_input()
 -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
@@ -106,7 +102,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         groups
     };
 
-    let mut dashboard = OuterDashboard::start_with_verified_gui_profile(
+    let mut dashboard = OuterDashboard::start(
         &fixture,
         PtySize {
             rows: 40,
@@ -119,7 +115,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         |screen| screen.contains("retained-agent") && screen.contains("running-agent"),
         wait_deadline(),
     )?;
-    dashboard.send(control_press())?;
+    dashboard.send(ctrl_g())?;
     dashboard.wait_for_screen(
         |screen| {
             screen.lines().any(|line| {
@@ -133,17 +129,8 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
     )?;
     let retained_code = jump_digit(&dashboard.rendered(), "retained-agent");
     let retained_code = retained_code?;
-    dashboard.send(&control_digit(retained_code))?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("Session selected"),
-        wait_deadline(),
-    )?;
-    dashboard.send(b"RETAINED_SELECTION_LEAK\r")?;
-    dashboard.send(control_release())?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE") && !screen.contains("Session selected"),
-        wait_deadline(),
-    )?;
+    dashboard.send(&digit(retained_code))?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
 
     let stability_deadline = Instant::now() + Duration::from_millis(300);
     while Instant::now() < stability_deadline {
@@ -165,14 +152,8 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         groups_after_inspection, groups_before_inspection,
         "retained inspection must not create a process group"
     );
-    assert!(
-        !fixture
-            .read_terminal(retained.id)?
-            .contains("RETAINED_SELECTION_LEAK"),
-        "keys held after retained selection must not reach an Agent"
-    );
 
-    dashboard.send(control_press())?;
+    dashboard.send(ctrl_g())?;
     dashboard.wait_for_screen(
         |screen| {
             screen.lines().any(|line| {
@@ -185,12 +166,7 @@ fn retained_jump_inspects_without_restarting_then_running_jump_accepts_only_post
         wait_deadline(),
     )?;
     let running_code = jump_digit(&dashboard.rendered(), "running-agent")?;
-    dashboard.send(&control_digit(running_code))?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("Session selected"),
-        wait_deadline(),
-    )?;
-    dashboard.send(control_release())?;
+    dashboard.send(&digit(running_code))?;
     dashboard.wait_for_screen(
         |screen| screen.contains("READY_running-agent") && screen.contains("Terminal mode"),
         wait_deadline(),

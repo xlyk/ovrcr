@@ -716,9 +716,8 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         if detached {
             app.terminal.as_mut().unwrap().stop()?;
         } else {
-            // Exercise a Control hold, then its ordinary Ctrl-g cancellation
-            // path, before checking that the separate Cmd-K host shortcut still
-            // opens the palette.
+            // Open the Ctrl-g label picker, then check that the separate Cmd-K
+            // host shortcut still opens the palette.
             let screen_rect = Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(960.0, 600.0),
@@ -735,8 +734,8 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
                 egui::RawInput {
                     screen_rect,
                     events: vec![egui::Event::Key {
-                        key: egui::Key::ControlLeft,
-                        physical_key: Some(egui::Key::ControlLeft),
+                        key: egui::Key::G,
+                        physical_key: Some(egui::Key::G),
                         pressed: true,
                         repeat: false,
                         modifiers: egui::Modifiers {
@@ -752,49 +751,15 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let contents = app.terminal.as_ref().unwrap().screen().contents();
-                if contents.contains("No visible Agents") || contents.contains("Ctrl+1–9 jump") {
+                if contents.contains("No visible Agents") || contents.contains("1–9 jump") {
                     break;
                 }
                 anyhow::ensure!(
                     std::time::Instant::now() < deadline,
-                    "the GUI Command press did not start a Dashboard hold:\n{contents}"
+                    "the GUI Ctrl-g press did not open the Dashboard picker:\n{contents}"
                 );
                 std::thread::yield_now();
             }
-
-            let mut output = context.run_ui(
-                egui::RawInput {
-                    screen_rect,
-                    events: vec![egui::Event::Key {
-                        key: egui::Key::G,
-                        physical_key: None,
-                        pressed: true,
-                        repeat: false,
-                        modifiers: egui::Modifiers {
-                            ctrl: true,
-                            ..Default::default()
-                        },
-                    }],
-                    ..Default::default()
-                },
-                |ui| app.show(ui),
-            );
-            output.textures_delta.clear();
-            let mut output = context.run_ui(
-                egui::RawInput {
-                    screen_rect,
-                    events: vec![egui::Event::Key {
-                        key: egui::Key::ControlLeft,
-                        physical_key: Some(egui::Key::ControlLeft),
-                        pressed: false,
-                        repeat: false,
-                        modifiers: egui::Modifiers::default(),
-                    }],
-                    ..Default::default()
-                },
-                |ui| app.show(ui),
-            );
-            output.textures_delta.clear();
         }
         let mut other_text = String::new();
         let mut output = context.run_ui(

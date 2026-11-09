@@ -3,7 +3,6 @@
 //! message, Stop and history paging. There is no create form, chat list,
 //! switching or archive action to exercise.
 use super::*;
-use crossterm::event::ModifierKeyCode;
 use ovrcr_protocol::{
     OperatorContext, OperatorConversationId, OperatorConversationSummary, OperatorHistory,
     OperatorMessage, OperatorMessageContent, OperatorModel, OperatorRequest, OperatorResponse,
@@ -12,14 +11,6 @@ use ovrcr_protocol::{
 };
 
 const BUSY_REASON: &str = "The Operator is busy or its worker stop is unconfirmed; draft retained.";
-
-fn control_event(kind: KeyEventKind) -> Event {
-    Event::Key(KeyEvent::new_with_kind(
-        KeyCode::Modifier(ModifierKeyCode::LeftControl),
-        KeyModifiers::NONE,
-        kind,
-    ))
-}
 
 fn summary() -> OperatorConversationSummary {
     OperatorConversationSummary {
@@ -1286,7 +1277,6 @@ fn unicode_editing_keeps_the_full_composer_cursor_and_draft() {
     assert!(screen.contains("draft ▏界"), "{screen}");
 
     // Command+Backspace is not a composer edit and never leaves Operator.
-    dashboard.event_action(control_event(KeyEventKind::Press));
     dashboard.event_action(Event::Key(KeyEvent::new(
         KeyCode::Backspace,
         KeyModifiers::SUPER,
@@ -1295,7 +1285,6 @@ fn unicode_editing_keeps_the_full_composer_cursor_and_draft() {
     assert!(screen.contains("draft ▏界"), "{screen}");
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(dashboard.drain_outbox().is_empty());
-    dashboard.event_action(control_event(KeyEventKind::Release));
     dashboard.key(KeyCode::Char('!'));
     assert!(draw_text(&mut dashboard, 120, 40).contains("draft !▏界"));
 
@@ -1337,6 +1326,84 @@ fn unicode_editing_keeps_the_full_composer_cursor_and_draft() {
 }
 
 #[test]
+fn operator_ctrl_g_labels_visible_agents_and_keeps_the_composer_draft() {
+    let mut hierarchy = fixture_hierarchy();
+    let agent = hierarchy.projects[1].workspaces[0]
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(4))
+        .unwrap();
+    agent.kind = SessionKind::Agent {
+        name: "fixture-agent".into(),
+    };
+    agent.name = "operator-agent".into();
+    agent.label = "fixture-agent".into();
+    agent.title = Some("operator-agent".into());
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_area(area);
+    dashboard.install_focus(SessionId(1));
+    open_and_settle(&mut dashboard, summary());
+
+    let open = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(open.contains("Operator · pi"), "{open}");
+    assert!(
+        !open.contains("[1]"),
+        "an open conversation does not label Agents: {open}"
+    );
+
+    // Ctrl-g keeps Operator's ordinary leave behavior and opens the picker in Browse.
+    dashboard.ctrl('g');
+    let browse = rendered_rows(&dashboard, 120, 40);
+    let agent_row = browse
+        .iter()
+        .find(|row| row.contains("operator-agent"))
+        .expect("the visible Agent title is in the shared sidebar");
+    assert!(agent_row.contains("[1]"), "{agent_row}");
+    assert!(rendered_footer(&dashboard, 120).contains("1–9 jump"));
+
+    dashboard.key(KeyCode::Esc);
+    let out = opened(&mut dashboard, summary());
+    assert!(
+        out.is_empty(),
+        "an unchanged journal is not re-read: {out:?}"
+    );
+
+    dashboard.event_action(Event::Paste("draft 界".into()));
+    dashboard.key(KeyCode::Left);
+    let before = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        before.contains("draft") && before.contains("界"),
+        "{before}"
+    );
+
+    dashboard.ctrl('g');
+    let labeled = rendered_rows(&dashboard, 120, 40);
+    let agent_row = labeled
+        .iter()
+        .find(|row| row.contains("operator-agent"))
+        .expect("the Agent remains in the shared sidebar");
+    assert!(agent_row.contains("[1]"), "{agent_row}");
+
+    dashboard.key(KeyCode::Esc);
+    let out = opened(&mut dashboard, summary());
+    assert!(
+        out.is_empty(),
+        "an unchanged journal is not re-read: {out:?}"
+    );
+    let returned = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        returned.contains("draft") && returned.contains("界"),
+        "navigation preserves the composer draft: {returned}"
+    );
+}
+
+#[test]
 fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
     for mode in [
         "Browse",
@@ -1354,6 +1421,8 @@ fn operator_quick_opens_over_every_input_mode_without_pty_bytes() {
         match mode {
             "Terminal then Ctrl-g" => {
                 d.key(KeyCode::Enter);
+                d.ctrl('g');
+                // Ctrl-g also opens the picker; close it before Quick message.
                 d.ctrl('g');
             }
             "History" => {
@@ -1520,47 +1589,61 @@ fn title_bar_operator_control_opens_the_singleton_on_narrow_and_short_screens() 
 #[test]
 fn leaving_operator_restores_terminal_input_and_keeps_the_draft() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
-    dashboard.install_area(area);
-    open_and_settle(&mut dashboard, summary());
-    dashboard.event_action(Event::Paste("-draft".into()));
-    assert!(draw_text(&mut dashboard, 120, 40).contains("-draft"));
+    for leave in [
+        KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.install_area(area);
+        open_and_settle(&mut dashboard, summary());
+        dashboard.event_action(Event::Paste("-draft".into()));
+        assert!(draw_text(&mut dashboard, 120, 40).contains("-draft"));
 
-    // Operator empties the terminal view while it is shown.
-    let hidden = dashboard.request_view_at(area).expect("Operator view");
-    let Request::SetView { view } = &hidden.request else {
-        panic!("expected SetView, got {:?}", hidden.request);
-    };
-    assert!(view.panes.is_empty());
-    acknowledge_view_request(&mut dashboard, hidden);
+        // Operator empties the terminal view while it is shown.
+        let hidden = dashboard.request_view_at(area).expect("Operator view");
+        let Request::SetView { view } = &hidden.request else {
+            panic!("expected SetView, got {:?}", hidden.request);
+        };
+        assert!(view.panes.is_empty());
+        acknowledge_view_request(&mut dashboard, hidden);
 
-    dashboard.ctrl('g');
-    let screen = draw_text(&mut dashboard, 120, 40);
-    assert!(!screen.contains("Managing"), "{screen}");
-    assert!(!screen.contains("New Conversation"), "{screen}");
-    assert!(rendered_footer(&dashboard, 120).starts_with("BROWSE"));
-    let shown = dashboard.request_view_at(area).expect("terminal view");
-    let Request::SetView { view } = &shown.request else {
-        panic!("expected SetView, got {:?}", shown.request);
-    };
-    assert_eq!(
-        view.panes
-            .iter()
-            .map(|pane| pane.session)
-            .collect::<Vec<_>>(),
-        [SessionId(1)]
-    );
-    acknowledge_view_request(&mut dashboard, shown);
-    // Ordinary terminal input is live again.
-    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
-    assert_eq!(
-        dashboard.key(KeyCode::Char('x')),
-        DashboardAction::PtyBytes(b"x".to_vec())
-    );
-    // `o` returns to the same conversation and draft.
-    dashboard.ctrl('g');
-    dashboard.key(KeyCode::Char('o'));
-    assert!(draw_text(&mut dashboard, 120, 40).contains("-draft"));
+        dashboard.event_action(Event::Key(leave));
+        if leave.modifiers == KeyModifiers::CONTROL {
+            // Ctrl-g is the navigation key and also opens the label picker.
+            // Close it before checking the plain Browse footer.
+            dashboard.event_action(Event::Key(leave));
+        }
+        let screen = draw_text(&mut dashboard, 120, 40);
+        assert!(!screen.contains("Managing"), "{leave:?}: {screen}");
+        assert!(!screen.contains("New Conversation"), "{leave:?}: {screen}");
+        assert!(
+            rendered_footer(&dashboard, 120).starts_with("BROWSE"),
+            "{leave:?}"
+        );
+        let shown = dashboard.request_view_at(area).expect("terminal view");
+        let Request::SetView { view } = &shown.request else {
+            panic!("expected SetView, got {:?}", shown.request);
+        };
+        assert_eq!(
+            view.panes
+                .iter()
+                .map(|pane| pane.session)
+                .collect::<Vec<_>>(),
+            [SessionId(1)]
+        );
+        acknowledge_view_request(&mut dashboard, shown);
+        // Ordinary terminal input is live again.
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        assert_eq!(
+            dashboard.key(KeyCode::Char('x')),
+            DashboardAction::PtyBytes(b"x".to_vec())
+        );
+        // Ctrl-g returns to Browse and opens the picker; `o` then returns to
+        // the same conversation and draft.
+        dashboard.ctrl('g');
+        dashboard.key(KeyCode::Char('o'));
+        assert!(draw_text(&mut dashboard, 120, 40).contains("-draft"));
+    }
 }
 
 #[test]
@@ -1582,6 +1665,8 @@ fn terminal_input_stays_responsive_while_a_stop_is_unconfirmed() {
     );
 
     // The pending Stop never blocks the ordinary terminal path.
+    dashboard.ctrl('g');
+    // Ctrl-g also opens the label picker; close it before ordinary input.
     dashboard.ctrl('g');
     let shown = dashboard.request_view_at(area).expect("terminal view");
     acknowledge_view_request(&mut dashboard, shown);
@@ -1616,13 +1701,10 @@ fn operator_navigation_is_never_a_jump_target() {
     agent.title = Some("operator-agent".into());
 
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize {
-            rows: 40,
-            cols: 120,
-        },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(area);
     dashboard.install_focus(SessionId(1));
@@ -1647,7 +1729,9 @@ fn operator_navigation_is_never_a_jump_target() {
         "the fixture transcript is visible"
     );
 
-    dashboard.event_action(control_event(KeyEventKind::Press));
+    // Ctrl-g leaves Operator and opens the picker in Browse: only Agent rows
+    // receive labels and the singleton row stays a navigation target.
+    dashboard.ctrl('g');
     let held = rendered_rows(&dashboard, 120, 40);
     let agent_row = held
         .iter()
@@ -1666,43 +1750,36 @@ fn operator_navigation_is_never_a_jump_target() {
         "the singleton row is not a session target: {operator_row}"
     );
     assert!(
-        rendered_footer(&dashboard, 120).contains("Ctrl+1–9 jump"),
-        "the footer explains the active gesture"
+        rendered_footer(&dashboard, 120).contains("1–9 jump"),
+        "the footer explains the picker"
     );
 
-    // Cancelling with a non-digit Control chord keeps the draft and cursor.
-    dashboard.event_action(Event::Key(KeyEvent::new(
-        KeyCode::Char('c'),
-        KeyModifiers::CONTROL,
-    )));
-    let after_ctrl_c = rendered_rows(&dashboard, 120, 40).join("\n");
-    assert!(
-        !after_ctrl_c.contains("draft"),
-        "Ctrl+C keeps its ordinary Operator draft-clear behavior: {after_ctrl_c}"
-    );
+    // Esc closes the picker without touching the retained draft.
+    dashboard.key(KeyCode::Esc);
+    assert!(!rendered_footer(&dashboard, 120).contains("1–9 jump"));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(dashboard.drain_outbox().is_empty());
-    dashboard.event_action(control_event(KeyEventKind::Release));
 
     // The jump selects the Agent, never the Operator conversation.
-    dashboard.event_action(control_event(KeyEventKind::Press));
-    dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-        KeyCode::Char('1'),
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    )));
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('1'));
     assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
-    assert!(rendered_footer(&dashboard, 120).contains("Session selected"));
+    assert!(rendered_footer(&dashboard, 120).starts_with("Loading agent"));
     let view = only_request(dashboard.drain_outbox());
     assert!(matches!(
         &view.request,
         Request::SetView { view } if view.focused == Some(SessionId(4))
     ));
-    dashboard.event_action(control_event(KeyEventKind::Release));
+    acknowledge_view_request(&mut dashboard, view);
+    assert!(rendered_footer(&dashboard, 120).starts_with("Terminal mode"));
 
     // Returning to the shell keeps the conversation, draft and scroll position.
     dashboard.ctrl('g');
-    dashboard.key(KeyCode::Char('o'));
+    let out = opened(&mut dashboard, summary());
+    assert!(
+        out.is_empty(),
+        "an unchanged journal is not re-read: {out:?}"
+    );
     dashboard.event_action(Event::Paste("!X".into()));
     let returned = rendered_rows(&dashboard, 120, 40).join("\n");
     assert!(returned.contains("!X"), "{returned}");
@@ -1718,7 +1795,7 @@ fn operator_navigation_is_never_a_jump_target() {
 }
 
 #[test]
-fn operator_control_jump_does_not_reveal_its_on_demand_sidebar() {
+fn operator_ctrl_g_leaves_operator_and_labels_the_browse_sidebar() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.truncate(1);
     hierarchy.projects[0].workspaces.truncate(1);
@@ -1732,47 +1809,36 @@ fn operator_control_jump_does_not_reveal_its_on_demand_sidebar() {
     agent.title = Some("operator-agent".into());
     workspace.sessions = vec![agent];
 
-    let mut dashboard = Dashboard::with_input_profile(
-        TerminalSize { rows: 24, cols: 80 },
-        super::DashboardInputProfile::VerifiedOvrcrGui,
-    );
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(Rect::new(0, 0, 80, 24));
     dashboard.install_focus(SessionId(3));
     open_and_settle(&mut dashboard, summary());
+    let before = rendered_rows(&dashboard, 80, 24).join("\n");
+    assert!(before.contains("Operator · pi"), "{before}");
 
-    dashboard.event_action(control_event(KeyEventKind::Press));
-    dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-        KeyCode::Char('1'),
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    )));
-    dashboard.event_action(control_event(KeyEventKind::Release));
-    let hidden = rendered_rows(&dashboard, 80, 24).join("\n");
-    assert!(
-        !hidden.contains("operator-agent"),
-        "Control cannot reveal the sidebar: {hidden}"
-    );
-    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
-
-    // At narrow widths Ctrl-L explicitly opens the ordinary sidebar.
-    dashboard.ctrl('l');
-    dashboard.event_action(control_event(KeyEventKind::Press));
-    let open = rendered_rows(&dashboard, 80, 24);
-    let agent_row = open
+    dashboard.ctrl('g');
+    let browse = rendered_rows(&dashboard, 80, 24);
+    let agent_row = browse
         .iter()
-        .find(|row| row.contains("operator-agent"))
-        .expect("Agent becomes visible after the user opens the sidebar");
+        .find(|row| {
+            row.split('│')
+                .next()
+                .is_some_and(|sidebar| sidebar.contains("operator-agent"))
+        })
+        .expect("leaving Operator shows the Browse sidebar");
     assert!(
         agent_row.contains("[1]"),
-        "visible Agent receives a label: {agent_row}"
+        "the visible Agent receives a label: {agent_row}"
     );
-    let operator_row = open
-        .iter()
-        .find(|row| row.contains("Operator") && !row.contains("operator-agent"))
-        .expect("the fixed Operator navigation row");
-    assert!(!operator_row.contains("[1]"), "{operator_row}");
-    dashboard.event_action(control_event(KeyEventKind::Release));
+    assert!(rendered_footer(&dashboard, 80).contains("1–9 jump"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+
+    dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('1'),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    )));
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
 }
 
@@ -1796,10 +1862,7 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
         workspace.sessions = vec![local, agent];
 
         let area = Rect::new(0, 0, cols, rows);
-        let mut dashboard = Dashboard::with_input_profile(
-            TerminalSize { rows, cols },
-            super::DashboardInputProfile::VerifiedOvrcrGui,
-        );
+        let mut dashboard = Dashboard::new(TerminalSize { rows, cols });
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_area(area);
         dashboard.install_focus(SessionId(3));
@@ -1809,72 +1872,52 @@ fn operator_jump_keeps_agent_columns_and_rows_at_sidebar_boundaries() {
             dashboard.ctrl('l');
         }
 
-        let before = rendered_rows(&dashboard, cols, rows);
-        if below_operator_floor {
-            let text = before
+        let before = if below_operator_floor {
+            let floor = rendered_rows(&dashboard, cols, rows)
                 .join(" ")
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
             assert!(
-                text.contains("60×16") && text.contains("Resize to continue"),
-                "{cols}×{rows}: existing Operator resize guidance remains: {text}"
+                floor.contains("60×16") && floor.contains("Resize to continue"),
+                "{cols}×{rows}: existing Operator resize guidance remains: {floor}"
             );
-        }
+            // Below the floor Esc leaves the guidance for the ordinary Browse pane.
+            dashboard.key(KeyCode::Esc);
+            rendered_rows(&dashboard, cols, rows)
+        } else {
+            rendered_rows(&dashboard, cols, rows)
+        };
         let before_agent = before
             .iter()
             .find(|row| row.contains("jump-target"))
             .unwrap_or_else(|| panic!("{cols}×{rows}: visible Agent row missing: {before:?}"));
         let status_and_title = before_agent.chars().skip(5).collect::<String>();
-        dashboard.event_action(control_event(KeyEventKind::Press));
+
+        // Ctrl-g leaves Operator and opens the picker in Browse.
+        dashboard.ctrl('g');
         let held = rendered_rows(&dashboard, cols, rows);
-        if below_operator_floor {
-            let text = held
-                .join(" ")
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            assert!(
-                text.contains("60×16") && text.contains("Resize to continue"),
-                "{cols}×{rows}: Control preserves Operator resize guidance: {text}"
-            );
-        }
         let after_agent = held
             .iter()
             .find(|row| row.contains("jump-target"))
             .unwrap_or_else(|| panic!("{cols}×{rows}: Agent row disappeared: {held:?}"));
-        if below_operator_floor {
-            assert!(
-                !after_agent.contains("[1]"),
-                "{cols}×{rows}: below the Operator floor suppress labels: {after_agent}"
-            );
-            assert!(
-                !rendered_footer(&dashboard, cols).contains("Ctrl+1–9"),
-                "{cols}×{rows}: the gesture hint stays hidden below the floor"
-            );
-            dashboard.event_action(Event::Key(KeyEvent::new_with_kind(
-                KeyCode::Char('1'),
-                KeyModifiers::CONTROL,
-                KeyEventKind::Press,
-            )));
-            assert_eq!(
-                dashboard.focused_session(),
-                Some(SessionId(3)),
-                "{cols}×{rows}: Control digits cannot select below the Operator floor"
-            );
-        } else {
-            assert!(
-                after_agent.contains("[1]"),
-                "{cols}×{rows}: visible Agent gets a label: {after_agent}"
-            );
-        }
+        assert!(
+            after_agent.contains("[1]"),
+            "{cols}×{rows}: visible Agent gets a label: {after_agent}"
+        );
         assert_eq!(
             after_agent.chars().skip(5).collect::<String>(),
             status_and_title,
             "{cols}×{rows}: title/status columns stay fixed"
         );
         assert_eq!(held.len(), before.len(), "{cols}×{rows}: rows do not move");
-        dashboard.event_action(control_event(KeyEventKind::Release));
+        assert!(
+            rendered_footer(&dashboard, cols).contains("1–9 jump"),
+            "{cols}×{rows}: the picker hint is visible"
+        );
+
+        // A second Ctrl-g closes the picker; mouse hit-testing still selects.
+        dashboard.ctrl('g');
         let target_row = rendered_rows(&dashboard, cols, rows)
             .iter()
             .position(|row| row.contains("jump-target"))

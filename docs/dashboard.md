@@ -23,14 +23,15 @@ Next input needed` or `i Next ready`, naming where it goes.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 | Transcript | `PageUp` or wheel-up on full-screen Claude Code or Codex | `Esc`, `q`, or `Ctrl-g` |
 
-Terminal mode is the only mode that sends input to the PTY. `Ctrl-g` leaves it;
-a qualified frontend's Control-hold gesture owns Ctrl+digit jump keys while
-active. Other Control shortcuts, including Ctrl-c and Ctrl-o, keep their normal
-program or Dashboard handling. `Ctrl-o` reaches the program there (Oh My Pi expands tool
+Terminal mode is the only mode that sends input to the PTY. `Ctrl-g` leaves it and
+opens the session-jump labels in Browse. Other Control shortcuts, including
+Ctrl-c and Ctrl-o, keep their normal program or Dashboard handling. `Ctrl-o`
+reaches the program there (Oh My Pi expands tool
 output with it, Claude Code opens its transcript), so Operator **Quick message** is
 `Ctrl-g` then `Ctrl-o`; the Terminal footer shows this when space permits. Click the
 title bar's Commands control to open the palette or Menu to open the action menu.
-Press `Ctrl-g` first to use dashboard shortcuts.
+Press `Ctrl-g` first to use dashboard shortcuts. The label picker it opens closes
+on any non-digit key, which then runs its normal action.
 
 ### Footer messages
 
@@ -114,7 +115,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `s` | Search other running agents across all projects and workspaces |
-| `Ctrl+1`–`Ctrl+9` | In the bundled OVRCR GUI or direct macOS iTerm2 reporting version 3.7.2 or 3.7.7, hold Control to label at most the first nine visible running or retained Agent rows. Press a shown digit to select immediately. Further visible rows stay unlabelled; scroll and start a fresh hold, or use `s` Agents search. In Operator, the shared sidebar must already be open and the view must meet its 60×16 minimum; Control never reveals it. Unqualified frontends use `s` Agents search. |
+| `Ctrl-g` | Label at most the first nine visible running or retained Agent rows. Then press a shown digit `1`–`9` to select immediately. Press `Ctrl-g` again or `Esc` to close without choosing; any other key closes the labels and keeps its ordinary handling. Further visible rows stay unlabelled; scroll and press `Ctrl-g` again, or use `s` Agents search. `Ctrl-g` never reveals a hidden sidebar. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
 | `Space` | Show contextual groups, then choose an action |
@@ -126,24 +127,19 @@ change when the Server republishes. The Claude probe is a separate consent,
 
 `N`, `O`, `S`, `R`, `b`, `i` and `[` act on a key press; a key repeat or release does nothing.
 `Alt` and `Shift` do not change which action a key runs: `Alt-x` closes the pane
-that `x` closes. Command/Super remains distinct from Control and never starts a
-session jump. In a qualified frontend's Control-hold gesture, `Ctrl+1`–
-`Ctrl+9` choose a labeled Agent; non-digit Control shortcuts keep their ordinary
-Dashboard, Operator, or program handling. Other frontends use `s` Agents search.
-`Ctrl-t` reaches Browse with optional Alt or Shift. `Esc` and `Ctrl-g` cancel a
-history request that has not opened yet.
+that `x` closes. Command/Super remains distinct from Control and never opens the
+session-jump picker. A bare digit `1`–`9` chooses a labeled Agent while the picker
+is open; every other key closes the picker and keeps its ordinary Dashboard,
+Operator, or program handling. `Ctrl-t` reaches Browse with optional Alt or Shift.
+`Esc` and `Ctrl-g` cancel a history request that has not opened yet.
 
-Control-hold session jump is qualified for the bundled OVRCR GUI and direct macOS
-iTerm2 reporting version 3.7.2 or 3.7.7. iTerm2 is detected automatically from its
-terminal metadata. SSH,
-multiplexers, nested OVRCR sessions, and unverified terminal versions keep `s` Agents
-search and do not show or intercept the Control-hold gesture.
-Kitty keyboard-mode negotiation or a capability response alone does not qualify
-another frontend. Adding one requires native evidence that standalone Control
-press and release plus Ctrl+1–Ctrl+9 reach the application. Command/Super remains
-separate from this gesture. In qualified frontends, the gesture also works from an
-unobscured Operator view when the shared sidebar is already visible; the
-Operator navigation row never receives Agent labels.
+The session-jump picker works in every terminal: pressing `Ctrl-g` captures the
+visible Agent rows, draws their labels, and leaves the picker open until a digit
+selects or `Esc`/`Ctrl-g` closes it. Labels appear only while the sidebar is
+already visible; `Ctrl-g` never reveals a hidden sidebar. In Operator, `Ctrl-g`
+keeps its ordinary meaning of leaving Operator, then labels the Browse sidebar
+if it is visible. The fixed Operator navigation row and its conversation never
+receive Agent labels.
 
 ## Search other running agents
 
@@ -577,24 +573,21 @@ insert a newline instead of submitting. Terminals without the kitty keyboard
 protocol report `Shift+Enter` as plain `Enter`, so the dashboard cannot tell them
 apart there.
 
-In a qualified input profile, the Control session jump uses
-Kitty's enhanced key events while the user holds Control. It labels at most the
-first nine drawn running or retained Agent rows, including the current session,
-in sidebar order and freezes each target's session and run for that hold. The
-labels are always `1`–`9`; pressing `Ctrl+1`–`Ctrl+9` selects immediately. `0`
-and other unmapped digits show a retry hint without selecting a session or
-sending program input. Further rows stay visible and unlabelled; scroll and
-start a fresh hold to label the new first nine, or use `s` Agents search.
-Releasing Control without choosing cancels. After choosing a running Agent, it
-stays in Browse until Control is released and the exact view is acknowledged;
-queued loading input is discarded. Non-digit Control shortcuts keep their
-ordinary Dashboard, Operator, or program handling. A retained Agent stays in
-Browse for inspection and is never resumed or reopened by navigation; use its
-explicit Resume/Reopen action when needed. Command/Super shortcuts remain
-separate. Qualification requires native input verification; terminal metadata
-selects only a previously qualified frontend. A capability reply alone does not
-qualify one. Other frontends remain on Agents search until native input has been
-verified and that frontend is explicitly qualified.
+The `Ctrl-g` session-jump picker labels at most the first nine drawn running or
+retained Agent rows, including the current session, in sidebar order and freezes
+each target's session and run while the picker is open. The labels are always
+`1`–`9`; a bare `1`–`9` selects immediately, and `Ctrl+1`–`Ctrl+9` remains an
+accepted spelling. `0` and other unmapped digits show a retry hint without
+selecting a session or sending program input. Further rows stay visible and
+unlabelled; scroll and press `Ctrl-g` again to label the new first nine, or use
+`s` Agents search. Pressing `Ctrl-g` again without choosing closes the picker;
+the key keeps its ordinary Browse meaning elsewhere. After choosing a running
+Agent, it stays in Browse until the exact view is acknowledged and the input
+boundary is drained; queued loading input is discarded. Any other key closes the
+picker and keeps its ordinary Dashboard, Operator, or program handling. A
+retained Agent stays in Browse for inspection and is never resumed or reopened
+by navigation; use its explicit Resume/Reopen action when needed. Command/Super
+shortcuts remain separate.
 
 ## Pause and resume
 
@@ -943,12 +936,15 @@ resume adapters, with the limitations below. Other providers remain unavailable.
 Workspace removal remains a separate action.
 
 Claude recovery retains the exact UUID, provider history path, executable and
-non-secret configuration references. Missing history, executable, recorded
-working directory or matching configuration blocks recovery with a diagnostic;
-Retry never starts fresh. An observed unsupported or ambiguous Claude
+non-secret configuration references. Missing history, executable or matching
+configuration opens Claude's native resume picker instead of failing; the UUID
+stays retained, so a later Retry still attempts the exact conversation. A missing
+recorded working directory still blocks with a diagnostic because the shell cannot
+start. An observed unsupported or ambiguous Claude
 conversation transition (`identity_transition_unavailable`, including bare fork
-without a leave of the current conversation) permanently disables recovery for
-that row, retaining its old UUID as context. Supported clear / in-process resume /
+without a leave of the current conversation) permanently disables exact recovery
+for that row, retaining its old UUID as context; an explicit reopen still offers
+Claude's native picker. Supported clear / in-process resume /
 foreground-branch replacements update the retained reference instead.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
 Inventory restoration never launches a process. First display in a visible pane
@@ -958,9 +954,11 @@ recovery; same-boot or unknown ownership still requires explicit confirmation
 that old agents and descendants stopped. Live runs are reused. Shells, deliberately
 stopped/exited rows and newly unarchived rows do not launch automatically.
 
-Missing prerequisites or full live capacity leave a diagnostic and **Retry resume
-conversation** in the command palette. Fix the prerequisite, then explicitly retry;
-redraws and reconnects do not retry failed launches. Hidden panes and sidebar rows
+Full live capacity leaves a diagnostic and **Retry resume conversation** in the
+command palette. A reference that cannot be certified opens the provider's native
+resume picker (Claude, Codex, Pi and Oh My Pi); providers without a picker keep the
+diagnostic. Fix capacity, then explicitly retry; redraws and reconnects do not retry
+failed launches. Hidden panes and sidebar rows
 do not trigger recovery. Native GUI acceptance of this automatic path is tracked
 separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
 
@@ -978,7 +976,9 @@ switches cannot update the reference without a supported hook. See
 Pi and Oh My Pi retain the exact native session ID and file from their managed
 extension. History must remain unchanged by external processes during reopening,
 from prelaunch validation until native attachment. Concurrent deletion or replacement
-can cause a native fresh session and is outside the recovery guarantee.
+can cause a native fresh session and is outside the recovery guarantee. A reference
+that cannot be validated at reopen opens the provider's native resume picker; the
+reason is logged and the reference stays retained for a later exact retry.
 Accepted conversation switches replace the reference, including switches
 back to an earlier conversation. An ephemeral conversation replaces the old
 reference but cannot be resumed. Unsupported launch configuration leaves resume

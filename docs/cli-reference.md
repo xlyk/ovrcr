@@ -274,9 +274,14 @@ confirmation. `acknowledge-stopped` records that confirmation without launching
 a session, but starts the server on demand when it is not running. Certified Agent
 rows enter their managed resume command into that shell to resume the exact retained
 conversation without a new prompt (Claude, Codex, Pi and Oh My Pi). Without a saved
-conversation, these providers open their native resume picker instead. The shell
-remains usable when the agent exits. Reopen starts the server if it is not running. With `--json`,
-reopen returns the terminal object and rename returns `{"ok":true}`.
+conversation, these providers open their native resume picker instead. If a saved
+conversation cannot be certified at reopen (missing, moved or changed history,
+configuration, executable or identity), the same providers open the native resume
+picker instead of failing the reopen; the retained reference is kept, so a later
+retry still attempts the exact conversation. Providers without a native picker keep
+the error. The shell remains usable when the agent exits. Reopen starts the server
+if it is not running. With `--json`, reopen returns the terminal object and rename
+returns `{"ok":true}`.
 
 CLI inventory remains passive. The Dashboard's first visible display can recover
 an eligible interrupted Agent after a verified reboot; it never acknowledges

@@ -15,8 +15,7 @@ use crate::protocol::{
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode, MouseButton, MouseEvent,
-    MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr_terminal::encode_paste;
 use ovrcr_terminal::vt100;
@@ -578,8 +577,6 @@ pub(super) struct AgentTyping {
     session: SessionId,
     run: SessionRunId,
     revision: u64,
-    /// A sidebar jump cannot type until the held Control key has been released.
-    defer_until_modifier_release: bool,
     /// The production loop must discard already-pending input before acknowledgement cutover.
     defer_until_input_boundary: bool,
     pub(super) rejected: Option<&'static str>,
@@ -640,27 +637,12 @@ impl SidebarJumpTarget {
 
 pub(super) struct SidebarJump {
     targets: Vec<SidebarJumpTarget>,
-    left_control: bool,
-    right_control: bool,
-    selected: bool,
-    cancelled: bool,
     hint: Option<String>,
 }
 
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_input_profile(size, super::DashboardInputProfile::Standard)
-    }
-
-    /// Construct the same production Dashboard boundary with an explicit
-    /// frontend profile. Unqualified terminals use [`Self::new`]; the CLI
-    /// selects qualified native frontends through `DashboardInputProfile`.
-    pub fn with_input_profile(
-        size: TerminalSize,
-        input_profile: super::DashboardInputProfile,
-    ) -> Self {
         Self {
-            input_profile,
             operator: Default::default(),
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
@@ -809,7 +791,6 @@ impl Dashboard {
     pub fn install_area(&mut self, area: Rect) {
         if self.outer_area != area && self.sidebar_jump.is_some() {
             self.cancel_sidebar_jump();
-            self.clear_sidebar_jump();
         }
         self.outer_area = area;
         for rect in self.pane_rects(area) {
@@ -1097,9 +1078,6 @@ impl Dashboard {
 
     pub(super) fn sidebar_jump_label(&self, session: SessionId) -> Option<usize> {
         let jump = self.sidebar_jump.as_ref()?;
-        if jump.cancelled || jump.selected {
-            return None;
-        }
         let index = jump.targets.iter().position(|target| {
             target.session == session && self.sidebar_jump_target_available(*target)
         })?;
@@ -1108,248 +1086,101 @@ impl Dashboard {
 
     pub(super) fn sidebar_jump_footer_hint(&self) -> Option<String> {
         let jump = self.sidebar_jump.as_ref()?;
-        let binding = super::keymap::sidebar_jump_binding(self)?;
-        let command = binding.key.split_whitespace().next().unwrap_or("Ctrl");
-        if jump.selected {
-            return Some(format!("Session selected  release {command}"));
-        }
-        if jump.cancelled {
-            return Some(format!("Session jump cancelled  release {command}"));
-        }
         if let Some(hint) = &jump.hint {
-            return Some(format!("{hint}  {command}+digit choose · Esc cancel"));
+            return Some(format!("{hint}  Esc cancel"));
         }
         if jump.targets.is_empty() {
             return Some("No visible Agents  s Agents search".into());
         }
-        Some(format!("{command}+1–9 jump  release to cancel"))
+        Some("1–9 jump  Ctrl-g/Esc cancel".into())
     }
 
     fn cancel_sidebar_jump(&mut self) {
-        let Some(jump) = &mut self.sidebar_jump else {
-            return;
-        };
-        if jump.selected {
-            self.agent_typing = None;
-            self.mode = InputMode::Browse;
-        }
-        jump.cancelled = true;
-        jump.hint = None;
-    }
-
-    fn clear_sidebar_jump(&mut self) {
         self.sidebar_jump = None;
     }
 
-    fn control_side(code: KeyCode) -> Option<bool> {
-        match code {
-            KeyCode::Modifier(ModifierKeyCode::LeftControl) => Some(true),
-            KeyCode::Modifier(ModifierKeyCode::RightControl) => Some(false),
-            _ => None,
-        }
-    }
-
+    /// Keep the picker open for a digit and close it for everything else. A
+    /// closing key then keeps its ordinary Dashboard, Operator, or program
+    /// handling instead of being replayed into a child as a shortcut.
     fn dispatch_sidebar_jump_key(&mut self, key: KeyEvent) -> Option<DashboardAction> {
-        if self.sidebar_jump.as_ref().is_some_and(|jump| jump.selected) {
-            return Some(self.sidebar_jump_key(key));
+        self.sidebar_jump.as_ref()?;
+        if key.kind != KeyEventKind::Press {
+            return Some(DashboardAction::None);
         }
-        if self.sidebar_jump.is_some() {
-            if Self::control_side(key.code).is_some() {
-                return Some(self.sidebar_jump_key(key));
-            }
-            if self
-                .sidebar_jump
-                .as_ref()
-                .is_some_and(|jump| jump.cancelled)
-            {
-                // A host shortcut such as the GUI's Cmd-K arrives here through
-                // its ordinary Dashboard equivalent (Ctrl-g, then `:`). Let
-                // that sequence and subsequent modified shortcuts keep their
-                // normal dispatch after cancelling.
-                return None;
-            }
-            if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
-                self.cancel_sidebar_jump();
-                return Some(DashboardAction::Redraw);
-            }
-            if key.modifiers.intersects(
-                KeyModifiers::CONTROL
-                    | KeyModifiers::SUPER
-                    | KeyModifiers::HYPER
-                    | KeyModifiers::META,
-            ) {
-                let is_label_digit = key.modifiers == KeyModifiers::CONTROL
-                    && matches!(key.code, KeyCode::Char('0'..='9'));
-                if is_label_digit {
-                    return Some(self.sidebar_jump_key(key));
-                }
-                self.cancel_sidebar_jump();
-                // Preserve normal Control shortcuts and platform Command
-                // shortcuts. Input encoding and keymap matching retain and
-                // reject these modifier bits respectively.
-                return None;
-            }
-            if matches!(key.code, KeyCode::Char('0'..='9')) {
-                // A digit that arrived without its modifier is not a label and
-                // must not leak into a child while the gesture remains held.
-                return Some(self.sidebar_jump_key(key));
-            }
+        if key.code == KeyCode::Esc {
             self.cancel_sidebar_jump();
-            // Ordinary Dashboard handling remains available for non-digit
-            // Control shortcuts, including Ctrl-g then the palette binding.
-            return None;
+            return Some(DashboardAction::Redraw);
         }
-        if Self::control_side(key.code).is_some() {
-            let binding = self.key_binding_for(key)?;
-            if binding.action == super::keymap::Action::SidebarJump && binding.enabled() {
-                let control_is_left = Self::control_side(key.code)
-                    .expect("the shared gesture binding matches a Control edge");
-                return Some(self.begin_sidebar_jump(control_is_left));
-            }
+        if is_browse_key(key) {
+            let terminal = self.mode == InputMode::Terminal;
+            self.cancel_sidebar_jump();
+            // Let the Terminal branch perform its ordinary Browse return,
+            // including mouse and history cleanup; Browse just closes.
+            return (!terminal).then_some(DashboardAction::Redraw);
         }
+        if let KeyCode::Char(digit @ '0'..='9') = key.code
+            && matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::CONTROL)
+        {
+            return Some(self.sidebar_jump_key(digit));
+        }
+        self.cancel_sidebar_jump();
         None
     }
 
-    fn begin_sidebar_jump(&mut self, control_is_left: bool) -> DashboardAction {
+    pub(super) fn begin_sidebar_jump(&mut self) -> DashboardAction {
         if !self.sidebar_jump_can_start() {
             return DashboardAction::None;
         }
         let targets = self.visible_sidebar_jump_targets();
         self.sidebar_jump = Some(SidebarJump {
             targets,
-            left_control: control_is_left,
-            right_control: !control_is_left,
-            selected: false,
-            cancelled: false,
             hint: None,
         });
         DashboardAction::Redraw
     }
 
-    fn sidebar_jump_key(&mut self, key: KeyEvent) -> DashboardAction {
-        if let Some(control_is_left) = Self::control_side(key.code) {
-            let Some(jump) = &mut self.sidebar_jump else {
-                return if key.kind == KeyEventKind::Press {
-                    self.begin_sidebar_jump(control_is_left)
-                } else {
-                    DashboardAction::None
-                };
-            };
-            match (control_is_left, key.kind) {
-                (true, KeyEventKind::Press) => jump.left_control = true,
-                (true, KeyEventKind::Release) => jump.left_control = false,
-                (false, KeyEventKind::Press) => jump.right_control = true,
-                (false, KeyEventKind::Release) => jump.right_control = false,
-                (_, KeyEventKind::Repeat) => return DashboardAction::None,
-            }
-            if !jump.left_control && !jump.right_control {
-                let selected = jump.selected;
-                self.clear_sidebar_jump();
-                if selected {
-                    if let Some(intent) = &mut self.agent_typing {
-                        intent.defer_until_modifier_release = false;
-                        // Keys queued after this release stay behind the same input boundary.
-                        intent.defer_until_input_boundary = true;
-                    }
-                    self.finish_agent_switch();
-                }
-                return DashboardAction::Redraw;
-            }
-            return DashboardAction::Redraw;
-        }
-
-        let Some(jump) = self.sidebar_jump.as_ref() else {
-            return DashboardAction::None;
-        };
-        if key.kind != KeyEventKind::Press {
-            return DashboardAction::None;
-        }
-        if jump.selected {
-            if key.code == KeyCode::Esc || is_browse_key(key) {
-                self.agent_typing = None;
-                self.mode = InputMode::Browse;
-                if let Some(jump) = &mut self.sidebar_jump {
-                    jump.cancelled = true;
-                }
-                return DashboardAction::Redraw;
-            }
-            return DashboardAction::None;
-        }
-        if jump.cancelled {
-            return DashboardAction::None;
-        }
-        if key.code == KeyCode::Esc {
-            self.cancel_sidebar_jump();
-            return DashboardAction::Redraw;
-        }
-        if let KeyCode::Char(digit @ '0'..='9') = key.code
-            && key.modifiers == KeyModifiers::CONTROL
-        {
-            let target = digit
-                .to_digit(10)
-                .and_then(|value| value.checked_sub(1))
-                .and_then(|index| usize::try_from(index).ok())
-                .and_then(|index| self.sidebar_jump.as_ref()?.targets.get(index).copied());
-            let Some(target) = target else {
-                if let Some(jump) = &mut self.sidebar_jump {
-                    jump.hint = Some("No visible Agent for that number".into());
-                }
-                return DashboardAction::Redraw;
-            };
-            if !self.sidebar_jump_target_available(target) {
-                if let Some(jump) = &mut self.sidebar_jump {
-                    jump.hint = Some("Agent unavailable; label kept".into());
-                }
-                return DashboardAction::Redraw;
-            }
+    fn sidebar_jump_key(&mut self, digit: char) -> DashboardAction {
+        let target = digit
+            .to_digit(10)
+            .and_then(|value| value.checked_sub(1))
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| self.sidebar_jump.as_ref()?.targets.get(index).copied());
+        let Some(target) = target else {
             if let Some(jump) = &mut self.sidebar_jump {
-                jump.selected = true;
-                jump.hint = None;
+                jump.hint = Some("No visible Agent for that number".into());
             }
-            // Retained inspection only changes the view. Running destinations use the
-            // existing release, acknowledged-view, and input-drain boundary before typing.
-            self.mode = InputMode::Browse;
-            return match target.phase {
-                SidebarJumpPhase::Running => {
-                    self.confirm_agent_switch_after_release(target.session, target.run, true)
-                }
-                SidebarJumpPhase::Retained => {
-                    self.agent_typing = None;
-                    self.select_session(target.session);
-                    // Showing a retained Interrupted run is inspection, not recovery.
-                    // Match notification navigation's exact-run suppression before its
-                    // view request reaches the ordinary recovery hook.
-                    self.recovery_requests
-                        .entry((target.session, target.run))
-                        .or_insert(None);
-                    self.request_selected()
-                }
-            };
+            return DashboardAction::Redraw;
+        };
+        if !self.sidebar_jump_target_available(target) {
+            if let Some(jump) = &mut self.sidebar_jump {
+                jump.hint = Some("Agent unavailable; label kept".into());
+            }
+            return DashboardAction::Redraw;
         }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
-        {
-            self.cancel_sidebar_jump();
-        } else if let Some(jump) = &mut self.sidebar_jump {
-            jump.hint = Some("Use Control with 1–9".into());
+        self.sidebar_jump = None;
+        self.mode = InputMode::Browse;
+        // Retained inspection only changes the view. Running destinations use the
+        // existing acknowledged-view and input-drain boundary before typing.
+        match target.phase {
+            SidebarJumpPhase::Running => self.confirm_agent_switch(target.session, target.run),
+            SidebarJumpPhase::Retained => {
+                self.agent_typing = None;
+                self.select_session(target.session);
+                // Showing a retained Interrupted run is inspection, not recovery.
+                // Match notification navigation's exact-run suppression before its
+                // view request reaches the ordinary recovery hook.
+                self.recovery_requests
+                    .entry((target.session, target.run))
+                    .or_insert(None);
+                self.request_selected()
+            }
         }
-        DashboardAction::Redraw
     }
 
     pub(super) fn confirm_agent_switch(
         &mut self,
         session: SessionId,
         run: SessionRunId,
-    ) -> DashboardAction {
-        self.confirm_agent_switch_after_release(session, run, false)
-    }
-
-    fn confirm_agent_switch_after_release(
-        &mut self,
-        session: SessionId,
-        run: SessionRunId,
-        defer_until_modifier_release: bool,
     ) -> DashboardAction {
         self.select_session(session);
         let coalesced = self.handshake.in_flight();
@@ -1369,7 +1200,6 @@ impl Dashboard {
             session,
             run,
             revision,
-            defer_until_modifier_release,
             defer_until_input_boundary: false,
             rejected: None,
         });
@@ -1421,11 +1251,7 @@ impl Dashboard {
                     .iter()
                     .all(|(id, _, _)| self.handshake.is_ready(*id))
         });
-        if ready
-            && !intent.defer_until_modifier_release
-            && !intent.defer_until_input_boundary
-            && self.input_is_allowed()
-        {
+        if ready && !intent.defer_until_input_boundary && self.input_is_allowed() {
             self.agent_typing = None;
             self.mode = InputMode::Terminal;
         }
@@ -1651,7 +1477,6 @@ impl Dashboard {
         let geometry_changed = self.outer_area != area;
         if geometry_changed {
             self.cancel_sidebar_jump();
-            self.clear_sidebar_jump();
             self.cancel_mouse_gesture();
         }
         if geometry_changed && self.copy.is_some() {
@@ -2052,9 +1877,6 @@ impl Dashboard {
 
     fn dispatch_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
-            if self.sidebar_jump.is_some() && Self::control_side(key.code).is_some() {
-                return self.sidebar_jump_key(key);
-            }
             // Enhanced keyboard mode reports releases for ordinary keys too; they are not
             // Keystrokes and must never be encoded into a child PTY.
             return DashboardAction::None;
@@ -2163,6 +1985,9 @@ impl Dashboard {
                         begin.cancelled = true;
                     }
                     self.mode = InputMode::Browse;
+                    // Ctrl-g is the navigation key: arriving in Browse also opens
+                    // the label picker in the same press.
+                    self.begin_sidebar_jump();
                     DashboardAction::EnterBrowse
                 } else if !self.input_is_allowed() {
                     self.refuse_input()
@@ -2935,7 +2760,6 @@ impl Dashboard {
             }
             Event::FocusLost => {
                 self.cancel_sidebar_jump();
-                self.clear_sidebar_jump();
                 self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
@@ -2948,7 +2772,6 @@ impl Dashboard {
             }
             Event::Resize(_, _) => {
                 self.cancel_sidebar_jump();
-                self.clear_sidebar_jump();
                 self.agent_typing = None;
                 DashboardAction::Redraw
             }

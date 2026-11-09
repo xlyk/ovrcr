@@ -3413,7 +3413,9 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     use super::keymap::{Action, KeyBinding, keymap};
     // Global shortcuts carry their modifiers when checking unique bindings.
     let event = |binding: &KeyBinding| match binding.action {
-        Action::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        Action::Browse | Action::SidebarJump => {
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        }
         Action::OperatorQuick => KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
         _ => KeyEvent::new(binding.code, KeyModifiers::NONE),
     };
@@ -3473,8 +3475,14 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
             "{event:?}"
         );
     }
-    // Other Ctrl-modified keys stay unbound in Browse.
-    for code in [KeyCode::Char('n'), KeyCode::Char('q'), KeyCode::Char('g')] {
+    // Ctrl-g opens the session-jump picker; other Ctrl-modified keys stay unbound.
+    assert_eq!(
+        dashboard
+            .key_binding_for(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
+            .map(|binding| binding.action),
+        Some(Action::SidebarJump)
+    );
+    for code in [KeyCode::Char('n'), KeyCode::Char('q')] {
         assert!(
             dashboard
                 .key_binding_for(KeyEvent::new(code, KeyModifiers::CONTROL))
