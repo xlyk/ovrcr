@@ -1,0 +1,10 @@
+{
+  "sourceRevision": "f3d21df13ac9200a021a065033c0b6973d530726",
+  "root": "/tmp/ovrcr-gui-swK83j",
+  "hashes": {
+    "dashboard": "e39dcdb0c590ef9948d4224aee7c6d92aadadab9ceda68eb0ec59f3571531776",
+    "server": "dafcd5643c51e8ad0c715418c783fd28a0aa57d502dff24de9393582f2e91941",
+    "gui": "760ec2efcfca5865380babe2af146ed31ff5736b3b68237e167bf8ecfb45d78b"
+  },
+  "note": "Dashboard image refreshed from reviewed checkout after GUI Restart dashboard; Server/runtime and GUI source unchanged by this feature."
+}

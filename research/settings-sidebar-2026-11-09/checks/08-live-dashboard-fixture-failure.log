@@ -1,0 +1,120 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+warning: variable does not need to be mutable
+    --> tests/settings_lifecycle.rs:1252:13
+     |
+1252 |         let mut connection = connect_server(&live.socket).expect("connect Dashboard socket");
+     |             ----^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ovrcr` (test "settings_lifecycle") generated 1 warning (run `cargo fix --test "settings_lifecycle" -p ovrcr` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.36s
+     Running tests/settings_lifecycle.rs (target/debug/deps/settings_lifecycle-061942a732521fe3)
+
+running 3 tests
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpabDH2z server=60062
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwbsLQU server=60064
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSXHgSp server=60063
+test dashboard_shows_the_server_reading_when_the_client_cannot_read_the_document ... ok
+
+thread 'dashboard_theme_save_and_cancel_round_trip_through_the_server' (603321295) panicked at tests/settings_lifecycle.rs:1424:5:
+no focused Settings row "Theme":
+Settings / Appearance                                                                                                   
+Categories              │› Theme                           Catppuccin Mocha                                             
+  Alerts                │                                                                                               
+› Appearance            │                                                                                               
+  Workspaces            │                                                                                               
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Theme                                                                                         
+                        │ Value: Catppuccin Mocha                                                                       
+                        │ 80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the        
+                        │ default (alias dark); Catppuccin Latte also accepts light.                                    
+                        │ The highlighted choice previews across the Dashboard. Enter saves it; Esc restores the saved  
+                        │ theme.                                                                                        
+                        │ Source: default                                                                               
+                        │ Default: Catppuccin Mocha                                                                     
+                        │ key: theme                                                                                    
+ Enter choose  · Ctrl-d details  · / search  · ← categories  · Esc categories                                           
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'dashboard_picker_root_reorder_survives_reopen_with_unrelated_values' (603321293) panicked at tests/settings_lifecycle.rs:1424:5:
+no focused Settings row "Picker roots":
+Settings / Workspaces                                                                                                   
+Categories              │  Automatic local terminals       default_branch_only                                          
+  Alerts                │  Save uncommitted work           off                                                          
+  Appearance            │  Branch prefix                   kept/                                                        
+› Workspaces            │› Picker roots                    3 entries                                                    
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Picker roots                                                                                  
+                        │ Value: 3 entries                                                                              
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: ["/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSXHgSp/home"]         
+                        │ Reset: r removes this override and falls back to                                              
+                        │ ["/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSXHgSp/home"]                  
+                        │ key: picker_roots                                                                             
+                        │ Entries: /fixture/one · /fixture/two · /fixture/three                                         
+                        │ Document:                                                                                     
+ Enter manage  · Ctrl-d details  · r reset  · / search  · ← categories  · Esc categories                                
+test dashboard_theme_save_and_cancel_round_trip_through_the_server ... FAILED
+test dashboard_picker_root_reorder_survives_reopen_with_unrelated_values ... FAILED
+
+failures:
+
+failures:
+    dashboard_picker_root_reorder_survives_reopen_with_unrelated_values
+    dashboard_theme_save_and_cancel_round_trip_through_the_server
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 10 filtered out; finished in 4.02s
+
+error: test failed, to rerun pass `-p ovrcr --test settings_lifecycle`

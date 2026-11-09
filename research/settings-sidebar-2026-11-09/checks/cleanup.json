@@ -1,0 +1,7 @@
+{
+  "removedScratchRoot": "/tmp/ovrcr-413-checks.DjTg8r",
+  "scratchRootRemoved": true,
+  "nativeFixtures": "All task-owned GUI launchers exited 0; recorded PIDs/groups absent in per-run receipts.",
+  "retainedRecoveryRoot": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUmaU7N",
+  "retainedReason": "Initial failed fixture cleanup guard preserved this root. Original failure evidence is retained; no automatic removal of recovery state."
+}

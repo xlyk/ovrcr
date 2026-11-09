@@ -1,0 +1,65 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.57s
+     Running tests/settings_theme_preview.rs (target/debug/deps/settings_theme_preview-30cade4bb78e8633)
+
+running 14 tests
+test zero_height_theme_options_block_saves_and_preserve_the_draft ... ok
+test settings_theme_preview_repaints_the_dashboard_then_restores_on_cancel ... ok
+test external_update_preserves_a_highlight_that_matched_the_saved_theme ... ok
+test sidebar_click_aligned_with_a_theme_option_does_not_preview ... ok
+test saved_and_preview_theme_names_remain_visible_while_highlighting ... ok
+test theme_picker_presentation_at_80_and_60_and_mouse_preview ... ok
+test reopening_before_confirmation_previews_the_new_picker_selection ... ok
+test older_save_refusal_preserves_a_newer_highlighted_preview ... ok
+test paging_and_pasted_search_preview_through_public_event_dispatch ... ok
+test ctrl_g_from_the_active_picker_closes_settings_and_restores_latest_saved_theme ... ok
+test newer_save_of_original_theme_survives_the_older_save_report ... ok
+test typed_search_recovers_from_no_matches_without_saving_until_enter ... ok
+test all_80_highlighted_choices_repaint_without_sending_a_save ... ok
+test enter_sends_the_canonical_id_for_every_grouped_choice ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.65s
+
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.30s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-4d4bbaf401d6754e)
+
+running 31 tests
+test dashboard::settings_editor::tests::acknowledged_noop_save_settles_but_default_override_waits_for_source ... ok
+test dashboard::settings_editor::tests::agent_and_launch_managers_expose_their_own_operations ... ok
+test dashboard::settings_editor::tests::catalog_categories_keep_one_stable_row_per_setting ... ok
+test dashboard::settings_editor::tests::collections_are_one_summary_and_managers_keep_order_and_scope ... ok
+test dashboard::settings_editor::tests::details_distinguish_explicit_values_and_only_document_overrides_reset ... ok
+test dashboard::settings_editor::tests::details_scroll_with_ctrl_keys_and_mouse_wheel ... ok
+test dashboard::settings_editor::tests::empty_add_notice_is_visible_and_writes_nothing ... ok
+test dashboard::settings_editor::tests::every_catalog_category_is_reachable_from_the_sidebar ... ok
+test dashboard::settings_editor::tests::existing_picker_root_edits_prefill_the_complete_path ... ok
+test dashboard::settings_editor::tests::findings_route_across_categories_and_document_details_hold_unknown_keys ... ok
+test dashboard::settings_editor::tests::global_search_opens_context_and_restores_the_prior_place ... ok
+test dashboard::settings_editor::tests::inactive_sound_choice_names_the_missing_prerequisite ... ok
+test dashboard::settings_editor::tests::manager_focus_clamps_to_a_visible_row_when_the_collection_shrinks ... ok
+test dashboard::settings_editor::tests::manager_follows_published_source_for_reset_actions ... ok
+test dashboard::settings_editor::tests::menu_style_navigation_enters_theme_and_unwinds_to_workspace ... ok
+test dashboard::settings_editor::tests::mouse_selects_categories_rows_and_theme_options ... ok
+test dashboard::settings_editor::tests::moving_focus_does_not_move_neighboring_setting_rows ... ok
+test dashboard::settings_editor::tests::narrow_consent_details_show_consequences_before_enter ... ok
+test dashboard::settings_editor::tests::normalized_typed_literal_confirms_against_published_value ... ok
+test dashboard::settings_editor::tests::older_theme_refusal_does_not_clear_a_newer_preview ... ok
+test dashboard::settings_editor::tests::one_parent_change_confirms_only_one_queued_collection_edit ... ok
+test dashboard::settings_editor::tests::pending_reorder_follows_its_folder_across_manager_reopen ... ok
+test dashboard::settings_editor::tests::picker_cancel_and_selection_use_canonical_values ... ok
+test dashboard::settings_editor::tests::published_report_waits_for_its_own_response_and_keeps_refusal ... ok
+test dashboard::settings_editor::tests::refusal_stays_on_the_row_and_clears_when_the_row_is_edited_again ... ok
+test dashboard::settings_editor::tests::resize_event_updates_geometry_before_the_next_draw ... ok
+test dashboard::settings_editor::tests::responsive_frames_keep_selection_and_freeze_input_when_too_small ... ok
+test dashboard::settings_editor::tests::text_and_typed_editors_prefill_and_write_raw_values ... ok
+test dashboard::settings_editor::tests::theme_picker_previews_all_palettes_and_saves_one_canonical_id ... ok
+test dashboard::settings_editor::tests::tiny_theme_picker_shows_resize_and_never_writes ... ok
+test dashboard::settings_editor::tests::toggle_saves_immediately_and_stays_pending_until_publication ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 406 filtered out; finished in 0.43s
+

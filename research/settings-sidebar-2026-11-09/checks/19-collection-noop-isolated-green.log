@@ -1,0 +1,15 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.81s
+     Running tests/settings_lifecycle.rs (target/debug/deps/settings_lifecycle-061942a732521fe3)
+
+running 1 test
+UNCHANGED_CHILD case=agent argv server_log=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTN99Xd/home/Library/Application Support/ovrcr/unchanged-child-server.log
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTN99Xd server=62601
+UNCHANGED_CHILD case=picker root server_log=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplSx6gv/home/Library/Application Support/ovrcr/unchanged-child-server.log
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplSx6gv server=63309
+UNCHANGED_CHILD case=remembered launch server_log=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPKqw6p/home/Library/Application Support/ovrcr/unchanged-child-server.log
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPKqw6p server=63540
+test dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 4.88s
+

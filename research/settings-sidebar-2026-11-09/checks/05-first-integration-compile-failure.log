@@ -1,0 +1,286 @@
+error[E0592]: duplicate definitions with name `draw_details`
+    --> crates/ovrcr-tui/src/dashboard/quota.rs:112:5
+     |
+ 112 |       pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `draw_details`
+     |
+    ::: crates/ovrcr-tui/src/dashboard/settings_editor.rs:2637:5
+     |
+2637 | /     fn draw_details(
+2638 | |         &self,
+2639 | |         frame: &mut Frame<'_>,
+2640 | |         area: Rect,
+...    |
+2643 | |         manager: Option<&Manager>,
+2644 | |     ) {
+     | |_____- other definition for `draw_details`
+
+error[E0308]: `match` arms have incompatible types
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:1450:35
+     |
+1430 | /         match key.code {
+1431 | |             KeyCode::Esc => {
+1432 | |                 self.settings_editor.cancel_draft();
+1433 | |                 self.details = None;
+...    |
+1448 | |                 self.enter_list()
+     | |                 ----------------- this and all prior arms are found to be of type `()`
+1449 | |             }
+1450 | |             KeyCode::Char('/') => self.start_search(),
+     | |                                   ^^^^^^^^^^^^^^^^^^^ expected `()`, found `DashboardAction`
+...    |
+1453 | |             _ => {}
+1454 | |         }
+     | |_________- `match` arms have incompatible types
+
+error[E0609]: no field `finding_cursor` on type `settings_editor::Editor`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:1652:55
+     |
+1652 |         let index = target_index(self.settings_editor.finding_cursor, targets.len());
+     |                                                       ^^^^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `focus`, `category`, `selected`, `search`, `search_return` ... and 12 others
+
+error[E0609]: no field `finding_cursor` on type `settings_editor::Editor`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:1654:30
+     |
+1654 |         self.settings_editor.finding_cursor = index.saturating_add(1);
+     |                              ^^^^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `focus`, `category`, `selected`, `search`, `search_return` ... and 12 others
+
+error[E0034]: multiple applicable items in scope
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2542:26
+     |
+2542 |                     self.draw_details(frame, detail, report, now, None);
+     |                          ^^^^^^^^^^^^ multiple `draw_details` found
+     |
+note: candidate #1 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/quota.rs:112:5
+     |
+ 112 |     pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2637:5
+     |
+2637 | /     fn draw_details(
+2638 | |         &self,
+2639 | |         frame: &mut Frame<'_>,
+2640 | |         area: Rect,
+...    |
+2643 | |         manager: Option<&Manager>,
+2644 | |     ) {
+     | |_____^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2550:22
+     |
+2550 |                 self.draw_details(frame, detail, report, now, None);
+     |                      ^^^^^^^^^^^^ multiple `draw_details` found
+     |
+note: candidate #1 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/quota.rs:112:5
+     |
+ 112 |     pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2637:5
+     |
+2637 | /     fn draw_details(
+2638 | |         &self,
+2639 | |         frame: &mut Frame<'_>,
+2640 | |         area: Rect,
+...    |
+2643 | |         manager: Option<&Manager>,
+2644 | |     ) {
+     | |_____^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2985:14
+     |
+2985 |         self.draw_details(frame, detail, report, now_ms(), Some(manager));
+     |              ^^^^^^^^^^^^ multiple `draw_details` found
+     |
+note: candidate #1 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/quota.rs:112:5
+     |
+ 112 |     pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2637:5
+     |
+2637 | /     fn draw_details(
+2638 | |         &self,
+2639 | |         frame: &mut Frame<'_>,
+2640 | |         area: Rect,
+...    |
+2643 | |         manager: Option<&Manager>,
+2644 | |     ) {
+     | |_____^
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3004:30
+     |
+3004 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0034]: multiple applicable items in scope
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3063:14
+     |
+3063 |         self.draw_details(frame, detail, report, now, None);
+     |              ^^^^^^^^^^^^ multiple `draw_details` found
+     |
+note: candidate #1 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/quota.rs:112:5
+     |
+ 112 |     pub(super) fn draw_details(&self, frame: &mut Frame<'_>, now: u64) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `dashboard::Dashboard`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2637:5
+     |
+2637 | /     fn draw_details(
+2638 | |         &self,
+2639 | |         frame: &mut Frame<'_>,
+2640 | |         area: Rect,
+...    |
+2643 | |         manager: Option<&Manager>,
+2644 | |     ) {
+     | |_____^
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3104:30
+     |
+3104 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3220:30
+     |
+3220 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3305:26
+     |
+3305 |             Span::styled(display, Style::default().fg(TEXT())),
+     |             ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |             |
+     |             required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0382]: use of partially moved value: `editor`
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:1972:66
+     |
+1963 |         let row = editor.row;
+     |                   ---------- value partially moved here
+...
+1972 |                 self.settings_editor.overlays.push(Overlay::Text(editor));
+     |                                                                  ^^^^^^ value used here after partial move
+     |
+     = note: partial move occurs because `editor.row` has type `settings_editor::Row`, which does not implement the `Copy` trait
+
+warning: variable does not need to be mutable
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2386:13
+     |
+2386 |         let mut push = |spans: &mut Vec<Span<'static>>, used: &mut usize, text: String| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0034, E0277, E0308, E0382, E0592, E0609.
+For more information about an error, try `rustc --explain E0034`.
+warning: `ovrcr-tui` (lib) generated 2 warnings
+error: could not compile `ovrcr-tui` (lib) due to 13 previous errors; 2 warnings emitted
+[raw output: artifact://162]
+
+
+Wall time: 4.28 seconds
+
+Command exited with code 101

@@ -114,6 +114,13 @@ programmatic `DashboardDriver` and never draws a terminal, so it cannot prove
 spinner animation; native render evidence comes from the opt-in GUI walkthrough in
 [computer-use testing](../testing-computer-use.md).
 
+When running checks from a managed Agent, clear `OVRCR_AGENT_SOCKET` and
+`OVRCR_AGENT_TOKEN` for the test process, for example by prefixing the commands
+below with `env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN`. A private HOME does
+not remove these bindings; inherited values can redirect hook and CLI tests
+away from their fixture identities. Keep builds and live tests sequential
+when they share an executable path.
+
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 
 ```sh

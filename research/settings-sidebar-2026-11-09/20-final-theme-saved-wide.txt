@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e224] app=OVRCR GUI
+  - group [ref=e493]
+    - textarea "OVRCR terminal" [ref=e492]: "Settings / Appearance                                                            \nCategories          │› Theme                        Nord                         \nAlerts              │               "… (+1,767 chars; (await computer.ref("e492")).value()) (focused) actions=press
+    - statictext [ref=e508]: "Settings / Appearance                                                            "
+    - statictext [ref=e509]: "Categories          │› Theme                        Nord                         "
+    - statictext [ref=e532]: "Alerts              │                                                            "
+    - statictext [ref=e533]: "• Appearance        │                                                            "
+    - statictext [ref=e538]: "Workspaces          │                                                            "
+    - statictext [ref=e534]: "Titles              │                                                            "
+    - statictext [ref=e535]: "Usage               │                                                            "
+    - statictext [ref=e536]: "Agents              │                                                            "
+    - statictext [ref=e539]: "Remembered launches │                                                            "
+    - statictext [ref=e540]: "Operator            │                                                            "
+    - statictext [ref=e541]: "Delegation          │                                                            "
+    - statictext [ref=e542]: "Remote              │                                                            "
+    - statictext [ref=e543]: "                    │                                                            "
+    - statictext [ref=e544]: "                    │                                                            "
+    - statictext [ref=e545]: "                    │                                                            "
+    - statictext [ref=e546]: "                    │                                                            "
+    - statictext [ref=e547]: "                    │ Theme                                                      "
+    - statictext [ref=e548]: "                    │ Value: Nord                                                "
+    - statictext [ref=e549]: "                    │ 80 built-in palettes across 27 families: 54 Dark and 26    "
+    - statictext [ref=e550]: "                    │ Light. Catppuccin Mocha is the default (alias dark);       "
+    - statictext [ref=e551]: "                    │ Catppuccin Latte also accepts light.                       "
+    - statictext [ref=e552]: "                    │ Source: dashboard.toml                                     "
+    - statictext [ref=e553]: "                    │ Default: Catppuccin Mocha                                  "
+    - statictext [ref=e554]: " Enter choose  · Ctrl-d details  · r reset  · / search  · ← categories           "
+  - button "close" [ref=e236]
+  - button "full screen" [ref=e237]
+  - button "minimize" [ref=e238]
+  - statictext [ref=e239]: "OVRCR GUI"

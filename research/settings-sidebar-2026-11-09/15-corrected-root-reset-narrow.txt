@@ -1,0 +1,18 @@
+- window "OVRCR GUI" [ref=e224] app=OVRCR GUI
+  - group [ref=e225]
+    - textarea "OVRCR terminal" [ref=e226]: "Settings / Workspaces / Picker roots                                    \n  /tmp/ovrcr-413-checks.DjTg8r/…                                        \n  + Add folder                                        "… (+1,551 chars; (await computer.ref("e226")).value()) (focused) actions=press
+    - statictext [ref=e242]: "Settings / Workspaces / Picker roots                                    "
+    - statictext [ref=e243]: "  /tmp/ovrcr-413-checks.DjTg8r/…                                        "
+    - statictext [ref=e312]: "  + Add folder                                                          "
+    - statictext [ref=e322]: " Workspaces · Picker roots                                              "
+    - statictext [ref=e323]: " Entry: /tmp/ovrcr-413-checks.DjTg8r/home                               "
+    - statictext [ref=e324]: " A folder in the picker root search order.                              "
+    - statictext [ref=e325]: " Source: default                                                        "
+    - statictext [ref=e326]: " Default: [\"/tmp/ovrcr-413-checks.DjTg8r/home\"]                         "
+    - statictext [ref=e327]: " Reset: r is unavailable; x removes one entry                           "
+    - statictext [ref=e328]: " x removes this entry · r resets the whole collection · Esc back        "
+    - statictext [ref=e265]: " Enter edit  · a add  · x remove  · [ ] move  · Esc back                "
+  - button "close" [ref=e236]
+  - button "full screen" [ref=e237]
+  - button "minimize" [ref=e238]
+  - statictext [ref=e239]: "OVRCR GUI"

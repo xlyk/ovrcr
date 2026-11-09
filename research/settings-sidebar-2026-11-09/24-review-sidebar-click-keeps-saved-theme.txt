@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e585] app=OVRCR GUI
+  - group [ref=e586]
+    - textarea "OVRCR terminal" [ref=e587]: "Settings / Appearance / Theme                                                    \nCategories          │Choose a theme                                              \nAlerts              │The highlighted"… (+1,767 chars; (await computer.ref("e587")).value()) (focused) actions=press
+    - statictext [ref=e603]: "Settings / Appearance / Theme                                                    "
+    - statictext [ref=e604]: "Categories          │Choose a theme                                              "
+    - statictext [ref=e605]: "Alerts              │The highlighted palette previews this view; Enter saves.    "
+    - statictext [ref=e606]: "• Appearance        │Find a theme: ▏  80 of 80 themes                            "
+    - statictext [ref=e607]: "Workspaces          │                                                            "
+    - statictext [ref=e608]: "Titles              │  Dark                                                      "
+    - statictext [ref=e609]: "Usage               │  Catppuccin Mocha                                          "
+    - statictext [ref=e610]: "Agents              │  Tokyo Night                                               "
+    - statictext [ref=e611]: "Remembered launches │  Dracula                                                   "
+    - statictext [ref=e612]: "Operator            │  Gruvbox Dark                                              "
+    - statictext [ref=e613]: "Delegation          │› Nord  Saved                                               "
+    - statictext [ref=e614]: "Remote              │  Rosé Pine                                                 "
+    - statictext [ref=e615]: "                    │  Catppuccin Macchiato                                      "
+    - statictext [ref=e616]: "                    │  Catppuccin Frappé                                         "
+    - statictext [ref=e617]: "                    │  Rosé Pine Moon                                            "
+    - statictext [ref=e618]: "                    │  Kanagawa Wave                                             "
+    - statictext [ref=e619]: "                    │  Kanagawa Dragon                                           "
+    - statictext [ref=e620]: "                    │  Everforest Dark Hard                                      "
+    - statictext [ref=e621]: "                    │  Everforest Dark Medium                                    "
+    - statictext [ref=e622]: "                    │  Everforest Dark Soft                                      "
+    - statictext [ref=e623]: "                    │Saved: Nord                                                 "
+    - statictext [ref=e624]: "                    │                                                            "
+    - statictext [ref=e625]: "                    │                                                            "
+    - statictext [ref=e626]: " ↑↓ preview  · PgUp/PgDn page  · Enter save  · Esc cancel                        "
+  - button "close" [ref=e597]
+  - button "full screen" [ref=e598]
+  - button "minimize" [ref=e599]
+  - statictext [ref=e600]: "OVRCR GUI"

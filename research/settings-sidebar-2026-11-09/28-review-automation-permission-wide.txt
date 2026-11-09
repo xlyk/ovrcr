@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e585] app=OVRCR GUI
+  - group [ref=e586]
+    - textarea "OVRCR terminal" [ref=e587]: "Settings / Alerts                                                                \nCategories          │  Desktop notifications        off                          \n• Alerts            │  Ready sound  "… (+1,767 chars; (await computer.ref("e587")).value()) (focused) actions=press
+    - statictext [ref=e603]: "Settings / Alerts                                                                "
+    - statictext [ref=e604]: "Categories          │  Desktop notifications        off                          "
+    - statictext [ref=e605]: "• Alerts            │  Ready sound                  off                          "
+    - statictext [ref=e606]: "Appearance          │  Ready sound choice           Tap · inactive               "
+    - statictext [ref=e607]: "Workspaces          │› Exact iTerm focus            off                          "
+    - statictext [ref=e608]: "Titles              │                                                            "
+    - statictext [ref=e609]: "Usage               │                                                            "
+    - statictext [ref=e610]: "Agents              │                                                            "
+    - statictext [ref=e611]: "Remembered launches │                                                            "
+    - statictext [ref=e612]: "Operator            │                                                            "
+    - statictext [ref=e613]: "Delegation          │                                                            "
+    - statictext [ref=e614]: "Remote              │                                                            "
+    - statictext [ref=e615]: "                    │                                                            "
+    - statictext [ref=e616]: "                    │                                                            "
+    - statictext [ref=e617]: "                    │                                                            "
+    - statictext [ref=e618]: "                    │                                                            "
+    - statictext [ref=e619]: "                    │ Exact iTerm focus                                          "
+    - statictext [ref=e620]: "                    │ Value: off                                                 "
+    - statictext [ref=e621]: "                    │ A separate opt-in for selecting the existing iTerm session "
+    - statictext [ref=e622]: "                    │ hosting the current Dashboard.                             "
+    - statictext [ref=e623]: "                    │ On macOS choose Set up iTerm focus in the palette to       "
+    - statictext [ref=e624]: "                    │ request Automation permission explicitly. Banner clicks    "
+    - statictext [ref=e625]: "                    │ never request it.                                          "
+    - statictext [ref=e626]: " Enter turn on  · Ctrl-d details  · / search  · ← categories  · Esc categories   "
+  - button "close" [ref=e597]
+  - button "full screen" [ref=e598]
+  - button "minimize" [ref=e599]
+  - statictext [ref=e600]: "OVRCR GUI"

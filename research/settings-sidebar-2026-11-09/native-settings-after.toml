@@ -1,0 +1,3 @@
+automatic_local_terminals = "on"
+theme = "solarized-light"
+picker_roots = ["/tmp/ovrcr-413-checks.DjTg8r/home"]

@@ -1,0 +1,3 @@
+# Raw terminal output and persisted-document receipts retain literal whitespace.
+checks/*.log -whitespace
+native-*.toml -whitespace

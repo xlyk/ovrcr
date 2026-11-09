@@ -1,0 +1,102 @@
+    Blocking waiting for file lock on build directory
+   Compiling smallvec v1.16.0
+   Compiling mio v1.2.3
+   Compiling croner v3.0.1
+   Compiling rustls v0.23.45
+   Compiling zerocopy v0.8.56
+   Compiling portable-pty v0.9.0
+   Compiling parking_lot_core v0.9.12
+   Compiling icu_normalizer v2.3.0
+   Compiling rusqlite v0.40.2
+   Compiling parking_lot v0.12.5
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-protocol)
+   Compiling signal-hook-mio v0.2.5
+   Compiling crossterm v0.29.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ratatui v0.30.2
+   Compiling ahash v0.8.12
+   Compiling ureq v2.12.1
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 17s
+     Running tests/tui/main.rs (target/debug/deps/tui-420ba52360dc582c)
+
+running 1 test
+
+thread 'settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace' (602291722) panicked at tests/tui/settings.rs:109:5:
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                               [Commands] [Menu]
+   Operato┌Settings · ↑/↓ move · Enter edit · r reset · / filter · Esc close─────────────────────────────────┐   pid 111
+ CONSIGINT│Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6Fd9S8/dashboard.toml · read at an │──────────
+  󰘬 auth  │                                                                                                  │          
+     $ loc│Alerts                                                                                            │          
+▌    - rev│› Desktop notifications      off  default                                                         │          
+  󰘬 lifecy│      Off · Enter to turn on                                                                      │          
+     $ loc│      Shows a desktop banner when a response is ready or a session needs input.                   │          
+     · imp│      Turning this on may show an OS notification permission prompt.                              │          
+          │      macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or    │          
+ SPACELIFT│      opens System Settings when denied; choose Notifications → OVRCR.                            │          
+  󰘬 progre│      key: desktop_notifications                                                                  │          
+     $ loc│  Ready sound                off  default                                                         │          
+          │      macOS plays the selected sound with new banners only when Desktop notifications and Ready s…│          
+          │  Ready sound choice         System default  default                                              │          
+          │      Used for new Ready and Input banners when both alert settings are on. Changing this does no…│          
+          │  Exact iTerm focus          off  default                                                         │          
+          │      Off · Enter to turn on                                                                      │          
+          │                                                                                                  │          
+          │Appearance                                                                                        │          
+          │  Theme                      Catppuccin Mocha  default                                            │          
+          │      80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the defa…│          
+          │                                                                                                  │          
+          │Workspaces                                                                                        │          
+          │  Automatic local terminals  default_branch_only  default                                         │          
+          │  Save uncommitted work      off  default                                                         │          
+          │      Off · Enter to turn on                                                                      │          
+          │  Branch prefix              feature/  default                                                    │          
+          │  Picker roots               1 entry  default                                                     │          
+          │      /tmp/ovrcr-413-checks.DjTg8r/home                                                           │          
+          │      + Add root                                                                                  │          
+          │                                                                                                  │          
+          │Titles                                                                                            │          
+          │  Title model                unset  default                                                       │          
+          │      Off · Enter to set the title model                                                          │          
+          │                                                                                                  │          
+          │Usage                                                                                             │          
+          │  Native account usage       on  default                                                          │          
+          │      Reads Codex and Grok allowance while a Dashboard is attached. The readers never rewrite aut…│          
+          │  Claude allowance probe     off  default                                                         │          
+          │      Off · Enter to turn on                                                                      │          
+          │  Codex command              codex  default                                                       │          
+          │  Codex home                 unset  default                                                       │          
+          │  Grok command               grok  default                                                        │          
+          │  Grok home                  unset  default                                                       │          
+          │  Cursor dashboard usage     off  default                                                         │          
+          │      Off · Enter to turn on                                                                      │          
+          │  Cursor state database      unset  default                                                       │          
+          │      Optional absolute path to Cursor's state.vscdb; otherwise the platform default.             │          
+          │                                                                                                  │          
+          │Agents                                                                                            │          
+          │  Agent overrides            0 entries  default                                                   │          
+          │      + Add agent (name)                                                                          │          
+ QUOTA LEF│  Cursor cloud accounts      []  default                                                          │          
+Claude · c│      Named Keychain references, explicit model and repository/owner policy; selection is not bil…│          
+Codex · us│                                                                                                  │          
+Grok · usa│Remembered launches                                                                               │          
+Cursor · u│  Remembered launches        0 entries  default                                                   │          
+          └──────────────────────────────────────────────────────────────────────────────────────────────────┘          
+BROWSE  Space Menu  : Commands  ? Help                                                                                  
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace ... FAILED
+
+failures:
+
+failures:
+    settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 412 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

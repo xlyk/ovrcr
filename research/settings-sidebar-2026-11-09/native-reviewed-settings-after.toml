@@ -1,0 +1,8 @@
+automatic_local_terminals = "on"
+
+theme = "nord"
+ready_sound_choice = "tap"
+
+[quota]
+enabled = false
+

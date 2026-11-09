@@ -1,0 +1,20 @@
+- window "OVRCR GUI" [ref=e585] app=OVRCR GUI
+  - group [ref=e586]
+    - textarea "OVRCR terminal" [ref=e587]: "Settings / Alerts                                                       \n  Desktop notifications           off                                   \n  Ready sound                     off                 "… (+1,551 chars; (await computer.ref("e587")).value()) (focused) actions=press
+    - statictext [ref=e603]: "Settings / Alerts                                                       "
+    - statictext [ref=e604]: "  Desktop notifications           off                                   "
+    - statictext [ref=e605]: "  Ready sound                     off                                   "
+    - statictext [ref=e606]: "  Ready sound choice              Tap · inactive                        "
+    - statictext [ref=e607]: "› Exact iTerm focus               off                                   "
+    - statictext [ref=e619]: " Exact iTerm focus                                                      "
+    - statictext [ref=e620]: " Value: off                                                             "
+    - statictext [ref=e621]: " A separate opt-in for selecting the existing iTerm session hosting the "
+    - statictext [ref=e622]: " current Dashboard.                                                     "
+    - statictext [ref=e623]: " On macOS choose Set up iTerm focus in the palette to request           "
+    - statictext [ref=e624]: " Automation permission explicitly. Banner clicks never request it.      "
+    - statictext [ref=e625]: " Unavailable or denied control keeps Dashboard navigation and           "
+    - statictext [ref=e626]: " Enter turn on  · Ctrl-d details  · / search  · ← categories            "
+  - button "close" [ref=e597]
+  - button "full screen" [ref=e598]
+  - button "minimize" [ref=e599]
+  - statictext [ref=e600]: "OVRCR GUI"

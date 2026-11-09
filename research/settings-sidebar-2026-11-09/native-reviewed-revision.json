@@ -1,0 +1,127 @@
+{
+  "sourceRevision": "f6d15cf5f4a6bfaf1c12ea3485658828ed50ad4d",
+  "root": "/tmp/ovrcr-gui-KKZRv6",
+  "dashboardSha256": "eacaa6c342f214e6e8043b77bebb7a1df754f32611fc0372955f62c152069f54",
+  "owners": [
+    {
+      "pid": 2305,
+      "ppid": 70084,
+      "pgid": 2305,
+      "comm": "rtk"
+    },
+    {
+      "pid": 2387,
+      "ppid": 2305,
+      "pgid": 2305,
+      "comm": "just"
+    },
+    {
+      "pid": 2405,
+      "ppid": 2387,
+      "pgid": 2305,
+      "comm": "rtk"
+    },
+    {
+      "pid": 2409,
+      "ppid": 2405,
+      "pgid": 2305,
+      "comm": "rtk"
+    },
+    {
+      "pid": 8707,
+      "ppid": 2409,
+      "pgid": 2305,
+      "comm": "ovrcr-gui"
+    },
+    {
+      "pid": 9690,
+      "ppid": 8707,
+      "pgid": 2305,
+      "comm": "ovrcr"
+    },
+    {
+      "pid": 10803,
+      "ppid": 9690,
+      "pgid": 10803,
+      "comm": "zsh"
+    },
+    {
+      "pid": 11003,
+      "ppid": 9690,
+      "pgid": 11003,
+      "comm": "zsh"
+    },
+    {
+      "pid": 11762,
+      "ppid": 9690,
+      "pgid": 11762,
+      "comm": "zsh"
+    },
+    {
+      "pid": 11948,
+      "ppid": 9690,
+      "pgid": 11948,
+      "comm": "zsh"
+    },
+    {
+      "pid": 12385,
+      "ppid": 9690,
+      "pgid": 12385,
+      "comm": "zsh"
+    },
+    {
+      "pid": 13091,
+      "ppid": 9690,
+      "pgid": 13091,
+      "comm": "zsh"
+    },
+    {
+      "pid": 13634,
+      "ppid": 9690,
+      "pgid": 13634,
+      "comm": "bash"
+    },
+    {
+      "pid": 14123,
+      "ppid": 9690,
+      "pgid": 14123,
+      "comm": "bash"
+    },
+    {
+      "pid": 14881,
+      "ppid": 9690,
+      "pgid": 14881,
+      "comm": "bash"
+    },
+    {
+      "pid": 15044,
+      "ppid": 9690,
+      "pgid": 15044,
+      "comm": "bash"
+    },
+    {
+      "pid": 15285,
+      "ppid": 9690,
+      "pgid": 15285,
+      "comm": "bash"
+    },
+    {
+      "pid": 15408,
+      "ppid": 9690,
+      "pgid": 15408,
+      "comm": "bash"
+    },
+    {
+      "pid": 15479,
+      "ppid": 8707,
+      "pgid": 15479,
+      "comm": "ovrcr"
+    },
+    {
+      "pid": 50583,
+      "ppid": 9690,
+      "pgid": 2305,
+      "comm": "git"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.10s
+     Running tests/settings_theme_preview.rs (target/debug/deps/settings_theme_preview-30cade4bb78e8633)
+
+running 12 tests
+test saved_and_preview_theme_names_remain_visible_while_highlighting ... ok
+test theme_picker_presentation_at_80_and_60_and_mouse_preview ... ok
+test external_update_preserves_a_highlight_that_matched_the_saved_theme ... ok
+test newer_save_of_original_theme_survives_the_older_save_report ... ok
+test older_save_refusal_preserves_a_newer_highlighted_preview ... ok
+test settings_theme_preview_repaints_the_dashboard_then_restores_on_cancel ... ok
+test paging_and_pasted_search_preview_through_public_event_dispatch ... ok
+test reopening_before_confirmation_previews_the_new_picker_selection ... ok
+test typed_search_recovers_from_no_matches_without_saving_until_enter ... ok
+test ctrl_g_from_the_active_picker_closes_settings_and_restores_latest_saved_theme ... ok
+test all_80_highlighted_choices_repaint_without_sending_a_save ... ok
+test enter_sends_the_canonical_id_for_every_grouped_choice ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.97s
+

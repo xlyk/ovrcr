@@ -1,0 +1,2 @@
+Command: cargo test -p ovrcr --test tui settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace -- --exact --nocapture
+Observed exit 0: 1 passed, 0 failed, 429 filtered; first integrated source.

@@ -1,0 +1,8 @@
+{
+  "base": "9e027779bfc94cb217f4921a04e30ed78747ed92",
+  "revision": "uncommitted pre-correction implementation",
+  "images": {
+    "ovrcr": "71e6264dffe4a1f7dd30358b2cf38827d4d0b5baa50f4c809388f43f66d784ff",
+    "ovrcr-gui": "a5dde257005bb6ea4f47a5d27f5ef60a352470e556219435be3c895fe13cb84f"
+  }
+}

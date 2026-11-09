@@ -1,0 +1,12 @@
+{
+  "baseRevision": "9e027779bfc94cb217f4921a04e30ed78747ed92",
+  "candidateRevision": "f3d21df13ac9200a021a065033c0b6973d530726",
+  "home": "/tmp/ovrcr-413-checks.DjTg8r/home",
+  "cargoHome": "/Users/xlyk/.cargo",
+  "shell": "/bin/zsh",
+  "notes": [
+    "Early numbered logs record earlier worktree attempts, not final revision passes.",
+    "Final interleaved-save regression passes 1/1 and owned unit suite25/25 after corrections.",
+    "Independent reviews and full workspace suite are separate gates."
+  ]
+}

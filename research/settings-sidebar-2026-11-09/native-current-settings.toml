@@ -1,0 +1,9 @@
+automatic_local_terminals = "on"
+
+theme = "nord"
+ready_sound_choice = "tap"
+picker_roots = ["/tmp/ovrcr-413-checks.DjTg8r/evidence"]
+
+[quota]
+enabled = false
+

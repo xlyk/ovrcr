@@ -1,0 +1,72 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.15s
+     Running tests/tui/main.rs (target/debug/deps/tui-420ba52360dc582c)
+
+running 46 tests
+test settings::a_rejected_value_shows_in_details_and_leaves_the_document_unchanged ... ok
+test settings::add_agent_draft_appends_after_an_external_reading ... ok
+test settings::adding_root_to_default_list_publishes_source_and_reset_keeps_unrelated ... ok
+test settings::adding_to_a_default_list_keeps_its_default_elements ... ok
+test settings::alert_dependency_and_short_picker_guidance_precede_the_action ... ok
+test settings::alert_permission_consequences_are_visible_before_activation ... FAILED
+test settings::an_unparseable_document_disables_editing_and_recovers_on_a_valid_reading ... ok
+test settings::backing_out_of_search_restores_the_prior_list_row_and_scroll ... ok
+test settings::collection_drafts_and_boundaries_report_feedback_without_writes ... ok
+test settings::collection_manager_edits_agents_without_reordering_neighbors ... ok
+test settings::connecting_retires_a_queued_status_off_note ... ok
+test settings::consent_consequences_show_before_activation ... ok
+test settings::editor_typing_and_picker_filtering_stay_distinct_from_global_search ... ok
+test settings::empty_collection_keeps_one_summary_row_and_opens_its_manager ... ok
+test settings::empty_global_search_explains_recovery_and_writes_nothing ... ok
+test settings::enum_edits_in_place_with_a_pick_list ... ok
+test settings::every_catalog_category_is_reachable_and_palette_settings_open_context ... ok
+test settings::explicit_and_inherited_off_are_distinguishable ... ok
+test settings::external_collection_reading_leaves_visible_manager_focus ... ok
+test settings::findings_surface_across_categories_and_route_by_f_and_d ... ok
+test settings::global_search_round_trips_to_a_setting_and_back ... ok
+test settings::inactive_saved_sound_picker_highlights_the_saved_choice ... ok
+test settings::long_values_and_explanations_are_reachable_at_narrow_width ... ok
+test settings::mouse_wheel_and_clicks_navigate_categories_rows_and_results ... ok
+test settings::moving_the_selection_leaves_neighboring_rows_and_columns_in_place ... ok
+test settings::narrow_60x24_frame_shows_one_pane_with_breadcrumbs ... ok
+test settings::palette_connects_agent_status_until_it_succeeds ... ok
+test settings::pending_root_move_and_sound_save_match_interleaved_server_replies ... ok
+test settings::picker_root_edit_prefills_the_full_path_and_keeps_neighbors ... ok
+test settings::picker_roots_manager_preserves_order_and_distinguishes_reset ... ok
+test settings::queued_agent_edits_keep_their_own_reply_association ... ok
+test settings::remembered_launch_picks_kind_and_preset_together ... ok
+test settings::reset_is_offered_only_for_a_value_the_document_sets ... ok
+test settings::rows_show_the_value_and_details_carry_source_default_and_reset ... ok
+test settings::settings_footer_reports_findings_at_attach_and_when_the_count_changes ... ok
+test settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace ... ok
+test settings::settings_opens_from_the_menu_and_has_no_browse_key ... ok
+test settings::settings_without_a_reading_explains_and_recovers_on_publish ... ok
+test settings::startup_error_banner_does_not_hide_the_settings_findings_notice ... ok
+test settings::startup_status_off_is_a_calm_one_time_note_behind_the_findings_notice ... ok
+test settings::string_edits_are_prefilled_and_escape_cancels_only_that_edit ... ok
+test settings::toggle_saves_at_once_and_applies_only_the_servers_reading ... ok
+test settings::too_small_frame_recovers_focus_scroll_and_draft ... ok
+test settings::typed_integer_normalization_clears_pending_after_confirmation ... ok
+test settings::unparseable_reading_blocks_manager_drafts_until_recovery ... ok
+test settings::wide_80x24_frame_pins_sidebar_rows_details_and_footer ... ok
+
+failures:
+
+---- settings::alert_permission_consequences_are_visible_before_activation stdout ----
+
+thread 'settings::alert_permission_consequences_are_visible_before_activation' (605460730) panicked at tests/tui/settings.rs:2148:9:
+notification permission consequence must be visible at 80x24:
+settings / alerts categories │› desktop notifications off • alerts │ ready sound off appearance │ ready sound choice system default · inactive workspaces │ exact iterm focus off titles │ usage │ agents │ remembered launches │ operator │ delegation │ remote │ │ │ │ │ │ desktop notifications │ value: off │ shows a desktop banner when a response is ready or a │ session needs input. │ source: default │ default: off │ turning this on may show an os notification permission enter turn on · ctrl-d details · / search · ← categories · esc categories
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    settings::alert_permission_consequences_are_visible_before_activation
+
+test result: FAILED. 45 passed; 1 failed; 0 ignored; 0 measured; 394 filtered out; finished in 14.85s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

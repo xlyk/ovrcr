@@ -1,0 +1,747 @@
+TAP version 13
+# Subtest: session switches capture OMP's exact native file and ephemeral identity
+not ok 1 - session switches capture OMP's exact native file and ephemeral identity
+  ---
+  duration_ms: 1823.724875
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:43:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   [
+    -     'native-a',
+    -     '/private/omp/arbitrary-file.jsonl'
+    -   ],
+    -   [
+    -     'native-b',
+    -     null
+    -   ]
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'native-a'
+      1: '/private/omp/arbitrary-file.jsonl'
+    1:
+      0: 'native-b'
+      1: ~
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:53:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: inert outside a managed invocation and outside the terminal UI
+ok 2 - inert outside a managed invocation and outside the terminal UI
+  ---
+  duration_ms: 8.783667
+  type: 'test'
+  ...
+# Subtest: registers OMP's lifecycle and switch events
+ok 3 - registers OMP's lifecycle and switch events
+  ---
+  duration_ms: 3.241334
+  type: 'test'
+  ...
+# Subtest: a switch names the conversation it left by id, never by its file path
+ok 4 - a switch names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 839.346166
+  type: 'test'
+  ...
+# Subtest: a same-file reload is a switch that names the conversation it is already on
+ok 5 - a same-file reload is a switch that names the conversation it is already on
+  ---
+  duration_ms: 690.3385
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 6 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 735.91375
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces this producer once and says so
+ok 7 - the reattach command re-announces this producer once and says so
+  ---
+  duration_ms: 490.415292
+  type: 'test'
+  ...
+# Subtest: a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+ok 8 - a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+  ---
+  duration_ms: 3.602125
+  type: 'test'
+  ...
+# Subtest: an approval opens and closes one namespaced request and carries no reason
+ok 9 - an approval opens and closes one namespaced request and carries no reason
+  ---
+  duration_ms: 763.459417
+  type: 'test'
+  ...
+# Subtest: a denial closes the approval exactly as an allow does
+ok 10 - a denial closes the approval exactly as an allow does
+  ---
+  duration_ms: 770.383625
+  type: 'test'
+  ...
+# Subtest: an approval from another session id or with none emits nothing
+ok 11 - an approval from another session id or with none emits nothing
+  ---
+  duration_ms: 3.169375
+  type: 'test'
+  ...
+# Subtest: two approvals overlap: each frame carries its own tool call id
+not ok 12 - two approvals overlap: each frame carries its own tool call id
+  ---
+  duration_ms: 950.521542
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:230:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+          'input_open',
+    -     'approval:c1'
+    -   ],
+    -   [
+    -     'input_open',
+          'approval:c2'
+        ],
+        [
+          'input_close',
+          'approval:c1'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'input_open'
+      1: 'approval:c1'
+    1:
+      0: 'input_open'
+      1: 'approval:c2'
+    2:
+      0: 'input_close'
+      1: 'approval:c1'
+    3:
+      0: 'input_close'
+      1: 'approval:c2'
+  actual:
+    0:
+      0: 'input_open'
+      1: 'approval:c2'
+    1:
+      0: 'input_close'
+      1: 'approval:c1'
+    2:
+      0: 'input_close'
+      1: 'approval:c2'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:238:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: the ask tool's lifetime is one question request keyed by its tool call id
+ok 13 - the ask tool's lifetime is one question request keyed by its tool call id
+  ---
+  duration_ms: 800.416041
+  type: 'test'
+  ...
+# Subtest: a tool that is not ask emits nothing
+ok 14 - a tool that is not ask emits nothing
+  ---
+  duration_ms: 2.83975
+  type: 'test'
+  ...
+# Subtest: an approval opened during a question keeps both requests and their order
+ok 15 - an approval opened during a question keeps both requests and their order
+  ---
+  duration_ms: 786.642541
+  type: 'test'
+  ...
+# Subtest: an end that failed, timed out or aborted still closes the question
+ok 16 - an end that failed, timed out or aborted still closes the question
+  ---
+  duration_ms: 899.387041
+  type: 'test'
+  ...
+# Subtest: an approval requested and resolved in one tick is delivered open before close
+not ok 17 - an approval requested and resolved in one tick is delivered open before close
+  ---
+  duration_ms: 1810.221041
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:301:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   [
+    -     'input_open',
+    -     'approval:c1'
+    -   ],
+    -   [
+    -     'input_close',
+    -     'approval:c1'
+    -   ]
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'input_open'
+      1: 'approval:c1'
+    1:
+      0: 'input_close'
+      1: 'approval:c1'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:312:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: an ask execution that starts and ends in one tick is delivered open before close
+not ok 18 - an ask execution that starts and ends in one tick is delivered open before close
+  ---
+  duration_ms: 1438.242417
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:322:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+    -     'input_open',
+    -     'question:q1'
+    -   ],
+    -   [
+          'input_close',
+          'question:q1'
+        ]
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'input_open'
+      1: 'question:q1'
+    1:
+      0: 'input_close'
+      1: 'question:q1'
+  actual:
+    0:
+      0: 'input_close'
+      1: 'question:q1'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:330:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a print-mode child emits no approval or question frames
+ok 19 - a print-mode child emits no approval or question frames
+  ---
+  duration_ms: 3.212875
+  type: 'test'
+  ...
+# Subtest: an end that will continue keeps the cycle open; the final end settles it as observed work
+ok 20 - an end that will continue keeps the cycle open; the final end settles it as observed work
+  ---
+  duration_ms: 946.173375
+  type: 'test'
+  ...
+# Subtest: error and aborted ends settle as error and aborted; no assistant message is none
+ok 21 - error and aborted ends settle as error and aborted; no assistant message is none
+  ---
+  duration_ms: 713.404625
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 22 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 525.993417
+  type: 'test'
+  ...
+# Subtest: an in-place session switch re-announces the conversation and closes any open cycle
+ok 23 - an in-place session switch re-announces the conversation and closes any open cycle
+  ---
+  duration_ms: 532.092708
+  type: 'test'
+  ...
+# Subtest: shutdown reports once with reason quit and disables
+ok 24 - shutdown reports once with reason quit and disables
+  ---
+  duration_ms: 717.069667
+  type: 'test'
+  ...
+# Subtest: a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+ok 25 - a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+  ---
+  duration_ms: 641.140167
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 26 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 745.507792
+  type: 'test'
+  ...
+# Subtest: a session switch re-announces the model for the new conversation
+ok 27 - a session switch re-announces the model for the new conversation
+  ---
+  duration_ms: 806.560333
+  type: 'test'
+  ...
+# Subtest: managed Pi exposes research assignment and explicit collection tools
+ok 28 - managed Pi exposes research assignment and explicit collection tools
+  ---
+  duration_ms: 103.488542
+  type: 'test'
+  ...
+# Subtest: acceptance exclusivity rejects direct registered callbacks before transport
+ok 29 - acceptance exclusivity rejects direct registered callbacks before transport
+  ---
+  duration_ms: 20.460084
+  type: 'test'
+  ...
+# Subtest: registered start rejects invalid action authority before intent or transport
+ok 30 - registered start rejects invalid action authority before intent or transport
+  ---
+  duration_ms: 25.007792
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare before persistence
+ok 31 - original intent recovers a lost Prepare before persistence
+  ---
+  duration_ms: 2836.300667
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare after persistence
+ok 32 - original intent recovers a lost Prepare after persistence
+  ---
+  duration_ms: 1097.74325
+  type: 'test'
+  ...
+# Subtest: followup recovery retains exact private request after a lost reply
+ok 33 - followup recovery retains exact private request after a lost reply
+  ---
+  duration_ms: 1016.4845
+  type: 'test'
+  ...
+# Subtest: failed registered collection releases pending follow-up without accepting either result
+ok 34 - failed registered collection releases pending follow-up without accepting either result
+  ---
+  duration_ms: 893.946667
+  type: 'test'
+  ...
+# Subtest: retry rejects a FIFO intent before a blocking open can wait for a writer
+ok 35 - retry rejects a FIFO intent before a blocking open can wait for a writer
+  ---
+  duration_ms: 25.476417
+  type: 'test'
+  ...
+# Subtest: tool queued on old recovery cannot start work after explicit new
+ok 36 - tool queued on old recovery cannot start work after explicit new
+  ---
+  duration_ms: 1009.115834
+  type: 'test'
+  ...
+# Subtest: an awaited old private intent cannot reacquire auth after fork
+ok 37 - an awaited old private intent cannot reacquire auth after fork
+  ---
+  duration_ms: 693.019708
+  type: 'test'
+  ...
+# Subtest: DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+ok 38 - DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 927.497333
+  type: 'test'
+  ...
+# Subtest: Archive persists an exact private intent before transport and reconciles a lost reply
+ok 39 - Archive persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 917.962834
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers none Prepare loss
+ok 40 - prepare-only registered start reserves without effects and recovers none Prepare loss
+  ---
+  duration_ms: 4050.846208
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers before Prepare loss
+ok 41 - prepare-only registered start reserves without effects and recovers before Prepare loss
+  ---
+  duration_ms: 1384.718375
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers after Prepare loss
+ok 42 - prepare-only registered start reserves without effects and recovers after Prepare loss
+  ---
+  duration_ms: 1667.404833
+  type: 'test'
+  ...
+# Subtest: prepare-only invalid flags refuse before control or private intent effects
+ok 43 - prepare-only invalid flags refuse before control or private intent effects
+  ---
+  duration_ms: 758.30575
+  type: 'test'
+  ...
+# Subtest: Codex coding and resolved-default review refuse before intent or Prepare
+ok 44 - Codex coding and resolved-default review refuse before intent or Prepare
+  ---
+  duration_ms: 1006.54975
+  type: 'test'
+  ...
+# Subtest: fixture result receipt appears only after its complete JSON is written
+ok 45 - fixture result receipt appears only after its complete JSON is written
+  ---
+  duration_ms: 78.540875
+  type: 'test'
+  ...
+# Subtest: captures exact native history at each conversation boundary
+not ok 46 - captures exact native history at each conversation boundary
+  ---
+  duration_ms: 1888.2905
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:100:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   [
+    -     'native-a',
+    -     '/private/history/not-derived-from-id.jsonl'
+    -   ],
+    -   [
+    -     'native-b',
+    -     '/private/history/second.jsonl'
+    -   ]
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'native-a'
+      1: '/private/history/not-derived-from-id.jsonl'
+    1:
+      0: 'native-b'
+      1: '/private/history/second.jsonl'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:110:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: inert outside a managed invocation: registers nothing
+ok 47 - inert outside a managed invocation: registers nothing
+  ---
+  duration_ms: 22.011416
+  type: 'test'
+  ...
+# Subtest: an unavailable optional Pi API preserves ordinary reporting
+not ok 48 - an unavailable optional Pi API preserves ordinary reporting
+  ---
+  duration_ms: 995.574833
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:124:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    -   'session_start',
+        'agent_start',
+        'agent_end',
+        'agent_settled'
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'session_start'
+    1: 'agent_start'
+    2: 'agent_end'
+    3: 'agent_settled'
+  actual:
+    0: 'agent_start'
+    1: 'agent_end'
+    2: 'agent_settled'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:135:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: one response cycle: start, end, settled carry run, outcome and ordered sequence
+ok 49 - one response cycle: start, end, settled carry run, outcome and ordered sequence
+  ---
+  duration_ms: 868.063208
+  type: 'test'
+  ...
+# Subtest: error and aborted outcomes come from the last assistant message; a second run increments
+ok 50 - error and aborted outcomes come from the last assistant message; a second run increments
+  ---
+  duration_ms: 550.050458
+  type: 'test'
+  ...
+# Subtest: continuations inside one cycle keep the run; the last end before settled decides the outcome
+ok 51 - continuations inside one cycle keep the run; the last end before settled decides the outcome
+  ---
+  duration_ms: 750.143125
+  type: 'test'
+  ...
+# Subtest: non-tui modes never spawn a helper; shutdown reports once then disables
+ok 52 - non-tui modes never spawn a helper; shutdown reports once then disables
+  ---
+  duration_ms: 709.732083
+  type: 'test'
+  ...
+# Subtest: a print-mode shutdown drains nothing and spawns no helper
+ok 53 - a print-mode shutdown drains nothing and spawns no helper
+  ---
+  duration_ms: 18.01025
+  type: 'test'
+  ...
+# Subtest: a hung helper is killed at the deadline and the handler still resolves
+ok 54 - a hung helper is killed at the deadline and the handler still resolves
+  ---
+  duration_ms: 919.208417
+  type: 'test'
+  ...
+# Subtest: queue overflow disables reporting and sends one content-free unavailable notice
+ok 55 - queue overflow disables reporting and sends one content-free unavailable notice
+  ---
+  duration_ms: 917.170416
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 56 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 449.583375
+  type: 'test'
+  ...
+# Subtest: resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+ok 57 - resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+  ---
+  duration_ms: 926.186583
+  type: 'test'
+  ...
+# Subtest: an outer prompt span opens and closes one Input request; the title never leaves
+not ok 58 - an outer prompt span opens and closes one Input request; the title never leaves
+  ---
+  duration_ms: 2929.202
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:293:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+    -     'agent_start',
+    -     1,
+    -     null
+    -   ],
+    -   [
+          'input_open',
+          1,
+    -     'select'
+    -   ],
+    -   [
+    -     'input_close',
+    -     1,
+    -     null
+    -   ],
+    -   [
+    -     'input_open',
+    -     1,
+          'editor'
+        ],
+        [
+          'input_close',
+          1,
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'agent_start'
+      1: 1
+      2: ~
+    1:
+      0: 'input_open'
+      1: 1
+      2: 'select'
+    2:
+      0: 'input_close'
+      1: 1
+      2: ~
+    3:
+      0: 'input_open'
+      1: 1
+      2: 'editor'
+    4:
+      0: 'input_close'
+      1: 1
+      2: ~
+  actual:
+    0:
+      0: 'input_open'
+      1: 1
+      2: 'editor'
+    1:
+      0: 'input_close'
+      1: 1
+      2: ~
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:303:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a prompt can open while no cycle is running and never touches the cycle
+not ok 59 - a prompt can open while no cycle is running and never touches the cycle
+  ---
+  duration_ms: 1063.992375
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:314:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+    -     'input_open',
+    -     null
+    -   ],
+    -   [
+          'input_close',
+          null
+        ],
+        [
+          'agent_start',
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'input_open'
+      1: ~
+    1:
+      0: 'input_close'
+      1: ~
+    2:
+      0: 'agent_start'
+      1: 1
+  actual:
+    0:
+      0: 'input_close'
+      1: ~
+    1:
+      0: 'agent_start'
+      1: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/pi_reporting_extension.mjs:321:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a transition names the conversation it left by id, never by its file path
+ok 60 - a transition names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 767.120333
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 61 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 921.358209
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces a disabled producer once and says so
+ok 62 - the reattach command re-announces a disabled producer once and says so
+  ---
+  duration_ms: 513.25675
+  type: 'test'
+  ...
+# Subtest: a shutdown drain discards the queue and delivers only the final frame in one deadline
+ok 63 - a shutdown drain discards the queue and delivers only the final frame in one deadline
+  ---
+  duration_ms: 719.580792
+  type: 'test'
+  ...
+# Subtest: a replacement factory is a new instance that names the conversation it replaced
+ok 64 - a replacement factory is a new instance that names the conversation it replaced
+  ---
+  duration_ms: 552.397583
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 65 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 585.916291
+  type: 'test'
+  ...
+# Subtest: omits model until the session reports one
+ok 66 - omits model until the session reports one
+  ---
+  duration_ms: 749.465625
+  type: 'test'
+  ...
+# Subtest: reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+ok 67 - reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+  ---
+  duration_ms: 826.935958
+  type: 'test'
+  ...
+1..67
+# tests 67
+# suites 0
+# pass 59
+# fail 8
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 18848.405709
+
+
+Wall time: 18.96 seconds
+
+Command exited with code 1
