@@ -36,7 +36,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: taiki-e/install-action@nextest
+      # Four shards fetch nextest at the same moment. On the first sharded run
+      # one of the four hit a transient failure in this step and lost its whole
+      # partition, so allow one retry before failing the job.
+      - name: Install nextest
+        id: nextest
+        uses: taiki-e/install-action@nextest
+        continue-on-error: true
+      - name: Install nextest (retry)
+        if: steps.nextest.outcome == 'failure'
+        uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: checks
