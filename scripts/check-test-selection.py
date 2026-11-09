@@ -2,14 +2,20 @@
 """Fail when a test target the workspace declares never appears in the selection.
 
 The sharded `macOS checks` job hashes a list of built test binaries. If a target
-fails to build, the list is silently short: the shard counts still add up, every
-job is green, and the missing target's tests simply never run. That happened
-with `ovrcr::operator_auth`, which vanished for two runs and came back for two
-more at identical source.
+is not built, the list is silently short: the shard counts still add up, every
+job is green, and that target's tests never run. `ovrcr::operator_auth` went
+missing exactly this way.
 
-This compares the suites nextest actually built against the test-capable targets
-`cargo metadata` says exist, so a dropped target fails the build instead of
-quietly shrinking coverage.
+Expectations come from two independent sources on purpose:
+
+* `cargo metadata` — every test-capable target the manifest machinery knows.
+* the test sources themselves — `tests/*.rs` beside each package manifest, which
+  is what cargo auto-discovers when no `[[test]]` section overrides it.
+
+The second source exists because the first is not a reliable floor: on a Linux
+runner `cargo metadata` did not report `ovrcr::operator_auth` at all, so a
+metadata-only audit passed while the macOS shards were still missing the binary.
+A target is required if either source knows about it.
 
 Usage: python3 scripts/check-test-selection.py <manifest-dir> [...]
 Every *.json in the directory is treated as one shard's `cargo nextest list
@@ -25,9 +31,8 @@ import sys
 LIB_KINDS = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"}
 
 
-def declared_suites():
-    """Test-capable targets in this workspace, in nextest's suite-id spelling."""
-    meta = json.loads(
+def cargo_metadata():
+    return json.loads(
         subprocess.run(
             ["cargo", "metadata", "--no-deps", "--format-version", "1"],
             capture_output=True,
@@ -35,6 +40,10 @@ def declared_suites():
             check=True,
         ).stdout
     )
+
+
+def metadata_suites(meta):
+    """Test-capable targets the manifest machinery reports, in suite-id spelling."""
     suites = {}
     for package in meta["packages"]:
         for target in package["targets"]:
@@ -55,6 +64,21 @@ def declared_suites():
             else:
                 continue
             suites[suite] = f"{package['name']} ({'/'.join(sorted(kinds))}:{name})"
+    return suites
+
+
+def source_suites(meta):
+    """Integration-test targets visible on disk for each workspace package."""
+    suites = {}
+    for package in meta["packages"]:
+        package_dir = os.path.dirname(package["manifest_path"])
+        tests_dir = os.path.join(package_dir, "tests")
+        if not os.path.isdir(tests_dir):
+            continue
+        # Only top-level tests/*.rs are targets; tests/support/* is a module tree.
+        for path in sorted(glob.glob(os.path.join(tests_dir, "*.rs"))):
+            name = os.path.basename(path)[: -len(".rs")]
+            suites[f"{package['name']}::{name}"] = os.path.relpath(path)
     return suites
 
 
@@ -85,11 +109,26 @@ def main(argv):
     if not manifests:
         sys.exit(f"no selection manifests found in {argv[1:]}")
 
-    expected = declared_suites()
+    meta = cargo_metadata()
+    from_metadata = metadata_suites(meta)
+    from_sources = source_suites(meta)
+    expected = dict(from_sources)
+    expected.update(from_metadata)
+
+    script_only = sorted(set(from_sources) - set(from_metadata))
+    print(
+        f"declared targets: {len(expected)} "
+        f"({len(from_metadata)} from cargo metadata, {len(from_sources)} from test sources)"
+    )
+    if script_only:
+        print(
+            "note: cargo metadata did not report these test sources, requiring them "
+            f"from disk anyway: {script_only}"
+        )
+
     shards = load_manifests(manifests)
 
     failed = False
-    union = set().union(*shards.values())
     for shard, suites in sorted(shards.items()):
         missing = sorted(set(expected) - suites)
         if missing:
@@ -102,6 +141,7 @@ def main(argv):
 
     if len(set(map(frozenset, shards.values()))) > 1:
         failed = True
+        union = set().union(*shards.values())
         print(f"FAIL shards disagree: union {len(union)} suites")
         for shard, suites in sorted(shards.items()):
             print(f"     {shard} lacks {sorted(union - suites)}")

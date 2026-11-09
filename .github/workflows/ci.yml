@@ -50,11 +50,10 @@ jobs:
         uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
-          # A shared target cache restored a state where a declared test target
-          # was considered fresh but had no binary, so the selection silently ran
-          # without it. The versioned key forces a complete rebuild; the audit
-          # job now fails loudly if it ever happens again.
-          shared-key: checks-shards
+          # A cold cache still omitted a declared test target, so caching is not
+          # the cause of that omission; the shared-key experiment that versioned
+          # this was reverted. The `test selection audit` job is the guard.
+          shared-key: checks
           cache-on-failure: true
       - name: Install zsh for shell integration tests
         if: runner.os == 'Linux'
@@ -139,6 +138,7 @@ jobs:
         if: matrix.shard == 1
         run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs tests/pi_workflow_tracker.mjs
       - name: Provision pinned Pi loader test host
+        id: pi-provision
         if: matrix.shard == 1
         run: |
           mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
@@ -162,7 +162,9 @@ jobs:
           set -o pipefail
           cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
       - name: Upload installed Pi loader evidence
-        if: always() && matrix.shard == 1
+        # Only when provisioning actually produced evidence: an unrelated earlier
+        # failure should not add a second, misleading "no files found" error.
+        if: always() && matrix.shard == 1 && steps.pi-provision.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -198,6 +200,13 @@ jobs:
         with:
           pattern: nextest-selection-*
           path: ${{ runner.temp }}/selection
+      # `cargo metadata` on this runner once failed to report a test target that
+      # was present in the commit, so record what the checkout actually holds.
+      - name: Record checkout shape
+        run: |
+          git rev-parse HEAD
+          git ls-files 'tests/*.rs' | wc -l
+          ls -l tests/operator_auth.rs || true
       - name: Require every declared test target in the selection
         run: python3 -I scripts/check-test-selection.py "$RUNNER_TEMP/selection"
 
