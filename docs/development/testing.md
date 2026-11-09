@@ -97,12 +97,13 @@ specification rather than a measurement.
 
 Every shard uploads its `cargo nextest list --message-format json` output. The
 `test selection audit` job — on Linux, so it costs no macOS slot — compares those
-manifests against the test-capable targets `cargo metadata` reports, and fails if
-a declared target is absent from any shard. The check exists because a target can
-fail to build while every shard stays green and the counts still add up: nextest
-then partitions a short list and that target's tests never run. It happened with
-`ovrcr::operator_auth`, which vanished for two runs at unchanged source before
-the check existed.
+manifests against the test-capable targets `cargo metadata` and the `tests/*.rs`
+sources report, and fails if a declared target is absent from any shard. A shard
+count alone cannot distinguish a target that failed to build from one that a
+branch or merge legitimately dropped; both produce a smaller selection and a
+green run. `ovrcr::operator_auth` moved in and out of the selection that way —
+`main` had deleted the test while a stale checkout still had the file — and only
+the recorded manifests settled which it was.
 
 The required `checks` job waits for `macOS checks`, the offline Cursor job, and
 the selection audit. Its shell guard requires all three results to be `success`,

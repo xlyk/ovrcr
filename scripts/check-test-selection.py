@@ -2,9 +2,9 @@
 """Fail when a test target the workspace declares never appears in the selection.
 
 The sharded `macOS checks` job hashes a list of built test binaries. If a target
-is not built, the list is silently short: the shard counts still add up, every
-job is green, and that target's tests never run. `ovrcr::operator_auth` went
-missing exactly this way.
+is not built, the list is silently short: the per-shard counts still add up,
+every job stays green, and that target's tests never run. Nothing in the shard
+logs distinguishes that from a target a branch or a merge legitimately dropped.
 
 Expectations come from two independent sources on purpose:
 
@@ -13,9 +13,15 @@ Expectations come from two independent sources on purpose:
   is what cargo auto-discovers when no `[[test]]` section overrides it.
 
 The second source exists because the first is not a reliable floor: on a Linux
-runner `cargo metadata` did not report `ovrcr::operator_auth` at all, so a
-metadata-only audit passed while the macOS shards were still missing the binary.
-A target is required if either source knows about it.
+runner `cargo metadata` once reported one fewer target than the macOS shards
+were expected to build. A target is required if either source knows about it.
+
+Why the check exists: `ovrcr::operator_auth` appeared in some runs and not
+others at unchanged source, which looked like an intermittent build failure.
+It turned out that `main` had deleted the test and the pull-request merge ref
+applied the deletion, while a stale local checkout still had the file. Both
+readings produce a smaller selection and a green run. This tool plus the
+recorded manifests are what tell them apart.
 
 Usage: python3 scripts/check-test-selection.py <manifest-dir> [...]
 Every *.json in the directory is treated as one shard's `cargo nextest list

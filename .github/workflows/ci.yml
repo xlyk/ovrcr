@@ -50,9 +50,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
-          # A cold cache still omitted a declared test target, so caching is not
-          # the cause of that omission; the shared-key experiment that versioned
-          # this was reverted. The `test selection audit` job is the guard.
           shared-key: checks
           cache-on-failure: true
       - name: Install zsh for shell integration tests
