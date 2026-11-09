@@ -16,16 +16,38 @@ env:
 
 jobs:
   macos_checks:
-    name: macOS checks
+    name: macOS checks (${{ matrix.shard }}/4)
     # macOS covers the GUI feature as well as the headless workspace.
+    # The nextest selection is hash-partitioned across four shards so the suite
+    # runs in parallel instead of serially. Everything that is not the test run
+    # stays on shard 1, so packaging, doctests and the installed-Pi cases still
+    # execute exactly once. Four shards plus the offline Cursor job is the
+    # five-concurrent-macOS-job limit on the GitHub Free plan. Three shards were
+    # measured too: they removed all runner queueing but grew per-leg test work
+    # more than that saved (1029s total against 991s here).
     runs-on: macos-latest
     timeout-minutes: 45
+    strategy:
+      # Report every shard's result instead of cancelling siblings, so a red
+      # run shows whether the failure is broad or confined to one partition.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: taiki-e/install-action@nextest
+      # Every shard fetches nextest at the same moment. On the first sharded run
+      # one of four hit a transient failure in this step and lost its whole
+      # partition, so allow one retry before failing the job.
+      - name: Install nextest
+        id: nextest
+        uses: taiki-e/install-action@nextest
+        continue-on-error: true
+      - name: Install nextest (retry)
+        if: steps.nextest.outcome == 'failure'
+        uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: checks
@@ -37,18 +59,55 @@ jobs:
         run: |
           git config --global user.name "OVRCR CI"
           git config --global user.email "ci@ovrcr.invalid"
+      # The shard model assumes three slots per runner. Record what was actually
+      # allocated so the next analysis is measured rather than inferred.
+      - name: Record runner shape
+        run: |
+          sysctl -n hw.logicalcpu hw.ncpu || true
+          cargo nextest --version
+          rustc -Vv | head -2
       - name: Format
+        if: matrix.shard == 1
         run: cargo fmt --all -- --check
       # Clippy covers compilation too; a preceding cargo check duplicates work.
       - name: Lint
+        if: matrix.shard == 1
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # nextest retries timing-sensitive failures and reports them as FLAKY;
       # see .config/nextest.toml. Doc tests stay on cargo test below.
-      - name: Test
-        run: cargo nextest run --workspace --all-targets --all-features --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)'
+      # Hash partitioning assigns by binary ID and test name, so new tests and
+      # new binaries join a shard automatically, and the large pi_delegation
+      # binary is divided rather than landing whole on one job.
+      - name: Test (shard ${{ matrix.shard }} of 4)
+        run: |
+          cargo nextest run --workspace --all-targets --all-features \
+            --profile ci \
+            -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
+            --partition hash:${{ matrix.shard }}/4
       - name: Doc tests
+        if: matrix.shard == 1
         run: cargo test --workspace --doc
+      # Coverage must be auditable from artifacts, not inferred from counters:
+      # nextest's "tests skipped" also counts tests excluded by --partition, so
+      # the shard totals cannot be reconciled arithmetically. Record the exact
+      # selection each shard built, so the union can be compared with a
+      # baseline and a missing binary or test is visible rather than silent.
+      - name: Record selected tests
+        if: always()
+        run: |
+          set -o pipefail
+          cargo nextest list --workspace --all-targets --all-features --profile ci \
+            -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
+            --message-format json > "$RUNNER_TEMP/nextest-selection.json"
+      - name: Upload selected tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-selection-${{ github.run_id }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/nextest-selection.json
+          retention-days: 7
       - name: Relocated macOS startup assets
+        if: matrix.shard == 1
         run: |
           cargo build -p ovrcr --bin ovrcr
           sh scripts/package-startup.sh target/startup-assets target/debug/ovrcr
@@ -62,23 +121,29 @@ jobs:
           python3 -I native/bridge/check-packaging.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
           python3 -I native/bridge/check-guards.py --local-development 'target/startup-assets-local-development/OVRCR Bridge Local.app'
       - name: Relocated pinned Cursor dependency and passive CLI diagnostics
+        if: matrix.shard == 1
         run: |
           bridge_home=$(mktemp -d)
           trap 'rm -rf "$bridge_home"' EXIT
           HOME="$bridge_home" python3 -I scripts/install-cursor-bridge.py
           OVRCR_CURSOR_BRIDGE_ARCHIVE="$bridge_home/.local/lib/ovrcr-cursor-sdk/1.0.40/bridge.tar.gz" OVRCR_TEST_EXECUTABLE="$PWD/target/debug/ovrcr" python3 -I tests/cursor_bridge_install.py
       - uses: actions/setup-node@v4
+        if: matrix.shard == 1
         with:
           node-version: 22
       - name: Extension tests
+        if: matrix.shard == 1
         run: node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs tests/pi_workflow_tracker.mjs
       - name: Provision pinned Pi loader test host
+        id: pi-provision
+        if: matrix.shard == 1
         run: |
           mkdir -p "$RUNNER_TEMP/ovrcr-pi-package-evidence"
           npm install --prefix "$RUNNER_TEMP/ovrcr-pi-package-host" --no-audit --no-fund --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
           cp "$RUNNER_TEMP/ovrcr-pi-package-host/package-lock.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/package-lock.json"
           cp "$RUNNER_TEMP/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent/package.json" "$RUNNER_TEMP/ovrcr-pi-package-evidence/host-package.json"
       - name: Installed Pi package through production materialization
+        if: matrix.shard == 1
         env:
           OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
         run: |
@@ -87,13 +152,16 @@ jobs:
       # The nested tests/pi_child_tools_installed.mjs needs actual assignment argv;
       # it must not enter the ordinary extension-test batch above.
       - name: Installed Pi effective child tools through production assignment argv
+        if: matrix.shard == 1
         env:
           OVRCR_TEST_PI_PACKAGE_ROOT: ${{ runner.temp }}/ovrcr-pi-package-host/node_modules/@earendil-works/pi-coding-agent
         run: |
           set -o pipefail
           cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/ovrcr-pi-package-evidence/child-tools.log"
       - name: Upload installed Pi loader evidence
-        if: always()
+        # Only when provisioning actually produced evidence: an unrelated earlier
+        # failure should not add a second, misleading "no files found" error.
+        if: always() && matrix.shard == 1 && steps.pi-provision.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: pi-package-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -114,9 +182,34 @@ jobs:
       - name: Offline Cursor cloud preflight
         run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
 
+  coverage_audit:
+    name: test selection audit
+    needs: [macos_checks]
+    # Runs on Linux: it only reads the manifests each shard uploaded, so it must
+    # not consume one of the five macOS slots.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nextest-selection-*
+          path: ${{ runner.temp }}/selection
+      # `cargo metadata` on this runner once failed to report a test target that
+      # was present in the commit, so record what the checkout actually holds.
+      - name: Record checkout shape
+        run: |
+          git rev-parse HEAD
+          git ls-files 'tests/*.rs' | wc -l
+          ls -l tests/operator_auth.rs || true
+      - name: Require every declared test target in the selection
+        run: python3 -I scripts/check-test-selection.py "$RUNNER_TEMP/selection"
+
   checks:
     name: checks
-    needs: [macos_checks, offline_cursor]
+    needs: [macos_checks, offline_cursor, coverage_audit]
     # Only this short aggregate survives cancellation; the acceptance jobs remain cancellable.
     if: ${{ always() }}
     runs-on: macos-latest
@@ -128,9 +221,11 @@ jobs:
         env:
           MACOS_RESULT: ${{ needs.macos_checks.result }}
           CURSOR_RESULT: ${{ needs.offline_cursor.result }}
+          AUDIT_RESULT: ${{ needs.coverage_audit.result }}
         run: |
           test "$MACOS_RESULT" = success
           test "$CURSOR_RESULT" = success
+          test "$AUDIT_RESULT" = success
       - name: Reject workflow cancellation
         if: ${{ always() && cancelled() }}
         shell: bash
