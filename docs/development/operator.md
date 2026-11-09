@@ -12,7 +12,8 @@ same-executable worker owns each turn's pi process.
 ## Package layout
 
 - `src/operator/pi.rs` — executable resolution, the dedicated profile, launch
-  command construction, extension materialization and bounded model listing.
+  command construction, the bundled CLI skill, extension materialization and
+  bounded model listing.
 - `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
   worker and `ovrcr operator models`.
 - `src/operator/worker.rs` — one turn: authenticated Start, attempt directory,
@@ -63,9 +64,19 @@ pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --no-themes --no-context-files --no-approve --offline
    --tools read,bash,edit,write
    --session-dir <attempt> --session-id operator-<conversation-id>
-   --append-system-prompt <policy>
+   --append-system-prompt <policy + bundled CLI skill>
    --extension <operator-pi>/pi-operator-extension.mjs
 ```
+
+One `--append-system-prompt` argument carries the fixed Operator policy followed
+by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`.
+The skill is available before the first model request in full chat and Quick
+message without a repository checkout. `--no-skills` remains, so neither that
+source tree nor a personal profile contributes a second copy; no runtime skill
+file is read and the skill is never injected into a conversation message or tool
+result. Its interactive-shell guidance resolves `ovrcr` once, while Operator
+keeps the inherited `OVRCR_EXECUTABLE`, `OVRCR_HOME`, `OVRCR_CONFIG`,
+`OVRCR_SOCKET` and exactly the captured project/workspace/session run identities.
 
 pi stays in the worker's process group (no `process_group(0)`), so the Server's
 lifetime Session owns pi and its tool children. `ovrcr operator models` runs in
@@ -106,7 +117,10 @@ Server.
 6. Stream until `agent_settled`. `prompt.success` is acceptance only. Success
    also requires the final assistant message's `stopReason == "stop"`, no
    unresolved admitted tool, and no transport or extension error. Auto-compaction
-   runs inside the one conversation.
+   runs inside the one conversation. Every ordinary model request, including the
+   one after compaction, carries the policy and bundled CLI skill only in its
+   system prompt; the compaction conversation payload and the durable
+   conversation journal never contain that guidance.
 7. Final `get_state`, bounded `clear_queue` and `abort`, then close stdin and
    drain/reap pi within two seconds. The native session at the reported path,
    confined to the attempt directory, is renamed to `session.jsonl` when needed
@@ -160,7 +174,11 @@ refused acknowledgement aborts and holds the turn as uncertain.
 No other dialog is answered: the worker cancels it and fails with
 `Unsupported Pi interaction; the turn was stopped.` Display-only notifications,
 partial tool updates and duplicate execution notifications are ignored.
-Thinking blocks are never journaled.
+Displayable thinking is journaled as its own `ThinkingDelta` stream in content
+order; provider thinking signatures are never carried. A compaction summary's
+stream is never journaled as assistant text: `compaction_start`/`compaction_end`
+are durable control events, and the activity row reports `Compacting context…`
+until the end event.
 
 ## RPC driver
 

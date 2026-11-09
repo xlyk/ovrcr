@@ -48,6 +48,20 @@ fn deltas_for(history: &ovrcr::protocol::OperatorHistory, turn: u64) -> String {
         .collect()
 }
 
+fn thinking_for(history: &ovrcr::protocol::OperatorHistory, turn: u64) -> Vec<String> {
+    history
+        .messages
+        .iter()
+        .filter(|message| message.turn.0 == turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text)) => {
+                Some(text.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn selected_models_in_transcript(history: &ovrcr::protocol::OperatorHistory) -> usize {
     history
         .messages
@@ -209,7 +223,7 @@ fn rpc_splits_on_lf_only_and_separators_stay_inside_strings() {
     scenario.contract("none");
     scenario.startup_records(vec![
         "{\"type\":\"note\",\"text\":\"a\u{2028}b\u{2029}c\"}\n".into(),
-        "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"x\"}}\r\n"
+        "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"x\"}}\r\n"
             .into(),
     ]);
     let mut child = direct_child(&scenario, dir.path());
@@ -716,6 +730,859 @@ fn assistant_text_is_prefix_deduplicated_and_a_contradiction_fails() {
         failed_text(&history).as_deref(),
         Some("Pi request failed; inspect the partial journal before retrying.")
     );
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
+}
+
+#[test]
+fn thinking_deltas_stream_before_a_held_answer_and_final_blocks_do_not_duplicate() {
+    let release_dir = tempfile::tempdir().unwrap();
+    let release = release_dir.path().join("release");
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "First thought. "),
+        Step::thinking_delta(0, "Second thought."),
+        Step::WaitFile(release.clone()),
+        Step::TextDelta {
+            index: 1,
+            text: "Answer.".into(),
+        },
+        Step::ThinkingMessageEnd {
+            thinking: "First thought. Second thought.".into(),
+            text: "Answer.".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "think first");
+
+    let partial = client.wait_history(opened.id, |history| {
+        thinking_for(history, turned.identity.turn.0).join("") == "First thought. Second thought."
+    });
+    assert_eq!(
+        partial.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Running
+    );
+    assert_eq!(
+        deltas_for(&partial, turned.identity.turn.0),
+        "",
+        "the answer is still held"
+    );
+
+    std::fs::write(&release, "go").unwrap();
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "First thought. Second thought.",
+        "the final thinking block must not repeat or extend the streamed prefix"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "Answer.");
+    let thinking = history
+        .messages
+        .iter()
+        .position(|message| {
+            message.turn == turned.identity.turn
+                && matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_))
+                )
+        })
+        .expect("thinking is visible");
+    let answer = history
+        .messages
+        .iter()
+        .position(|message| {
+            message.turn == turned.identity.turn
+                && matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_))
+                )
+        })
+        .expect("answer is visible");
+    assert!(thinking < answer, "thinking precedes the answer");
+}
+
+#[test]
+fn thinking_end_reconciles_responses_separator_normalization() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "part one"),
+        Step::thinking_delta(0, "\n\n"),
+        Step::thinking_delta(0, "part two"),
+        Step::thinking_delta(0, "\n\n"),
+        Step::ThinkingEnd {
+            index: 0,
+            content: "part one\n\npart two".into(),
+        },
+        Step::TextDelta {
+            index: 1,
+            text: "answer".into(),
+        },
+        Step::ThinkingMessageEnd {
+            thinking: "part one\n\npart two".into(),
+            text: "answer".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "responses reasoning");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "part one\n\npart two",
+        "the synthetic trailing separator is retracted, not streamed or duplicated"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+}
+
+#[test]
+fn interleaved_text_and_thinking_indexes_keep_arrival_order_and_prefixes() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "think "),
+        Step::TextDelta {
+            index: 1,
+            text: "answer ".into(),
+        },
+        Step::thinking_delta(0, "more"),
+        Step::TextDelta {
+            index: 1,
+            text: "done".into(),
+        },
+        Step::ThinkingMessageEnd {
+            thinking: "think more".into(),
+            text: "answer done".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "interleaved blocks");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "think more"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer done");
+    let order: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                Some("thinking")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                Some("answer")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["thinking", "answer", "thinking", "answer"]);
+}
+
+#[test]
+fn held_thinking_whitespace_releases_before_the_answer() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "plan "),
+        Step::TextDelta {
+            index: 1,
+            text: "answer".into(),
+        },
+        Step::ThinkingEnd {
+            index: 0,
+            content: "plan ".into(),
+        },
+        Step::ThinkingMessageEnd {
+            thinking: "plan ".into(),
+            text: "answer".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "held separator");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "plan ",
+        "whitespace streamed before the answer stays in arrival order"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+    let order: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                Some("thinking")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                Some("answer")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["thinking", "answer"]);
+}
+
+#[test]
+fn end_only_thinking_before_answer_stays_in_order() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::ThinkingEnd {
+            index: 0,
+            content: "plan".into(),
+        },
+        Step::TextDelta {
+            index: 1,
+            text: "answer".into(),
+        },
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "plan"},
+                    {"type": "text", "text": "answer"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "end-only thinking");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0),
+        vec!["plan".to_string()]
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+    let order: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                Some("thinking")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                Some("answer")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["thinking", "answer"]);
+}
+
+#[test]
+fn end_only_redacted_thinking_never_becomes_a_block() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::ThinkingEnd {
+            index: 0,
+            content: "[Reasoning redacted]".into(),
+        },
+        Step::TextDelta {
+            index: 1,
+            text: "answer".into(),
+        },
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "[Reasoning redacted]",
+                        "redacted": true
+                    },
+                    {"type": "text", "text": "answer"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "redacted thinking");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert!(thinking_for(&history, turned.identity.turn.0).is_empty());
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+    assert!(!harness::history_text(&history).contains("Reasoning redacted"));
+}
+
+#[test]
+fn deferred_end_only_block_preserves_interleaved_arrival_runs() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::ThinkingEnd {
+            index: 0,
+            content: "plan".into(),
+        },
+        Step::TextDelta {
+            index: 1,
+            text: "A".into(),
+        },
+        Step::ThinkingStart { index: 2 },
+        Step::thinking_delta(2, "B"),
+        Step::TextDelta {
+            index: 1,
+            text: "C".into(),
+        },
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "plan"},
+                    {"type": "text", "text": "AC"},
+                    {"type": "thinking", "thinking": "B"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "deferred interleave");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "AC");
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "planB"
+    );
+    let order: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                Some("thinking")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                Some("answer")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["thinking", "answer", "thinking", "answer"]);
+}
+
+#[test]
+fn deferred_buffered_thinking_end_retracts_its_trailing_separator() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::ThinkingEnd {
+            index: 0,
+            content: "plan".into(),
+        },
+        Step::ThinkingStart { index: 1 },
+        Step::thinking_delta(1, "step"),
+        Step::thinking_delta(1, "\n\n"),
+        Step::ThinkingEnd {
+            index: 1,
+            content: "step".into(),
+        },
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "plan"},
+                    {"type": "thinking", "thinking": "step"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "buffered separator");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0).join(""),
+        "planstep",
+        "the buffered synthetic separator is retracted without losing input order"
+    );
+}
+
+#[test]
+fn final_content_block_suffixes_append_in_order_without_duplicate_thinking() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "plan"),
+        Step::ThinkingMessageEnd {
+            thinking: "plan complete".into(),
+            text: "answer".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "finish the thought");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0),
+        vec!["plan complete".to_string()],
+        "the unstreamed suffix is appended once"
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+}
+
+#[test]
+fn final_only_thinking_block_is_emitted_once() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "final-only thought"},
+                    {"type": "text", "text": "answer"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "final-only thinking");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0),
+        vec!["final-only thought".to_string()]
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+}
+
+#[test]
+fn thinking_and_answer_order_is_preserved_around_a_tool_receipt() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "plan the call"),
+        Step::ThinkingMessageEnd {
+            thinking: "plan the call".into(),
+            text: String::new(),
+            stop: "toolUse".into(),
+        },
+        Step::Tool {
+            id: "call-order".into(),
+            name: "bash".into(),
+            input: json!({"command": "true"}),
+            output: "ok".into(),
+            status: "succeeded",
+            truncated: false,
+            marker: None,
+        },
+        Step::assistant("done"),
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "call a tool");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    let order: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                Some("thinking")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall { .. }) => Some("call"),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { .. }) => {
+                Some("output")
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
+                Some("answer")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["thinking", "call", "output", "answer"]);
+}
+
+#[test]
+fn thinking_prefix_and_content_block_contradictions_fail_closed() {
+    let contradictory = [
+        (
+            "mid-prefix",
+            vec![
+                Step::Start,
+                Step::ThinkingStart { index: 0 },
+                Step::thinking_delta(0, "abc"),
+                Step::ThinkingMessageEnd {
+                    thinking: "xyz".into(),
+                    text: String::new(),
+                    stop: "stop".into(),
+                },
+            ],
+        ),
+        (
+            "suffix after a later block",
+            vec![
+                Step::Start,
+                Step::ThinkingStart { index: 0 },
+                Step::thinking_delta(0, "a"),
+                Step::TextDelta {
+                    index: 1,
+                    text: "b".into(),
+                },
+                Step::Event(json!({
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "ax"},
+                            {"type": "text", "text": "b"}
+                        ],
+                        "stopReason": "stop"
+                    }
+                })),
+            ],
+        ),
+        (
+            "missing content index",
+            vec![
+                Step::Start,
+                Step::Event(json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_delta", "delta": "no index"
+                    }
+                })),
+            ],
+        ),
+        (
+            "kind conflict",
+            vec![
+                Step::Start,
+                Step::TextDelta {
+                    index: 0,
+                    text: "answer".into(),
+                },
+                Step::thinking_delta(0, "thinking"),
+            ],
+        ),
+    ];
+    for (case, steps) in contradictory {
+        let mut scenario = Scenario::new();
+        scenario.steps(steps);
+        let (live, _fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        client.submit_turn(&opened, "contradict");
+        let history = client.wait_terminal(opened.id);
+        assert_eq!(
+            history.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Error,
+            "{case}: {history:#?}"
+        );
+        assert_eq!(
+            failed_text(&history).as_deref(),
+            Some("Pi request failed; inspect the partial journal before retrying."),
+            "{case}"
+        );
+        assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None, "{case}");
+        client.wait_stopped(opened.id);
+    }
+}
+
+#[test]
+fn empty_signature_and_redacted_thinking_never_become_a_block() {
+    for content in [
+        json!([
+            {"type": "thinking", "thinking": "", "thinkingSignature": "SIGNATURE-SENTINEL"},
+            {"type": "text", "text": "answer"}
+        ]),
+        json!([
+            {
+                "type": "thinking",
+                "thinking": "REDACTED-SENTINEL",
+                "thinkingSignature": "ENCRYPTED-SENTINEL",
+                "redacted": true
+            },
+            {"type": "text", "text": "answer"}
+        ]),
+    ] {
+        let mut scenario = Scenario::new();
+        scenario.steps(vec![
+            Step::Start,
+            Step::Event(json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "stopReason": "stop"
+                }
+            })),
+            Step::Settle,
+        ]);
+        let (_live, _fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        let turned = client.submit_turn(&opened, "no empty thinking");
+        let history = client.wait_terminal(opened.id);
+        assert_eq!(
+            history.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Complete
+        );
+        assert!(thinking_for(&history, turned.identity.turn.0).is_empty());
+        assert_eq!(deltas_for(&history, turned.identity.turn.0), "answer");
+        let visible = harness::history_text(&history);
+        assert!(!visible.contains("SIGNATURE-SENTINEL"), "{visible}");
+        assert!(!visible.contains("REDACTED-SENTINEL"), "{visible}");
+        assert!(!visible.contains("ENCRYPTED-SENTINEL"), "{visible}");
+    }
+}
+
+#[test]
+fn compaction_phase_is_durable_isolated_and_does_not_duplicate_thinking() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "before compaction"),
+        Step::ThinkingMessageEnd {
+            thinking: "before compaction".into(),
+            text: String::new(),
+            stop: "stop".into(),
+        },
+        Step::Event(json!({"type": "compaction_start", "reason": "threshold"})),
+        // Pi's summary request is separate from the visible assistant stream.
+        Step::Event(json!({
+            "type": "message_start",
+            "message": {"role": "assistant", "content": [], "stopReason": "pending"}
+        })),
+        Step::Event(json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "thinking_delta", "contentIndex": 0, "delta": "summary reasoning"
+            }
+        })),
+        Step::Event(json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_delta", "contentIndex": 1, "delta": "summary answer"
+            }
+        })),
+        Step::Event(json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "summary reasoning"},
+                    {"type": "text", "text": "summary answer"}
+                ],
+                "stopReason": "stop"
+            }
+        })),
+        Step::Event(json!({
+            "type": "compaction_end",
+            "reason": "threshold",
+            "aborted": false,
+            "willRetry": false
+        })),
+        Step::Start,
+        Step::ThinkingStart { index: 0 },
+        Step::thinking_delta(0, "after compaction"),
+        Step::ThinkingMessageEnd {
+            thinking: "after compaction".into(),
+            text: "final answer".into(),
+            stop: "stop".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "compact then answer");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert_eq!(
+        thinking_for(&history, turned.identity.turn.0),
+        vec![
+            "before compaction".to_string(),
+            "after compaction".to_string()
+        ]
+    );
+    assert_eq!(deltas_for(&history, turned.identity.turn.0), "final answer");
+    let phase: Vec<&str> = history
+        .messages
+        .iter()
+        .filter(|message| message.turn == turned.identity.turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted) => Some("start"),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded) => Some("end"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(phase, ["start", "end"]);
+    let visible = harness::history_text(&history);
+    assert!(!visible.contains("summary"), "{visible}");
+    assert!(!visible.contains("summary reasoning"), "{visible}");
+}
+
+#[test]
+fn compaction_failure_keeps_the_start_without_an_end_and_fails_the_turn() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Event(json!({"type": "compaction_start", "reason": "threshold"})),
+        Step::Event(json!({
+            "type": "compaction_end",
+            "reason": "threshold",
+            "aborted": false,
+            "willRetry": false,
+            "errorMessage": "fixture failure"
+        })),
+    ]);
+    let (live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "fail compaction");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Error
+    );
+    assert_eq!(
+        failed_text(&history).as_deref(),
+        Some("Pi request failed; inspect the partial journal before retrying.")
+    );
+    assert!(history.messages.iter().any(|message| {
+        message.turn == turned.identity.turn
+            && matches!(
+                message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+            )
+    }));
+    assert!(!history.messages.iter().any(|message| {
+        matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded)
+        )
+    }));
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
+    client.wait_stopped(opened.id);
+}
+
+#[test]
+fn stop_during_compaction_leaves_no_completed_phase() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Event(json!({"type": "compaction_start", "reason": "threshold"})),
+        Step::Hold,
+    ]);
+    let (live, _fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    let turned = client.submit_turn(&opened, "stop compaction");
+    client.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            message.turn == turned.identity.turn
+                && matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+                )
+        })
+    });
+    client.stop_turn(turned.identity);
+    let history = client.wait_stopped(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Interrupted
+    );
+    assert!(!history.messages.iter().any(|message| {
+        matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded)
+        )
+    }));
     assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
 }
 

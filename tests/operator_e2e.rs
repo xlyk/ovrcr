@@ -683,6 +683,7 @@ mod installed_pi {
         ServerMessage, SessionPhase, TerminalSize,
     };
     use ovrcr::tui::{Dashboard, Settings};
+    use ratatui::{Terminal, backend::TestBackend};
     use serde_json::{Value, json};
     use std::{
         collections::{HashMap, VecDeque},
@@ -699,6 +700,12 @@ mod installed_pi {
     };
 
     const BUDGET: Duration = Duration::from_secs(30);
+    /// The same source file the compiled Operator bundles into its system prompt.
+    const BUNDLED_SKILL: &str = include_str!("../.agents/skills/ovrcr/SKILL.md");
+    /// A personal skill that `--no-skills` must keep out of every model request,
+    /// even though the fixture HOME contains it.
+    const PERSONAL_SKILL_SENTINEL: &str = "PERSONAL_SKILL_MUST_NOT_LOAD_6f4a1";
+    const COMPACTION_CONTEXT_WINDOW: u64 = 12_288;
 
     /// Inherited provider/session credentials the launcher must strip before
     /// Pi — and therefore before the admitted Bash child — sees them. Every
@@ -878,6 +885,54 @@ mod installed_pi {
             self.flush();
         }
 
+        /// The first explicit Quick message: capture the target, type into the
+        /// overlay, then Send. The first Send opens the singleton conversation.
+        fn quick(&mut self, text: &str) {
+            self.pump();
+            self.dashboard.ctrl('o');
+            self.flush();
+            self.dashboard.event_action(Event::Paste(text.into()));
+            self.dashboard.key(KeyCode::Enter);
+            self.flush();
+        }
+
+        /// Drive the real sidebar selection from no selection to the fixture's
+        /// feature workspace: project -> root workspace -> `skill-cli` workspace.
+        fn select_fixture_workspace(&mut self) {
+            self.pump();
+            for _ in 0..3 {
+                self.dashboard.key(KeyCode::Down);
+            }
+            self.flush();
+        }
+
+        /// Leave any Operator/Quick view and open the same conversation again.
+        fn reopen(&mut self) {
+            self.pump();
+            self.dashboard.key(KeyCode::Esc);
+            self.flush();
+            self.dashboard.key(KeyCode::Esc);
+            self.flush();
+            self.open();
+        }
+
+        /// The actual public Dashboard render, including ephemeral activity.
+        fn screen(&mut self) -> String {
+            self.pump();
+            let backend = TestBackend::new(160, 50);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect()
+        }
+
         fn history(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
             match self.exchange(Request::Operator(ovrcr::protocol::OperatorRequest::Read {
                 conversation,
@@ -958,6 +1013,152 @@ mod installed_pi {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Synthetic request shape: role and content length, never a provider body.
+    fn request_shape(body: &Value) -> Vec<String> {
+        body["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|message| {
+                format!(
+                    "{}:{}",
+                    message["role"].as_str().unwrap_or("?"),
+                    operator_provider::content_text(&message["content"]).len()
+                )
+            })
+            .collect()
+    }
+
+    /// The bundled CLI skill is present exactly once, and only as instruction
+    /// text. Pi's OpenAI adapter may use `developer` instead of `system`.
+    fn assert_skill_only_in_system(label: &str, body: &Value) {
+        let system = operator_provider::system_text(body);
+        assert_eq!(
+            system.matches(BUNDLED_SKILL).count(),
+            1,
+            "{label}: the bundled CLI skill must appear exactly once in the system prompt; shape={:?}",
+            request_shape(body)
+        );
+        let conversation = operator_provider::non_system_text(body);
+        assert!(
+            !conversation.contains(BUNDLED_SKILL),
+            "{label}: the bundled CLI skill leaked into the conversation payload"
+        );
+        assert!(
+            !conversation.contains(PERSONAL_SKILL_SENTINEL),
+            "{label}: a personal skill was discovered despite --no-skills"
+        );
+    }
+
+    /// The first model request carries the normal Operator context and user
+    /// input, not skill text or a personal skill.
+    fn assert_normal_first_prompt(label: &str, body: &Value, marker: &str) {
+        let messages = body["messages"].as_array().cloned().unwrap_or_default();
+        for message in &messages {
+            let role = message["role"].as_str().unwrap_or_default();
+            assert!(
+                role == "user" || operator_provider::is_instruction_role(role),
+                "{label}: first request has an unexpected {role} message; shape={:?}",
+                request_shape(body)
+            );
+        }
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message["role"] == "user")
+                .count(),
+            1,
+            "{label}: the first request has exactly one user message"
+        );
+        let user = operator_provider::last_user_text(body);
+        assert!(
+            user.contains(marker),
+            "{label}: user input is missing: {user}"
+        );
+        assert!(
+            user.starts_with("Captured OVRCR context (identities are fixed for this turn):\n"),
+            "{label}: the captured context precedes the user input: {user}"
+        );
+        assert!(
+            user.contains("\n\nUser request:\n"),
+            "{label}: the user request is delimited: {user}"
+        );
+        assert!(
+            !user.contains(BUNDLED_SKILL) && !user.contains(PERSONAL_SKILL_SENTINEL),
+            "{label}: guidance was injected into the user message"
+        );
+    }
+
+    fn install_personal_skill(home: &Path) {
+        let directory = home.join(".agents/skills/personal-operator-sentinel");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!(
+                "---\nname: personal-operator-sentinel\ndescription: fixture personal skill\n---\n\n# Personal sentinel\n\n{PERSONAL_SKILL_SENTINEL}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn assert_no_guidance(label: &str, text: &str) {
+        assert!(
+            !text.contains(BUNDLED_SKILL),
+            "{label}: bundled CLI skill appeared outside the system prompt"
+        );
+        assert!(
+            !text.contains(PERSONAL_SKILL_SENTINEL),
+            "{label}: a personal skill was discovered"
+        );
+    }
+
+    /// Hold pi's compaction request and wait for the public Dashboard render to
+    /// show the live status before the test releases the provider.
+    fn wait_compaction_status(
+        driver: &mut DashboardDriver,
+        provider: &Provider,
+        conversation: OperatorConversationId,
+    ) -> usize {
+        let deadline = Instant::now() + BUDGET;
+        let compaction_index = loop {
+            driver.pump();
+            if let Some(index) = provider
+                .requests()
+                .iter()
+                .position(|request| operator_provider::is_compaction_request(&request.body))
+            {
+                break index;
+            }
+            let history = driver.history(conversation);
+            assert!(
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_none_or(|turn| turn.state == OperatorTurnState::Running),
+                "the turn finished before pi made its compaction request: {history:#?}"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "pi never made a compaction request: {:#?}",
+                provider.requests()
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            let screen = driver.screen();
+            if screen.contains("Compacting context") {
+                return compaction_index;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the Dashboard never rendered the Compacting status: {screen}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn tool_names(history: &OperatorHistory) -> Vec<String> {
@@ -1203,6 +1404,17 @@ mod installed_pi {
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
 
+    /// Optional fixture behavior on top of [`scenario_handler`].
+    #[derive(Clone, Copy, Default)]
+    struct ScenarioMode {
+        /// Hold pi's own compaction summary request until the test releases it,
+        /// so the Dashboard's live Compacting status can be observed.
+        hold_compaction: bool,
+        /// Make the first COMPACT turn's answer large enough that the next
+        /// prompt crosses the seeded threshold in a manual GUI run.
+        inflate_compaction_turn: bool,
+    }
+
     /// Scripted operator/tool scenario shared by the installed-pi test and the
     /// GUI provider. Every turn is identified by its user request marker.
     pub(super) fn scenario_handler(
@@ -1210,10 +1422,24 @@ mod installed_pi {
         marker: PathBuf,
         background_pid: PathBuf,
     ) -> operator_provider::Handler {
+        scenario_handler_mode(workspace, marker, background_pid, ScenarioMode::default())
+    }
+
+    fn scenario_handler_mode(
+        workspace: PathBuf,
+        marker: PathBuf,
+        background_pid: PathBuf,
+        mode: ScenarioMode,
+    ) -> operator_provider::Handler {
         let counters: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
         Box::new(move |body: &Value, _index: usize| {
             if operator_provider::is_compaction_request(body) {
-                return Plan::text("FIXTURE_COMPACTION_SUMMARY");
+                let plan = Plan::text("FIXTURE_COMPACTION_SUMMARY");
+                return if mode.hold_compaction {
+                    plan.holding()
+                } else {
+                    plan
+                };
             }
             let user = operator_provider::last_user_text(body);
             let key = [
@@ -1224,6 +1450,11 @@ mod installed_pi {
                 "REQUEST_FIVE_AFTER_INTERRUPT",
                 "REQUEST_SIX_TWO_TOOLS",
                 "REQUEST_SEVEN_TIMEOUT",
+                "REQUEST_SKILL_SYSTEM",
+                "REQUEST_SKILL_QUICK",
+                "REQUEST_SKILL_CLI",
+                "REQUEST_SKILL_RESUME",
+                "REQUEST_THINKING_HELD",
                 "COMPACT_ONE",
                 "COMPACT_TWO",
             ]
@@ -1325,6 +1556,41 @@ mod installed_pi {
                 // A second model request for this turn is the exact failure the
                 // test guards against; its text is unique and asserted absent.
                 ("REQUEST_SEVEN_TIMEOUT", 1) => Plan::text("TIMEOUT_CONTINUATION_MUST_NOT_APPEAR"),
+                ("REQUEST_SKILL_SYSTEM", 0) => Plan::text("SKILL_SYSTEM_ANSWER"),
+                ("REQUEST_SKILL_QUICK", 0) => Plan::text("SKILL_QUICK_ANSWER"),
+                ("REQUEST_SKILL_CLI", 0) => Plan::tool(
+                    "call-skill-cli",
+                    "bash",
+                    json!({
+                        "command": format!(
+                            "cd '{}' && printf 'CLI_PWD=%s\\n' \"$PWD\" && \
+                             printf 'CLI_ENV home=%s config=%s socket=%s exe=%s profile=%s home_dir=%s\\n' \
+                             \"${{OVRCR_HOME-}}\" \"${{OVRCR_CONFIG-}}\" \"${{OVRCR_SOCKET-}}\" \
+                             \"${{OVRCR_EXECUTABLE-}}\" \"${{PI_CODING_AGENT_DIR-}}\" \"$HOME\" && \
+                             printf 'CLI_VERSION ' && \"${{OVRCR_EXECUTABLE}}\" --version && \
+                             printf 'CLI_PROJECT ' && \"${{OVRCR_EXECUTABLE}}\" --json project get fixture && \
+                             printf 'CLI_WORKSPACES ' && \"${{OVRCR_EXECUTABLE}}\" --json workspace list --project fixture",
+                            workspace
+                                .parent()
+                                .map(|parent| parent.join("operator-relocated"))
+                                .unwrap_or_else(|| workspace.join("operator-relocated"))
+                                .display()
+                        )
+                    }),
+                ),
+                ("REQUEST_SKILL_CLI", 1) => Plan::text("SKILL_CLI_ANSWER"),
+                ("REQUEST_SKILL_RESUME", 0) => Plan::text("SKILL_RESUME_ANSWER"),
+                // Two displayable thinking deltas arrive before the hold; the
+                // answer only exists in the stream after release.
+                ("REQUEST_THINKING_HELD", 0) => Plan::new(vec![
+                    Chunk::Thinking("THINKING_DELTA_ONE".into()),
+                    Chunk::Thinking("THINKING_DELTA_TWO".into()),
+                ])
+                .holding()
+                .then_text_after_release("THINKING_ANSWER_AFTER_RELEASE"),
+                ("COMPACT_ONE", 0) if mode.inflate_compaction_turn => {
+                    Plan::text(&format!("COMPACT_ONE_DONE {}", "C".repeat(60_000)))
+                }
                 ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
                 ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
                 _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
@@ -1949,21 +2215,30 @@ mod installed_pi {
         }
     }
 
-    /// A tiny context window forces Pi's own automatic compaction; the fixture
-    /// provider recognizes the summarization call. The conversation and native
-    /// session must survive it unchanged.
+    /// Pi's own automatic compaction is forced by COMPACT_ONE's oversized answer,
+    /// which crosses the context budget before that same turn settles. The fixture
+    /// holds the summarization request so the public Dashboard render shows the
+    /// live Compacting status; release resumes and completes the first turn.
+    /// COMPACT_TWO then proves a normal post-compaction follow-up. The
+    /// conversation, native session and system-only guidance must survive it
+    /// unchanged.
     fn check_compaction(pi: &Path) {
         let live = live::Live::idle().bounded();
         let workspace = live.root.path().join("operator-target");
         std::fs::create_dir(&workspace).unwrap();
-        let provider = Provider::start(scenario_handler(
+        install_personal_skill(live.root.path());
+        let provider = Provider::start(scenario_handler_mode(
             workspace.clone(),
             workspace.join("compaction-marker"),
             workspace.join("compaction-background.pid"),
+            ScenarioMode {
+                hold_compaction: true,
+                inflate_compaction_turn: true,
+            },
         ));
         provider.seed_profile_with(
             &live.config,
-            1024,
+            COMPACTION_CONTEXT_WINDOW,
             Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
         );
         live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
@@ -1971,34 +2246,94 @@ mod installed_pi {
         driver.open();
         let opened = driver.conversation();
 
-        let filler = "x".repeat(6000);
-        driver.submit(&format!("COMPACT_ONE {filler}"));
-        let compaction_first = wait_terminal(&mut driver, opened.id, &provider, &live);
-        let first_turn = compaction_first
-            .conversation
-            .current_turn
-            .as_ref()
-            .unwrap()
-            .identity
-            .turn
-            .0;
-        wait_stopped(&mut driver, opened.id);
-        let history = submit_next(
-            &mut driver,
-            opened.id,
-            "COMPACT_TWO",
-            first_turn,
-            &provider,
-            &live,
+        // COMPACT_ONE's oversized answer crosses the budget at the end of the
+        // same first turn. Its summarization request is held, so the Dashboard
+        // must render the live Compacting status before agent_settled.
+        driver.submit("COMPACT_ONE");
+        let compaction_index = wait_compaction_status(&mut driver, &provider, opened.id);
+        let held = driver.screen();
+        assert!(
+            held.contains("Compacting context"),
+            "the held compaction status must be the public Dashboard render: {held}"
         );
-        assert!(delta_text(&history).contains("COMPACT_TWO_DONE"));
+        provider.release();
+        let compaction_first = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(
+            delta_text(&compaction_first).contains("COMPACT_ONE_DONE"),
+            "the first-turn answer streamed before compaction: {compaction_first:#?}"
+        );
+        let cleared = driver.screen();
+        assert!(
+            !cleared.contains("Compacting context"),
+            "the Compacting status must clear after compaction: {cleared}"
+        );
+        assert_skill_only_in_system("pre-compaction", &provider.requests()[0].body);
+        wait_stopped(&mut driver, opened.id);
+
+        // The next turn is a normal request over the compacted context.
+        driver.submit("COMPACT_TWO");
+        let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        let streamed = delta_text(&history);
+        assert!(
+            streamed.contains("COMPACT_TWO_DONE") || streamed.contains("FIXTURE_FOLLOWUP_DONE"),
+            "the post-compaction assistant answer streamed: {history:#?}"
+        );
+        assert!(
+            !streamed.contains("FIXTURE_COMPACTION_SUMMARY"),
+            "the summarization stream is not assistant text: {history:#?}"
+        );
+        wait_stopped(&mut driver, opened.id);
+
         let requests = provider.requests();
+        eprintln!(
+            "INSTALLED_PI_COMPACTION_REQUEST_SHAPES {:?}",
+            requests
+                .iter()
+                .map(|request| (
+                    operator_provider::is_compaction_request(&request.body),
+                    request_shape(&request.body)
+                ))
+                .collect::<Vec<_>>()
+        );
+        let normal = requests
+            .iter()
+            .enumerate()
+            .filter(|(_, request)| !operator_provider::is_compaction_request(&request.body));
+        for (index, request) in normal {
+            assert_skill_only_in_system(&format!("normal provider request {index}"), &request.body);
+        }
+        for request in requests
+            .iter()
+            .filter(|request| operator_provider::is_compaction_request(&request.body))
+        {
+            assert!(
+                !operator_provider::non_system_text(&request.body).contains(BUNDLED_SKILL),
+                "the compaction conversation payload contains the bundled CLI skill"
+            );
+            assert!(
+                !operator_provider::non_system_text(&request.body)
+                    .contains(PERSONAL_SKILL_SENTINEL),
+                "the compaction conversation payload contains a personal skill"
+            );
+        }
         assert!(
             requests
                 .iter()
-                .any(|request| operator_provider::is_compaction_request(&request.body)),
-            "Pi's automatic compaction must call the same provider: {requests:#?}"
+                .skip(compaction_index + 1)
+                .any(|request| !operator_provider::is_compaction_request(&request.body)),
+            "the turn continues with a normal request after compaction: {requests:#?}"
         );
+        for request in requests.iter().skip(compaction_index + 1) {
+            if !operator_provider::is_compaction_request(&request.body) {
+                assert_skill_only_in_system("post-compaction", &request.body);
+            }
+        }
+        let journal = format!(
+            "{}{}",
+            operator_harness::history_text(&compaction_first),
+            operator_harness::history_text(&history)
+        );
+        assert_no_guidance("compaction journal", &journal);
         assert_eq!(
             operator_harness::Registry::of(&live).conversation_ids(),
             vec![opened.id.0],
@@ -2016,12 +2351,300 @@ mod installed_pi {
         );
         assert_eq!(header["id"], format!("operator-{}", opened.id.0));
         eprintln!(
-            "INSTALLED_PI_COMPACTION PASS conversation={} compaction_requests={} provider_requests={}",
+            "INSTALLED_PI_COMPACTION PASS conversation={} compaction_requests={} provider_requests={} status_rendered=true status_cleared=true",
             opened.id.0,
             requests
                 .iter()
                 .filter(|request| operator_provider::is_compaction_request(&request.body))
                 .count(),
+            requests.len()
+        );
+    }
+
+    /// The bundled CLI skill is system-only in the first request of both entry
+    /// points, on independent clean profiles, and remains so when the completed
+    /// conversation is reopened and resumed. No personal skill is discovered.
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_bundled_skill_system_only() {
+        let pi = pi_executable();
+        for (entry, marker, answer, quick) in [
+            ("full", "REQUEST_SKILL_SYSTEM", "SKILL_SYSTEM_ANSWER", false),
+            ("quick", "REQUEST_SKILL_QUICK", "SKILL_QUICK_ANSWER", true),
+        ] {
+            let live = live::Live::idle().bounded();
+            let workspace = live.root.path().join("operator-target");
+            std::fs::create_dir(&workspace).unwrap();
+            install_personal_skill(live.root.path());
+            let provider = Provider::start(scenario_handler(
+                workspace.clone(),
+                workspace.join("skill-marker.txt"),
+                workspace.join("skill-background.pid"),
+            ));
+            provider.seed_profile(&live.config);
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            if quick {
+                driver.quick(marker);
+            } else {
+                driver.open();
+                driver.submit(marker);
+            }
+            let opened = driver.conversation();
+            let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert!(
+                delta_text(&history).contains(answer),
+                "{entry}: the first answer streamed: {history:#?}"
+            );
+            let first = provider.wait_requests(1, BUDGET);
+            eprintln!(
+                "INSTALLED_PI_SKILL_{entry}_FIRST_SHAPE {:?}",
+                request_shape(&first[0].body)
+            );
+            assert_normal_first_prompt(&format!("{entry} first"), &first[0].body, marker);
+            assert_skill_only_in_system(&format!("{entry} first"), &first[0].body);
+            assert_no_guidance(
+                &format!("{entry} journal"),
+                &operator_harness::history_text(&history),
+            );
+            for body in provider.request_bodies() {
+                assert_no_guidance(
+                    &format!("{entry} conversation payload"),
+                    &operator_provider::non_system_text(&body),
+                );
+            }
+            wait_stopped(&mut driver, opened.id);
+
+            driver.reopen();
+            driver.submit("REQUEST_SKILL_RESUME");
+            let resumed = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert!(
+                delta_text(&resumed).contains("SKILL_RESUME_ANSWER"),
+                "{entry}: the resumed answer streamed: {resumed:#?}"
+            );
+            wait_stopped(&mut driver, opened.id);
+            let resumed_body = provider
+                .requests()
+                .last()
+                .expect("the resumed turn made a provider request")
+                .body
+                .clone();
+            assert_skill_only_in_system(&format!("{entry} resumed"), &resumed_body);
+            assert!(
+                operator_provider::non_system_text(&resumed_body).contains(answer),
+                "{entry}: the previous answer is normal conversation context"
+            );
+            assert_no_guidance(
+                &format!("{entry} resumed journal"),
+                &operator_harness::history_text(&resumed),
+            );
+            assert_eq!(
+                operator_harness::Registry::of(&live).conversation_ids(),
+                vec![opened.id.0],
+                "{entry}: one durable conversation"
+            );
+            eprintln!(
+                "INSTALLED_PI_SKILL_{entry}_PASS conversation={} provider_requests={}",
+                opened.id.0,
+                provider.requests().len()
+            );
+        }
+    }
+
+    /// A first-turn CLI task runs the matching inherited binary with the
+    /// isolated instance and socket, from a relocated directory, and uses the
+    /// captured target. The skill arrives only in the system prompt.
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_bundled_skill_first_turn_cli() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let inherited_config = live.root.path().join("inherited-config.toml");
+        // A PATH-selected decoy must never stand in for the inherited binary.
+        let decoy_dir = live.root.path().join("decoy-bin");
+        std::fs::create_dir(&decoy_dir).unwrap();
+        let decoy_marker = decoy_dir.join("executed");
+        let decoy = decoy_dir.join("ovrcr");
+        std::fs::write(
+            &decoy,
+            format!(
+                "#!/bin/sh\nprintf 'DECOY_OVRCR_USED\\n' >> '{}'\nexit 42\n",
+                decoy_marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&decoy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(decoy_dir).chain(std::env::split_paths(&live.path())),
+        )
+        .unwrap();
+        live.start_binary_env(&[
+            ("OVRCR_PI_EXECUTABLE", pi.as_os_str()),
+            ("OVRCR_CONFIG", inherited_config.as_os_str()),
+            ("PATH", path.as_os_str()),
+        ]);
+        live.ready("skill-cli");
+        let workspace = live.workspace_path("work");
+        let relocated = workspace.parent().unwrap().join("operator-relocated");
+        std::fs::create_dir_all(&relocated).unwrap();
+        assert!(
+            !relocated.starts_with(env!("CARGO_MANIFEST_DIR")),
+            "the CLI task runs outside the repository checkout: {}",
+            relocated.display()
+        );
+        let provider = Provider::start(scenario_handler(
+            workspace.clone(),
+            workspace.join("skill-marker.txt"),
+            workspace.join("skill-background.pid"),
+        ));
+        provider.seed_profile(&live.config);
+        assert!(
+            !live.root.path().join(".agents/skills").exists(),
+            "the CLI fixture HOME must not contain a personal skills directory"
+        );
+        assert!(
+            !live.config.join("operator-pi/skills").exists(),
+            "the dedicated Pi profile must not contain a user skills directory"
+        );
+        assert!(
+            !relocated.join(".pi/skills").exists() && !relocated.join(".agents/skills").exists(),
+            "the relocated CLI directory must not contain project skills"
+        );
+        let mut driver = DashboardDriver::connect(&live);
+        driver.select_fixture_workspace();
+        driver.open();
+        let opened = driver.conversation();
+        driver.submit("REQUEST_SKILL_CLI");
+        let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        wait_stopped(&mut driver, opened.id);
+        assert!(
+            delta_text(&history).contains("SKILL_CLI_ANSWER"),
+            "the CLI turn completed: {history:#?}"
+        );
+
+        let first = provider.wait_requests(1, BUDGET);
+        eprintln!(
+            "INSTALLED_PI_SKILL_CLI_FIRST_SHAPE {:?}",
+            request_shape(&first[0].body)
+        );
+        assert_normal_first_prompt("cli first", &first[0].body, "REQUEST_SKILL_CLI");
+        assert_skill_only_in_system("cli first", &first[0].body);
+        let user = operator_provider::last_user_text(&first[0].body);
+        assert!(user.contains("\"project\":\"fixture\""), "{user}");
+        assert!(user.contains("\"workspace\":\"skill-cli\""), "{user}");
+        assert!(user.contains("\"workspace_id\":\"work\""), "{user}");
+        assert!(
+            user.contains(&format!("\"cwd\":\"{}\"", workspace.display())),
+            "the captured cwd reaches the first model request: {user}"
+        );
+
+        let outputs = operator_harness::tool_outputs(&history);
+        let output = &outputs
+            .iter()
+            .find(|(id, _, _)| id == "call-skill-cli")
+            .unwrap_or_else(|| panic!("the real CLI tool call has a durable result: {outputs:#?}"))
+            .1;
+        let pwd = output
+            .lines()
+            .find_map(|line| line.strip_prefix("CLI_PWD="))
+            .expect("the CLI task prints its working directory");
+        assert_eq!(pwd.to_owned(), relocated.display().to_string());
+        let environment = output
+            .lines()
+            .find(|line| line.starts_with("CLI_ENV "))
+            .expect("the CLI task prints its inherited environment");
+        let environment: HashMap<&str, &str> = environment["CLI_ENV ".len()..]
+            .split_whitespace()
+            .filter_map(|field| field.split_once('='))
+            .collect();
+        let expected_home = live.config.to_string_lossy().into_owned();
+        let expected_config = inherited_config.to_string_lossy().into_owned();
+        let expected_socket = live.socket.to_string_lossy().into_owned();
+        let expected_profile = live
+            .config
+            .join("operator-pi")
+            .to_string_lossy()
+            .into_owned();
+        let expected_home_dir = live.root.path().to_string_lossy().into_owned();
+        assert_eq!(
+            environment.get("home").copied(),
+            Some(expected_home.as_str())
+        );
+        assert_eq!(
+            environment.get("config").copied(),
+            Some(expected_config.as_str())
+        );
+        assert_eq!(
+            environment.get("socket").copied(),
+            Some(expected_socket.as_str())
+        );
+        assert_eq!(
+            environment.get("profile").copied(),
+            Some(expected_profile.as_str())
+        );
+        assert_eq!(
+            environment.get("home_dir").copied(),
+            Some(expected_home_dir.as_str())
+        );
+        let executable = environment
+            .get("exe")
+            .copied()
+            .expect("the CLI task prints OVRCR_EXECUTABLE");
+        assert_eq!(
+            std::path::Path::new(executable).canonicalize().unwrap(),
+            live.executable.canonicalize().unwrap(),
+            "the shell used the matching OVRCR binary"
+        );
+        let version = output
+            .lines()
+            .find_map(|line| line.strip_prefix("CLI_VERSION "))
+            .expect("the real binary reports its version");
+        assert!(version.contains(env!("CARGO_PKG_VERSION")), "{version}");
+        assert!(version.contains("protocol"), "{version}");
+        let project = output
+            .lines()
+            .find_map(|line| line.strip_prefix("CLI_PROJECT "))
+            .expect("project get returns JSON");
+        assert!(project.contains("\"name\":\"fixture\""), "{project}");
+        assert!(
+            project.contains(&format!("\"repo\":\"{}\"", live.repo.display())),
+            "{project}"
+        );
+        let workspaces = output
+            .lines()
+            .find_map(|line| line.strip_prefix("CLI_WORKSPACES "))
+            .expect("workspace list returns JSON");
+        assert!(workspaces.contains("\"id\":\"work\""), "{workspaces}");
+        assert!(
+            workspaces.contains(&format!("\"path\":\"{}\"", workspace.display())),
+            "{workspaces}"
+        );
+        assert!(
+            workspaces.contains("\"branch\":\"skill-cli\""),
+            "{workspaces}"
+        );
+
+        let requests = provider.requests();
+        assert!(requests.len() >= 2, "the tool result feeds another request");
+        for (index, request) in requests.iter().enumerate() {
+            assert_skill_only_in_system(&format!("cli provider request {index}"), &request.body);
+            for result in operator_provider::tool_result_texts(&request.body) {
+                assert_no_guidance("CLI tool result", &result);
+            }
+        }
+        assert_no_guidance("CLI tool output", output);
+        assert!(
+            !decoy_marker.exists(),
+            "a PATH-selected ovrcr ran instead of the inherited binary"
+        );
+        let journal = operator_harness::history_text(&history);
+        assert_no_guidance("CLI journal", &journal);
+        assert!(journal.contains("CLI_ENV"), "the CLI receipt is journaled");
+        eprintln!(
+            "INSTALLED_PI_SKILL_CLI_PASS conversation={} workspace={} relocated={} provider_requests={}",
+            opened.id.0,
+            workspace.display(),
+            relocated.display(),
             requests.len()
         );
     }
@@ -2035,7 +2658,11 @@ mod installed_pi {
     /// `OVRCR_OPERATOR_GUI_TOKEN`. It seeds only that root's `operator-pi`,
     /// prints `OPERATOR_PI_GUI_READY`, and serves until the root disappears or a
     /// private stop marker appears. A private release marker releases a held
-    /// stream.
+    /// stream. With `OVRCR_OPERATOR_GUI_COMPACTION` set, the profile uses a small
+    /// context window and COMPACT_ONE produces an oversized answer, which triggers
+    /// automatic compaction in that same turn. Observe `Compacting context…`, then
+    /// create the release marker to finish the turn; send COMPACT_TWO afterwards
+    /// to prove the normal post-compaction follow-up.
     #[test]
     #[ignore = "manual GUI acceptance helper; requires OVRCR_OPERATOR_GUI_HOME and OVRCR_OPERATOR_GUI_TOKEN"]
     fn operator_pi_gui_provider() {
@@ -2046,16 +2673,34 @@ mod installed_pi {
         std::fs::create_dir_all(&workspace).unwrap();
         let marker = workspace.join("gui-fixture-marker.txt");
         let background_pid = workspace.join("gui-background.pid");
-        let provider = Provider::start(scenario_handler(
+        // Manual compaction mode: COMPACT_ONE returns an oversized assistant
+        // answer, so the next COMPACT_TWO prompt crosses the seeded threshold.
+        // The summarization request is held until the release marker exists, so
+        // the GUI can show the live Compacting status before releasing it.
+        let compaction = std::env::var_os("OVRCR_OPERATOR_GUI_COMPACTION")
+            .is_some_and(|value| !value.is_empty());
+        let provider = Provider::start(scenario_handler_mode(
             workspace.clone(),
             marker.clone(),
             background_pid.clone(),
+            ScenarioMode {
+                hold_compaction: compaction,
+                inflate_compaction_turn: compaction,
+            },
         ));
-        provider.seed_profile(&root);
+        if compaction {
+            provider.seed_profile_with(
+                &root,
+                COMPACTION_CONTEXT_WINDOW,
+                Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
+            );
+        } else {
+            provider.seed_profile(&root);
+        }
         let _ = std::fs::remove_file(&release_marker);
         let _ = std::fs::remove_file(&stop_marker);
         println!(
-            "OPERATOR_PI_GUI_READY base={} root={}",
+            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction}",
             provider.base,
             root.display()
         );
@@ -2326,6 +2971,52 @@ mod installed_pi {
         let _ = Command::new("mkdir").arg("-p").arg(&target).status();
         target
     }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn provider_smoke_streams_thinking_before_released_answer() {
+    use std::io::{Read, Write};
+    let provider = operator_provider::Provider::start(Box::new(|_body, _index| {
+        operator_provider::Plan::new(vec![
+            operator_provider::Chunk::Thinking("THINKING_ONE".into()),
+            operator_provider::Chunk::Thinking("THINKING_TWO".into()),
+        ])
+        .holding()
+        .then_text_after_release("ANSWER_AFTER_RELEASE")
+    }));
+    let mut stream =
+        std::net::TcpStream::connect(provider.base.trim_start_matches("http://")).unwrap();
+    let body =
+        r#"{"model":"operator-fixture","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+    let request = format!(
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+
+    let mut received = String::new();
+    let mut buffer = [0_u8; 4096];
+    while !received.contains("THINKING_TWO") {
+        let read = stream.read(&mut buffer).unwrap();
+        assert!(
+            read > 0,
+            "provider closed before the held thinking: {received}"
+        );
+        received.push_str(&String::from_utf8_lossy(&buffer[..read]));
+    }
+    assert!(received.contains("reasoning_content"), "{received}");
+    assert!(!received.contains("ANSWER_AFTER_RELEASE"), "{received}");
+
+    provider.release();
+    let mut rest = String::new();
+    stream.read_to_string(&mut rest).unwrap();
+    received.push_str(&rest);
+    assert!(received.contains("ANSWER_AFTER_RELEASE"), "{received}");
+    assert!(received.contains("[DONE]"), "{received}");
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

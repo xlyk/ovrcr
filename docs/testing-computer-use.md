@@ -395,13 +395,24 @@ afterwards, never an invented `unknown/unknown`.
 
 For the separate provider and activity walkthrough below, use the loopback
 helper; it is not needed for dock placement, focus or draft acceptance.
+Give the GUI launcher a task-owned `HOME` and clear inherited provider-profile
+paths for this walkthrough. Preserve `CARGO_HOME` separately for the build cache.
+Disable quota probes with `OVRCR_GUI_QUOTA_CONFIG`; the loopback provider seeds
+only the disposable instance's Operator profile and needs no personal account.
 
-Start the GUI provider helper against the launcher's fixture root and wait for
-`OPERATOR_PI_GUI_READY` before sending:
+Start the GUI provider helper against the launcher's fixture root. Bind that root
+to this task with a private ownership marker before starting the helper:
 
 ```sh
-OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e operator_pi_gui_provider -- --ignored --nocapture
+export OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root
+export OVRCR_OPERATOR_GUI_TOKEN=operator-gui-owned-fixture
+(umask 077; printf 'ovrcr-operator-gui-fixture v1\nroot=%s\ntoken=%s\n' \
+  "$OVRCR_OPERATOR_GUI_HOME" "$OVRCR_OPERATOR_GUI_TOKEN" \
+  > "$OVRCR_OPERATOR_GUI_HOME/operator-pi-fixture-owner")
+cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e operator_pi_gui_provider -- --ignored --nocapture
 ```
+
+Wait for `OPERATOR_PI_GUI_READY` before sending.
 
 The helper prints the fixture workspace and marker path when it starts. It does
 not interpret arbitrary requests: each turn must contain one of its exact markers,
@@ -452,6 +463,24 @@ confirm independent output, then reopen with `o` and confirm history and the dra
 remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
 confirm the same conversation is attached (startup `Current` creates nothing).
 Keep fresh screenshots and AX text for every changed state.
+
+For thinking-stream acceptance, start a fresh helper with no release marker and
+send `REQUEST_THINKING_HELD`. While the provider is paused, confirm a distinct
+**Thinking** block shows both thinking fragments in order and no answer yet.
+Save a screenshot and AX text before creating `operator-pi/fixture-release`.
+After release, confirm the answer appears below the thinking without repeating
+either fragment. Reopen the conversation and confirm the same journal remains.
+A text-only follow-up must add no empty Thinking block. The bundled CLI skill
+must never appear as a user message, tool result or visible journal entry.
+
+For compaction acceptance, use a separate fresh fixture and start its provider
+helper with `OVRCR_OPERATOR_GUI_COMPACTION=1`. Send `COMPACT_ONE`. Its oversized
+answer triggers automatic compaction before that first turn settles, and the
+helper holds pi's summarization request. Confirm the inline activity row reads
+**Compacting context…**, and save a screenshot and AX text while it is paused.
+Create `operator-pi/fixture-release`, wait for the first turn to complete, then
+send `COMPACT_TWO`. Confirm the status clears, the answer continues, and no
+permanent compaction row or summary text is added to the journal.
 
 ### Pane header
 

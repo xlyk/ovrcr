@@ -32,6 +32,12 @@ const MODEL_DEADLINE: Duration = Duration::from_secs(20);
 const MODEL_LIMIT: usize = 4096;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
+/// The repository CLI skill is compiled into the binary, so the Operator has
+/// its OVRCR operating guide before the first model request without reading a
+/// checkout or discovering any skill at runtime. `--no-skills` stays in force.
+const BUNDLED_SKILL: &str = include_str!("../../.agents/skills/ovrcr/SKILL.md");
+const SYSTEM_PROMPT_GAP: &str = "\n\n";
+
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
 /// never reach a message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -303,6 +309,7 @@ pub fn rpc_command(
     if policy.is_empty() || policy.contains('\0') {
         return Err(PiError::integration("Operator policy is invalid"));
     }
+    let system_prompt = format!("{policy}{SYSTEM_PROMPT_GAP}{BUNDLED_SKILL}");
     let extension = paths.profile.join(EXTENSION_FILE);
     let mut command = Command::new(executable()?);
     command.args([
@@ -324,7 +331,7 @@ pub fn rpc_command(
         .arg("--session-id")
         .arg(conversation_session_id(conversation))
         .arg("--append-system-prompt")
-        .arg(policy)
+        .arg(&system_prompt)
         .arg("--extension")
         .arg(&extension)
         .stdin(std::process::Stdio::piped())
@@ -928,9 +935,24 @@ mod tests {
         let paths = paths(instance.path()).unwrap();
         let attempt = paths.attempt_dir(OperatorTurnId(7));
         let command = rpc_command(&paths, &attempt, OperatorConversationId(3), "policy").unwrap();
-        assert_args(
-            &command,
-            &[
+        let argv = args(&command);
+        let prompt = argv
+            .iter()
+            .position(|arg| arg == "--append-system-prompt")
+            .expect("managed turns append a system prompt");
+        assert_eq!(
+            argv.iter()
+                .filter(|arg| *arg == "--append-system-prompt")
+                .count(),
+            1,
+            "the policy and bundled skill share one argument"
+        );
+        assert_eq!(
+            argv[..prompt]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
                 "--mode",
                 "rpc",
                 "--no-extensions",
@@ -946,15 +968,23 @@ mod tests {
                 attempt.to_str().unwrap(),
                 "--session-id",
                 "operator-3",
-                "--append-system-prompt",
-                "policy",
-                "--extension",
-                paths
-                    .profile
-                    .join("pi-operator-extension.mjs")
-                    .to_str()
-                    .unwrap(),
-            ],
+            ]
+        );
+        let system_prompt = &argv[prompt + 1];
+        assert!(system_prompt.starts_with(&format!("policy{SYSTEM_PROMPT_GAP}")));
+        assert_eq!(
+            system_prompt.matches(BUNDLED_SKILL).count(),
+            1,
+            "the bundled CLI skill is appended exactly once"
+        );
+        assert_eq!(argv[prompt + 2].as_str(), "--extension");
+        assert_eq!(
+            argv[prompt + 3].as_str(),
+            paths
+                .profile
+                .join("pi-operator-extension.mjs")
+                .to_str()
+                .unwrap()
         );
         assert_eq!(command.get_current_dir(), Some(paths.workdir.as_path()));
         assert_eq!(

@@ -272,11 +272,32 @@ function emitStart() {
 }
 
 function emitDelta(delta) {
-  writeRecord({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
+  emitTextDelta(0, delta);
+}
+
+function emitTextDelta(index, delta) {
+  writeRecord({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: index, delta } });
+}
+
+function emitThinkingStart(index) {
+  writeRecord({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: index } });
+}
+
+function emitThinkingDelta(index, delta) {
+  writeRecord({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: index, delta } });
 }
 
 function emitEnd(text, stop, toolCalls) {
   writeRecord({ type: "message_end", message: assistantMessage(text, stop, toolCalls) });
+}
+
+function emitEndThinking(thinking, text, stop) {
+  const content = [{ type: "thinking", thinking }];
+  if (text !== undefined && text !== null && text !== "") content.push({ type: "text", text });
+  writeRecord({
+    type: "message_end",
+    message: { role: "assistant", content, stopReason: stop, timestamp: Date.now() },
+  });
 }
 
 /** One admission dialog plus (when granted) one durable result dialog. */
@@ -332,10 +353,34 @@ async function runSteps() {
   let finalText;
   for (const step of scenario.steps ?? []) {
     if (aborted || exited) return;
-    if (step.kind === "assistant" || step.kind === "message_end") finalText = step.text;
+    if (step.kind === "assistant" || step.kind === "message_end" || step.kind === "thinking_message_end") {
+      finalText = step.text;
+    }
     switch (step.kind) {
       case "delta":
         emitDelta(step.text);
+        break;
+      case "text_delta":
+        emitTextDelta(step.index ?? 0, step.text ?? "");
+        break;
+      case "thinking_start":
+        emitThinkingStart(step.index ?? 0);
+        break;
+      case "thinking_delta":
+        emitThinkingDelta(step.index ?? 0, step.text ?? "");
+        break;
+      case "thinking_end":
+        writeRecord({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "thinking_end",
+            contentIndex: step.index ?? 0,
+            content: step.content ?? "",
+          },
+        });
+        break;
+      case "thinking_message_end":
+        emitEndThinking(step.thinking ?? "", step.text, step.stop ?? "stop");
         break;
       case "start":
         emitStart();

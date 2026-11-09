@@ -2835,3 +2835,213 @@ fn operator_projects_viewport_keeps_the_last_selection_at_the_bottom() {
     )));
     assert_bottom(&dashboard);
 }
+
+#[test]
+fn thinking_renders_as_a_distinct_block_before_the_answer() {
+    let context = OperatorContext::default();
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(
+            running,
+            vec![
+                turn_message(
+                    2,
+                    1,
+                    OperatorMessageContent::User {
+                        text: "think about it".into(),
+                        context,
+                    },
+                ),
+                turn_message(
+                    2,
+                    2,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                        "First thought. ".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    3,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                        "Second thought.".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Answer.".into(),
+                    )),
+                ),
+            ],
+            None,
+        ),
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let screen = draw_text(&mut dashboard, 120, 40);
+    let rows: Vec<&str> = screen.lines().collect();
+    let thinking_label = rows
+        .iter()
+        .position(|row| row.contains("│ Thinking"))
+        .unwrap_or_else(|| panic!("missing Thinking label: {screen}"));
+    let thought = rows
+        .iter()
+        .position(|row| row.contains("First thought. Second thought."))
+        .unwrap_or_else(|| panic!("missing streamed thinking: {screen}"));
+    let operator_label = rows
+        .iter()
+        .position(|row| row.contains("│ Operator"))
+        .unwrap_or_else(|| panic!("missing answer label: {screen}"));
+    let answer = rows
+        .iter()
+        .position(|row| row.contains("│ Answer."))
+        .unwrap_or_else(|| panic!("missing answer: {screen}"));
+    assert!(
+        thinking_label < thought && thought < operator_label && operator_label < answer,
+        "visible order: {screen}"
+    );
+}
+
+#[test]
+fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
+    let context = OperatorContext::default();
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+
+    // Reopening during compaction derives the phase from durable history alone.
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(
+            running.clone(),
+            vec![
+                turn_message(
+                    2,
+                    1,
+                    OperatorMessageContent::User {
+                        text: "long task".into(),
+                        context: context.clone(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    2,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+                ),
+            ],
+            None,
+        ),
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(screen.contains("Compacting context…"), "{screen}");
+    assert!(!screen.contains("Responding"), "{screen}");
+    assert!(!screen.contains("Compaction"), "no permanent row: {screen}");
+
+    // Catch-up after the native finish returns the ordinary derived activity.
+    let out = changed(
+        &mut dashboard,
+        running.clone(),
+        vec![turn_message(
+            2,
+            3,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded),
+        )],
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(!screen.contains("Compacting context…"), "{screen}");
+    assert!(screen.contains("Responding"), "{screen}");
+
+    // Completed work is terminal even when history retains the start event.
+    let mut complete = running.clone();
+    complete.worker_stopped = true;
+    complete.current_turn = Some(turn(2, OperatorTurnState::Complete));
+    changed(
+        &mut dashboard,
+        complete,
+        vec![turn_message(
+            2,
+            4,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+        )],
+    );
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(!screen.contains("Compacting context…"), "{screen}");
+
+    // Failure is terminal even when history retains the start event.
+    let mut failed = running.clone();
+    failed.worker_stopped = true;
+    failed.current_turn = Some(turn(2, OperatorTurnState::Error));
+    changed(
+        &mut dashboard,
+        failed,
+        vec![turn_message(
+            2,
+            5,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+        )],
+    );
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(!screen.contains("Compacting context…"), "{screen}");
+    assert!(screen.contains("error"), "{screen}");
+
+    // Interrupted/Stop likewise cannot leave a stale phase.
+    let mut interrupted = running.clone();
+    interrupted.worker_stopped = true;
+    interrupted.current_turn = Some(turn(2, OperatorTurnState::Interrupted));
+    changed(
+        &mut dashboard,
+        interrupted,
+        vec![turn_message(
+            2,
+            6,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+        )],
+    );
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(!screen.contains("Compacting context…"), "{screen}");
+
+    // A later running turn ignores an earlier turn's unfinished compaction.
+    let mut next = running;
+    next.run = SessionRunId(3);
+    next.worker_stopped = false;
+    next.current_turn = Some(turn(3, OperatorTurnState::Running));
+    changed(
+        &mut dashboard,
+        next,
+        vec![
+            turn_message(
+                2,
+                7,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+            ),
+            turn_message(
+                3,
+                8,
+                OperatorMessageContent::User {
+                    text: "next task".into(),
+                    context,
+                },
+            ),
+        ],
+    );
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(!screen.contains("Compacting context…"), "{screen}");
+    assert!(screen.contains("Responding"), "{screen}");
+}

@@ -95,6 +95,14 @@ separate approval for each command. Durable tool calls and results appear in the
 journal before the model continues, so a crash cannot lose an accepted step.
 Existing OVRCR CLI guards still apply.
 
+The Operator's system prompt includes OVRCR's own CLI guide before the first
+message in both the full composer and Quick message. That guide is compiled into
+OVRCR, keeps the inherited instance, socket and captured target, and is available
+without a checkout. Automatic skill discovery stays off: personal and project
+skills are not loaded, and the guide never appears in your conversation, tool
+results or journal. Every ordinary model request, including one after pi
+compacts context automatically, receives the guide only as system prompt text.
+
 `Shift-Enter` inserts a newline; paste edits the draft without submitting. Both
 message inputs support these editing commands:
 
@@ -125,9 +133,15 @@ It shows `Sending` while submission acceptance is pending, then `Responding` whi
 the turn is running, including quiet periods. `Waiting for <tool> result` (or a
 count) means a recorded call has no matching result in the current turn's
 caught-up history; it does not certify that an operation is still executing.
-Paging history falls back to `Responding`. These labels scroll away with older
-history and return when you scroll to the tail. Stopping has its own label, and
-`Stop unconfirmed` is static until stop proof arrives.
+While pi replaces old context automatically, it says `Compacting context…` and
+clears when the next model request resumes. Paging history falls back to
+`Responding`. These labels scroll away with older history and return when you
+scroll to the tail. Stopping has its own label, and `Stop unconfirmed` is static
+until stop proof arrives.
+
+Displayable provider thinking streams into a distinct **Thinking** block in the
+order it arrives. The answer follows it without repeating the thinking text. A
+provider that emits no displayable thinking adds no empty block.
 
 `PageUp` and `PageDown` scroll the journal. User prompts are marked, and assistant
 and tool activity share a fine guide. Tool call and output receipts stay

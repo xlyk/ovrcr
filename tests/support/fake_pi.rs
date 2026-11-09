@@ -137,6 +137,32 @@ pub enum Step {
     Start,
     /// Append one streamed text delta.
     Delta(String),
+    /// Append one streamed text delta at an explicit content index.
+    TextDelta {
+        index: usize,
+        text: String,
+    },
+    /// Start one thinking content block.
+    ThinkingStart {
+        index: usize,
+    },
+    /// Append one streamed thinking delta at an explicit content index.
+    ThinkingDelta {
+        index: usize,
+        text: String,
+    },
+    /// Authoritative content ending for one thinking block.
+    ThinkingEnd {
+        index: usize,
+        content: String,
+    },
+    /// The final assistant message carries thinking and answer blocks; it does
+    /// not itself emit deltas.
+    ThinkingMessageEnd {
+        thinking: String,
+        text: String,
+        stop: String,
+    },
     /// Park until abort or stdin close (an in-flight turn for Stop tests).
     Hold,
     /// Authoritative assistant message delivered without streaming.
@@ -219,6 +245,13 @@ impl Step {
         }
     }
 
+    pub fn thinking_delta(index: usize, text: &str) -> Self {
+        Self::ThinkingDelta {
+            index,
+            text: text.into(),
+        }
+    }
+
     pub fn tool(id: &str, name: &str, input: Value, output: &str) -> Self {
         Self::Tool {
             id: id.into(),
@@ -235,6 +268,28 @@ impl Step {
         match self {
             Self::Start => json!({"kind": "start"}),
             Self::Delta(text) => json!({"kind": "delta", "text": text}),
+            Self::TextDelta { index, text } => {
+                json!({"kind": "text_delta", "index": index, "text": text})
+            }
+            Self::ThinkingStart { index } => {
+                json!({"kind": "thinking_start", "index": index})
+            }
+            Self::ThinkingDelta { index, text } => {
+                json!({"kind": "thinking_delta", "index": index, "text": text})
+            }
+            Self::ThinkingEnd { index, content } => {
+                json!({"kind": "thinking_end", "index": index, "content": content})
+            }
+            Self::ThinkingMessageEnd {
+                thinking,
+                text,
+                stop,
+            } => json!({
+                "kind": "thinking_message_end",
+                "thinking": thinking,
+                "text": text,
+                "stop": stop,
+            }),
             Self::Hold => json!({"kind": "hold"}),
             Self::Assistant { text, stop } => {
                 json!({"kind": "assistant", "text": text, "stop": stop})

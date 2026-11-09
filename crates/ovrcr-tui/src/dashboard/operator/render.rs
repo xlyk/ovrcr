@@ -311,10 +311,15 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
     let mut index = 0;
     while index < chat.messages.len() {
         let message = &chat.messages[index];
-        // The selected model is retained metadata; it never becomes a journal row.
+        // The selected model is retained metadata and compaction events are
+        // transient phase state; neither becomes a permanent journal row.
         if matches!(
             message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_))
+            OperatorMessageContent::Worker(
+                OperatorWorkerEvent::ModelSelected(_)
+                    | OperatorWorkerEvent::CompactionStarted
+                    | OperatorWorkerEvent::CompactionEnded
+            )
         ) {
             index += 1;
             continue;
@@ -388,6 +393,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     || matches!(
                         chat.messages[index - 1].content,
                         OperatorMessageContent::User { .. }
+                            | OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_))
                     )
                 {
                     push_lines(
@@ -410,6 +416,38 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     index += 1;
                 }
                 push_lines(&mut lines, ordinal, 3, display_text(&text), normal, true);
+                index -= 1;
+                ordinal = chat.messages[index].ordinal;
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
+                let label = index == 0
+                    || !matches!(
+                        chat.messages[index - 1].content,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_))
+                    );
+                let mut text = String::new();
+                while let Some(OperatorMessage {
+                    content:
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(delta)),
+                    ..
+                }) = chat.messages.get(index)
+                {
+                    text.push_str(delta);
+                    index += 1;
+                }
+                if !text.is_empty() {
+                    if label {
+                        push_lines(
+                            &mut lines,
+                            ordinal,
+                            0,
+                            "Thinking".into(),
+                            quiet.add_modifier(Modifier::BOLD),
+                            true,
+                        );
+                    }
+                    push_lines(&mut lines, ordinal, 3, display_text(&text), quiet, true);
+                }
                 index -= 1;
                 ordinal = chat.messages[index].ordinal;
             }
@@ -496,7 +534,11 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     );
                 }
             }
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_)) => {}
+            OperatorMessageContent::Worker(
+                OperatorWorkerEvent::ModelSelected(_)
+                | OperatorWorkerEvent::CompactionStarted
+                | OperatorWorkerEvent::CompactionEnded,
+            ) => {}
             OperatorMessageContent::Worker(OperatorWorkerEvent::Completed) => {
                 push_lines(
                     &mut lines,
@@ -587,24 +629,35 @@ pub(super) fn transcript_rows(
     width: u16,
     now_unix_ms: u64,
 ) -> Vec<(Line<'static>, Option<Anchor>)> {
-    // Deltas share visual paragraphs, but their anchors keep the actual durable source.
+    // Deltas share visual paragraphs, but their anchors keep the actual durable
+    // source. Answer and thinking runs are separate paragraphs.
     let mut sources: HashMap<u64, Vec<(usize, u64)>> = HashMap::new();
-    let mut first = None;
+    let mut group: Option<(u64, bool)> = None;
     let mut byte = 0;
     for message in &chat.messages {
-        if let OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) =
-            &message.content
-        {
-            let start = *first.get_or_insert(message.ordinal);
-            sources
-                .entry(start)
-                .or_default()
-                .push((byte, message.ordinal));
-            byte += display_text(text).len();
-        } else {
-            first = None;
+        let (thinking, text) = match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                (false, text.as_str())
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text)) => {
+                (true, text.as_str())
+            }
+            _ => {
+                group = None;
+                byte = 0;
+                continue;
+            }
+        };
+        if group.is_none_or(|(_, kind)| kind != thinking) {
+            group = Some((message.ordinal, thinking));
             byte = 0;
         }
+        let start = group.map_or(message.ordinal, |(start, _)| start);
+        sources
+            .entry(start)
+            .or_default()
+            .push((byte, message.ordinal));
+        byte += display_text(text).len();
     }
     let mut rows: Vec<_> = logical_lines(chat)
         .into_iter()

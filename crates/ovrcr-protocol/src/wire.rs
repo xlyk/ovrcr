@@ -2764,6 +2764,12 @@ mod wire_snapshot {
             ),
             ("Completed", OperatorWorkerEvent::Completed),
             ("Failed", OperatorWorkerEvent::Failed("error".into())),
+            (
+                "ThinkingDelta",
+                OperatorWorkerEvent::ThinkingDelta("hello".into()),
+            ),
+            ("CompactionStarted", OperatorWorkerEvent::CompactionStarted),
+            ("CompactionEnded", OperatorWorkerEvent::CompactionEnded),
         ] {
             all.push((
                 format!("Request::OperatorExchange::{name}"),
@@ -2881,6 +2887,24 @@ mod wire_snapshot {
             "OperatorMessageContent::Worker".into(),
             encode(&OperatorMessageContent::Worker(
                 OperatorWorkerEvent::AssistantDelta("a".into()),
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerThinking".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::ThinkingDelta("a".into()),
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerCompactionStarted".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::CompactionStarted,
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerCompactionEnded".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::CompactionEnded,
             )),
         ));
         all.push((
@@ -3934,13 +3958,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044c017301630168016c0104",
+            "2a044d017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044c017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044d017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -3990,18 +4014,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044c0000"),
+        ("Response::NotificationNavigation", "0d044d0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044c017301630168016c0104",
+            "0e01016e044d017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044c017301630168016c0164",
+            "0f010708090101690101044d017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044c010708090101690101044c017301630168016c0164",
+            "10044d010708090101690101044d017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4041,7 +4065,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044c017301630168016c0104",
+            "08016e044d017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4531,6 +4555,18 @@ mod wire_snapshot {
             "3a03070707070707070707070707070707070707070707070707070707070707070701020304010105056572726f72",
         ),
         (
+            "Request::OperatorExchange::ThinkingDelta",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101060568656c6c6f",
+        ),
+        (
+            "Request::OperatorExchange::CompactionStarted",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010107",
+        ),
+        (
+            "Request::OperatorExchange::CompactionEnded",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010108",
+        ),
+        (
             "Request::OperatorWorker::Start",
             "3b0307070707070707070707070707070707070707070707070707070707070707070001020304",
         ),
@@ -4574,6 +4610,9 @@ mod wire_snapshot {
         ("OperatorTurnState::Interrupted", "02"),
         ("OperatorTurnState::Error", "03"),
         ("OperatorMessageContent::Worker", "01000161"),
+        ("OperatorMessageContent::WorkerThinking", "01060161"),
+        ("OperatorMessageContent::WorkerCompactionStarted", "0107"),
+        ("OperatorMessageContent::WorkerCompactionEnded", "0108"),
         ("OperatorMessageContent::Interrupted", "02"),
     ];
 

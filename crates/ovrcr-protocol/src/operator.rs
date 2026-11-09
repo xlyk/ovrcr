@@ -146,6 +146,14 @@ pub enum OperatorWorkerEvent {
     ModelSelected(OperatorModel),
     Completed,
     Failed(String),
+    /// Displayable incremental thinking text; provider signatures are never carried.
+    ThinkingDelta(String),
+    /// Native pi automatic compaction began in this turn. Durable phase state
+    /// that drives transient UI and never renders as a permanent journal row.
+    CompactionStarted,
+    /// Native pi automatic compaction finished successfully. Failure and Stop
+    /// remain represented by the turn's terminal event/state, never by an end.
+    CompactionEnded,
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
@@ -174,8 +182,12 @@ impl OperatorEventBatch {
             }
             match event {
                 OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
-                OperatorWorkerEvent::Completed => {}
-                OperatorWorkerEvent::AssistantDelta(text) | OperatorWorkerEvent::Failed(text) => {
+                OperatorWorkerEvent::Completed
+                | OperatorWorkerEvent::CompactionStarted
+                | OperatorWorkerEvent::CompactionEnded => {}
+                OperatorWorkerEvent::AssistantDelta(text)
+                | OperatorWorkerEvent::Failed(text)
+                | OperatorWorkerEvent::ThinkingDelta(text) => {
                     validate_text(text)?;
                     bytes += text.len();
                 }
@@ -470,6 +482,20 @@ mod tests {
         );
         batch.events = vec![OperatorWorkerEvent::AssistantDelta(String::new())];
         assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::ThinkingDelta("thinking".into())];
+        assert!(batch.validate().is_ok());
+        batch.events = vec![OperatorWorkerEvent::ThinkingDelta(String::new())];
+        assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::ThinkingDelta(
+            "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
+        )];
+        assert!(batch.validate().is_err());
+        batch.events = vec![
+            OperatorWorkerEvent::CompactionStarted,
+            OperatorWorkerEvent::CompactionEnded,
+            OperatorWorkerEvent::Completed,
+        ];
+        assert!(batch.validate().is_ok());
         batch.events = vec![OperatorWorkerEvent::ToolOutput {
             id: "call".into(),
             output: String::new(),

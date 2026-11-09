@@ -294,10 +294,18 @@ the exact 16 MiB record limit, profile-default selection, checkpoint promotion
 only after an acknowledged Completed, interrupted and failed turns keeping their
 journal without a checkpoint, startup/contract refusal before any prompt, a
 resumed turn using the fresh profile default plus the last completed checkpoint,
-the per-turn `operator.model` snapshot, prefix-deduplicated assistant text, failed
-and timed-out tool results, sequential admissions with no command after a refusal,
-results for unadmitted calls, credential sentinels never reaching the journal,
-settings or events, and direct-worker termination/reaping. The fixture `pi` prints
+the per-turn `operator.model` snapshot, prefix-deduplicated assistant and thinking
+text across content blocks and final-only suffixes, pi OpenAI Responses
+`thinking_end` authoritative separator retraction, interleaved text/thinking
+indexes (0,1,0), held whitespace released before a later block, deferred end-only
+arrival runs across interleaved blocks, end-only redacted thinking placeholders,
+thinking/tool/answer ordering, contradictory thinking
+prefixes and content indexes, empty/signature-only thinking,
+automatic-compaction start/end isolation (including summary-stream suppression,
+failure, Stop and no duplicate thinking after compaction), failed and timed-out
+tool results, sequential admissions with no command after a refusal, results for
+unadmitted calls, credential sentinels never reaching the journal, settings or
+events, and direct-worker termination/reaping. The fixture `pi` prints
 deterministic records; it proves OVRCR's composition and refusal behavior, not
 provider inference.
 
@@ -346,13 +354,16 @@ suite: one fixed sidebar navigation row, direct open with composer focus, no
 create/list/archive controls, Quick sharing the one conversation and its capture,
 draft retention while busy or stop-unconfirmed, a cancelled unsent Quick creating
 nothing, late replies after dismissal, Unicode input, narrow layout, unread, paged
-history, and reopening either composer capturing the reselected target for the
-next message. `tests/operator_scope.rs` covers Operator-scope lifecycle refusals
+history, visible thinking blocks in stream order, durable compaction activity
+across reopen/catch-up with no stale phase after end/failure/Stop or a later turn,
+and reopening either composer capturing the reselected target for the next
+message. `tests/operator_scope.rs` covers Operator-scope lifecycle refusals
 and the hidden legacy rows. The TUI snapshot test renders the singleton at 140×40,
 100×24, 80×24, 60×24 and 60×16 with the composer at its two-row minimum; its
 journal holds one empty collapsed successful receipt and no control characters, so
 it does not exercise receipt escaping. Escaping is covered by
-`paged_history_scrolls_receipts_and_escapes_controls` (TUI unit) and
+`paged_history_scrolls_receipts_and_escapes_controls` and
+`thinking_text_escapes_terminal_controls` (TUI unit), plus
 `paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail`
 (`tests/tui/operator.rs`).
 
