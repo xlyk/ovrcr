@@ -134,8 +134,10 @@ choices with explicit managed argv, independent of PATH discovery. Protocol 70 a
 appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Protocol 76
 replaces the Operator's Create/List/Close requests with `Current`/`Open`, makes the
 conversation a per-instance singleton and reports an optional pi model instead of a
-provider enum. Readiness uses exact verified run observations; titles and active conversation
-recovery remain unavailable. See
+provider enum. Protocol 77 appends the Operator's displayable thinking deltas and its
+automatic-compaction start/end phase events; compaction events are durable phase
+state but never permanent transcript rows. Readiness uses exact verified run
+observations; titles and active conversation recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).
 
 Schema version 27 preserves the schema-26 Operator addition of explicit `SessionScope::Workspace` or

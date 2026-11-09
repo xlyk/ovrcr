@@ -269,9 +269,36 @@ fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
                 animated: false,
             });
         }
+        let caught_up = !chat.reading && !chat.dirty && chat.confirmed_tail == Some(chat.ordinal);
+        if caught_up {
+            // Durable start/end events survive catch-up and reopen; only the
+            // current turn's last phase decides, so older compaction never sticks.
+            let mut compacting = false;
+            for message in chat
+                .messages
+                .iter()
+                .filter(|message| message.turn == turn.identity.turn)
+            {
+                match &message.content {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted) => {
+                        compacting = true;
+                    }
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded) => {
+                        compacting = false;
+                    }
+                    _ => {}
+                }
+            }
+            if compacting {
+                return Some(ConversationActivity {
+                    label: "Compacting context…".into(),
+                    animated: true,
+                });
+            }
+        }
         let mut outputs = BTreeSet::new();
         let mut pending = BTreeMap::new();
-        if !chat.reading && !chat.dirty && chat.confirmed_tail == Some(chat.ordinal) {
+        if caught_up {
             for message in chat
                 .messages
                 .iter()
@@ -2436,6 +2463,56 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn thinking_text_escapes_terminal_controls() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![message(
+            1,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                "PLAN \u{1b}]52;c;INJECTED\u{7}".into(),
+            )),
+        )];
+        let visible = transcript_lines(&chat)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(visible.contains("Thinking"), "{visible}");
+        assert!(
+            visible.contains("PLAN \\u{1b}]52;c;INJECTED\\u{7}"),
+            "{visible}"
+        );
+        assert!(!visible.contains('\u{1b}'), "{visible}");
+    }
+
+    #[test]
+    fn empty_thinking_and_compaction_events_add_no_visible_rows() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![
+            message(
+                1,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(String::new())),
+            ),
+            message(
+                2,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+            ),
+            message(
+                3,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded),
+            ),
+            delta(4, "answer"),
+        ];
+        let visible = transcript_lines(&chat)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!visible.contains("Thinking"), "{visible}");
+        assert!(!visible.contains("Compaction"), "{visible}");
+        assert!(visible.contains("answer"), "{visible}");
     }
 
     #[test]

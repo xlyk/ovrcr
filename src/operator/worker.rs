@@ -16,6 +16,7 @@ use ovrcr_protocol::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs::{self, DirBuilder, File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -56,6 +57,11 @@ const MAX_CHECKPOINT_RECORD: usize = 16 * 1024 * 1024;
 /// the ordinary execution notifications. Sequential execution keeps this at one.
 const MAX_ADMITTED_CALLS: usize = 1024;
 const MAX_MODELS: usize = 4096;
+/// Bound on one assistant message's content blocks, including streamed indexes.
+const MAX_CONTENT_BLOCKS: usize = 1024;
+/// Deferred redaction display reuses per-block text; bound it by the native
+/// complete-record/RPC frame ceiling rather than adding copies.
+const MAX_DEFERRED_BYTES: usize = 16 * 1024 * 1024;
 const TEXT_CADENCE: Duration = Duration::from_millis(50);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(20);
@@ -250,11 +256,30 @@ fn attempt(
 
 // ---------------------------------------------------------------- journal
 
+/// The two displayable assistant content kinds. Both coalesce on the same cadence,
+/// but a kind or content-block boundary flushes before the next block starts so
+/// display order always matches the provider's content order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DisplayKind {
+    Answer,
+    Thinking,
+}
+
+impl DisplayKind {
+    fn event(self, text: String) -> OperatorWorkerEvent {
+        match self {
+            Self::Answer => OperatorWorkerEvent::AssistantDelta(text),
+            Self::Thinking => OperatorWorkerEvent::ThinkingDelta(text),
+        }
+    }
+}
+
 struct Journal<'a> {
     reporter: &'a mut Reporter,
     identity: OperatorTurnIdentity,
     sequence: u64,
-    text: String,
+    pending: String,
+    pending_kind: Option<DisplayKind>,
     last_flush: Instant,
     poisoned: bool,
 }
@@ -265,7 +290,8 @@ impl<'a> Journal<'a> {
             reporter,
             identity,
             sequence: 1,
-            text: String::new(),
+            pending: String::new(),
+            pending_kind: None,
             last_flush: Instant::now(),
             poisoned: false,
         }
@@ -300,17 +326,25 @@ impl<'a> Journal<'a> {
             .operator_retire(self.identity, stop, Instant::now() + deadline)
     }
 
-    /// Append streamed text, splitting only on UTF-8 boundaries and never exceeding
-    /// one batch.
-    fn push(&mut self, fragment: &str) -> std::result::Result<(), Failure> {
+    /// Append display text of one kind, splitting only on UTF-8 boundaries and
+    /// never exceeding one batch. A kind change flushes first: answer and thinking
+    /// events never interleave inside one commit.
+    fn push(&mut self, kind: DisplayKind, fragment: &str) -> std::result::Result<(), Failure> {
+        if fragment.is_empty() {
+            return Ok(());
+        }
+        if self.pending_kind != Some(kind) {
+            self.flush()?;
+        }
         let mut remaining = fragment;
         while !remaining.is_empty() {
-            if self.text.is_empty() {
+            if self.pending.is_empty() {
+                self.pending_kind = Some(kind);
                 self.last_flush = Instant::now();
             }
-            let room = BATCH_BYTES.saturating_sub(self.text.len());
+            let room = BATCH_BYTES.saturating_sub(self.pending.len());
             if room == 0 {
-                self.flush_text()?;
+                self.flush()?;
                 continue;
             }
             let mut count = remaining.len().min(room);
@@ -318,30 +352,35 @@ impl<'a> Journal<'a> {
                 count -= 1;
             }
             if count == 0 {
-                self.flush_text()?;
+                self.flush()?;
                 continue;
             }
-            self.text.push_str(&remaining[..count]);
+            self.pending.push_str(&remaining[..count]);
             remaining = &remaining[count..];
-            if self.text.len() >= BATCH_BYTES {
-                self.flush_text()?;
+            if self.pending.len() >= BATCH_BYTES {
+                self.flush()?;
             }
         }
         Ok(())
     }
 
-    fn flush_text(&mut self) -> std::result::Result<(), Failure> {
-        if self.text.is_empty() {
+    /// Commit the current display prefix, whatever its kind. Used before the next
+    /// content block, before a durable tool receipt, and after settlement.
+    fn flush(&mut self) -> std::result::Result<(), Failure> {
+        let Some(kind) = self.pending_kind.take() else {
+            return Ok(());
+        };
+        if self.pending.is_empty() {
             return Ok(());
         }
-        let text = std::mem::take(&mut self.text);
-        self.commit(OperatorWorkerEvent::AssistantDelta(text))
+        let text = std::mem::take(&mut self.pending);
+        self.commit(kind.event(text))
     }
 
     /// Coalesce display text on the existing cadence.
     fn tick(&mut self) -> std::result::Result<(), Failure> {
-        if !self.text.is_empty() && self.last_flush.elapsed() >= TEXT_CADENCE {
-            self.flush_text()?;
+        if !self.pending.is_empty() && self.last_flush.elapsed() >= TEXT_CADENCE {
+            self.flush()?;
         }
         Ok(())
     }
@@ -620,8 +659,8 @@ impl Connection {
                 return Err(failure);
             }
         };
-        // Flush preceding assistant text before the durable tool receipt.
-        journal.flush_text()?;
+        // Flush preceding assistant display before the durable tool receipt.
+        journal.flush()?;
         journal.commit(OperatorWorkerEvent::ToolCall {
             id: id.clone(),
             name: name.clone(),
@@ -671,6 +710,8 @@ impl Connection {
         let status = tool_status(payload["status"].as_str().unwrap_or(""))
             .ok_or(Failure::Failed(REQUEST_FAILED))?;
         let (output, cut) = sanitize_output(output);
+        // No display can cross a durable tool receipt.
+        journal.flush()?;
         journal.commit(OperatorWorkerEvent::ToolOutput {
             id: pending.id.clone(),
             output,
@@ -709,21 +750,33 @@ impl Connection {
         match event["type"].as_str() {
             Some("message_start") => {
                 if event["message"]["role"] == "assistant" {
-                    state.streamed.clear();
+                    state.reset_stream();
                 }
             }
             Some("message_update") => {
-                let update = &event["assistantMessageEvent"];
-                // Only assistant text deltas reach the journal; thinking never does.
-                if update["type"] == "text_delta"
-                    && let Some(delta) = update["delta"].as_str()
-                {
-                    state.streamed.push_str(delta);
-                    journal.push(delta)?;
+                // Pi's compaction summary is its own model request, never part of
+                // the user-visible assistant conversation.
+                if !state.compacting {
+                    let update = &event["assistantMessageEvent"];
+                    match update["type"].as_str() {
+                        Some("text_delta") => {
+                            state.stream_delta(journal, DisplayKind::Answer, update)?
+                        }
+                        Some("thinking_delta") => {
+                            state.stream_delta(journal, DisplayKind::Thinking, update)?
+                        }
+                        Some("thinking_end") => {
+                            if let Some(content) = update["content"].as_str() {
+                                let index = content_index(update)?;
+                                state.end_thinking(journal, index, content)?;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             Some("message_end") => {
-                if event["message"]["role"] == "assistant" {
+                if !state.compacting && event["message"]["role"] == "assistant" {
                     end_assistant(&event["message"], journal, state)?;
                 }
             }
@@ -756,10 +809,23 @@ impl Connection {
                     INTEGRATION_UNAVAILABLE
                 }));
             }
+            // pi 0.87.1's AgentSession emits these exact session event names and
+            // RPC mode forwards them unchanged (not auto_compaction_*).
+            Some("compaction_start") => {
+                // Make the visible prefix durable before the pause, then isolate
+                // the compaction request from the next assistant message.
+                journal.flush()?;
+                state.reset_stream();
+                state.compacting = true;
+                journal.commit(OperatorWorkerEvent::CompactionStarted)?;
+            }
             Some("compaction_end") => {
                 if event.get("errorMessage").is_some() || event["aborted"] == true {
                     return Err(Failure::Failed(REQUEST_FAILED));
                 }
+                state.compacting = false;
+                state.reset_stream();
+                journal.commit(OperatorWorkerEvent::CompactionEnded)?;
             }
             Some("auto_retry_start") => return Err(Failure::Failed(REQUEST_FAILED)),
             Some("auto_retry_end") if event["success"] == false => {
@@ -828,7 +894,7 @@ impl Connection {
                 RpcMessage::Event(event) => {
                     self.event(journal, state, event)?;
                     if state.settled {
-                        journal.flush_text()?;
+                        journal.flush()?;
                         return Ok(());
                     }
                 }
@@ -861,14 +927,56 @@ struct TurnState {
     current_model: Option<OperatorModel>,
     current_thinking: Option<String>,
     session_file: Option<PathBuf>,
-    /// All text deltas already sent for the current assistant message.
-    streamed: String,
+    /// Display text already streamed for the current assistant message, keyed by
+    /// pi's content index. One content block has exactly one display kind.
+    stream_blocks: BTreeMap<usize, StreamBlock>,
+    /// Index of the most recent display event, used only to flush on a content
+    /// block change. Providers may interleave updates to existing blocks.
+    last_stream_index: Option<usize>,
+    /// Highest content index that has displayed anything. A final-only suffix for
+    /// a lower block cannot be appended after that later block.
+    max_display_index: Option<usize>,
+    /// An end-only thinking block awaits final redaction metadata. Subsequent
+    /// display is held in arrival order so the final message can release it
+    /// after deciding whether the thought is redacted.
+    deferred_display: bool,
+    deferred_runs: Vec<DeferredRun>,
+    deferred_bytes: usize,
+    /// Pi's automatic compaction can replace context between assistant messages.
+    /// Its summary stream is never journaled and never shares message state.
+    compacting: bool,
     last_assistant: Option<AssistantTurn>,
     /// Admitted tool-call ids whose ordinary execution end has not arrived yet.
     admitted: Vec<String>,
     pending: Option<PendingCall>,
     settled: bool,
     prompted: bool,
+}
+
+struct DeferredRun {
+    index: usize,
+    kind: DisplayKind,
+    /// Byte range in that stream block's text.
+    start: usize,
+    end: usize,
+    /// True only for an end-only thinking block that final redaction may discard.
+    end_only: bool,
+}
+
+struct StreamBlock {
+    kind: DisplayKind,
+    /// All streamed text for this block, including `held`.
+    text: String,
+    /// Trailing whitespace already streamed but not journaled yet. An ending or
+    /// the final message decides whether it is a real suffix or a synthetic
+    /// separator pi retracts.
+    held: String,
+    /// Authoritative block text from a provider content-ending event, when one
+    /// was emitted. pi's OpenAI Responses adapter may normalize trailing
+    /// separators after the last streamed delta.
+    authoritative: Option<String>,
+    /// Whether any part of this block has entered the journal.
+    displayed: bool,
 }
 
 impl TurnState {
@@ -882,13 +990,413 @@ impl TurnState {
             current_model: None,
             current_thinking: None,
             session_file: None,
-            streamed: String::new(),
+            stream_blocks: BTreeMap::new(),
+            last_stream_index: None,
+            max_display_index: None,
+            deferred_display: false,
+            deferred_runs: Vec::new(),
+            deferred_bytes: 0,
+            compacting: false,
             last_assistant: None,
             admitted: Vec::new(),
             pending: None,
             settled: false,
             prompted: false,
         }
+    }
+
+    fn reset_stream(&mut self) {
+        self.stream_blocks.clear();
+        self.last_stream_index = None;
+        self.max_display_index = None;
+        self.deferred_display = false;
+        self.deferred_runs.clear();
+        self.deferred_bytes = 0;
+    }
+
+    fn note_display(&mut self, index: usize) {
+        self.max_display_index = Some(self.max_display_index.map_or(index, |max| max.max(index)));
+    }
+
+    /// Record one contiguous deferred display segment by offset. Adjacent deltas
+    /// of the same block reuse the previous range, so no delta text is copied.
+    fn defer_run(
+        &mut self,
+        index: usize,
+        kind: DisplayKind,
+        start: usize,
+        end: usize,
+        end_only: bool,
+    ) -> std::result::Result<(), Failure> {
+        self.deferred_bytes = self
+            .deferred_bytes
+            .saturating_add(end.saturating_sub(start));
+        if self.deferred_bytes > MAX_DEFERRED_BYTES {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
+        if let Some(last) = self.deferred_runs.last_mut()
+            && !end_only
+            && !last.end_only
+            && last.index == index
+            && last.kind == kind
+            && last.end == start
+        {
+            last.end = end;
+            return Ok(());
+        }
+        if self.deferred_runs.len() >= MAX_CONTENT_BLOCKS {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
+        self.deferred_runs.push(DeferredRun {
+            index,
+            kind,
+            start,
+            end,
+            end_only,
+        });
+        Ok(())
+    }
+
+    /// Truncate buffered ranges after an authoritative ending retracts only a
+    /// trailing separator. The substantive displayed prefix is untouched.
+    fn trim_deferred_runs(&mut self, index: usize, new_len: usize) {
+        let mut removed = 0usize;
+        self.deferred_runs.retain_mut(|run| {
+            if run.index != index {
+                return true;
+            }
+            if run.start >= new_len {
+                removed = removed.saturating_add(run.end - run.start);
+                return false;
+            }
+            let old_end = run.end;
+            run.end = run.end.min(new_len);
+            removed = removed.saturating_add(old_end - run.end);
+            run.start < run.end
+        });
+        self.deferred_bytes = self.deferred_bytes.saturating_sub(removed);
+    }
+
+    /// Record one display delta at pi's content index and journal it. A new
+    /// content block flushes the previous block first, so a final-only suffix for
+    /// an earlier block can never be appended after a later block was displayed.
+    fn flush_at_index(
+        &mut self,
+        journal: &mut Journal<'_>,
+        index: usize,
+    ) -> std::result::Result<(), Failure> {
+        if self.last_stream_index != Some(index) {
+            journal.flush()?;
+            self.last_stream_index = Some(index);
+        }
+        Ok(())
+    }
+
+    /// Whitespace already streamed before a different block is real content, not
+    /// a separator an authoritative ending may retract. Release it in arrival
+    /// order before the next block displays.
+    fn release_held(
+        &mut self,
+        journal: &mut Journal<'_>,
+        index: usize,
+    ) -> std::result::Result<(), Failure> {
+        let held = match self.stream_blocks.get_mut(&index) {
+            Some(block) if !block.held.is_empty() => std::mem::take(&mut block.held),
+            _ => return Ok(()),
+        };
+        self.flush_at_index(journal, index)?;
+        self.note_display(index);
+        if let Some(block) = self.stream_blocks.get_mut(&index) {
+            block.displayed = true;
+        }
+        journal.push(DisplayKind::Thinking, &held)
+    }
+
+    fn stream_delta(
+        &mut self,
+        journal: &mut Journal<'_>,
+        kind: DisplayKind,
+        update: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let delta = update["delta"].as_str().unwrap_or("");
+        if delta.is_empty() {
+            return Ok(());
+        }
+        let index = content_index(update)?;
+        if self.deferred_display {
+            let (start, end) = {
+                let block = self
+                    .stream_blocks
+                    .entry(index)
+                    .or_insert_with(|| StreamBlock {
+                        kind,
+                        text: String::new(),
+                        held: String::new(),
+                        authoritative: None,
+                        displayed: false,
+                    });
+                if block.kind != kind || block.authoritative.is_some() || block.displayed {
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                let start = block.text.len();
+                block.text.push_str(delta);
+                (start, start + delta.len())
+            };
+            return self.defer_run(index, kind, start, end, false);
+        }
+        if let Some(last) = self.last_stream_index
+            && last != index
+        {
+            self.release_held(journal, last)?;
+        }
+        if kind == DisplayKind::Answer {
+            {
+                let block = self
+                    .stream_blocks
+                    .entry(index)
+                    .or_insert_with(|| StreamBlock {
+                        kind,
+                        text: String::new(),
+                        held: String::new(),
+                        authoritative: None,
+                        displayed: false,
+                    });
+                if block.kind != kind || block.authoritative.is_some() {
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                block.text.push_str(delta);
+                block.displayed = true;
+            }
+            self.flush_at_index(journal, index)?;
+            self.note_display(index);
+            return journal.push(kind, delta);
+        }
+
+        // Hold trailing thinking whitespace. pi's OpenAI Responses adapter emits
+        // "\n\n" between reasoning summary parts and then retracts the final one
+        // when the authoritative ending replaces the streamed text.
+        let release = {
+            let block = self
+                .stream_blocks
+                .entry(index)
+                .or_insert_with(|| StreamBlock {
+                    kind,
+                    text: String::new(),
+                    held: String::new(),
+                    authoritative: None,
+                    displayed: false,
+                });
+            if block.kind != kind || block.authoritative.is_some() {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            block.text.push_str(delta);
+            let body = delta.trim_end_matches(char::is_whitespace);
+            if body.is_empty() {
+                block.held.push_str(delta);
+                return Ok(());
+            }
+            block.displayed = true;
+            let body_len = body.len();
+            let mut visible = std::mem::take(&mut block.held);
+            visible.push_str(&delta[..body_len]);
+            block.held.push_str(&delta[body_len..]);
+            visible
+        };
+        self.flush_at_index(journal, index)?;
+        self.note_display(index);
+        journal.push(kind, &release)
+    }
+
+    /// Reconcile one content block against an authoritative ending or the final
+    /// message. Thinking may have trailing whitespace held back; the authority
+    /// either keeps it, truncates it, or extends it. A substantive rewrite of
+    /// already displayed text fails closed.
+    fn reconcile_stream(
+        &mut self,
+        journal: &mut Journal<'_>,
+        index: usize,
+        text: &str,
+        authoritative: bool,
+    ) -> std::result::Result<(), Failure> {
+        let mut emit = None;
+        let mut late = false;
+        let kind;
+        {
+            let block = self
+                .stream_blocks
+                .get_mut(&index)
+                .ok_or(Failure::Failed(REQUEST_FAILED))?;
+            kind = block.kind;
+            if let Some(stored) = &block.authoritative {
+                return if text == stored.as_str() {
+                    Ok(())
+                } else {
+                    Err(Failure::Failed(REQUEST_FAILED))
+                };
+            }
+            match kind {
+                DisplayKind::Thinking => {
+                    if block.held.is_empty() {
+                        if !text.starts_with(block.text.as_str()) {
+                            return Err(Failure::Failed(REQUEST_FAILED));
+                        }
+                        if text.len() > block.text.len() {
+                            emit = Some(text[block.text.len()..].to_owned());
+                            late = true;
+                        }
+                    } else {
+                        let displayed = block.text.len() - block.held.len();
+                        if text.len() < displayed || !text.starts_with(&block.text[..displayed]) {
+                            return Err(Failure::Failed(REQUEST_FAILED));
+                        }
+                        let suffix = &text[displayed..];
+                        let accepted = if suffix.len() <= block.held.len() {
+                            block.held.starts_with(suffix)
+                        } else {
+                            suffix.starts_with(block.held.as_str())
+                        };
+                        if !accepted {
+                            return Err(Failure::Failed(REQUEST_FAILED));
+                        }
+                        if !suffix.is_empty() {
+                            // Releasing already-streamed whitespace is in arrival
+                            // order even if another block has since displayed.
+                            late = suffix.len() > block.held.len();
+                            emit = Some(suffix.to_owned());
+                        }
+                    }
+                }
+                DisplayKind::Answer => {
+                    if !text.starts_with(block.text.as_str()) {
+                        return Err(Failure::Failed(REQUEST_FAILED));
+                    }
+                    if text.len() > block.text.len() {
+                        emit = Some(text[block.text.len()..].to_owned());
+                        late = true;
+                    }
+                }
+            }
+            block.text.clear();
+            block.text.push_str(text);
+            block.held.clear();
+            if authoritative {
+                block.authoritative = Some(text.to_owned());
+            }
+        }
+        if let Some(suffix) = emit {
+            if late && self.max_display_index.is_some_and(|max| max > index) {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            self.flush_at_index(journal, index)?;
+            self.note_display(index);
+            journal.push(kind, &suffix)?;
+            if let Some(block) = self.stream_blocks.get_mut(&index) {
+                block.displayed = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply pi's authoritative `thinking_end` content. An empty ending with no
+    /// block creates nothing; an end-only ending is deferred until the final
+    /// block decides whether it is redacted.
+    fn end_thinking(
+        &mut self,
+        journal: &mut Journal<'_>,
+        index: usize,
+        content: &str,
+    ) -> std::result::Result<(), Failure> {
+        if !self.stream_blocks.contains_key(&index) && content.is_empty() {
+            return Ok(());
+        }
+        let defer = {
+            let block = self
+                .stream_blocks
+                .entry(index)
+                .or_insert_with(|| StreamBlock {
+                    kind: DisplayKind::Thinking,
+                    text: String::new(),
+                    held: String::new(),
+                    authoritative: None,
+                    displayed: false,
+                });
+            if block.kind != DisplayKind::Thinking {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            !content.is_empty()
+                && !block.displayed
+                && block.text.is_empty()
+                && block.held.is_empty()
+                && block.authoritative.is_none()
+        };
+        if defer {
+            // pi's Anthropic adapter can end with a redacted placeholder before
+            // the final block says `redacted: true`. Hold this and all following
+            // display until the final metadata decides.
+            if let Some(last) = self.last_stream_index {
+                self.release_held(journal, last)?;
+            }
+            let len = {
+                let block = self
+                    .stream_blocks
+                    .get_mut(&index)
+                    .ok_or(Failure::Failed(REQUEST_FAILED))?;
+                block.text.push_str(content);
+                block.authoritative = Some(content.to_owned());
+                block.text.len()
+            };
+            self.deferred_display = true;
+            self.defer_run(index, DisplayKind::Thinking, 0, len, true)?;
+            return Ok(());
+        }
+        if self.deferred_display {
+            let mut extension = None;
+            let mut trim_to = None;
+            {
+                let block = self
+                    .stream_blocks
+                    .get_mut(&index)
+                    .ok_or(Failure::Failed(REQUEST_FAILED))?;
+                if !block.displayed {
+                    if let Some(stored) = &block.authoritative {
+                        return if stored == content {
+                            Ok(())
+                        } else {
+                            Err(Failure::Failed(REQUEST_FAILED))
+                        };
+                    }
+                    if content == block.text {
+                        block.authoritative = Some(content.to_owned());
+                        return Ok(());
+                    }
+                    if content.starts_with(block.text.as_str()) {
+                        let start = block.text.len();
+                        let end = content.len();
+                        block.text.push_str(&content[start..]);
+                        block.authoritative = Some(content.to_owned());
+                        extension = Some((start, end));
+                    } else if block.text.starts_with(content)
+                        && block.text[content.len()..].chars().all(char::is_whitespace)
+                    {
+                        let new_len = content.len();
+                        block.text.truncate(new_len);
+                        block.held.clear();
+                        block.authoritative = Some(content.to_owned());
+                        trim_to = Some(new_len);
+                    } else {
+                        return Err(Failure::Failed(REQUEST_FAILED));
+                    }
+                }
+            }
+            if let Some((start, end)) = extension {
+                return self.defer_run(index, DisplayKind::Thinking, start, end, false);
+            }
+            if let Some(new_len) = trim_to {
+                self.trim_deferred_runs(index, new_len);
+                return Ok(());
+            }
+        }
+        self.reconcile_stream(journal, index, content, true)
     }
 
     fn capture(&mut self, data: &Value) -> std::result::Result<(), Failure> {
@@ -940,6 +1448,17 @@ fn operator_model(value: &Value) -> Option<OperatorModel> {
         provider: provider.to_owned(),
         id: id.to_owned(),
     })
+}
+
+/// Pi's assistant message events name their content block. A missing or
+/// non-integer index cannot be related to the final message, so it fails closed.
+fn content_index(update: &Value) -> std::result::Result<usize, Failure> {
+    update
+        .get("contentIndex")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .filter(|index| *index < MAX_CONTENT_BLOCKS)
+        .ok_or(Failure::Failed(REQUEST_FAILED))
 }
 
 fn require_success(response: &RpcResponse) -> std::result::Result<(), Failure> {
@@ -1184,21 +1703,44 @@ fn end_assistant(
     state: &mut TurnState,
 ) -> std::result::Result<(), Failure> {
     let stop = message["stopReason"].as_str().unwrap_or("pending");
-    let mut text = String::new();
-    let mut calls = Vec::new();
-    for block in message["content"]
+    let blocks = message["content"]
         .as_array()
-        .into_iter()
-        .flatten()
-        .take(1024)
-    {
-        match block["type"].as_str() {
-            Some("text") => {
-                if let Some(part) = block["text"].as_str() {
-                    text.push_str(part);
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if blocks.len() > MAX_CONTENT_BLOCKS {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let mut calls = Vec::new();
+    let mut matched = vec![false; blocks.len()];
+    let mut deferred_drop = Vec::new();
+    let mut deferred_final_only = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let (kind, text) = match block["type"].as_str() {
+            Some("text") => (DisplayKind::Answer, block["text"].as_str().unwrap_or("")),
+            // Only displayable thinking crosses the journal. Signatures and
+            // redacted reasoning remain provider-private even when pi keeps the
+            // redacted block in the assistant content array.
+            Some("thinking") if block["redacted"].as_bool() == Some(true) => {
+                if let Some(streamed) = state.stream_blocks.get(&index) {
+                    if streamed.displayed {
+                        return Err(Failure::Failed(REQUEST_FAILED));
+                    }
+                    // An end-only placeholder is discarded by this metadata.
+                    matched[index] = true;
+                    if state.deferred_display {
+                        deferred_drop.push(index);
+                    }
                 }
+                continue;
             }
+            Some("thinking") => (
+                DisplayKind::Thinking,
+                block["thinking"].as_str().unwrap_or(""),
+            ),
             Some("toolCall") => {
+                if state.stream_blocks.contains_key(&index) {
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
                 if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
                     calls.push(ToolCallBlock {
                         id: id.to_owned(),
@@ -1206,21 +1748,100 @@ fn end_assistant(
                         arguments: block["arguments"].clone(),
                     });
                 }
+                continue;
             }
-            // Thinking blocks are never exposed or journaled.
-            _ => {}
+            _ => {
+                // Redacted/opaque blocks and unknown block types never display;
+                // a display stream for one of them is contradictory.
+                if state.stream_blocks.contains_key(&index) {
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                continue;
+            }
+        };
+        matched[index] = true;
+        if let Some(streamed) = state.stream_blocks.get(&index) {
+            if streamed.kind != kind {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            if state.deferred_display && !streamed.displayed {
+                let extension = match &streamed.authoritative {
+                    Some(auth) => {
+                        if auth == text {
+                            None
+                        } else {
+                            return Err(Failure::Failed(REQUEST_FAILED));
+                        }
+                    }
+                    None if text.starts_with(streamed.text.as_str()) => (text.len()
+                        > streamed.text.len())
+                    .then(|| text[streamed.text.len()..].to_owned()),
+                    None => return Err(Failure::Failed(REQUEST_FAILED)),
+                };
+                if let Some(extension) = extension {
+                    deferred_final_only.push((kind, extension));
+                }
+                // Buffered ranges are emitted in arrival order after this pass.
+                continue;
+            }
+            let deferred = !streamed.displayed
+                && !text.is_empty()
+                && streamed.authoritative.as_deref() == Some(text);
+            state.reconcile_stream(journal, index, text, false)?;
+            if deferred {
+                if state.max_display_index.is_some_and(|max| max > index) {
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                state.flush_at_index(journal, index)?;
+                state.note_display(index);
+                journal.push(kind, text)?;
+                if let Some(block) = state.stream_blocks.get_mut(&index) {
+                    block.displayed = true;
+                }
+            }
+            continue;
+        }
+        if !text.is_empty() {
+            // A final-only block cannot be appended after a later block already
+            // displayed; that would put earlier content after later output.
+            if state.max_display_index.is_some_and(|max| max > index) {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            if state.deferred_display {
+                deferred_final_only.push((kind, text.to_owned()));
+            } else {
+                journal.push(kind, text)?;
+            }
         }
     }
-    // The authoritative completion may only extend what was already streamed and
-    // committed; a contradiction invalidates the visible journal prefix.
-    if !text.starts_with(state.streamed.as_str()) {
+    if state.deferred_display {
+        for run in std::mem::take(&mut state.deferred_runs) {
+            if deferred_drop.contains(&run.index) {
+                continue;
+            }
+            let text = state
+                .stream_blocks
+                .get(&run.index)
+                .and_then(|block| block.text.get(run.start..run.end))
+                .ok_or(Failure::Failed(REQUEST_FAILED))?;
+            journal.push(run.kind, text)?;
+            if let Some(block) = state.stream_blocks.get_mut(&run.index) {
+                block.displayed = true;
+            }
+        }
+        for (kind, text) in deferred_final_only {
+            journal.push(kind, &text)?;
+        }
+    }
+    // Every streamed block must exist in the same position of the final message.
+    if state
+        .stream_blocks
+        .keys()
+        .any(|index| !matched.get(*index).copied().unwrap_or(false))
+    {
         return Err(Failure::Failed(REQUEST_FAILED));
     }
-    let suffix = text[state.streamed.len()..].to_owned();
-    if !suffix.is_empty() {
-        journal.push(&suffix)?;
-    }
-    state.streamed.clear();
+    state.reset_stream();
     state.last_assistant = Some(AssistantTurn {
         stop: stop.to_owned(),
         calls,
@@ -1763,16 +2384,39 @@ mod tests {
         let mut reporter = reporter;
         let mut journal = Journal::new(&mut reporter, identity);
         let mut state = TurnState::new("session".into(), PathBuf::from("/tmp"));
-        state.streamed.push_str("hel");
+        state.stream_blocks.insert(
+            0,
+            StreamBlock {
+                kind: DisplayKind::Answer,
+                text: "hel".into(),
+                held: String::new(),
+                authoritative: None,
+                displayed: true,
+            },
+        );
+        state.last_stream_index = Some(0);
+        state.max_display_index = Some(0);
         let message = json!({
             "role":"assistant",
             "stopReason":"stop",
             "content":[{"type":"text","text":"hello"}],
         });
         end_assistant(&message, &mut journal, &mut state).unwrap();
-        assert_eq!(journal.text, "lo");
+        assert_eq!(journal.pending, "lo");
+        assert_eq!(journal.pending_kind, Some(DisplayKind::Answer));
         // A contradiction with an already streamed prefix fails.
-        state.streamed.push_str("other");
+        state.stream_blocks.insert(
+            0,
+            StreamBlock {
+                kind: DisplayKind::Answer,
+                text: "other".into(),
+                held: String::new(),
+                authoritative: None,
+                displayed: true,
+            },
+        );
+        state.last_stream_index = Some(0);
+        state.max_display_index = Some(0);
         let message = json!({
             "role":"assistant",
             "stopReason":"stop",

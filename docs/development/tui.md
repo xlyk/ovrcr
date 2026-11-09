@@ -186,8 +186,11 @@ Styled graphemes survive wrapping; the Working journal reserves a two-cell gutte
 before wrapping and decorates only after source-byte anchor calculation. User
 prompts have a mauve cue; assistant/tool activity shares a muted guide. Prose and
 command/output details use the available transcript width after the gutter.
-Adjacent tool calls and outputs stay separate disclosures under their original
-ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs.
+Displayable thinking deltas form a distinct muted `Thinking` paragraph ahead of
+the answer; the final thinking prefix is deduplicated per content block, and
+empty or signature-only thinking adds no row. Adjacent tool calls and outputs stay
+separate disclosures under their original ordinals, without blank rows or
+collapsed raw IDs; expanded details retain IDs.
 Expanded context prints the captured target and the fixed agent workdir separately.
 Successful completion Unread comes from the exact durable turn summary;
 `ModelSelected` updates the header without becoming a journal row.
@@ -201,9 +204,13 @@ transcript, context, writable composer and both rule rectangles for rendering,
 hit-testing and review. The captured target uses the context row above the top rule.
 A single transient journal row follows the latest durable message or receipt,
 aligned after the same two-cell gutter: Sending before submission acceptance,
-Responding throughout Running (including silence), or Waiting for a recorded
-current-turn tool result. Tool waits require caught-up history and match
-call IDs within the current turn; paging/dirty history falls back to Responding.
+Responding throughout Running (including silence), Waiting for a recorded
+current-turn tool result, or Compacting context… while the current turn's last
+durable compaction phase is started. Compaction phase events are durable phase
+state but never render as transcript rows; the matching end event, a terminal
+turn state, or a later turn returns the ordinary activity. The compaction phase
+and tool waits require
+caught-up history: paging/dirty history falls back to Responding.
 Stopping remains explicit and terminal work without stop proof says static
 Stop unconfirmed. Confirmed terminal work removes the indicator. The private
 derived activity decision also requests the shared 100 ms spinner cadence while
