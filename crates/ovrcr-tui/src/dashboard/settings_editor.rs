@@ -209,6 +209,9 @@ enum Overlay {
 struct Pending {
     row: String,
     report_key: String,
+    /// The exact SetSetting path, so a confirmed child value can be resolved
+    /// without comparing it to the whole published parent collection.
+    path: String,
     value: Option<String>,
     /// The report row's value when the request was sent, so a collection
     /// edit can tell the published change apart from an unrelated report.
@@ -1335,6 +1338,7 @@ impl Dashboard {
             Pending {
                 row: row.to_string(),
                 report_key,
+                path: path.clone(),
                 value: value.clone(),
                 before,
                 acknowledged: false,
@@ -2596,6 +2600,49 @@ impl Dashboard {
     }
 }
 
+fn bracket_index(text: &str, prefix: &str) -> Option<usize> {
+    let rest = text.strip_prefix(prefix)?;
+    rest[..rest.find(']')?].parse().ok()
+}
+
+/// The confirmed literal at the request's own path: a collection child value
+/// is resolved from the published typed settings, never from the whole parent
+/// display. Reuses the existing key quoting and TOML literal helpers.
+fn confirmed_child_value(pending: &Pending, report: &SettingsReport) -> Option<String> {
+    match pending.report_key.as_str() {
+        "agents" => {
+            let index = bracket_index(&pending.path, "agents[")
+                .or_else(|| bracket_index(&pending.row, "agents["))?;
+            let agent = report.settings.agents.get(index)?;
+            if pending.path.ends_with(".argv") || pending.row.ends_with(".argv") {
+                Some(toml_array(agent.argv.iter().map(String::as_str)))
+            } else {
+                Some(format!(
+                    "{{ name = {}, argv = {} }}",
+                    toml_string(&agent.name),
+                    toml_array(agent.argv.iter().map(String::as_str))
+                ))
+            }
+        }
+        "picker_roots" => {
+            let index = bracket_index(&pending.path, "picker_roots[")
+                .or_else(|| bracket_index(&pending.row, "picker_roots["))?;
+            let root = report.settings.picker_roots.get(index)?;
+            Some(toml_string(&root.display().to_string()))
+        }
+        "launch_choices" => report
+            .settings
+            .launch_choices
+            .iter()
+            .find(|(project, _)| {
+                let path = format!("launch_choices.{}", toml_edit::Key::new(project.as_str()));
+                path == pending.path || path == pending.row
+            })
+            .map(|(project, choice)| choice_value(project, choice)),
+        _ => None,
+    }
+}
+
 fn pending_exact(pending: &Pending, report: &SettingsReport) -> bool {
     let Some(row) = report.rows.iter().find(|row| row.key == pending.report_key) else {
         return false;
@@ -2603,9 +2650,15 @@ fn pending_exact(pending: &Pending, report: &SettingsReport) -> bool {
     match &pending.value {
         None => row.source == SettingSource::Default,
         Some(value) => {
+            let whole_collection =
+                pending.report_key == pending.row || pending.path == pending.report_key;
+            let confirmed = if whole_collection {
+                row.value.clone()
+            } else {
+                confirmed_child_value(pending, report)
+            };
             row.source == SettingSource::Document
-                && row
-                    .value
+                && confirmed
                     .as_deref()
                     .is_some_and(|actual| same_value(actual, value))
         }
@@ -5229,6 +5282,7 @@ mod tests {
                 Pending {
                     row: row.into(),
                     report_key: "agents".into(),
+                    path: format!("{row}.argv"),
                     value: Some(format!("[\"{row}\"]")),
                     before: Some("old".into()),
                     acknowledged: false,

@@ -703,6 +703,223 @@ fn dashboard_default_theme_save_waits_for_the_document_override_reading() {
 }
 
 #[test]
+fn dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement() {
+    struct Case {
+        name: &'static str,
+        document: &'static str,
+        category: &'static str,
+        summary: &'static str,
+        entries: &'static str,
+        child: &'static str,
+        parent: &'static str,
+        path: &'static str,
+        value: &'static str,
+    }
+
+    let cases = [
+        Case {
+            name: "agent argv",
+            document: "# kept\n[[agents]]\nname = \"claude\"\nargv = [\"claude\"]\n\n[[agents]]\nname = \"codex\"\nargv = [\"codex\", \"--safe\"]\n",
+            category: "Agents",
+            summary: "Agent overrides",
+            entries: "2 entries",
+            child: "claude",
+            parent: "agents",
+            path: "agents[0].argv",
+            value: "[\"claude\"]",
+        },
+        Case {
+            name: "picker root",
+            document: "# kept\npicker_roots = [\"/fixture/one\", \"/fixture/two\", \"/fixture/three\"]\n",
+            category: "Workspaces",
+            summary: "Picker roots",
+            entries: "3 entries",
+            child: "/fixture/one",
+            parent: "picker_roots",
+            path: "picker_roots[0]",
+            value: "\"/fixture/one\"",
+        },
+        Case {
+            name: "remembered launch",
+            document: "# kept\n[launch_choices.demo]\nkind = \"Terminal\"\n\n[launch_choices.other]\nkind = \"Terminal\"\n",
+            category: "Remembered launches",
+            summary: "Remembered launches",
+            entries: "2 entries",
+            child: "demo",
+            parent: "launch_choices",
+            path: "launch_choices.demo",
+            value: "{ kind = \"Terminal\" }",
+        },
+    ];
+
+    for case in cases {
+        let live = fresh();
+        let document = settings_document(&live);
+        std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+        std::fs::write(&document, case.document).unwrap();
+        let log = live.config.join("unchanged-child-server.log");
+        eprintln!(
+            "UNCHANGED_CHILD case={} server_log={}",
+            case.name,
+            log.display()
+        );
+        live.start_binary_logged(&[], &log);
+
+        let (mut attached, initial) = attach_dashboard(&live);
+        assert_eq!(initial.path, document, "{}", case.name);
+        assert!(
+            initial.findings.is_empty(),
+            "{}: {:?}",
+            case.name,
+            initial.findings
+        );
+        assert_eq!(
+            row(&initial, case.parent).source,
+            SettingSource::Document,
+            "{}",
+            case.name
+        );
+
+        open_settings(&mut attached);
+        focus_settings_category(&mut attached, case.category);
+        attached.dashboard.key(KeyCode::Enter);
+        focus_settings_row(&mut attached.dashboard, case.summary);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            focused_dashboard_line_with(&attached.dashboard, case.summary).contains(case.entries),
+            "{}: the collection summary must name its entries:\n{text}",
+            case.name
+        );
+        attached.dashboard.key(KeyCode::Enter);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            text.contains(&format!("{} / {}", case.category, case.summary)),
+            "{}: the manager must identify its collection:\n{text}",
+            case.name
+        );
+        focus_settings_row(&mut attached.dashboard, case.child);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            focused_dashboard_line_with(&attached.dashboard, case.child).contains(case.child),
+            "{}: the manager must focus the existing entry:\n{text}",
+            case.name
+        );
+
+        // Enter opens the prefilled editor or pick list; Enter again submits
+        // the unchanged value.
+        attached.dashboard.key(KeyCode::Enter);
+        attached.dashboard.key(KeyCode::Enter);
+        assert!(
+            dashboard_text(&attached.dashboard).contains("saving…"),
+            "{}: the unchanged save must show pending:\n{}",
+            case.name,
+            dashboard_text(&attached.dashboard)
+        );
+        let mut requests = attached.dashboard.drain_outbox();
+        assert_eq!(
+            requests.len(),
+            1,
+            "{}: expected one SetSetting, got {requests:?}",
+            case.name
+        );
+        let save = requests.remove(0);
+        let request_id = save.request_id;
+        let request = save.request;
+        let Request::SetSetting { path, value } = request.clone() else {
+            panic!("{}: expected SetSetting, got {request:?}", case.name);
+        };
+        assert_eq!(path, case.path, "{}", case.name);
+        assert_eq!(value.as_deref(), Some(case.value), "{}", case.name);
+        let observed = attached.drive(vec![ClientMessage {
+            request_id,
+            request,
+        }]);
+        assert!(
+            observed.iter().any(|message| matches!(
+                message,
+                ServerMessage::Response {
+                    request_id: id,
+                    response: Response::Ok,
+                } if *id == request_id
+            )),
+            "{}: the Server refused the unchanged save: {observed:?}",
+            case.name
+        );
+        assert!(
+            observed
+                .iter()
+                .all(|message| settings_report_of(message).is_none()),
+            "{}: an unchanged child reading must not be republished: {observed:?}",
+            case.name
+        );
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            !text.contains("saving…"),
+            "{}: the ack must settle against the confirmed reading:\n{text}",
+            case.name
+        );
+        assert!(
+            attached.dashboard.drain_outbox().is_empty(),
+            "{}: settling wrote again",
+            case.name
+        );
+
+        let persisted = std::fs::read_to_string(&document).unwrap();
+        assert!(persisted.contains("# kept"), "{}: {persisted}", case.name);
+        let from_file = settings::parse(&document, &persisted);
+        assert!(
+            from_file.findings.is_empty(),
+            "{}: {:?}",
+            case.name,
+            from_file.findings
+        );
+        assert_eq!(
+            row(&from_file, case.parent).source,
+            SettingSource::Document,
+            "{}",
+            case.name
+        );
+        match case.name {
+            "agent argv" => {
+                assert_eq!(from_file.settings.agents.len(), 2, "agent neighbors");
+                assert_eq!(from_file.settings.agents[0].name, "claude");
+                assert_eq!(
+                    from_file.settings.agents[0].argv,
+                    vec!["claude".to_string()]
+                );
+                assert_eq!(from_file.settings.agents[1].name, "codex");
+                assert_eq!(
+                    from_file.settings.agents[1].argv,
+                    vec!["codex".to_string(), "--safe".to_string()]
+                );
+            }
+            "picker root" => {
+                assert_eq!(
+                    from_file.settings.picker_roots,
+                    picker_roots(&["/fixture/one", "/fixture/two", "/fixture/three"])
+                );
+            }
+            "remembered launch" => {
+                assert_eq!(
+                    from_file.settings.launch_choices.len(),
+                    2,
+                    "launch neighbors"
+                );
+                assert_eq!(
+                    from_file.settings.launch_choices.get("demo"),
+                    Some(&ovrcr::protocol::LaunchChoice::Terminal)
+                );
+                assert_eq!(
+                    from_file.settings.launch_choices.get("other"),
+                    Some(&ovrcr::protocol::LaunchChoice::Terminal)
+                );
+            }
+            other => panic!("unhandled case {other}"),
+        }
+    }
+}
+
+#[test]
 fn dashboard_picker_root_reorder_survives_reopen_with_unrelated_values() {
     let live = fresh();
     let document = settings_document(&live);
