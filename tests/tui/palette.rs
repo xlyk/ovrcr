@@ -2688,6 +2688,7 @@ fn palette_finds_settings_by_label_or_key_and_opens_that_row() {
         "Settings opens on the Theme row: {theme}"
     );
     dashboard.key(KeyCode::Esc);
+    dashboard.key(KeyCode::Esc);
     // A key finds its row too; the Operator model is one optional Pi identity.
     palette_search(&mut dashboard, "operator.model");
     dashboard.key(KeyCode::Enter);

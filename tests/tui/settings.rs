@@ -1208,12 +1208,56 @@ fn wide_80x24_frame_pins_sidebar_rows_details_and_footer() {
         .iter()
         .find(|line| line.contains("› Desktop notifications"))
         .expect("selected row marker");
-    assert!(row.find("› Desktop notifications").unwrap() > 20);
-    let (source_x, source_y) = cell_of(&focused, "Source:");
+    assert!(
+        cell_index(row, "› Desktop notifications") > 20,
+        "the selected row stays in the main pane: {row:?}"
+    );
+    assert!(
+        focused.iter().any(|line| line.contains("Value: off")),
+        "the effective value is in the fixed details block: {focused:?}"
+    );
+    assert!(
+        flatten_frame(focused.clone()).contains("permission prompt"),
+        "the full permission warning is visible before scrolling: {focused:?}"
+    );
+    assert!(
+        !focused.iter().any(|line| line.contains("Source:")),
+        "metadata is on demand behind the initial guidance: {focused:?}"
+    );
+
+    // Ctrl-d scrolls the fixed details block to the on-demand metadata without
+    // moving the selected list row.
+    for _ in 0..3 {
+        let text = rendered_rows(&dashboard, 80, 24);
+        if text.iter().any(|line| line.contains("Source:"))
+            && text.iter().any(|line| line.contains("Default: off"))
+        {
+            break;
+        }
+        dashboard.ctrl('d');
+    }
+    let scrolled = rendered_rows(&dashboard, 80, 24);
+    assert!(
+        scrolled
+            .iter()
+            .any(|line| line.contains("› Desktop notifications")),
+        "the list selection does not move: {scrolled:?}"
+    );
+    assert!(
+        scrolled.iter().any(|line| line.contains("Default: off")),
+        "the default is reachable on demand: {scrolled:?}"
+    );
+    let (source_x, source_y) = cell_of(&scrolled, "Source:");
     assert!(
         (16..=22).contains(&source_y) && source_x > 20,
-        "details use the fixed block: {focused:?}"
+        "details keep the fixed block while scrolled: {scrolled:?}"
     );
+    assert!(
+        scrolled[23].contains("Enter turn on"),
+        "the footer keeps naming the toggle action: {:?}",
+        scrolled[23]
+    );
+    assert!(dashboard.drain_outbox().is_empty());
 }
 
 /// At 60 columns Settings shows one pane: a category index first, then a
