@@ -28,7 +28,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const UNPARSEABLE: &str = "Editing is off until dashboard.toml is fixed by hand.";
 const WAITING: &str = "Waiting for the Server's settings reading.";
@@ -214,6 +214,9 @@ struct Pending {
     /// edit can tell the published change apart from an unrelated report.
     before: Option<String>,
     acknowledged: bool,
+    /// The published reading confirms this exact request, but completion
+    /// still waits for the request's own Response so a refusal is not lost.
+    published: bool,
 }
 
 #[derive(Default)]
@@ -228,8 +231,6 @@ pub(super) struct Editor {
     overlays: Vec<Overlay>,
     /// Requests in flight, by request id, and the row each came from.
     pending: HashMap<u64, Pending>,
-    /// Requests already settled before a late acknowledgement arrived.
-    completed: HashSet<u64>,
     /// The Server's refusal, by row id, until that row is edited again.
     refused: HashMap<String, String>,
     notice: Option<String>,
@@ -286,15 +287,56 @@ impl Editor {
     /// been published and clears a resolved unparseable notice.
     pub(super) fn report_published(&mut self, report: &SettingsReport) {
         self.report_seq = self.report_seq.saturating_add(1);
-        let settled: Vec<u64> = self
+        // A published reading confirms at most one queued edit per collection
+        // by its changed parent array; never mark every edit against the same
+        // change. Completion still waits for each request's own Response.
+        let mut confirmed: Vec<u64> = self
             .pending
             .iter()
-            .filter(|(_, pending)| pending_matches(pending, report))
+            .filter(|(_, pending)| !pending.published && pending_exact(pending, report))
             .map(|(id, _)| *id)
             .collect();
-        for id in settled {
+        let mut changed_keys: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| {
+                !pending.published
+                    && pending.report_key != pending.row
+                    && pending_child_changed(pending, report)
+            })
+            .map(|(_, pending)| pending.report_key.clone())
+            .collect();
+        changed_keys.sort();
+        changed_keys.dedup();
+        for key in changed_keys {
+            if let Some(id) = self
+                .pending
+                .iter()
+                .filter(|(id, pending)| {
+                    pending.report_key == key
+                        && pending.report_key != pending.row
+                        && !pending.published
+                        && !confirmed.contains(id)
+                })
+                .map(|(id, _)| *id)
+                .min()
+            {
+                confirmed.push(id);
+            }
+        }
+        for id in confirmed {
+            if let Some(pending) = self.pending.get_mut(&id) {
+                pending.published = true;
+            }
+        }
+        let resolved: Vec<u64> = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| pending.acknowledged && pending.published)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in resolved {
             self.pending.remove(&id);
-            self.completed.insert(id);
         }
         if !report.unparseable && self.notice.as_deref() == Some(UNPARSEABLE) {
             self.notice = None;
@@ -475,18 +517,10 @@ fn top_row(
 ) -> Row {
     let row = top_report_row(report, entry.path);
     let source = row.map_or(SettingSource::Default, |row| row.source);
-    // The Server marks a consent setting that is off. Its off state names the
-    // TOML key for the CLI; here the way on is Enter.
-    let mut lines: Vec<String> = row
-        .and_then(|row| row.off_state.as_ref())
-        .map(|_| match (&kind, report.unparseable) {
-            (_, true) => "Off".to_string(),
-            (Kind::Toggle(_), false) => "Off · Enter to turn on".into(),
-            (_, false) => format!("Off · Enter to set the {}", entry.label.to_lowercase()),
-        })
-        .into_iter()
-        .collect();
-    lines.extend(entry.about.iter().map(|line| line.to_string()));
+    // Guidance and consequence descriptions lead the fixed details block so
+    // permission/access/cost warnings are visible before Enter acts. The
+    // footer names the off action; no duplicate off instruction is needed.
+    let mut lines: Vec<String> = entry.about.iter().map(|line| line.to_string()).collect();
     let raw = row.and_then(|row| row.value.clone());
     let raw_default = row.and_then(|row| row.default.clone());
     let value = display_value(entry.path, &kind, raw.clone());
@@ -909,6 +943,15 @@ fn theme_lines(query: &str) -> (Vec<PickerLine>, Vec<ThemeId>) {
     (lines, matches)
 }
 
+fn point_in(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.right()
+        && row >= area.y
+        && row < area.bottom()
+        && area.width > 0
+        && area.height > 0
+}
+
 fn row_at(area: Rect, row: u16, scroll: usize, count: usize) -> Option<usize> {
     if row < area.y || row >= area.bottom() || area.height == 0 {
         return None;
@@ -1059,6 +1102,57 @@ impl Dashboard {
         self.settings_report.as_deref()
     }
 
+    /// Whether the active editor has a visible row/option to act on. The
+    /// global minimum is not enough: a theme picker can have zero option rows
+    /// at 60x8 while its selected palette remains actionable.
+    fn settings_editor_fits(&self, layout: &Layout) -> bool {
+        if layout.tiny {
+            return false;
+        }
+        let editor = &self.settings_editor;
+        match editor.overlays.last() {
+            Some(Overlay::Theme(_)) => theme_areas(layout.main).options.height > 0,
+            Some(Overlay::Pick(_)) => layout.main.height.saturating_sub(5) > 0,
+            Some(Overlay::Text(_)) => layout.main.height > 3,
+            Some(Overlay::Document(_)) => layout.main.height > 1,
+            Some(Overlay::Manager(_)) => pane_split(layout.main).0.height > 0,
+            None if editor.search.is_some() => pane_split(layout.main).0.height > 1,
+            None if editor.focus == Focus::Categories => {
+                if layout.wide {
+                    pane_split(layout.main).0.height > 0
+                } else {
+                    layout.main.height > 1
+                }
+            }
+            None => pane_split(layout.main).0.height > 0,
+        }
+    }
+
+    fn small_settings_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if super::input::is_browse_key(key) {
+            self.settings_editor.cancel_draft();
+            self.details = None;
+            return DashboardAction::Redraw;
+        }
+        if key.code != KeyCode::Esc {
+            return DashboardAction::Redraw;
+        }
+        if !self.settings_editor.overlays.is_empty() {
+            return self.overlay_key(key);
+        }
+        if self.settings_editor.search.is_some() {
+            return self.search_key(key);
+        }
+        if self.settings_editor.focus == Focus::List {
+            self.settings_editor.focus = Focus::Categories;
+            self.settings_editor.detail_scroll.set(0);
+            return DashboardAction::Redraw;
+        }
+        self.settings_editor.cancel_draft();
+        self.details = None;
+        DashboardAction::Redraw
+    }
+
     fn settings_area(&self) -> Rect {
         let drawn = self.settings_editor.last_area.get();
         let outer = self.outer_area;
@@ -1095,6 +1189,22 @@ impl Dashboard {
         self.report().map_or_else(Vec::new, |report| {
             manager_rows(report, parent, &self.launch_presets())
         })
+    }
+
+    /// Resolve an open editor's row against the latest reading. A frozen
+    /// append index would overwrite an entry another client added while the
+    /// editor was open.
+    fn latest_row(&self, id: &str) -> Option<Row> {
+        let report = self.report()?;
+        if let Some(parent_id) = collection_parent(id) {
+            let parent = top_items(report)
+                .into_iter()
+                .find(|row| row.id == parent_id)?;
+            return manager_rows(report, &parent, &self.launch_presets())
+                .into_iter()
+                .find(|row| row.id == id);
+        }
+        top_items(report).into_iter().find(|row| row.id == id)
     }
 
     /// The collection's current summary. The row captured when the manager
@@ -1196,6 +1306,9 @@ impl Dashboard {
     }
 
     fn send_setting(&mut self, row: &str, path: String, value: Option<String>) -> DashboardAction {
+        if self.editing_disabled() {
+            return DashboardAction::Redraw;
+        }
         let request_id = self.next_request_id();
         let (report_key, before) = self.report().map_or_else(
             || (row.to_string(), None),
@@ -1225,6 +1338,7 @@ impl Dashboard {
                 value: value.clone(),
                 before,
                 acknowledged: false,
+                published: false,
             },
         );
         self.enqueue_request(ClientMessage {
@@ -1338,9 +1452,21 @@ impl Dashboard {
         {
             options = launch_pick_items(report, &self.launch_presets(), &row.label, choice);
         }
+        let canonical = self.report().and_then(|report| {
+            report
+                .rows
+                .iter()
+                .find(|candidate| candidate.key == row.id)
+                .and_then(|candidate| candidate.value.clone())
+        });
         let selected = options
             .iter()
-            .position(|item| item.label == row.value)
+            .position(|item| {
+                item.label == row.value
+                    || canonical
+                        .as_deref()
+                        .is_some_and(|raw| same_value(&item.value, &toml_string(raw)))
+            })
             .unwrap_or(0);
         self.settings_editor
             .overlays
@@ -1467,14 +1593,9 @@ impl Dashboard {
             return DashboardAction::None;
         }
         let area = self.settings_area();
-        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            // Editing and navigation stay frozen behind the resize message;
-            // Esc and Ctrl-g still close, so a trapped user has a safe way out.
-            if key.code == KeyCode::Esc || super::input::is_browse_key(key) {
-                self.settings_editor.cancel_draft();
-                self.details = None;
-            }
-            return DashboardAction::Redraw;
+        let layout = settings_layout(area);
+        if !self.settings_editor_fits(&layout) {
+            return self.small_settings_key(key);
         }
         self.settings_editor.notice = None;
         if super::input::is_browse_key(key) {
@@ -1516,10 +1637,10 @@ impl Dashboard {
 
     pub(super) fn settings_editor_mouse(&mut self, mouse: MouseEvent) -> DashboardAction {
         let area = self.settings_area();
-        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        let layout = settings_layout(area);
+        if !self.settings_editor_fits(&layout) {
             return DashboardAction::Redraw;
         }
-        let layout = settings_layout(area);
         let scroll = matches!(
             mouse.kind,
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
@@ -1557,7 +1678,7 @@ impl Dashboard {
                     let picker = picker.clone();
                     if click {
                         let areas = theme_areas(layout.main);
-                        if mouse.row >= areas.options.y && mouse.row < areas.options.bottom() {
+                        if point_in(areas.options, mouse.column, mouse.row) {
                             let (lines, matches) = theme_lines(&picker.query);
                             let offset =
                                 usize::from(mouse.row - areas.options.y) + picker.scroll.get();
@@ -1588,12 +1709,14 @@ impl Dashboard {
                     let picker = picker.clone();
                     let filtered = split_filtered(&picker.options, &picker.query);
                     if click {
-                        let options_y = layout.main.y.saturating_add(3);
-                        let options_height = layout.main.height.saturating_sub(5);
-                        if mouse.row >= options_y
-                            && mouse.row < options_y.saturating_add(options_height)
-                        {
-                            let index = picker.scroll.get() + usize::from(mouse.row - options_y);
+                        let options = Rect::new(
+                            layout.main.x,
+                            layout.main.y.saturating_add(3),
+                            layout.main.width,
+                            layout.main.height.saturating_sub(5),
+                        );
+                        if point_in(options, mouse.column, mouse.row) {
+                            let index = picker.scroll.get() + usize::from(mouse.row - options.y);
                             if index < filtered.len()
                                 && let Some(Overlay::Pick(current)) =
                                     self.settings_editor.overlays.last_mut()
@@ -1621,7 +1744,11 @@ impl Dashboard {
                         .and_then(|id| rows.iter().position(|row| &row.id == id))
                         .unwrap_or(0);
                     let next = if click {
-                        row_at(list, mouse.row, manager.scroll.get(), rows.len())
+                        if point_in(list, mouse.column, mouse.row) {
+                            row_at(list, mouse.row, manager.scroll.get(), rows.len())
+                        } else {
+                            None
+                        }
                     } else {
                         Some(
                             (current as isize + direction)
@@ -1693,7 +1820,12 @@ impl Dashboard {
                 list.height.saturating_sub(1),
             );
             if click {
-                if let Some(index) = row_at(results, mouse.row, scroll, hits.len()) {
+                let index = if point_in(results, mouse.column, mouse.row) {
+                    row_at(results, mouse.row, scroll, hits.len())
+                } else {
+                    None
+                };
+                if let Some(index) = index {
                     if let Some(search) = &mut self.settings_editor.search {
                         search.selected = index;
                     }
@@ -1723,12 +1855,16 @@ impl Dashboard {
         }
         if self.settings_editor.focus == Focus::Categories && !layout.wide {
             if click {
-                let index = category_at(
-                    layout.content,
-                    mouse.row,
-                    self.settings_editor.category_scroll.get(),
-                    self.categories().len(),
-                );
+                let index = if point_in(layout.content, mouse.column, mouse.row) {
+                    category_at(
+                        layout.content,
+                        mouse.row,
+                        self.settings_editor.category_scroll.get(),
+                        self.categories().len(),
+                    )
+                } else {
+                    None
+                };
                 if let Some(index) = index {
                     self.settings_editor.category = index;
                     self.enter_list();
@@ -1747,12 +1883,16 @@ impl Dashboard {
                 .and_then(|id| rows.iter().position(|row| &row.id == id))
                 .unwrap_or(0);
             let next = if click {
-                row_at(
-                    list,
-                    mouse.row,
-                    self.settings_editor.list_scroll.get(),
-                    rows.len(),
-                )
+                if point_in(list, mouse.column, mouse.row) {
+                    row_at(
+                        list,
+                        mouse.row,
+                        self.settings_editor.list_scroll.get(),
+                        rows.len(),
+                    )
+                } else {
+                    None
+                }
             } else {
                 Some(
                     (current as isize + direction).clamp(0, rows.len().saturating_sub(1) as isize)
@@ -2020,6 +2160,13 @@ impl Dashboard {
         let Some(mut overlay) = self.settings_editor.overlays.pop() else {
             return DashboardAction::Redraw;
         };
+        if key.code == KeyCode::Enter
+            && !matches!(&overlay, Overlay::Document(_))
+            && self.editing_disabled()
+        {
+            self.settings_editor.overlays.push(overlay);
+            return DashboardAction::Redraw;
+        }
         let mut keep = true;
         let mut pending_open: Option<Row> = None;
         let mut action = DashboardAction::Redraw;
@@ -2236,8 +2383,14 @@ impl Dashboard {
                     }
                     KeyCode::Enter => {
                         if editor.row.id.ends_with('+') && editor.text.trim().is_empty() {
-                            self.settings_editor.notice =
-                                Some("Enter a value before saving".into());
+                            self.settings_editor.notice = Some(
+                                match editor.row.id.as_str() {
+                                    "agents+" => "Enter a name before saving",
+                                    "launch_choices+" => "Enter a project before saving",
+                                    _ => "Enter a value before saving",
+                                }
+                                .into(),
+                            );
                         } else {
                             keep = false;
                             action = self.commit_text(editor.clone());
@@ -2292,6 +2445,9 @@ impl Dashboard {
     }
 
     fn manager_activate(&mut self, row: Row) -> DashboardAction {
+        if self.editing_disabled() {
+            return DashboardAction::Redraw;
+        }
         if row.id.ends_with('+') {
             return self.open_text(row);
         }
@@ -2304,7 +2460,10 @@ impl Dashboard {
     }
 
     fn commit_text(&mut self, editor: TextEditor) -> DashboardAction {
-        let row = editor.row.clone();
+        let Some(row) = self.latest_row(&editor.row.id) else {
+            self.settings_editor.notice = Some("The Server reading no longer has this row".into());
+            return DashboardAction::Redraw;
+        };
         let text = editor.text.trim().to_string();
         let value = match &row.kind {
             Kind::Toml | Kind::Typed(_) => text.clone(),
@@ -2396,9 +2555,6 @@ impl Dashboard {
         request_id: u64,
         response: &Response,
     ) -> bool {
-        if self.settings_editor.completed.remove(&request_id) {
-            return true;
-        }
         let Some(pending) = self.settings_editor.pending.get(&request_id) else {
             return false;
         };
@@ -2415,28 +2571,81 @@ impl Dashboard {
             }
             return true;
         }
-        // An acknowledgement means the Server accepted the request; the row
-        // stays pending until a SettingsChanged publishes the effective value.
+        // An acknowledgement means the Server accepted the request. If the
+        // confirmed reading already satisfies it exactly (a no-op save), no
+        // SettingsChanged follows, so settle here; otherwise wait for the
+        // published effective value.
         if let Some(pending) = self.settings_editor.pending.get_mut(&request_id) {
             pending.acknowledged = true;
+        }
+        let satisfied = self
+            .settings_editor
+            .pending
+            .get(&request_id)
+            .is_some_and(|pending| {
+                pending.published
+                    || self
+                        .settings_report
+                        .as_deref()
+                        .is_some_and(|report| pending_exact(pending, report))
+            });
+        if satisfied {
+            self.settings_editor.pending.remove(&request_id);
         }
         true
     }
 }
 
-fn pending_matches(pending: &Pending, report: &SettingsReport) -> bool {
+fn pending_exact(pending: &Pending, report: &SettingsReport) -> bool {
     let Some(row) = report.rows.iter().find(|row| row.key == pending.report_key) else {
         return false;
     };
-    let child = pending.report_key != pending.row;
-    let changed = pending.before.as_deref() != row.value.as_deref();
     match &pending.value {
-        None => row.source == SettingSource::Default || (child && changed),
+        None => row.source == SettingSource::Default,
         Some(value) => {
-            row.value
-                .as_deref()
-                .is_some_and(|actual| same_value(actual, value))
-                || (child && changed)
+            row.source == SettingSource::Document
+                && row
+                    .value
+                    .as_deref()
+                    .is_some_and(|actual| same_value(actual, value))
+        }
+    }
+}
+
+fn pending_child_changed(pending: &Pending, report: &SettingsReport) -> bool {
+    let Some(row) = report.rows.iter().find(|row| row.key == pending.report_key) else {
+        return false;
+    };
+    pending.before.as_deref() != row.value.as_deref()
+}
+
+/// Normalize one editor-submitted TOML literal and one published display value
+/// without reading or validating the settings document. The Server remains the
+/// validation authority; this only recognizes that semantically equal values
+/// (for example `1_0` and `10`) are the same confirmed write.
+fn canonical_toml(value: &toml_edit::Value) -> String {
+    use toml_edit::Value;
+    match value {
+        Value::String(value) => format!("s:{:?}", value.value()),
+        Value::Integer(value) => format!("i:{}", value.value()),
+        Value::Float(value) => format!("f:{:?}", value.value()),
+        Value::Boolean(value) => format!("b:{}", value.value()),
+        Value::Datetime(value) => format!("d:{}", value.value()),
+        Value::Array(items) => format!(
+            "a:[{}]",
+            items
+                .iter()
+                .map(canonical_toml)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Value::InlineTable(table) => {
+            let mut pairs: Vec<String> = table
+                .iter()
+                .map(|(key, value)| format!("{key}={}", canonical_toml(value)))
+                .collect();
+            pairs.sort();
+            format!("t:{{{}}}", pairs.join(","))
         }
     }
 }
@@ -2444,6 +2653,12 @@ fn pending_matches(pending: &Pending, report: &SettingsReport) -> bool {
 fn same_value(published: &str, submitted: &str) -> bool {
     if published == submitted || published == unquote(submitted) {
         return true;
+    }
+    if let (Ok(published), Ok(submitted)) = (
+        published.parse::<toml_edit::Value>(),
+        submitted.parse::<toml_edit::Value>(),
+    ) {
+        return canonical_toml(&published) == canonical_toml(&submitted);
     }
     // Typed arrays and the whole picker-root list can differ only in the
     // whitespace toml_edit chooses.
@@ -2712,7 +2927,7 @@ impl Dashboard {
         frame.render_widget(Clear, area);
         frame.render_widget(Block::default().style(Style::default().bg(BASE())), area);
         let layout = settings_layout(area);
-        if layout.tiny {
+        if !self.settings_editor_fits(&layout) {
             frame.render_widget(
                 Paragraph::new(Line::styled(
                     TOO_SMALL,
@@ -3070,7 +3285,7 @@ impl Dashboard {
         manager: Option<&Manager>,
     ) {
         let width = usize::from(area.width).saturating_sub(2);
-        let lines = if let Some(manager) = manager {
+        let mut lines = if let Some(manager) = manager {
             self.manager_detail_lines(manager, report, now, width)
         } else if let Some(row) = row {
             self.row_detail_lines(&row, report, now, width)
@@ -3081,6 +3296,18 @@ impl Dashboard {
         } else {
             self.selected_detail_lines(report, now, width)
         };
+        if let Some(notice) = &self.settings_editor.notice {
+            let mut notice_lines = Vec::new();
+            push_wrapped(
+                &mut notice_lines,
+                &format!("! {notice}"),
+                Style::default().fg(PEACH()),
+                width,
+                "",
+            );
+            notice_lines.extend(lines);
+            lines = notice_lines;
+        }
         let total = lines.len();
         let height = usize::from(area.height);
         let max_scroll = total.saturating_sub(height);
@@ -3208,9 +3435,9 @@ impl Dashboard {
                 "",
             );
         }
-        // Guidance first, then source/default/reset, then the rest of the
-        // explanation. Consent consequences stay in the fixed narrow block.
-        if let Some(about) = row.about.first() {
+        // Permission/access/cost guidance precedes metadata; Source, Default
+        // and Reset stay reachable through the fixed details scroll.
+        for about in &row.about {
             push_wrapped(&mut lines, about, Style::default().fg(SUBTEXT()), width, "");
         }
         if let Some(source) = row.source {
@@ -3247,9 +3474,6 @@ impl Dashboard {
                 };
                 push_wrapped(&mut lines, &reset, Style::default().fg(PEACH()), width, "");
             }
-        }
-        for about in row.about.iter().skip(1) {
-            push_wrapped(&mut lines, about, Style::default().fg(SUBTEXT()), width, "");
         }
         if !row.path.is_empty() {
             push_wrapped(
@@ -3660,6 +3884,15 @@ impl Dashboard {
         }
         let preview = matches.get(picker.selected).copied();
         let mut summary = Vec::new();
+        if let Some(notice) = &self.settings_editor.notice {
+            push_wrapped(
+                &mut summary,
+                &format!("! {notice}"),
+                Style::default().fg(PEACH()),
+                usize::from(areas.summary.width),
+                "",
+            );
+        }
         match preview {
             Some(theme) if theme != saved => summary.push(Line::from(vec![
                 Span::styled("Preview: ", Style::default().fg(MAUVE())),
@@ -3771,10 +4004,18 @@ impl Dashboard {
         }
         frame.render_widget(Paragraph::new(lines), options_area);
         let summary = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
+        let summary_text = self.settings_editor.notice.as_ref().map_or_else(
+            || format!("Current: {}", picker.row.value),
+            |notice| format!("! {notice}"),
+        );
         frame.render_widget(
             Paragraph::new(Line::styled(
-                format!("Current: {}", picker.row.value),
-                Style::default().fg(SUBTEXT()),
+                summary_text,
+                Style::default().fg(if self.settings_editor.notice.is_some() {
+                    PEACH()
+                } else {
+                    SUBTEXT()
+                }),
             )),
             summary,
         );
@@ -3792,6 +4033,15 @@ impl Dashboard {
             Span::styled("Value: ", Style::default().fg(MAUVE())),
             Span::styled(display, Style::default().fg(TEXT())),
         ]));
+        if let Some(notice) = &self.settings_editor.notice {
+            push_wrapped(
+                &mut lines,
+                &format!("! {notice}"),
+                Style::default().fg(PEACH()),
+                usize::from(area.width).saturating_sub(2),
+                "",
+            );
+        }
         match &editor.row.kind {
             Kind::Toml => lines.push(Line::styled(
                 "TOML array, e.g. [\"claude\", \"--verbose\"] · Enter saves · Esc cancels"
@@ -3942,7 +4192,7 @@ mod tests {
         TerminalSize,
     };
     use ratatui::backend::TestBackend;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::path::PathBuf;
 
     fn report(settings: Settings, document: &[&str]) -> SettingsReport {
@@ -4349,11 +4599,15 @@ mod tests {
             Some(Overlay::Theme(_))
         ));
         dashboard.key(KeyCode::Enter);
-        let (_, path, value) = setting_request(&mut dashboard);
+        let (request_id, path, value) = setting_request(&mut dashboard);
         assert_eq!(path, ThemeId::KEY);
         assert_eq!(value.as_deref(), Some("\"catppuccin-mocha\""));
         assert!(dashboard.settings_editor.preview_request.is_some());
         assert!(dashboard.settings_editor.overlays.is_empty());
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Ok,
+        });
 
         install(&mut dashboard, report(Settings::default(), &[ThemeId::KEY]));
         assert!(dashboard.settings_editor.pending.is_empty());
@@ -4830,6 +5084,238 @@ mod tests {
             dashboard.settings_editor.selected.as_deref(),
             Some("ready_sound")
         );
+    }
+
+    #[test]
+    fn published_report_waits_for_its_own_response_and_keeps_refusal() {
+        let mut dashboard = fresh_dashboard();
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Enter);
+        let (request_id, path, _) = setting_request(&mut dashboard);
+        let mut saved = dashboard.settings.clone();
+        saved.desktop_notifications = true;
+        install(&mut dashboard, report(saved, &["desktop_notifications"]));
+        assert_eq!(
+            dashboard.settings_editor.pending.len(),
+            1,
+            "publication alone does not complete the request"
+        );
+        assert!(
+            dashboard
+                .settings_editor
+                .pending
+                .get(&request_id)
+                .is_some_and(|pending| pending.published)
+        );
+        assert!(frame_text(&mut dashboard, 120, 40).contains("saving…"));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Error {
+                code: ErrorCode::InvalidRequest,
+                message: "late refusal".into(),
+            },
+        });
+        assert!(dashboard.settings_editor.pending.is_empty());
+        assert_eq!(
+            dashboard
+                .settings_editor
+                .refused
+                .get(&path)
+                .map(String::as_str),
+            Some("late refusal")
+        );
+    }
+
+    #[test]
+    fn acknowledged_noop_save_settles_but_default_override_waits_for_source() {
+        let mut dashboard = fresh_dashboard();
+        install(
+            &mut dashboard,
+            report(
+                Settings {
+                    theme: ThemeId::Nord,
+                    ..Settings::default()
+                },
+                &[ThemeId::KEY],
+            ),
+        );
+        choose_row(&mut dashboard, ThemeId::KEY);
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Enter);
+        let (request_id, _, value) = setting_request(&mut dashboard);
+        assert_eq!(value.as_deref(), Some("\"nord\""));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Ok,
+        });
+        assert!(
+            dashboard.settings_editor.pending.is_empty(),
+            "an already-explicit identical value needs no publication"
+        );
+
+        let mut dashboard = fresh_dashboard();
+        choose_row(&mut dashboard, ThemeId::KEY);
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Enter);
+        let (request_id, _, value) = setting_request(&mut dashboard);
+        assert_eq!(value.as_deref(), Some("\"catppuccin-mocha\""));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Ok,
+        });
+        assert_eq!(
+            dashboard.settings_editor.pending.len(),
+            1,
+            "an explicit default override waits for the document-source reading"
+        );
+        install(&mut dashboard, report(Settings::default(), &[ThemeId::KEY]));
+        assert!(dashboard.settings_editor.pending.is_empty());
+    }
+
+    #[test]
+    fn normalized_typed_literal_confirms_against_published_value() {
+        let mut dashboard = fresh_dashboard();
+        choose_row(&mut dashboard, "delegation.max_live_children");
+        dashboard.key(KeyCode::Enter);
+        let length = dashboard
+            .settings_editor
+            .overlays
+            .last()
+            .and_then(|overlay| match overlay {
+                Overlay::Text(editor) => Some(editor.text.len()),
+                _ => None,
+            })
+            .unwrap();
+        for _ in 0..length {
+            dashboard.key(KeyCode::Backspace);
+        }
+        dashboard.settings_editor_paste("1_0");
+        dashboard.key(KeyCode::Enter);
+        let (request_id, path, value) = setting_request(&mut dashboard);
+        assert_eq!(path, "delegation.max_live_children");
+        assert_eq!(value.as_deref(), Some("1_0"));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Ok,
+        });
+        assert_eq!(dashboard.settings_editor.pending.len(), 1);
+        install(
+            &mut dashboard,
+            report(
+                Settings {
+                    delegation: ovrcr_protocol::DelegationSettings {
+                        max_live_children: 10,
+                        ..Default::default()
+                    },
+                    ..Settings::default()
+                },
+                &["delegation.max_live_children"],
+            ),
+        );
+        assert!(
+            dashboard.settings_editor.pending.is_empty(),
+            "1_0 and 10 are the same published integer"
+        );
+        let text = frame_text(&mut dashboard, 120, 40);
+        assert!(text.contains("Value: 10"), "{text}");
+    }
+
+    #[test]
+    fn one_parent_change_confirms_only_one_queued_collection_edit() {
+        let mut dashboard = fresh_dashboard();
+        for (id, row) in [(10u64, "agents[0]"), (11u64, "agents[1]")] {
+            dashboard.settings_editor.pending.insert(
+                id,
+                Pending {
+                    row: row.into(),
+                    report_key: "agents".into(),
+                    value: Some(format!("[\"{row}\"]")),
+                    before: Some("old".into()),
+                    acknowledged: false,
+                    published: false,
+                },
+            );
+        }
+        install(
+            &mut dashboard,
+            report(
+                Settings {
+                    agents: vec![
+                        AgentOverride {
+                            name: "one".into(),
+                            argv: vec!["one".into()],
+                        },
+                        AgentOverride {
+                            name: "two".into(),
+                            argv: vec!["two".into()],
+                        },
+                    ],
+                    ..Settings::default()
+                },
+                &["agents"],
+            ),
+        );
+        assert!(dashboard.settings_editor.pending[&10].published);
+        assert!(
+            !dashboard.settings_editor.pending[&11].published,
+            "one changed parent array confirms one queued edit"
+        );
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: 11,
+            response: Response::Error {
+                code: ErrorCode::InvalidRequest,
+                message: "second edit refused".into(),
+            },
+        });
+        assert!(!dashboard.settings_editor.pending.contains_key(&11));
+        assert_eq!(
+            dashboard
+                .settings_editor
+                .refused
+                .get("agents[1]")
+                .map(String::as_str),
+            Some("second edit refused")
+        );
+    }
+
+    #[test]
+    fn tiny_theme_picker_shows_resize_and_never_writes() {
+        let mut dashboard = fresh_dashboard();
+        choose_row(&mut dashboard, ThemeId::KEY);
+        dashboard.key(KeyCode::Enter);
+        dashboard.settings_editor_paste("tokyo");
+        dashboard.install_area(Rect::new(0, 0, 60, 8));
+        let text = frame_text(&mut dashboard, 60, 8);
+        assert!(text.contains(TOO_SMALL), "{text}");
+        dashboard.key(KeyCode::Enter);
+        assert!(dashboard.drain_outbox().is_empty());
+        assert!(matches!(
+            dashboard.settings_editor.overlays.last(),
+            Some(Overlay::Theme(_))
+        ));
+        dashboard.install_area(Rect::new(0, 0, 60, 24));
+        let text = frame_text(&mut dashboard, 60, 24);
+        assert!(text.contains("Find a theme: tokyo"), "{text}");
+        assert_eq!(
+            dashboard.settings_editor.preview_theme,
+            Some(ThemeId::TokyoNight)
+        );
+    }
+
+    #[test]
+    fn empty_add_notice_is_visible_and_writes_nothing() {
+        let mut dashboard = fresh_dashboard();
+        choose_row(&mut dashboard, "agents");
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Char('a'));
+        dashboard.key(KeyCode::Enter);
+        assert!(dashboard.drain_outbox().is_empty());
+        let text = frame_text(&mut dashboard, 120, 40);
+        assert!(text.contains("! Enter a name before saving"), "{text}");
+        assert!(matches!(
+            dashboard.settings_editor.overlays.last(),
+            Some(Overlay::Text(_))
+        ));
     }
 
     #[test]

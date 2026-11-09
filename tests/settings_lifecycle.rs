@@ -499,6 +499,210 @@ fn dashboard_theme_save_and_cancel_round_trip_through_the_server() {
 }
 
 #[test]
+fn dashboard_same_document_theme_save_settles_without_a_publish() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, "# kept\ntheme = \"nord\"\n").unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    assert_eq!(initial.path, document);
+    assert_eq!(initial.settings.theme, ThemeId::Nord);
+    assert_eq!(row(&initial, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(row(&initial, ThemeId::KEY).value.as_deref(), Some("nord"));
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Nord"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Nord").contains("Saved"),
+        "the documented theme must open focused:\n{text}"
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    // Enter on the already-documented choice still submits its canonical ID.
+    attached.dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard_text(&attached.dashboard).contains("saving…"),
+        "Enter must show a pending save:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    let save = take_dashboard_request(&mut attached.dashboard);
+    let request_id = save.request_id;
+    let request = save.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("Enter must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, ThemeId::KEY);
+    assert_eq!(value.as_deref(), Some("\"nord\""));
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the unchanged save: {observed:?}"
+    );
+    assert!(
+        observed
+            .iter()
+            .all(|message| settings_report_of(message).is_none()),
+        "an unchanged reading must not be republished: {observed:?}"
+    );
+    assert!(
+        !dashboard_text(&attached.dashboard).contains("saving…"),
+        "the ack must settle against the confirmed reading without a report:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    close_settings(&mut attached);
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Nord"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Nord").contains("Saved"),
+        "reopening must still show the documented theme:\n{text}"
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+    close_settings(&mut attached);
+    drop(attached);
+
+    // The private document and the Server reading still agree.
+    let mut socket = attach(&live);
+    let hello = settings_event(&mut socket);
+    assert_eq!(hello.path, document);
+    assert_eq!(hello.settings.theme, ThemeId::Nord);
+    assert_eq!(row(&hello, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(row(&hello, ThemeId::KEY).value.as_deref(), Some("nord"));
+    assert!(hello.findings.is_empty(), "{:?}", hello.findings);
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# kept"), "{persisted}");
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.theme, ThemeId::Nord);
+    assert_eq!(
+        row(&from_file, ThemeId::KEY).source,
+        SettingSource::Document
+    );
+}
+
+#[test]
+fn dashboard_default_theme_save_waits_for_the_document_override_reading() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, "# kept\nbranch_prefix = \"kept/\"\n").unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    assert_eq!(initial.settings.theme, ThemeId::Dark);
+    assert_eq!(row(&initial, ThemeId::KEY).source, SettingSource::Default);
+    assert_eq!(
+        row(&initial, ThemeId::KEY).value.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert_eq!(
+        row(&initial, ThemeId::KEY).default.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Catppuccin Mocha"), "{text}");
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    // The effective value equals the default, but the write creates a
+    // document override: its changed source must arrive as a reading.
+    attached.dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard_text(&attached.dashboard).contains("saving…"),
+        "Enter must show a pending save:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    let save = take_dashboard_request(&mut attached.dashboard);
+    let request_id = save.request_id;
+    let request = save.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("Enter must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, ThemeId::KEY);
+    assert_eq!(value.as_deref(), Some("\"catppuccin-mocha\""));
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the default override: {observed:?}"
+    );
+    let saved = observed
+        .iter()
+        .rev()
+        .find_map(settings_report_of)
+        .filter(|report| {
+            report.settings.theme == ThemeId::Dark
+                && row(report, ThemeId::KEY).source == SettingSource::Document
+        })
+        .unwrap_or_else(|| {
+            attached.await_settings("the document override was not published", |report| {
+                report.settings.theme == ThemeId::Dark
+                    && row(report, ThemeId::KEY).source == SettingSource::Document
+            })
+        });
+    assert_eq!(saved.settings.theme, ThemeId::Dark);
+    assert_eq!(row(&saved, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(
+        row(&saved, ThemeId::KEY).value.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert_eq!(saved.settings.branch_prefix, "kept/");
+    assert!(saved.findings.is_empty(), "{:?}", saved.findings);
+    assert!(
+        !dashboard_text(&attached.dashboard).contains("saving…"),
+        "the published override must end the pending state:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# kept"), "{persisted}");
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.theme, ThemeId::Dark);
+    assert_eq!(
+        row(&from_file, ThemeId::KEY).source,
+        SettingSource::Document
+    );
+    assert_eq!(from_file.settings.branch_prefix, "kept/");
+    assert!(from_file.findings.is_empty(), "{:?}", from_file.findings);
+
+    close_settings(&mut attached);
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Catppuccin Mocha"), "{text}");
+    assert!(attached.dashboard.drain_outbox().is_empty());
+    close_settings(&mut attached);
+}
+
+#[test]
 fn dashboard_picker_root_reorder_survives_reopen_with_unrelated_values() {
     let live = fresh();
     let document = settings_document(&live);

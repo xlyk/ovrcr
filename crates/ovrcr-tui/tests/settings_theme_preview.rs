@@ -505,6 +505,100 @@ fn theme_picker_presentation_at_80_and_60_and_mouse_preview() {
     assert_eq!(background(&dashboard), theme_background(ThemeId::Dark));
 }
 
+/// A wide picker click in the sidebar must not preview the theme option that
+/// happens to share its row; clicking the option itself still previews.
+#[test]
+fn sidebar_click_aligned_with_a_theme_option_does_not_preview() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut dashboard = dashboard();
+    open_theme_picker(&mut dashboard);
+    let rows = visible_rows(&dashboard, 80, 24);
+    let y = rows
+        .iter()
+        .position(|line| line.contains("Tokyo Night"))
+        .expect("Tokyo Night option");
+    assert!(
+        rows[y].contains("Agents"),
+        "the fixture aligns the Agents category with the option row:\n{}",
+        rows.join("\n")
+    );
+    let column = |line: &str, needle: &str| {
+        let byte = line.find(needle).unwrap();
+        line[..byte].chars().count() as u16
+    };
+    let option_x = column(&rows[y], "Tokyo Night");
+    let click = |dashboard: &mut Dashboard, x: u16| {
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: x,
+                row: y as u16,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 80, 24),
+        )
+    };
+
+    let _ = visible_rows(&dashboard, 80, 24);
+    assert_eq!(click(&mut dashboard, 2), DashboardAction::Redraw);
+    assert_eq!(
+        highlighted_theme(&dashboard),
+        ThemeId::Dark,
+        "a sidebar click must not preview an aligned option"
+    );
+    assert_eq!(background(&dashboard), theme_background(ThemeId::Dark));
+    assert!(dashboard.drain_outbox().is_empty());
+
+    let _ = visible_rows(&dashboard, 80, 24);
+    click(&mut dashboard, option_x);
+    assert_eq!(
+        highlighted_theme(&dashboard),
+        ThemeId::TokyoNight,
+        "clicking the option itself previews it"
+    );
+    assert_eq!(
+        background(&dashboard),
+        theme_background(ThemeId::TokyoNight)
+    );
+    assert!(dashboard.drain_outbox().is_empty());
+}
+
+/// A picker whose option area has zero height reports the resize and cannot
+/// submit; the same draft and highlight return once enough rows exist.
+#[test]
+fn zero_height_theme_options_block_saves_and_preserve_the_draft() {
+    let mut dashboard = dashboard();
+    open_theme_picker(&mut dashboard);
+    dashboard.event_action(Event::Paste("tokyo".into()));
+    assert_eq!(highlighted_theme(&dashboard), ThemeId::TokyoNight);
+
+    for rows in [8u16, 9u16] {
+        let text = visible_text(&dashboard, 60, rows).to_lowercase();
+        assert!(
+            text.contains("resize") || text.contains("larger terminal"),
+            "a zero-height option area must explain the resize at 60x{rows}:\n{text}"
+        );
+        dashboard.key(KeyCode::Enter);
+        assert!(
+            dashboard.drain_outbox().is_empty(),
+            "Enter must not save with no visible options at 60x{rows}"
+        );
+    }
+
+    let text = visible_text(&dashboard, 60, 24);
+    assert!(
+        text.contains("Find a theme: tokyo"),
+        "the filter draft survives:\n{text}"
+    );
+    assert!(
+        text.contains("› Tokyo Night"),
+        "the saved highlight survives:\n{text}"
+    );
+    assert!(dashboard.drain_outbox().is_empty());
+}
+
 #[test]
 fn enter_sends_the_canonical_id_for_every_grouped_choice() {
     let mut choices = ThemeId::ALL.to_vec();

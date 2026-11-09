@@ -61,6 +61,23 @@ fn screen(dashboard: &Dashboard) -> String {
     rendered_rows(dashboard, 120, 60).join("\n")
 }
 
+/// Join the main pane's wrapped text into one whitespace-normalized line.
+/// The wide sidebar and its `│` divider are stripped per row so a word wrapped
+/// across rows stays adjacent instead of acquiring sidebar glyphs.
+fn flatten_frame(rows: Vec<String>) -> String {
+    rows.into_iter()
+        .map(|line| match line.chars().position(|ch| ch == '│') {
+            Some(divider) => line.chars().skip(divider + 1).collect::<String>(),
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 fn count_label(entries: usize) -> String {
     match entries {
         1 => "1 entry".into(),
@@ -1873,6 +1890,345 @@ fn collection_manager_edits_agents_without_reordering_neighbors() {
             .unwrap()
             .contains("[launch_choices.demo]"),
         "unrelated entries survive"
+    );
+}
+
+/// An open Add-agent draft must append to the reading published after it
+/// opened, preserving agents added elsewhere instead of overwriting one.
+#[test]
+fn add_agent_draft_appends_after_an_external_reading() {
+    let original = "[[agents]]\nname = \"claude\"\nargv = [\"claude\"]\n";
+    let (mut dashboard, _root, document) = editor(original);
+    select(&mut dashboard, "agent overrides");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Char('a'));
+    assert!(
+        screen(&dashboard).contains("Add agent"),
+        "the draft names the collection:\n{}",
+        screen(&dashboard)
+    );
+
+    let external = format!(
+        "{original}\n[[agents]]\nname = \"codex\"\nargv = [\"codex\"]\n\n[launch_choices.demo]\nkind = \"Terminal\"\n"
+    );
+    std::fs::write(&document, &external).unwrap();
+    publish(&mut dashboard, &document);
+    dashboard.event_action(Event::Paste("new".into()));
+    let (path, value) = serve(&mut dashboard, &document, KeyCode::Enter);
+    assert!(path.starts_with("agents"), "{path}");
+    assert!(value.is_some(), "{value:?}");
+    let reading = dashboard_reading(&document);
+    assert_eq!(
+        reading
+            .settings
+            .agents
+            .iter()
+            .map(|agent| agent.name.as_str())
+            .collect::<Vec<_>>(),
+        ["claude", "codex", "new"],
+        "the draft appends after externally added agents"
+    );
+    assert!(
+        reading.settings.launch_choices.contains_key("demo"),
+        "unrelated settings survive the append"
+    );
+}
+
+/// A saved sound remains the picker's canonical selection while its row reads
+/// inactive; Enter saves that sound, not the default option.
+#[cfg(target_os = "macos")]
+#[test]
+fn inactive_saved_sound_picker_highlights_the_saved_choice() {
+    for (choice, label, contents) in [
+        ("tap", "Tap", "ready_sound_choice = \"tap\"\n"),
+        (
+            "chime",
+            "Chime",
+            "desktop_notifications = true\nready_sound_choice = \"chime\"\n",
+        ),
+        ("rise", "Rise", "ready_sound_choice = \"rise\"\n"),
+    ] {
+        let (mut dashboard, _root, document) = editor(contents);
+        select(&mut dashboard, "ready_sound_choice");
+        assert!(
+            focused_line_with(&dashboard, "Ready sound choice").contains("inactive"),
+            "{contents}"
+        );
+        assert!(dashboard.drain_outbox().is_empty());
+        dashboard.key(KeyCode::Enter);
+        assert!(
+            focused_line_with(&dashboard, label).contains(label),
+            "the saved {label} choice stays highlighted:\n{}",
+            screen(&dashboard)
+        );
+        assert!(
+            !screen(&dashboard).contains("› System default"),
+            "the default must not replace the saved choice:\n{}",
+            screen(&dashboard)
+        );
+        let (path, value) = serve(&mut dashboard, &document, KeyCode::Enter);
+        assert_eq!(path, "ready_sound_choice");
+        let expected = format!("\"{choice}\"");
+        assert_eq!(value.as_deref(), Some(expected.as_str()));
+        assert!(
+            focused_line_with(&dashboard, "Ready sound choice").contains(label),
+            "{contents}"
+        );
+    }
+}
+
+/// Empty collection drafts and collection-boundary actions leave visible
+/// feedback and never submit a setting.
+#[test]
+fn collection_drafts_and_boundaries_report_feedback_without_writes() {
+    let (mut dashboard, _root, document) = editor("");
+    let before = std::fs::read_to_string(&document).unwrap();
+    select(&mut dashboard, "agent overrides");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "an empty add must not write"
+    );
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), before);
+    let text = screen(&dashboard).to_lowercase();
+    assert!(
+        text.contains("name") && (text.contains("saving") || text.contains("save")),
+        "the empty add explains what is missing:\n{}",
+        screen(&dashboard)
+    );
+
+    let (mut dashboard, _root, document) = editor("picker_roots = [\"/a\", \"/b\"]\n");
+    select(&mut dashboard, "picker_roots");
+    dashboard.key(KeyCode::Enter);
+    focus_row(&mut dashboard, "/a");
+    dashboard.key(KeyCode::Char('['));
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        screen(&dashboard)
+            .to_lowercase()
+            .contains("first picker root"),
+        "the first-root boundary is reported:\n{}",
+        screen(&dashboard)
+    );
+    focus_row(&mut dashboard, "/b");
+    dashboard.key(KeyCode::Char(']'));
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        screen(&dashboard)
+            .to_lowercase()
+            .contains("last picker root"),
+        "the last-root boundary is reported:\n{}",
+        screen(&dashboard)
+    );
+    assert_eq!(
+        dashboard_reading(&document).settings.picker_roots,
+        [PathBuf::from("/a"), PathBuf::from("/b")]
+    );
+
+    let (mut dashboard, _root, document) = editor("");
+    select(&mut dashboard, "picker_roots");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Char('r'));
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        screen(&dashboard)
+            .to_lowercase()
+            .contains("already its default"),
+        "resetting an inherited collection is reported:\n{}",
+        screen(&dashboard)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        "",
+        "a default collection reset writes nothing"
+    );
+}
+
+/// Two queued agent edits share the parent report row. A reading that changed
+/// only the first must leave the second pending, so its refusal stays visible.
+#[test]
+fn queued_agent_edits_keep_their_own_reply_association() {
+    let contents = "\
+[[agents]]
+name = \"claude\"
+argv = [\"claude\"]
+
+[[agents]]
+name = \"codex\"
+argv = [\"codex\"]
+";
+    let (mut dashboard, _root, document) = editor(contents);
+    select(&mut dashboard, "agent overrides");
+    dashboard.key(KeyCode::Enter);
+
+    focus_row(&mut dashboard, "claude");
+    dashboard.key(KeyCode::Enter);
+    for _ in 0..24 {
+        dashboard.key(KeyCode::Backspace);
+    }
+    dashboard.event_action(Event::Paste("[\"claude\", \"--verbose\"]".into()));
+    dashboard.key(KeyCode::Enter);
+    let first = only_request(dashboard.drain_outbox());
+
+    focus_row(&mut dashboard, "codex");
+    dashboard.key(KeyCode::Enter);
+    for _ in 0..24 {
+        dashboard.key(KeyCode::Backspace);
+    }
+    dashboard.event_action(Event::Paste("[\"codex\", \"--verbose\"]".into()));
+    dashboard.key(KeyCode::Enter);
+    let second = only_request(dashboard.drain_outbox());
+    assert_ne!(first.request_id, second.request_id);
+
+    // The first Server write updates only claude; codex is still in flight.
+    let first_saved = "\
+[[agents]]
+name = \"claude\"
+argv = [\"claude\", \"--verbose\"]
+
+[[agents]]
+name = \"codex\"
+argv = [\"codex\"]
+";
+    std::fs::write(&document, first_saved).unwrap();
+    publish(&mut dashboard, &document);
+    focus_row(&mut dashboard, "codex");
+    assert!(
+        focused_line_with(&dashboard, "codex").contains("saving…"),
+        "the second queued edit is still pending:\n{}",
+        screen(&dashboard)
+    );
+
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: second.request_id,
+        response: Response::Error {
+            code: ErrorCode::InvalidRequest,
+            message: "fixture second agent refused".into(),
+        },
+    });
+    assert!(
+        screen(&dashboard).contains("fixture second agent refused"),
+        "the second reply keeps its own visible refusal:\n{}",
+        screen(&dashboard)
+    );
+    assert!(
+        !focused_line_with(&dashboard, "codex").contains("saving…"),
+        "the refused edit stops pending"
+    );
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), first_saved);
+}
+
+/// A valid TOML integer with separators is published as its canonical value;
+/// the matching acknowledgement must clear the pending state.
+#[test]
+fn typed_integer_normalization_clears_pending_after_confirmation() {
+    let (mut dashboard, _root, document) = editor("");
+    select(&mut dashboard, "delegation.max_live_children");
+    assert!(
+        focused_line_with(&dashboard, "Maximum live children").contains("Maximum live children")
+    );
+    dashboard.key(KeyCode::Enter);
+    for _ in 0..20 {
+        dashboard.key(KeyCode::Backspace);
+    }
+    dashboard.event_action(Event::Paste("1_0".into()));
+    let (path, value) = serve(&mut dashboard, &document, KeyCode::Enter);
+    assert_eq!(path, "delegation.max_live_children");
+    assert_eq!(value.as_deref(), Some("1_0"));
+    let reading = dashboard_reading(&document);
+    assert_eq!(reading.settings.delegation.max_live_children, 10);
+    let row = focused_line_with(&dashboard, "Maximum live children");
+    assert!(row.contains("10"), "{row}");
+    assert!(!row.contains("saving…"), "{row}");
+    assert!(
+        screen(&dashboard).contains("Value: 10"),
+        "the published canonical value is shown:\n{}",
+        screen(&dashboard)
+    );
+}
+
+/// Notification and iTerm permission consequences are readable before the
+/// user commits, on both compact wide and single-pane frames.
+#[cfg(target_os = "macos")]
+#[test]
+fn alert_permission_consequences_are_visible_before_activation() {
+    let (mut dashboard, _root, _document) = menu_editor();
+    dashboard.key(KeyCode::Enter);
+    for (cols, rows) in [(80, 24), (60, 24)] {
+        let text = flatten_frame(rendered_rows(&dashboard, cols, rows));
+        assert!(
+            text.contains("permission prompt"),
+            "notification permission consequence must be visible at {cols}x{rows}:\n{text}"
+        );
+    }
+    focus_row(&mut dashboard, "Exact iTerm focus");
+    for (cols, rows) in [(80, 24), (60, 24)] {
+        let text = flatten_frame(rendered_rows(&dashboard, cols, rows));
+        assert!(
+            text.contains("automation permission"),
+            "iTerm permission consequence must be visible at {cols}x{rows}:\n{text}"
+        );
+    }
+    assert!(dashboard.drain_outbox().is_empty());
+}
+
+/// An unparseable reading stops a collection draft from enqueueing a write;
+/// a valid reading restores collection controls.
+#[test]
+fn unparseable_reading_blocks_manager_drafts_until_recovery() {
+    let valid = "[[agents]]\nname = \"claude\"\nargv = [\"claude\"]\n";
+    let (mut dashboard, _root, document) = editor(valid);
+    select(&mut dashboard, "agent overrides");
+    dashboard.key(KeyCode::Enter);
+
+    let invalid = "not toml {\n";
+    std::fs::write(&document, invalid).unwrap();
+    publish(&mut dashboard, &document);
+    assert!(
+        screen(&dashboard).contains("cannot be parsed"),
+        "{}",
+        screen(&dashboard)
+    );
+    dashboard.key(KeyCode::Char('a'));
+    dashboard.event_action(Event::Paste("new".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "an unparseable reading cannot enqueue a collection write"
+    );
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), invalid);
+    assert!(screen(&dashboard).contains("cannot be parsed"));
+
+    std::fs::write(&document, valid).unwrap();
+    publish(&mut dashboard, &document);
+    assert!(
+        !screen(&dashboard).contains("cannot be parsed"),
+        "{}",
+        screen(&dashboard)
+    );
+    if screen(&dashboard).contains("Settings / Agents / + Add agent") {
+        dashboard.key(KeyCode::Esc);
+    }
+    assert!(
+        screen(&dashboard).contains("Settings / Agents / Agent overrides"),
+        "{}",
+        screen(&dashboard)
+    );
+    dashboard.key(KeyCode::Char('a'));
+    dashboard.event_action(Event::Paste("new".into()));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let message = only_request(dashboard.drain_outbox());
+    let (path, _) = answer(&mut dashboard, &document, message);
+    assert!(path.starts_with("agents"), "{path}");
+    assert!(
+        dashboard_reading(&document)
+            .settings
+            .agents
+            .iter()
+            .any(|agent| agent.name == "new"),
+        "recovered controls add the agent"
     );
 }
 

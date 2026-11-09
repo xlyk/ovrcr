@@ -1163,9 +1163,11 @@ once; `automatic_local_terminals` and a remembered launch open a pick list
 (Terminal or a detected agent); strings open a text field; paths open a text
 field whose Tab completes directories. Enter saves that one row and Escape cancels
 only that edit. An emptied top-level value resets it. Every save is one
-`SetSetting` request: the row shows `saving…` and changes only when the Server's
-new reading arrives. A value the Server refuses shows under its row as
-**refused: …** and the document is unchanged.
+`SetSetting` request. The row shows `saving…` until its own response and the
+Server's published value confirm it; an unchanged value already confirmed from
+the document settles on the successful response without waiting for another
+publication. Values always follow the Server's reading. A refusal shows its
+reason on the affected row and leaves the document unchanged.
 
 `picker_roots`, `[[agents]]` and `launch_choices` each occupy one summary row,
 including when empty. Enter opens a manager; Escape returns to the same summary.
