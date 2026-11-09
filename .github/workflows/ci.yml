@@ -87,6 +87,25 @@ jobs:
       - name: Doc tests
         if: matrix.shard == 1
         run: cargo test --workspace --doc
+      # Coverage must be auditable from artifacts, not inferred from counters:
+      # nextest's "tests skipped" also counts tests excluded by --partition, so
+      # the shard totals cannot be reconciled arithmetically. Record the exact
+      # selection each shard built, so the union can be compared with a
+      # baseline and a missing binary or test is visible rather than silent.
+      - name: Record selected tests
+        if: always()
+        run: |
+          set -o pipefail
+          cargo nextest list --workspace --all-targets --all-features --profile ci \
+            -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
+            --message-format json > "$RUNNER_TEMP/nextest-selection.json"
+      - name: Upload selected tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-selection-${{ github.run_id }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/nextest-selection.json
+          retention-days: 7
       - name: Relocated macOS startup assets
         if: matrix.shard == 1
         run: |
