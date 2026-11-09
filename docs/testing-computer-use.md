@@ -141,8 +141,10 @@ the last entry; confirm it remains visible and clickable. Press Escape.
 Confirm the Space group list holds only the groups, Register project and Detach,
 with no notification or sound toggles.
 Press `:` and type `theme`; confirm a `Settings: Theme` row with
-`Appearance · theme` below it, press Return, and confirm Settings opens on the
-Theme row; press Escape. In the unfiltered palette confirm session rows read
+`Appearance · theme` below it, press Return, and confirm Settings opens with
+Appearance selected and the Theme row focused. Escape returns to categories;
+Escape again closes Settings.
+In the unfiltered palette confirm session rows read
 `project / branch / title` and that Take control, Resume and Mark reviewed are
 absent while they cannot run. Press `v`; confirm the second pane opens behind a
 `New pane · choose its session` list that highlights its session and omits the
@@ -199,6 +201,35 @@ path. Press `Space v e` and confirm `Home:` and `Socket:` head the Events list
 and name that fixture's directories. Escape, register a disposable repository
 with `a`, and confirm the pane then shows its project card leading with
 `Next: press w to start your first agent`.
+
+### Settings categories, theme preview and collections
+
+Use only the disposable instance. Record its original workspace/session
+selection and the saved theme before changing anything.
+
+1. Open `Space v ,`. Confirm Settings replaces the Dashboard header and footer,
+   starts on Alerts, and shows a category sidebar with one-line settings.
+   Press Down for Appearance, Enter for its list, then Enter on Theme.
+2. Confirm the picker highlights the saved palette and offers Dark and Light
+   groups. Type or paste a different palette name. Confirm the whole Settings
+   view previews it and names both the preview and saved palette.
+   Escape returns to Theme with saved colors. Reopen, filter again, and Enter
+   saves. Wait for `saving…` to disappear after the Server's publication.
+   Reopen to check the saved highlight; cancel a different preview.
+3. Narrow the window below 80 columns. Confirm the category/list/editor uses
+   the full width with a breadcrumb and keeps its draft and focus. In
+   Workspaces, open Picker roots. Add a task-owned folder, edit it, reorder
+   when there are multiple entries, and remove just that folder. Check that
+   the named folder and action are clear before each change and that other
+   roots keep their order. Escape returns to the summary row.
+4. Search globally with `/theme`, open the result, then back out to the
+   starting category/row. Try an empty result and confirm Enter sends no edit.
+   Return to categories and Escape to close. Confirm the original
+   workspace/session is still selected and can resume terminal input.
+
+Keep wide and narrow screenshots, accessibility text, saved-document evidence
+and the tested revision. Automated 80×24, 60×24 and too-small/recovery frames
+complement this native walkthrough; they do not replace it.
 
 ### Workspace launch and titles
 

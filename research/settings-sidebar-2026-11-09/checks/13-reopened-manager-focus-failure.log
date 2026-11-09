@@ -1,0 +1,85 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.74s
+     Running tests/tui/main.rs (target/debug/deps/tui-420ba52360dc582c)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8JnIZv server=28719
+
+thread 'settings::pending_root_move_and_sound_save_match_interleaved_server_replies' (604389433) panicked at tests/tui/settings.rs:205:28:
+no focused line with "/b":
+Settings / Workspaces / Picker roots                                                                                    
+Categories              │  /a                                                                                           
+Alerts                  │› /c                                                                                           
+Appearance              │  /b                                                                                           
+• Workspaces            │  + Add folder                                                                                 
+Titles                  │                                                                                               
+Usage                   │                                                                                               
+Agents                  │                                                                                               
+Remembered launches     │                                                                                               
+Operator                │                                                                                               
+Delegation              │                                                                                               
+Remote                  │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Workspaces · Picker roots                                                                     
+                        │ Entry: /c                                                                                     
+                        │ A folder in the picker root search order.                                                     
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: ["/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8JnIZv"]                      
+                        │ Reset: r clears the collection override                                                       
+                        │ Enter edits this folder · x removes this entry · [ ] moves it · Esc back · r resets the collec
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8JnIZv/instance/dashboard.toml 
+                        │ · read at an unverifiable time                                                                
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+ Enter edit  · a add  · x remove  · [ ] move  · r reset  · Esc back                                                     
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test settings::pending_root_move_and_sound_save_match_interleaved_server_replies ... FAILED
+
+failures:
+
+failures:
+    settings::pending_root_move_and_sound_save_match_interleaved_server_replies
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 432 filtered out; finished in 3.61s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

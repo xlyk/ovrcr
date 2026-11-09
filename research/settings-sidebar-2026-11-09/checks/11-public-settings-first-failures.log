@@ -1,0 +1,536 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.01s
+     Running tests/tui/main.rs (target/debug/deps/tui-420ba52360dc582c)
+
+running 36 tests
+test settings::a_rejected_value_shows_in_details_and_leaves_the_document_unchanged ... ok
+test settings::consent_consequences_show_before_activation ... ok
+test settings::an_unparseable_document_disables_editing_and_recovers_on_a_valid_reading ... ok
+test settings::enum_edits_in_place_with_a_pick_list ... ok
+
+thread 'settings::long_values_and_explanations_are_reachable_at_narrow_width' (603635743) panicked at tests/tui/settings.rs:971:5:
+the full effective value wraps in details:
+Settings / Workspaces                                                           
+Categories          │  Automatic local terminals   default_branch_only          
+  Alerts            │  Save uncommitted work       off                          
+  Appearance        │› Branch prefix               kept/word word word word wor…
+• Workspaces        │  Picker roots                1 entry                      
+  Titles            │                                                           
+  Usage             │                                                           
+  Agents            │                                                           
+  Remembered launch…│                                                           
+  Operator          │                                                           
+  Delegation        │                                                           
+  Remote            │                                                           
+                    │                                                           
+                    │                                                           
+                    │                                                           
+                    │                                                           
+                    │ Branch prefix                                             
+                    │ Value: kept/word word word word word word word word word  
+                    │ word word word word word word word word word word word    
+                    │ word word word word word word word word word word word    
+                    │ word word word word word word word word word              
+                    │ Source: dashboard.toml                                    
+                    │ Default: feature/                                         
+ Enter edit  · Ctrl-d details  · r reset  · / search  · ← back  · Esc back      
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test settings::long_values_and_explanations_are_reachable_at_narrow_width ... FAILED
+
+thread 'settings::collection_manager_edits_agents_without_reordering_neighbors' (603635724) panicked at tests/tui/settings.rs:1728:5:
+Settings / Agents / Agent overrides                                                                                     
+Categories              │› claude                          ["claude"]                                                   
+  Alerts                │  + Add agent                                                                                  
+  Appearance            │                                                                                               
+  Workspaces            │                                                                                               
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+• Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Agents · Agent overrides                                                                      
+                        │ Entry: claude                                                                                 
+                        │ argv is edited as a TOML string array.                                                        
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: []                                                                                   
+                        │ Reset: r clears the collection override                                                       
+                        │ x removes this entry · r resets the whole collection · Esc back                               
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUksEdI/dashboard.toml · read   
+                        │ at an unverifiable time                                                                       
+ Enter edit  · a add  · x remove  · r reset  · Esc back                                                                 
+test settings::collection_manager_edits_agents_without_reordering_neighbors ... FAILED
+
+thread 'settings::editor_typing_and_picker_filtering_stay_distinct_from_global_search' (603635727) panicked at tests/tui/settings.rs:2166:5:
+Settings / Workspaces                                                                                                   
+Categories              │  Automatic local terminals       default_branch_only                                          
+  Alerts                │  Save uncommitted work           off                                                          
+  Appearance            │› Branch prefix                   feature/  saving…                                            
+• Workspaces            │  Picker roots                    1 entry                                                      
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Branch prefix                                                                                 
+                        │ Value: feature/                                                                               
+                        │ saving… waiting for the Server reading                                                        
+                        │ Source: default                                                                               
+                        │ Default: feature/                                                                             
+                        │ key: branch_prefix                                                                            
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIWUpLT/dashboard.toml · read   
+                        │ at an unverifiable time                                                                       
+                        │                                                                                               
+ Enter edit  · / search  · ← back  · Esc back                                                                           
+test settings::editor_typing_and_picker_filtering_stay_distinct_from_global_search ... FAILED
+test settings::connecting_retires_a_queued_status_off_note ... ok
+
+thread 'settings::global_search_round_trips_to_a_setting_and_back' (603635742) panicked at tests/tui/settings.rs:2044:5:
+Settings / Search                                                                                                       
+Categories              │Search: home▏                                                                                  
+• Alerts                │› Usage · Codex home              unset                                                        
+  Appearance            │  Usage · Grok home               unset                                                        
+  Workspaces            │                                                                                               
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Usage · Codex home                                                                            
+                        │ Value: unset                                                                                  
+                        │ Source: default                                                                               
+                        │ Default: unset                                                                                
+                        │ key: quota.codex.home                                                                         
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqziL0B/dashboard.toml · read   
+                        │ at an unverifiable time                                                                       
+                        │                                                                                               
+                        │                                                                                               
+ Type search  · ↑↓ result  · Enter open  · Esc cancel                                                                   
+test settings::global_search_round_trips_to_a_setting_and_back ... FAILED
+test settings::narrow_60x24_frame_shows_one_pane_with_breadcrumbs ... ok
+test settings::empty_collection_keeps_one_summary_row_and_opens_its_manager ... ok
+
+thread 'settings::moving_the_selection_leaves_neighboring_rows_and_columns_in_place' (603635751) panicked at tests/tui/settings.rs:775:9:
+assertion `left == right` failed: rows moved
+  left: [(1, 29), (2, 33), (4, 29)]
+ right: [(1, 31), (2, 31), (4, 29)]
+test settings::moving_the_selection_leaves_neighboring_rows_and_columns_in_place ... FAILED
+
+thread 'settings::explicit_and_inherited_off_are_distinguishable' (603635732) panicked at tests/tui/settings.rs:1952:5:
+an explicit Off offers reset:
+Settings / Alerts                                                                                                       
+Categories              │› Desktop notifications           off                                                          
+• Alerts                │  Ready sound                     off                                                          
+  Appearance            │  Ready sound choice              System default · inactive                                    
+  Workspaces            │  Exact iTerm focus               off                                                          
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Desktop notifications                                                                         
+                        │ Value: off                                                                                    
+                        │ Off · Enter to turn on                                                                        
+                        │ Shows a desktop banner when a response is ready or a session needs input.                     
+                        │ Turning this on may show an OS notification permission prompt.                                
+                        │ macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or      
+                        │ opens System Settings when denied; choose Notifications → OVRCR.                              
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: off                                                                                  
+ Enter turn on  · Ctrl-d details  · r reset  · / search  · ← back  · Esc back                                           
+test settings::explicit_and_inherited_off_are_distinguishable ... FAILED
+
+thread 'settings::empty_global_search_explains_recovery_and_writes_nothing' (603635729) panicked at tests/tui/settings.rs:2090:5:
+Settings / Search                                                                                                       
+Categories              │Search: branch▏                                                                                
+  Alerts                │› Workspaces · Automatic local …  default_branch_only                                          
+• Appearance            │  Workspaces · Branch prefix      feature/                                                     
+  Workspaces            │                                                                                               
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Workspaces · Automatic local terminals                                                        
+                        │ Value: default_branch_only                                                                    
+                        │ Source: default                                                                               
+                        │ Default: default_branch_only                                                                  
+                        │ key: automatic_local_terminals                                                                
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMCuC4Q/dashboard.toml · read   
+                        │ at an unverifiable time                                                                       
+                        │                                                                                               
+                        │                                                                                               
+ Type search  · ↑↓ result  · Enter open  · Esc cancel                                                                   
+test settings::empty_global_search_explains_recovery_and_writes_nothing ... FAILED
+test settings::reset_is_offered_only_for_a_value_the_document_sets ... ok
+test settings::settings_footer_reports_findings_at_attach_and_when_the_count_changes ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLKlLWH server=19569
+test settings::settings_opens_from_the_menu_and_has_no_browse_key ... ok
+test settings::alert_dependency_and_short_picker_guidance_precede_the_action ... ok
+test settings::remembered_launch_picks_kind_and_preset_together ... ok
+test settings::startup_error_banner_does_not_hide_the_settings_findings_notice ... ok
+test settings::startup_status_off_is_a_calm_one_time_note_behind_the_findings_notice ... ok
+test settings::palette_connects_agent_status_until_it_succeeds ... ok
+
+thread 'settings::wide_80x24_frame_pins_sidebar_rows_details_and_footer' (603635898) panicked at tests/tui/settings.rs:1069:17:
+start byte index 21 is not a char boundary; it is inside '│' (bytes 20..23 of string)
+test settings::wide_80x24_frame_pins_sidebar_rows_details_and_footer ... FAILED
+test settings::findings_surface_across_categories_and_route_by_f_and_d ... ok
+
+thread 'settings::toggle_saves_at_once_and_applies_only_the_servers_reading' (603635874) panicked at tests/tui/settings.rs:1041:5:
+Settings / Alerts                                                                                                       
+Categories              │› Desktop notifications           on                                                           
+• Alerts                │  Ready sound                     on                                                           
+  Appearance            │  Ready sound choice              System default                                               
+  Workspaces            │  Exact iTerm focus               off                                                          
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Desktop notifications                                                                         
+                        │ Value: on                                                                                     
+                        │ Shows a desktop banner when a response is ready or a session needs input.                     
+                        │ Turning this on may show an OS notification permission prompt.                                
+                        │ macOS uses the installed OVRCR Bridge app. In Browse, O checks unconfirmed permission or      
+                        │ opens System Settings when denied; choose Notifications → OVRCR.                              
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: on                                                                                   
+                        │ Reset: r removes this override and falls back to on                                           
+ Enter turn off  · Ctrl-d details  · r reset  · / search  · ← back  · Esc back                                          
+test settings::toggle_saves_at_once_and_applies_only_the_servers_reading ... FAILED
+test settings::every_catalog_category_is_reachable_and_palette_settings_open_context ... ok
+test settings::string_edits_are_prefilled_and_escape_cancels_only_that_edit ... ok
+test settings::mouse_wheel_and_clicks_navigate_categories_rows_and_results ... ok
+test settings::settings_without_a_reading_explains_and_recovers_on_publish ... ok
+test settings::picker_roots_manager_preserves_order_and_distinguishes_reset ... ok
+test settings::backing_out_of_search_restores_the_prior_list_row_and_scroll ... ok
+test settings::settings_navigation_enters_appearance_theme_and_unwinds_to_the_workspace ... ok
+test settings::rows_show_the_value_and_details_carry_source_default_and_reset ... ok
+test settings::too_small_frame_recovers_focus_scroll_and_draft ... ok
+test settings::adding_to_a_default_list_keeps_its_default_elements ... ok
+
+thread 'settings::pending_root_move_and_sound_save_match_interleaved_server_replies' (603635760) panicked at tests/tui/settings.rs:188:13:
+no focused line with "/b":
+Settings / Workspaces / Picker roots                                                                                    
+Categories              │  /a                                                                                           
+  Alerts                │  /b                                                                                           
+  Appearance            │› /c                                                                                           
+• Workspaces            │  + Add folder                                                                                 
+  Titles                │                                                                                               
+  Usage                 │                                                                                               
+  Agents                │                                                                                               
+  Remembered launches   │                                                                                               
+  Operator              │                                                                                               
+  Delegation            │                                                                                               
+  Remote                │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │                                                                                               
+                        │ Workspaces · Picker roots                                                                     
+                        │ Entry: /c                                                                                     
+                        │ A folder in the picker root search order.                                                     
+                        │ Source: dashboard.toml                                                                        
+                        │ Default: ["/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLKlLWH"]                      
+                        │ Reset: r clears the collection override                                                       
+                        │ x removes this entry · r resets the whole collection · Esc back                               
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLKlLWH/instance/dashboard.toml 
+                        │ · read at an unverifiable time                                                                
+ Enter edit  · a add  · x remove  · [ ] move  · r reset  · Esc back                                                     
+test settings::pending_root_move_and_sound_save_match_interleaved_server_replies ... FAILED
+
+failures:
+
+failures:
+    settings::collection_manager_edits_agents_without_reordering_neighbors
+    settings::editor_typing_and_picker_filtering_stay_distinct_from_global_search
+    settings::empty_global_search_explains_recovery_and_writes_nothing
+    settings::explicit_and_inherited_off_are_distinguishable
+    settings::global_search_round_trips_to_a_setting_and_back
+    settings::long_values_and_explanations_are_reachable_at_narrow_width
+    settings::moving_the_selection_leaves_neighboring_rows_and_columns_in_place
+    settings::pending_root_move_and_sound_save_match_interleaved_server_replies
+    settings::toggle_saves_at_once_and_applies_only_the_servers_reading
+    settings::wide_80x24_frame_pins_sidebar_rows_details_and_footer
+
+test result: FAILED. 26 passed; 10 failed; 0 ignored; 0 measured; 394 filtered out; finished in 2.23s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

@@ -1,0 +1,55 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.58s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-b82accc52e294204)
+
+running 1 test
+test desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_preserve_opt_ins ... ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8/private/server.sock
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8 pgid=53205
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8 pgid=53284
+desktop fixture root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8 dashboard_pgid=53381 session_groups=[53082, 53205, 53284]
+
+thread 'desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_preserve_opt_ins' (608782215) panicked at tests/server_lifecycle.rs:18185:15:
+dashboard screen deadline: Settings / Categories                                                                                                                                                               
+Categories              │  Desktop notifications           off                                                                                                                      
+› Alerts                │  Ready sound                     on                                                                                                                       
+Appearance              │  Ready sound choice              System default · inactive                                                                                                
+Workspaces              │  Exact iTerm focus               off                                                                                                                      
+Titles                  │                                                                                                                                                           
+Usage                   │                                                                                                                                                           
+Agents                  │                                                                                                                                                           
+Remembered launches     │                                                                                                                                                           
+Operator                │                                                                                                                                                           
+Delegation              │                                                                                                                                                           
+Remote                  │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │ Alerts                                                                                                                                                    
+                        │ 4 settings · Enter opens this category                                                                                                                    
+                        │ Desktop notifications · Ready sound · Ready sound choice · Exact iTerm focus                                                                              
+                        │ Document: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuxmW8/instance/dashboard.toml · read 5s ago                                               
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+                        │                                                                                                                                                           
+ ↑↓ category  · Enter open  · / search  · Esc close                                                                                                                                 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+FAILED
+
+failures:
+
+failures:
+    desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_preserve_opt_ins
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 167 filtered out; finished in 11.85s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

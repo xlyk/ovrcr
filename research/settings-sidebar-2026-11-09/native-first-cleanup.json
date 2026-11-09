@@ -1,0 +1,159 @@
+{
+  "exitCode": 0,
+  "root": "/tmp/ovrcr-gui-hPZsDy",
+  "rootRemoved": true,
+  "processes": [
+    {
+      "pid": 1132,
+      "ppid": 99133,
+      "pgid": 93726,
+      "comm": "ovrcr",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 2845,
+      "ppid": 1132,
+      "pgid": 2845,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 3083,
+      "ppid": 1132,
+      "pgid": 3083,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 3409,
+      "ppid": 1132,
+      "pgid": 3409,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 3899,
+      "ppid": 1132,
+      "pgid": 3899,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 4465,
+      "ppid": 1132,
+      "pgid": 4465,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 5066,
+      "ppid": 1132,
+      "pgid": 5066,
+      "comm": "zsh",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 5849,
+      "ppid": 1132,
+      "pgid": 5849,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 6283,
+      "ppid": 1132,
+      "pgid": 6283,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 7029,
+      "ppid": 1132,
+      "pgid": 7029,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 7448,
+      "ppid": 1132,
+      "pgid": 7448,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 7664,
+      "ppid": 1132,
+      "pgid": 7664,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 7998,
+      "ppid": 1132,
+      "pgid": 7998,
+      "comm": "bash",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 8164,
+      "ppid": 99133,
+      "pgid": 8164,
+      "comm": "ovrcr",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 93726,
+      "ppid": 70084,
+      "pgid": 93726,
+      "comm": "rtk",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 93820,
+      "ppid": 93726,
+      "pgid": 93726,
+      "comm": "just",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 93826,
+      "ppid": 93820,
+      "pgid": 93726,
+      "comm": "rtk",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 93858,
+      "ppid": 93826,
+      "pgid": 93726,
+      "comm": "rtk",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    },
+    {
+      "pid": 99133,
+      "ppid": 93858,
+      "pgid": 93726,
+      "comm": "ovrcr-gui",
+      "pidState": "ESRCH",
+      "groupState": "ESRCH"
+    }
+  ]
+}

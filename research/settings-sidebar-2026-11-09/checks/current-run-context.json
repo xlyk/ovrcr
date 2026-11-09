@@ -1,0 +1,21 @@
+{
+  "source_revision": "a98ffde42bc110238c9333bfdc2298e4860d3d66",
+  "cleared_environment": ["OVRCR_AGENT_SOCKET", "OVRCR_AGENT_TOKEN"],
+  "home": "/tmp/ovrcr-413-checks.DjTg8r/home",
+  "cargo_home": "/Users/xlyk/.cargo",
+  "shell": "/bin/zsh",
+  "rust_command": "RUST_TEST_THREADS=1 cargo test --workspace --all-targets --all-features --no-fail-fast",
+  "node_command": "node --test --test-concurrency=1 tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs",
+  "node_result": {"passed": 65, "failed": 2, "skipped": 0},
+  "node_remaining_failures": [
+    "session switches capture OMP's exact native file and ephemeral identity",
+    "two approvals overlap: each frame carries its own tool call id"
+  ],
+  "notes": [
+    "Earlier failed attempts are retained under distinct filenames, not replaced by successful runs.",
+    "The initial workspace attempt inherited this assistant's managed-agent bindings and stopped in CLI tests.",
+    "The clean-environment CLI file removed the identity failures but retained one wall-clock timeout assertion failure.",
+    "The complete final workspace run is serialized and uses --no-fail-fast to execute every test target.",
+    "No reporting-extension source or tests were changed by issue 413."
+  ]
+}

@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-b82accc52e294204)
+
+running 1 test
+test desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_preserve_choice ... ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqCtpG/private/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqCtpG/private/server.sock
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqCtpG pgid=3836
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqCtpG pgid=3914
+desktop fixture root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqCtpG dashboard_pgid=4271 session_groups=[3755, 3836, 3914]
+ovrcr server stopped
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 167 filtered out; finished in 9.98s
+

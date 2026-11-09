@@ -12473,11 +12473,41 @@ printf '%s\n' "$reply"
         }
     }
 
+    /// Open Settings from Browse and enter the Alerts category's settings
+    /// list, where its first setting carries row focus.
     #[cfg(target_os = "macos")]
-    fn open_sound_choices(&mut self) {
+    #[track_caller]
+    fn open_alerts_list(&mut self) {
         self.send(b" v,");
-        self.wait_screen(|screen| screen.contains("Settings · ↑/↓ move · Enter edit"));
-        self.send(b"/ready_sound_choice\r\r");
+        self.wait_screen(|screen| {
+            screen.contains("Settings / Categories") && screen.contains("› Alerts")
+        });
+        self.send(b"\r");
+        self.wait_screen(|screen| {
+            screen.contains("Settings / Alerts") && screen.contains("› Desktop notifications")
+        });
+    }
+
+    /// Cancel any draft and close Settings, restoring the workspace.
+    #[cfg(target_os = "macos")]
+    #[track_caller]
+    fn close_settings(&mut self) {
+        self.send(b"\x07");
+        self.wait_screen(|screen| !screen.contains("Settings / "));
+    }
+
+    /// Open the Ready sound choice picker through global search from the open
+    /// Alerts list: search Enter focuses the owning row, then Enter opens that
+    /// row's editor.
+    #[cfg(target_os = "macos")]
+    #[track_caller]
+    fn open_sound_choices(&mut self) {
+        self.open_alerts_list();
+        self.send(b"/ready_sound_choice\r");
+        self.wait_screen(|screen| {
+            screen.contains("Settings / Alerts") && screen.contains("› Ready sound choice")
+        });
+        self.send(b"\r");
         self.wait_screen(|screen| {
             screen.contains("System default")
                 && screen.contains("Tap")
@@ -18181,14 +18211,10 @@ fn desktop_notifications_bridge_settings_sources_authorize_and_failed_saves_pres
     dashboard.send(b"\x07");
 
     // Enable through the actual Settings editor and accepted Server snapshot.
-    dashboard.send(b" v,");
-    dashboard.wait_screen(|screen| {
-        screen.contains("Settings · ↑/↓ move · Enter edit")
-            && screen.contains("› Desktop notifications")
-    });
+    dashboard.open_alerts_list();
     dashboard.send(b"\r");
     dashboard.wait_bridge_controls(&["status", "authorize"]);
-    dashboard.send(b"\x1b");
+    dashboard.close_settings();
     let reading = ovrcr::settings::load_document(&fixture.config, &document);
     assert!(reading.settings.desktop_notifications);
     assert!(reading.settings.ready_sound);
@@ -19063,14 +19089,13 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
     dashboard.send(b"Tap\r");
     dashboard.wait_screen(|screen| {
         screen.contains("Ready sound choice")
-            && !screen.contains("filter:")
+            && !screen.contains("Choose Ready sound choice")
             && ovrcr::settings::load_document(&fixture.config, &document)
                 .settings
                 .ready_sound_choice
                 == Some(ReadySoundChoice::Tap)
     });
-    dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
+    dashboard.close_settings();
     let reading = ovrcr::settings::load_document(&fixture.config, &document);
     assert_eq!(
         reading.settings.ready_sound_choice,
@@ -19101,14 +19126,13 @@ fn desktop_sound_selector_uses_server_settings_without_preview_opt_in_or_replay(
         dashboard.send(format!("{label}\r").as_bytes());
         dashboard.wait_screen(|screen| {
             screen.contains("Ready sound choice")
-                && !screen.contains("filter:")
+                && !screen.contains("Choose Ready sound choice")
                 && ovrcr::settings::load_document(&fixture.config, &document)
                     .settings
                     .ready_sound_choice
                     == Some(choice)
         });
-        dashboard.send(b"\x07");
-        dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
+        dashboard.close_settings();
         let reading = ovrcr::settings::load_document(&fixture.config, &document);
         assert_eq!(reading.settings.ready_sound_choice, Some(choice));
         assert!(reading.settings.desktop_notifications && reading.settings.ready_sound);
@@ -19199,8 +19223,7 @@ fn desktop_sound_invalid_external_and_cli_changes_keep_banners_and_failed_saves_
     assert!(!refused.status.success(), "{refused:?}");
     assert!(String::from_utf8_lossy(&refused.stderr).contains("could not save ready_sound_choice"));
     assert_eq!(std::fs::read_to_string(&document).unwrap(), saved);
-    dashboard.send(b"\x07");
-    dashboard.wait_screen(|screen| !screen.contains("Settings · ↑/↓ move · Enter edit"));
+    dashboard.close_settings();
     let mut index = 0;
     let mut expected = Vec::new();
     for command in [

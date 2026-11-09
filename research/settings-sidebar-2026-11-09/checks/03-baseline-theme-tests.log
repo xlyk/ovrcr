@@ -1,0 +1,60 @@
+    Blocking waiting for file lock on build directory
+   Compiling libc v0.2.189
+   Compiling syn v3.0.5
+   Compiling num-traits v0.2.19
+   Compiling log v0.4.34
+   Compiling smallvec v1.16.0
+   Compiling derive_builder v0.20.2
+   Compiling once_cell v1.21.4
+   Compiling chrono v0.4.45
+   Compiling errno v0.3.14
+   Compiling parking_lot_core v0.9.12
+   Compiling mio v1.2.3
+   Compiling num_threads v0.1.7
+   Compiling filedescriptor v0.8.3
+   Compiling getrandom v0.4.3
+   Compiling time v0.3.55
+   Compiling signal-hook-registry v1.4.8
+   Compiling rustix v1.1.4
+   Compiling signal-hook v0.3.18
+   Compiling parking_lot v0.12.5
+   Compiling signal-hook-mio v0.2.5
+   Compiling chrono-tz v0.10.4
+   Compiling croner v3.0.1
+   Compiling crossterm v0.29.0
+   Compiling tempfile v3.27.0
+   Compiling darling_core v0.24.1
+   Compiling thiserror-impl v2.0.20
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v2.0.20
+   Compiling kasuari v0.4.12
+   Compiling ratatui-core v0.1.2
+   Compiling darling_macro v0.24.1
+   Compiling darling v0.24.1
+   Compiling instability v0.3.13
+   Compiling serde v1.0.229
+   Compiling ratatui-widgets v0.3.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling bincode v2.0.1
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 30s
+     Running tests/settings_theme_preview.rs (target/debug/deps/settings_theme_preview-30cade4bb78e8633)
+
+running 10 tests
+test reopening_before_confirmation_previews_the_new_picker_selection ... ok
+test external_update_preserves_a_highlight_that_matched_the_saved_theme ... ok
+test paging_and_pasted_search_preview_through_public_event_dispatch ... ok
+test older_save_refusal_preserves_a_newer_highlighted_preview ... ok
+test newer_save_of_original_theme_survives_the_older_save_report ... ok
+test settings_theme_preview_repaints_the_dashboard_then_restores_on_cancel ... ok
+test typed_search_recovers_from_no_matches_without_saving_until_enter ... ok
+test ctrl_g_from_the_active_picker_closes_settings_and_restores_latest_saved_theme ... ok
+test all_80_highlighted_choices_repaint_without_sending_a_save ... ok
+test enter_sends_the_canonical_id_for_every_grouped_choice ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.75s
+

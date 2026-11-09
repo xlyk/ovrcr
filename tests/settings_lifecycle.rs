@@ -8,15 +8,19 @@ mod live;
 
 use live::claude_auth;
 
+use crossterm::event::{Event, KeyCode};
 use ovrcr::protocol::{
     CLAUDE_WAITING, ClientMessage, ErrorCode, QuotaSnapshot, QuotaState, Request, Response,
-    ServerEvent, ServerMessage, SettingRow, SettingSource, SettingsReport, connect_server,
-    read_frame, write_frame,
+    ServerEvent, ServerMessage, SettingRow, SettingSource, SettingsReport, TerminalSize, ThemeId,
+    connect_server, read_frame, write_frame,
 };
 use ovrcr::server::ServerPaths;
 use ovrcr::service::{ServiceCommand, ServiceConfig, ServicePlatform, run_with};
 use ovrcr::settings;
+use ovrcr::tui::{Dashboard, DashboardAction, draw_dashboard_at};
+use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::io::{BufRead, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -267,6 +271,820 @@ fn dashboard_shows_the_server_reading_when_the_client_cannot_read_the_document()
         "the client's own load hid the unreadable document: {cli:?}"
     );
     std::fs::set_permissions(&document, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+fn dashboard_theme_save_and_cancel_round_trip_through_the_server() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(
+        &document,
+        "# keep this comment\nbranch_prefix = \"kept/\"\n",
+    )
+    .unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    assert_eq!(initial.path, document);
+    assert_eq!(initial.settings.theme, ThemeId::Dark);
+    assert_eq!(initial.settings.branch_prefix, "kept/");
+    assert_eq!(row(&initial, ThemeId::KEY).source, SettingSource::Default);
+    assert_eq!(
+        row(&initial, ThemeId::KEY).value.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    // Menu -> Settings opens category focus on Alerts; Down reveals Appearance.
+    open_settings(&mut attached);
+    assert_eq!(
+        attached.dashboard.key(KeyCode::Down),
+        DashboardAction::Redraw
+    );
+    assert!(
+        focused_dashboard_line(&attached.dashboard).contains("Appearance"),
+        "{}",
+        dashboard_text(&attached.dashboard)
+    );
+    attached.dashboard.key(KeyCode::Enter);
+    focus_settings_row(&mut attached.dashboard, "Theme");
+    attached.dashboard.key(KeyCode::Enter);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Dark"), "{text}");
+    assert!(text.contains("Saved: Catppuccin Mocha"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Catppuccin Mocha").contains("Saved"),
+        "the saved palette must open focused and labelled:\n{text}"
+    );
+    assert!(
+        attached.dashboard.drain_outbox().is_empty(),
+        "opening the theme picker wrote"
+    );
+
+    // End reaches the Light group without forcing heading into the first page.
+    attached.dashboard.key(KeyCode::End);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(
+        text.contains("Light"),
+        "End must reach the Light group:\n{text}"
+    );
+    assert!(
+        text.contains("Preview:"),
+        "End must preview another palette:\n{text}"
+    );
+    assert!(
+        attached.dashboard.drain_outbox().is_empty(),
+        "paging and previewing wrote"
+    );
+
+    // Home restores the saved first palette without submitting it.
+    attached.dashboard.key(KeyCode::Home);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(
+        text.contains("Saved: Catppuccin Mocha"),
+        "Home must restore the saved palette:\n{text}"
+    );
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Catppuccin Mocha").contains("Saved"),
+        "Home must leave the saved palette focused:\n{text}"
+    );
+    assert!(
+        attached.dashboard.drain_outbox().is_empty(),
+        "restoring the saved preview wrote"
+    );
+
+    attached
+        .dashboard
+        .event_action(Event::Paste("Solarized Light".into()));
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("› Solarized Light"), "{text}");
+    assert!(
+        text.contains("Preview: Solarized Light · Saved: Catppuccin Mocha"),
+        "{text}"
+    );
+    assert!(
+        attached.dashboard.drain_outbox().is_empty(),
+        "filtering and previewing wrote"
+    );
+
+    attached.dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard_text(&attached.dashboard).contains("saving…"),
+        "Enter must show a pending save:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    let save = take_dashboard_request(&mut attached.dashboard);
+    let request_id = save.request_id;
+    let request = save.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("Enter must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, ThemeId::KEY);
+    assert_eq!(value.as_deref(), Some("\"solarized-light\""));
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the theme save: {observed:?}"
+    );
+    let saved = observed
+        .iter()
+        .rev()
+        .find_map(settings_report_of)
+        .filter(|report| report.settings.theme == ThemeId::SolarizedLight)
+        .unwrap_or_else(|| {
+            attached.await_settings("the theme save was not published", |report| {
+                report.settings.theme == ThemeId::SolarizedLight
+            })
+        });
+    assert_eq!(saved.path, document);
+    assert_eq!(saved.settings.theme, ThemeId::SolarizedLight);
+    assert_eq!(saved.settings.branch_prefix, "kept/");
+    assert_eq!(row(&saved, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(
+        row(&saved, ThemeId::KEY).value.as_deref(),
+        Some("solarized-light")
+    );
+    assert!(saved.findings.is_empty(), "{:?}", saved.findings);
+    assert!(
+        !dashboard_text(&attached.dashboard).contains("saving…"),
+        "the published reading must end the pending state"
+    );
+
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# keep this comment"), "{persisted}");
+    assert!(
+        persisted.contains("theme = \"solarized-light\""),
+        "{persisted}"
+    );
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.theme, ThemeId::SolarizedLight);
+    assert_eq!(from_file.settings.branch_prefix, "kept/");
+    assert_eq!(
+        row(&from_file, ThemeId::KEY).source,
+        SettingSource::Document
+    );
+    assert!(from_file.findings.is_empty(), "{:?}", from_file.findings);
+
+    // Reopen: the picker starts on the Server's saved theme.
+    close_settings(&mut attached);
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Solarized Light"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Solarized Light").contains("Saved"),
+        "the reopened picker must start on the saved palette:\n{text}"
+    );
+
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    attached.dashboard.key(KeyCode::Down);
+    let preview = dashboard_line(&attached.dashboard, "Preview:");
+    assert!(preview.contains("Saved: Solarized Light"), "{preview}");
+    assert!(!preview.contains("Preview: Solarized Light"), "{preview}");
+    assert!(
+        attached.dashboard.drain_outbox().is_empty(),
+        "highlighting another palette wrote"
+    );
+    attached.dashboard.key(KeyCode::Esc);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(
+        !text.contains("Preview:"),
+        "Esc must cancel the preview:\n{text}"
+    );
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Theme").contains("Theme"),
+        "cancel must return to the Theme row:\n{text}"
+    );
+    assert!(
+        text.contains("Solarized Light") || text.contains("solarized-light"),
+        "the saved value must remain after cancel:\n{text}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        persisted,
+        "canceling a preview changed the document"
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+    close_settings(&mut attached);
+    drop(attached);
+
+    // The Server reading survives a restart with the same private document.
+    restart(&live);
+    let mut socket = attach(&live);
+    let hello = settings_event(&mut socket);
+    assert_eq!(hello.path, document);
+    assert_eq!(hello.settings.theme, ThemeId::SolarizedLight);
+    assert_eq!(hello.settings.branch_prefix, "kept/");
+    assert_eq!(row(&hello, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(
+        row(&hello, ThemeId::KEY).value.as_deref(),
+        Some("solarized-light")
+    );
+    assert!(hello.findings.is_empty(), "{:?}", hello.findings);
+    assert!(
+        std::fs::read_to_string(&document)
+            .unwrap()
+            .contains("# keep this comment")
+    );
+}
+
+#[test]
+fn dashboard_same_document_theme_save_settles_without_a_publish() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, "# kept\ntheme = \"nord\"\n").unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    assert_eq!(initial.path, document);
+    assert_eq!(initial.settings.theme, ThemeId::Nord);
+    assert_eq!(row(&initial, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(row(&initial, ThemeId::KEY).value.as_deref(), Some("nord"));
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Nord"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Nord").contains("Saved"),
+        "the documented theme must open focused:\n{text}"
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    // Enter on the already-documented choice still submits its canonical ID.
+    attached.dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard_text(&attached.dashboard).contains("saving…"),
+        "Enter must show a pending save:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    let save = take_dashboard_request(&mut attached.dashboard);
+    let request_id = save.request_id;
+    let request = save.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("Enter must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, ThemeId::KEY);
+    assert_eq!(value.as_deref(), Some("\"nord\""));
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the unchanged save: {observed:?}"
+    );
+    assert!(
+        observed
+            .iter()
+            .all(|message| settings_report_of(message).is_none()),
+        "an unchanged reading must not be republished: {observed:?}"
+    );
+    assert!(
+        !dashboard_text(&attached.dashboard).contains("saving…"),
+        "the ack must settle against the confirmed reading without a report:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    close_settings(&mut attached);
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Nord"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Nord").contains("Saved"),
+        "reopening must still show the documented theme:\n{text}"
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+    close_settings(&mut attached);
+    drop(attached);
+
+    // The private document and the Server reading still agree.
+    let mut socket = attach(&live);
+    let hello = settings_event(&mut socket);
+    assert_eq!(hello.path, document);
+    assert_eq!(hello.settings.theme, ThemeId::Nord);
+    assert_eq!(row(&hello, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(row(&hello, ThemeId::KEY).value.as_deref(), Some("nord"));
+    assert!(hello.findings.is_empty(), "{:?}", hello.findings);
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# kept"), "{persisted}");
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.theme, ThemeId::Nord);
+    assert_eq!(
+        row(&from_file, ThemeId::KEY).source,
+        SettingSource::Document
+    );
+}
+
+#[test]
+fn dashboard_default_theme_save_waits_for_the_document_override_reading() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, "# kept\nbranch_prefix = \"kept/\"\n").unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    assert_eq!(initial.settings.theme, ThemeId::Dark);
+    assert_eq!(row(&initial, ThemeId::KEY).source, SettingSource::Default);
+    assert_eq!(
+        row(&initial, ThemeId::KEY).value.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert_eq!(
+        row(&initial, ThemeId::KEY).default.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Catppuccin Mocha"), "{text}");
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    // The effective value equals the default, but the write creates a
+    // document override: its changed source must arrive as a reading.
+    attached.dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard_text(&attached.dashboard).contains("saving…"),
+        "Enter must show a pending save:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    let save = take_dashboard_request(&mut attached.dashboard);
+    let request_id = save.request_id;
+    let request = save.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("Enter must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, ThemeId::KEY);
+    assert_eq!(value.as_deref(), Some("\"catppuccin-mocha\""));
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the default override: {observed:?}"
+    );
+    let saved = observed
+        .iter()
+        .rev()
+        .find_map(settings_report_of)
+        .filter(|report| {
+            report.settings.theme == ThemeId::Dark
+                && row(report, ThemeId::KEY).source == SettingSource::Document
+        })
+        .unwrap_or_else(|| {
+            attached.await_settings("the document override was not published", |report| {
+                report.settings.theme == ThemeId::Dark
+                    && row(report, ThemeId::KEY).source == SettingSource::Document
+            })
+        });
+    assert_eq!(saved.settings.theme, ThemeId::Dark);
+    assert_eq!(row(&saved, ThemeId::KEY).source, SettingSource::Document);
+    assert_eq!(
+        row(&saved, ThemeId::KEY).value.as_deref(),
+        Some("catppuccin-mocha")
+    );
+    assert_eq!(saved.settings.branch_prefix, "kept/");
+    assert!(saved.findings.is_empty(), "{:?}", saved.findings);
+    assert!(
+        !dashboard_text(&attached.dashboard).contains("saving…"),
+        "the published override must end the pending state:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    assert!(attached.dashboard.drain_outbox().is_empty());
+
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# kept"), "{persisted}");
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.theme, ThemeId::Dark);
+    assert_eq!(
+        row(&from_file, ThemeId::KEY).source,
+        SettingSource::Document
+    );
+    assert_eq!(from_file.settings.branch_prefix, "kept/");
+    assert!(from_file.findings.is_empty(), "{:?}", from_file.findings);
+
+    close_settings(&mut attached);
+    open_settings(&mut attached);
+    open_theme_picker(&mut attached);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Saved: Catppuccin Mocha"), "{text}");
+    assert!(attached.dashboard.drain_outbox().is_empty());
+    close_settings(&mut attached);
+}
+
+#[test]
+fn dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement() {
+    struct Case {
+        name: &'static str,
+        document: &'static str,
+        category: &'static str,
+        summary: &'static str,
+        entries: &'static str,
+        child: &'static str,
+        parent: &'static str,
+        path: &'static str,
+        value: &'static str,
+    }
+
+    let cases = [
+        Case {
+            name: "agent argv",
+            document: "# kept\n[[agents]]\nname = \"claude\"\nargv = [\"claude\"]\n\n[[agents]]\nname = \"codex\"\nargv = [\"codex\", \"--safe\"]\n",
+            category: "Agents",
+            summary: "Agent overrides",
+            entries: "2 entries",
+            child: "claude",
+            parent: "agents",
+            path: "agents[0].argv",
+            value: "[\"claude\"]",
+        },
+        Case {
+            name: "picker root",
+            document: "# kept\npicker_roots = [\"/fixture/one\", \"/fixture/two\", \"/fixture/three\"]\n",
+            category: "Workspaces",
+            summary: "Picker roots",
+            entries: "3 entries",
+            child: "/fixture/one",
+            parent: "picker_roots",
+            path: "picker_roots[0]",
+            value: "\"/fixture/one\"",
+        },
+        Case {
+            name: "remembered launch",
+            document: "# kept\n[launch_choices.demo]\nkind = \"Terminal\"\n\n[launch_choices.other]\nkind = \"Terminal\"\n",
+            category: "Remembered launches",
+            summary: "Remembered launches",
+            entries: "2 entries",
+            child: "demo",
+            parent: "launch_choices",
+            path: "launch_choices.demo",
+            value: "{ kind = \"Terminal\" }",
+        },
+    ];
+
+    for case in cases {
+        let live = fresh();
+        let document = settings_document(&live);
+        std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+        std::fs::write(&document, case.document).unwrap();
+        let log = live.config.join("unchanged-child-server.log");
+        eprintln!(
+            "UNCHANGED_CHILD case={} server_log={}",
+            case.name,
+            log.display()
+        );
+        live.start_binary_logged(&[], &log);
+
+        let (mut attached, initial) = attach_dashboard(&live);
+        assert_eq!(initial.path, document, "{}", case.name);
+        assert!(
+            initial.findings.is_empty(),
+            "{}: {:?}",
+            case.name,
+            initial.findings
+        );
+        assert_eq!(
+            row(&initial, case.parent).source,
+            SettingSource::Document,
+            "{}",
+            case.name
+        );
+
+        open_settings(&mut attached);
+        focus_settings_category(&mut attached, case.category);
+        attached.dashboard.key(KeyCode::Enter);
+        focus_settings_row(&mut attached.dashboard, case.summary);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            focused_dashboard_line_with(&attached.dashboard, case.summary).contains(case.entries),
+            "{}: the collection summary must name its entries:\n{text}",
+            case.name
+        );
+        attached.dashboard.key(KeyCode::Enter);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            text.contains(&format!("{} / {}", case.category, case.summary)),
+            "{}: the manager must identify its collection:\n{text}",
+            case.name
+        );
+        focus_settings_row(&mut attached.dashboard, case.child);
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            focused_dashboard_line_with(&attached.dashboard, case.child).contains(case.child),
+            "{}: the manager must focus the existing entry:\n{text}",
+            case.name
+        );
+
+        // Enter opens the prefilled editor or pick list; Enter again submits
+        // the unchanged value.
+        attached.dashboard.key(KeyCode::Enter);
+        attached.dashboard.key(KeyCode::Enter);
+        assert!(
+            dashboard_text(&attached.dashboard).contains("saving…"),
+            "{}: the unchanged save must show pending:\n{}",
+            case.name,
+            dashboard_text(&attached.dashboard)
+        );
+        let mut requests = attached.dashboard.drain_outbox();
+        assert_eq!(
+            requests.len(),
+            1,
+            "{}: expected one SetSetting, got {requests:?}",
+            case.name
+        );
+        let save = requests.remove(0);
+        let request_id = save.request_id;
+        let request = save.request;
+        let Request::SetSetting { path, value } = request.clone() else {
+            panic!("{}: expected SetSetting, got {request:?}", case.name);
+        };
+        assert_eq!(path, case.path, "{}", case.name);
+        assert_eq!(value.as_deref(), Some(case.value), "{}", case.name);
+        let observed = attached.drive(vec![ClientMessage {
+            request_id,
+            request,
+        }]);
+        assert!(
+            observed.iter().any(|message| matches!(
+                message,
+                ServerMessage::Response {
+                    request_id: id,
+                    response: Response::Ok,
+                } if *id == request_id
+            )),
+            "{}: the Server refused the unchanged save: {observed:?}",
+            case.name
+        );
+        assert!(
+            observed
+                .iter()
+                .all(|message| settings_report_of(message).is_none()),
+            "{}: an unchanged child reading must not be republished: {observed:?}",
+            case.name
+        );
+        let text = dashboard_text(&attached.dashboard);
+        assert!(
+            !text.contains("saving…"),
+            "{}: the ack must settle against the confirmed reading:\n{text}",
+            case.name
+        );
+        assert!(
+            attached.dashboard.drain_outbox().is_empty(),
+            "{}: settling wrote again",
+            case.name
+        );
+
+        let persisted = std::fs::read_to_string(&document).unwrap();
+        assert!(persisted.contains("# kept"), "{}: {persisted}", case.name);
+        let from_file = settings::parse(&document, &persisted);
+        assert!(
+            from_file.findings.is_empty(),
+            "{}: {:?}",
+            case.name,
+            from_file.findings
+        );
+        assert_eq!(
+            row(&from_file, case.parent).source,
+            SettingSource::Document,
+            "{}",
+            case.name
+        );
+        match case.name {
+            "agent argv" => {
+                assert_eq!(from_file.settings.agents.len(), 2, "agent neighbors");
+                assert_eq!(from_file.settings.agents[0].name, "claude");
+                assert_eq!(
+                    from_file.settings.agents[0].argv,
+                    vec!["claude".to_string()]
+                );
+                assert_eq!(from_file.settings.agents[1].name, "codex");
+                assert_eq!(
+                    from_file.settings.agents[1].argv,
+                    vec!["codex".to_string(), "--safe".to_string()]
+                );
+            }
+            "picker root" => {
+                assert_eq!(
+                    from_file.settings.picker_roots,
+                    picker_roots(&["/fixture/one", "/fixture/two", "/fixture/three"])
+                );
+            }
+            "remembered launch" => {
+                assert_eq!(
+                    from_file.settings.launch_choices.len(),
+                    2,
+                    "launch neighbors"
+                );
+                assert_eq!(
+                    from_file.settings.launch_choices.get("demo"),
+                    Some(&ovrcr::protocol::LaunchChoice::Terminal)
+                );
+                assert_eq!(
+                    from_file.settings.launch_choices.get("other"),
+                    Some(&ovrcr::protocol::LaunchChoice::Terminal)
+                );
+            }
+            other => panic!("unhandled case {other}"),
+        }
+    }
+}
+
+#[test]
+fn dashboard_picker_root_reorder_survives_reopen_with_unrelated_values() {
+    let live = fresh();
+    let document = settings_document(&live);
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(
+        &document,
+        "# kept\npicker_roots = [\"/fixture/one\", \"/fixture/two\", \"/fixture/three\"] # roots\nbranch_prefix = \"kept/\" # mine\n",
+    )
+    .unwrap();
+    live.start_binary();
+
+    let (mut attached, initial) = attach_dashboard(&live);
+    let original = picker_roots(&["/fixture/one", "/fixture/two", "/fixture/three"]);
+    assert_eq!(initial.path, document);
+    assert_eq!(initial.settings.picker_roots, original);
+    assert_eq!(initial.settings.branch_prefix, "kept/");
+    assert_eq!(
+        row(&initial, "picker_roots").source,
+        SettingSource::Document
+    );
+    assert!(initial.findings.is_empty(), "{:?}", initial.findings);
+
+    open_settings(&mut attached);
+    assert_eq!(
+        attached.dashboard.key(KeyCode::Down),
+        DashboardAction::Redraw
+    );
+    assert_eq!(
+        attached.dashboard.key(KeyCode::Down),
+        DashboardAction::Redraw
+    );
+    assert!(
+        focused_dashboard_line(&attached.dashboard).contains("Workspaces"),
+        "{}",
+        dashboard_text(&attached.dashboard)
+    );
+    attached.dashboard.key(KeyCode::Enter);
+    focus_settings_row(&mut attached.dashboard, "Picker roots");
+    let text = dashboard_text(&attached.dashboard);
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Picker roots").contains("3 entries"),
+        "the collection summary must name its size:\n{text}"
+    );
+    attached.dashboard.key(KeyCode::Enter);
+    let text = dashboard_text(&attached.dashboard);
+    assert!(text.contains("Workspaces / Picker roots"), "{text}");
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "/fixture/one").contains("/fixture/one"),
+        "the manager must open on its first entry:\n{text}"
+    );
+    assert_paths_in_order(
+        &attached.dashboard,
+        &["/fixture/one", "/fixture/two", "/fixture/three"],
+    );
+
+    // "]" moves the selected root later and writes the whole list once.
+    attached.dashboard.key(KeyCode::Char(']'));
+    let reorder = take_dashboard_request(&mut attached.dashboard);
+    let request_id = reorder.request_id;
+    let request = reorder.request;
+    let Request::SetSetting { path, value } = request.clone() else {
+        panic!("] must send SetSetting, got {request:?}");
+    };
+    assert_eq!(path, "picker_roots");
+    let value = value.expect("reordering writes the whole root list");
+    let document_with_roots: toml::Value = toml::from_str(&format!("roots = {value}")).unwrap();
+    assert_eq!(
+        document_with_roots.get("roots"),
+        Some(&toml::Value::Array(
+            ["/fixture/two", "/fixture/one", "/fixture/three"]
+                .into_iter()
+                .map(|path| toml::Value::String(path.into()))
+                .collect()
+        ))
+    );
+    let observed = attached.drive(vec![ClientMessage {
+        request_id,
+        request,
+    }]);
+    assert!(
+        observed.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if *id == request_id
+        )),
+        "the Server refused the reorder: {observed:?}"
+    );
+    let reordered = picker_roots(&["/fixture/two", "/fixture/one", "/fixture/three"]);
+    let saved = observed
+        .iter()
+        .rev()
+        .find_map(settings_report_of)
+        .filter(|report| report.settings.picker_roots == reordered)
+        .unwrap_or_else(|| {
+            attached.await_settings("the reorder was not published", |report| {
+                report.settings.picker_roots == reordered
+            })
+        });
+    assert_eq!(saved.path, document);
+    assert_eq!(saved.settings.branch_prefix, "kept/");
+    assert_eq!(row(&saved, "picker_roots").source, SettingSource::Document);
+    assert!(saved.findings.is_empty(), "{:?}", saved.findings);
+    assert_paths_in_order(
+        &attached.dashboard,
+        &["/fixture/two", "/fixture/one", "/fixture/three"],
+    );
+
+    attached.dashboard.key(KeyCode::Esc);
+    assert!(
+        focused_dashboard_line_with(&attached.dashboard, "Picker roots").contains("3 entries"),
+        "Esc must return to the Picker roots summary:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+    close_settings(&mut attached);
+
+    let persisted = std::fs::read_to_string(&document).unwrap();
+    assert!(persisted.contains("# kept"), "{persisted}");
+    assert!(persisted.contains("# roots"), "{persisted}");
+    assert!(persisted.contains("# mine"), "{persisted}");
+    let from_file = settings::parse(&document, &persisted);
+    assert_eq!(from_file.settings.picker_roots, reordered);
+    assert_eq!(
+        row(&from_file, "picker_roots").source,
+        SettingSource::Document
+    );
+    assert_eq!(from_file.settings.branch_prefix, "kept/");
+    assert!(from_file.findings.is_empty(), "{:?}", from_file.findings);
+    assert_paths_ordered(
+        &persisted,
+        &["/fixture/two", "/fixture/one", "/fixture/three"],
+    );
+    drop(attached);
+
+    // A fresh Dashboard sees the Server's stored reading, and reopening the
+    // manager shows the new order with every neighboring root intact.
+    let (mut reopened, reread) = attach_dashboard(&live);
+    assert_eq!(reread.settings.picker_roots, reordered);
+    assert_eq!(reread.settings.branch_prefix, "kept/");
+    assert_eq!(row(&reread, "picker_roots").source, SettingSource::Document);
+    assert!(reread.findings.is_empty(), "{:?}", reread.findings);
+    for (before, after) in initial.rows.iter().zip(reread.rows.iter()) {
+        if before.key == "picker_roots" {
+            continue;
+        }
+        assert_eq!(before, after, "reopening changed {}", before.key);
+    }
+    open_settings(&mut reopened);
+    focus_settings_category(&mut reopened, "Workspaces");
+    reopened.dashboard.key(KeyCode::Enter);
+    focus_settings_row(&mut reopened.dashboard, "Picker roots");
+    assert!(
+        focused_dashboard_line_with(&reopened.dashboard, "Picker roots").contains("3 entries"),
+        "the reopened collection summary must still name three entries:\n{}",
+        dashboard_text(&reopened.dashboard)
+    );
+    reopened.dashboard.key(KeyCode::Enter);
+    assert!(dashboard_text(&reopened.dashboard).contains("Workspaces / Picker roots"));
+    assert_paths_in_order(
+        &reopened.dashboard,
+        &["/fixture/two", "/fixture/one", "/fixture/three"],
+    );
+    assert!(reopened.dashboard.drain_outbox().is_empty());
+    close_settings(&mut reopened);
 }
 
 #[test]
@@ -794,6 +1612,325 @@ fn quota_until(
             return *snapshot;
         }
     }
+}
+
+/// A Dashboard admitted on its own socket, with every request it sends routed
+/// to the real Server under test and every reply and event returned to it.
+struct AttachedDashboard {
+    dashboard: Dashboard,
+    connection: UnixStream,
+}
+
+impl AttachedDashboard {
+    /// Write `initial` and every follow-up the Dashboard emits, then read until
+    /// those requests have replies. Events seen on the way are also returned.
+    fn drive(&mut self, initial: Vec<ClientMessage>) -> Vec<ServerMessage> {
+        let mut awaiting = BTreeSet::new();
+        for request in initial {
+            assert!(
+                awaiting.insert(request.request_id),
+                "reused Dashboard request id {}",
+                request.request_id
+            );
+            write_frame(&mut self.connection, &request).expect("send Dashboard request");
+        }
+        let mut observed = Vec::new();
+        while !awaiting.is_empty() {
+            let message =
+                read_frame::<ServerMessage>(&mut self.connection).expect("read Dashboard response");
+            let response_id = match &message {
+                ServerMessage::Response { request_id, .. } => Some(*request_id),
+                ServerMessage::Event(_) => None,
+            };
+            for followup in self.dashboard.handle_server_message(message.clone()) {
+                assert!(
+                    awaiting.insert(followup.request_id),
+                    "reused Dashboard follow-up id {}",
+                    followup.request_id
+                );
+                write_frame(&mut self.connection, &followup).expect("send Dashboard follow-up");
+            }
+            if let Some(request_id) = response_id {
+                awaiting.remove(&request_id);
+            }
+            observed.push(message);
+        }
+        observed
+    }
+
+    fn await_settings(
+        &mut self,
+        what: &str,
+        mut done: impl FnMut(&SettingsReport) -> bool,
+    ) -> SettingsReport {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "{what}");
+            let message = read_frame::<ServerMessage>(&mut self.connection)
+                .expect("read a Dashboard settings event");
+            let direct = settings_report_of(&message);
+            let followups = self.dashboard.handle_server_message(message);
+            let latest = if followups.is_empty() {
+                None
+            } else {
+                self.drive(followups)
+                    .iter()
+                    .rev()
+                    .find_map(settings_report_of)
+            };
+            if let Some(report) = latest
+                && done(&report)
+            {
+                return report;
+            }
+            if let Some(report) = direct
+                && done(&report)
+            {
+                return report;
+            }
+        }
+    }
+}
+
+fn settings_report_of(message: &ServerMessage) -> Option<SettingsReport> {
+    match message {
+        ServerMessage::Event(ServerEvent::SettingsChanged(report)) => Some((**report).clone()),
+        _ => None,
+    }
+}
+
+/// Attach a Dashboard to the disposable Server, retrying while the previous
+/// connection's dashboard slot is released, and return its first reading.
+fn attach_dashboard(live: &live::Live) -> (AttachedDashboard, SettingsReport) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        dashboard.install_config_dir(live.config.clone());
+        let connection = connect_server(&live.socket).expect("connect Dashboard socket");
+        connection
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        connection
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut attached = AttachedDashboard {
+            dashboard,
+            connection,
+        };
+        let greeting = attached.drive(vec![ClientMessage {
+            request_id: 90_001,
+            request: Request::DashboardHello,
+        }]);
+        if greeting.iter().any(|message| {
+            matches!(
+                message,
+                ServerMessage::Response {
+                    response: Response::Hierarchy(_),
+                    ..
+                }
+            )
+        }) {
+            let report = greeting
+                .iter()
+                .rev()
+                .find_map(settings_report_of)
+                .unwrap_or_else(|| {
+                    attached.await_settings("the Server published no settings reading", |_| true)
+                });
+            return (attached, report);
+        }
+        assert!(
+            greeting.iter().any(|message| matches!(
+                message,
+                ServerMessage::Response {
+                    response: Response::Error {
+                        code: ErrorCode::Conflict,
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "unexpected Dashboard greeting: {greeting:?}"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the previous Dashboard slot was not released"
+        );
+        drop(attached);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn dashboard_lines(dashboard: &Dashboard) -> Vec<String> {
+    const COLS: u16 = 120;
+    const ROWS: u16 = 40;
+    let mut terminal = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..ROWS)
+        .map(|y| {
+            (0..COLS)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+fn dashboard_text(dashboard: &Dashboard) -> String {
+    dashboard_lines(dashboard).join("\n")
+}
+
+fn dashboard_line(dashboard: &Dashboard, needle: &str) -> String {
+    dashboard_lines(dashboard)
+        .into_iter()
+        .find(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("no line with {needle:?}:\n{}", dashboard_text(dashboard)))
+}
+
+/// The focus text of every focused pane segment on one rendered line. The
+/// wide layout puts the sidebar marker at the line start and the list marker
+/// after the pane divider, so a line-start scan misses the list.
+fn focused_segments(line: &str) -> impl Iterator<Item = &str> {
+    line.split('│')
+        .filter_map(|segment| segment.trim_start().strip_prefix("› "))
+}
+
+/// The one Settings line carrying the monochrome focus marker.
+fn focused_dashboard_line(dashboard: &Dashboard) -> String {
+    dashboard_lines(dashboard)
+        .into_iter()
+        .find(|line| focused_segments(line).next().is_some())
+        .unwrap_or_else(|| panic!("no focused Settings line:\n{}", dashboard_text(dashboard)))
+}
+
+/// The focus-marked pane segment containing `needle`. In list focus both the
+/// category and the selected row carry the marker, in different pane segments.
+fn focused_dashboard_line_with(dashboard: &Dashboard, needle: &str) -> String {
+    dashboard_lines(dashboard)
+        .into_iter()
+        .find(|line| focused_segments(line).any(|text| text.contains(needle)))
+        .unwrap_or_else(|| {
+            panic!(
+                "no focused Settings line with {needle:?}:\n{}",
+                dashboard_text(dashboard)
+            )
+        })
+}
+
+fn settings_open(dashboard: &Dashboard) -> bool {
+    let text = dashboard_text(dashboard);
+    [
+        "Alerts",
+        "Appearance",
+        "Workspaces",
+        "Remembered launches",
+        "Remote",
+    ]
+    .iter()
+    .all(|category| text.contains(*category))
+}
+
+/// Open Settings through the Browse menu, where category focus starts on Alerts.
+fn open_settings(attached: &mut AttachedDashboard) {
+    let dashboard = &mut attached.dashboard;
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('v'));
+    dashboard.key(KeyCode::Char(','));
+    assert!(settings_open(dashboard), "{}", dashboard_text(dashboard));
+    assert!(
+        focused_dashboard_line(dashboard).contains("Alerts"),
+        "the menu must open category focus on Alerts:\n{}",
+        dashboard_text(dashboard)
+    );
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "opening Settings sent a request"
+    );
+}
+
+/// Back out one level at a time until Settings closes, without sending writes.
+fn close_settings(attached: &mut AttachedDashboard) {
+    for _ in 0..6 {
+        if !settings_open(&attached.dashboard) {
+            assert!(attached.dashboard.drain_outbox().is_empty());
+            return;
+        }
+        attached.dashboard.key(KeyCode::Esc);
+    }
+    panic!(
+        "Settings did not close:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+}
+
+fn focus_settings_category(attached: &mut AttachedDashboard, category: &str) {
+    for _ in 0..ovrcr::protocol::entries().len() {
+        if focused_dashboard_line(&attached.dashboard).contains(category) {
+            return;
+        }
+        attached.dashboard.key(KeyCode::Down);
+    }
+    panic!(
+        "no Settings category {category:?}:\n{}",
+        dashboard_text(&attached.dashboard)
+    );
+}
+
+fn focus_settings_row(dashboard: &mut Dashboard, label: &str) {
+    for _ in 0..ovrcr::protocol::entries().len() + 8 {
+        if dashboard_lines(dashboard)
+            .iter()
+            .any(|line| focused_segments(line).any(|text| text.contains(label)))
+        {
+            return;
+        }
+        dashboard.key(KeyCode::Down);
+    }
+    panic!(
+        "no focused Settings row {label:?}:\n{}",
+        dashboard_text(dashboard)
+    );
+}
+
+/// Navigate from category focus to the Theme picker and open it.
+fn open_theme_picker(attached: &mut AttachedDashboard) {
+    focus_settings_category(attached, "Appearance");
+    attached.dashboard.key(KeyCode::Enter);
+    focus_settings_row(&mut attached.dashboard, "Theme");
+    attached.dashboard.key(KeyCode::Enter);
+}
+
+fn take_dashboard_request(dashboard: &mut Dashboard) -> ClientMessage {
+    let mut requests = dashboard.drain_outbox();
+    assert_eq!(requests.len(), 1, "expected one request, got {requests:?}");
+    requests.remove(0)
+}
+
+fn picker_roots(paths: &[&str]) -> Vec<PathBuf> {
+    paths.iter().map(|path| PathBuf::from(*path)).collect()
+}
+
+fn assert_paths_in_order(dashboard: &Dashboard, paths: &[&str]) {
+    assert_paths_ordered(&dashboard_text(dashboard), paths);
+}
+
+fn assert_paths_ordered(text: &str, paths: &[&str]) {
+    let positions: Vec<usize> = paths
+        .iter()
+        .map(|path| {
+            text.find(*path)
+                .unwrap_or_else(|| panic!("no {path:?} in:\n{text}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{paths:?} are out of order at {positions:?}:\n{text}"
+    );
 }
 
 fn auth_call_log(live: &live::Live) -> PathBuf {

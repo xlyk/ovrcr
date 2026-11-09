@@ -86,12 +86,7 @@ impl Dashboard {
             .details
             .is_some_and(|(details, _)| details == Details::Settings)
         {
-            let code = match mouse.kind {
-                MouseEventKind::ScrollDown => KeyCode::Down,
-                MouseEventKind::ScrollUp => KeyCode::Up,
-                _ => return DashboardAction::None,
-            };
-            return self.settings_editor_key(KeyEvent::from(code));
+            return self.settings_editor_mouse(mouse);
         }
         if self
             .details

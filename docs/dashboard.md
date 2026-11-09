@@ -1104,45 +1104,50 @@ Server's document whatever its own environment says.
 
 ### Settings view
 
-Open **Settings** from the menu (`Space v ,`) or search the command palette for
-**settings**; it has no Browse key of its own. Searching the palette for one
-setting's label or key, such as `theme`, opens Settings on that row. The view is
-the settings editor.
-It shows the document path and when the Server read it, then findings that belong
-to no setting (unknown keys and document-level problems, each with its line), then
-every setting in one scrolling list under the group headers **Alerts**
-(`desktop_notifications`, `ready_sound`, macOS `ready_sound_choice`, and
-`iterm_focus`), **Appearance** (`theme`), **Workspaces**
-(`automatic_local_terminals`, `save_uncommitted_work`, `branch_prefix`,
-`picker_roots`), **Titles**
-(`title_model`), **Usage** (`quota.*`), **Agents** (`[[agents]]`) and
-**Remembered launches** (`launch_choices`, one row per project), **Operator**
-(`operator.model`),
-**Delegation** (`delegation.*`) and **Remote** (`remote.enabled`,
-`remote.port`, `remote.login`).
+Open **Settings** from the menu (`Space v ,`) or search Commands for
+**settings**. A Commands shortcut for a setting, such as `theme`, opens its
+category and focuses that row. Settings owns the header, content and footer;
+closing it restores the workspace and session selection.
 
-The view's title lists `↑/↓ move · Enter edit · r reset · / filter · Esc close`.
-Each row shows its label, effective value (`unset` for an empty optional value)
-and source badge, `default` or `set`; a value the document sets also shows the
-default beside it, for example `kh/  set  (default: feature/)`. A setting's
-finding shows under its row. Each row shows one line of description; the
-selected row shows all of it, its `key:` and, on a collection element, the keys
-that act on it (`[ ] move · x remove` on a picker root, `x remove` elsewhere).
-A consent setting that is off says `Off · Enter to turn on` (`Off · Enter to set
-the title model` for the title model) rather than the TOML key that `ovrcr
-settings` names. Selecting it shows its side effect; turning it on asks for no
-confirmation.
+The sidebar follows the settings catalog: **Alerts**, **Appearance**,
+**Workspaces**, **Titles**, **Usage**, **Agents**, **Remembered launches**,
+**Operator**, **Delegation** and **Remote**. Only the active category's settings
+are listed. Each setting has one aligned label/value row; `›` marks keyboard
+focus without depending on color. The explanation changes in a fixed details
+area instead of expanding the selected row.
+
+Details show the effective value, its source and default, the configuration key,
+and the document path and read time. An explicit document value remains distinct
+from a built-in default even when both are Off. Reset is available only for a
+document override and names the affected setting or whole collection. Consent
+guidance explains permission, access or cost consequences before activation.
+The sound choice also explains when Desktop notifications or Ready sound is off.
+
+At 80 columns the category sidebar stays visible. Below 80 columns, a breadcrumb
+and one category index, list or editor use the full width. Resizing preserves
+focus, drafts and scroll positions. Below 48 columns or eight rows, Settings
+shows resize guidance and accepts only cancel/close controls.
 
 | Key | Action |
 | --- | --- |
-| `↑`/`↓`, `j`/`k`, Page Up/Down, Home/End, wheel | Move the selection |
-| `Enter` | Edit the selected row in place |
-| `[` / `]` | Move the selected picker root up or down |
-| `r` | Reset: remove the key so the source returns to `default` (only for a `set` row) |
-| `x` / Delete | Remove the selected element of a collection |
-| `/` | Filter rows across groups with the palette's word filter; Enter keeps it, Escape clears it |
-| `Escape` | Cancel the current edit, else clear the filter, else close |
-| `Ctrl-g` | Cancel the current edit and close Settings |
+| `↑`/`↓`, Page Up/Down, Home/End, wheel | Navigate the focused category, list or picker |
+| `j` / `k` in categories or lists | Move down/up; in text inputs these remain ordinary letters |
+| `Enter` / `Right` in categories | Enter that category's settings |
+| `Enter` on a setting | Perform the footer's named action: turn on/off, choose, edit or manage |
+| `Left` / `Escape` in a list | Return to categories, or restore the starting point of a search |
+| `/` | Search labels and configuration keys across every category |
+| `Enter` in global search | Open the highlighted result in its owning category |
+| `Escape` in search or an editor | Cancel that layer and restore its previous selection |
+| `r` | Reset a document override; collection reset affects the whole collection |
+| `Ctrl-d` / `Ctrl-u` | Scroll selected details down/up to reach full values and explanations |
+| `f` | Visit the next finding, selecting its affected setting when possible |
+| `d` | Open scrollable document details and diagnostics |
+| `Escape` in categories | Close Settings |
+| `Ctrl-g` | Cancel drafts and close Settings |
+
+Global search and picker filters have separate text inputs. Ordinary letters
+and paste belong to the active input. Results name their category; no matches
+explain how to revise or cancel the search and cannot submit an edit.
 
 **Remote** is the optional loopback web UI. `remote.enabled` is a consent
 setting: turning it on starts a supervised `ovrcr remote serve` child, and
@@ -1158,23 +1163,32 @@ once; `automatic_local_terminals` and a remembered launch open a pick list
 (Terminal or a detected agent); strings open a text field; paths open a text
 field whose Tab completes directories. Enter saves that one row and Escape cancels
 only that edit. An emptied top-level value resets it. Every save is one
-`SetSetting` request: the row shows `saving…` and changes only when the Server's
-new reading arrives. A value the Server refuses shows under its row as
-**refused: …** and the document is unchanged.
+`SetSetting` request. The row shows `saving…` until its own response and the
+Server's published value confirm it; an unchanged value already confirmed from
+the document settles on the successful response without waiting for another
+publication. Values always follow the Server's reading. A refusal shows its
+reason on the affected row and leaves the document unchanged.
 
-`picker_roots`, `[[agents]]` and `launch_choices` expand into one child row per
-element or entry plus an **Add** row. `[` and `]` on a picker-root row send one
-`SetSetting` of the whole `picker_roots` list in the new order; the first row
-cannot move up and the last cannot move down. Agent rows have no order, so those
-keys do nothing there. An agent row edits
-its `argv` as a TOML array literal such as `["claude", "--verbose"]`; Add asks for
-the agent's name and starts its argv as that name. Add under Remembered launches
-asks for a project name and remembers Terminal. While `picker_roots` is its
-default, an edit or Add writes the whole default list with the change.
+`picker_roots`, `[[agents]]` and `launch_choices` each occupy one summary row,
+including when empty. Enter opens a manager; Escape returns to the same summary.
+Inside a manager, Enter edits the selected entry, `a` adds one and `x` removes
+only that entry. The details identify the affected folder, agent or project.
+Resetting a collection is separate from removing an entry.
 
-While the document is not valid TOML, every row shows its default, the top
-finding names the line, and **Editing is off until dashboard.toml is fixed by
-hand.**; Enter, `[`, `]`, `r` and `x` change nothing.
+Picker roots also support `[` and `]` to move the selected folder up or down.
+Reordering sends one `SetSetting` of the whole list and preserves neighboring
+folders. The first folder cannot move up and the last cannot move down.
+Agent overrides and remembered launches have no reorder action. An agent entry
+edits its `argv` as a TOML array such as `["claude", "--verbose"]`; Add asks for
+its name and starts its argv as that name. A remembered launch chooses Terminal
+or a detected Agent/preset; Add asks for a project name and remembers Terminal.
+Changing default picker roots writes the default list with just that change.
+
+Active findings remain visible across categories. `f` visits affected settings;
+`d` exposes unknown keys, full diagnostics, document path and read time.
+Editing is unavailable before the Server's reading arrives or while the
+document is unparseable. A valid published reading restores the controls and
+removes resolved findings.
 
 At attach the footer shows one line when the reading has findings, for example
 **2 settings findings; see Settings**, and nothing when it has none. When a later
@@ -1480,18 +1494,21 @@ hot-switches on the next `SettingsChanged` without a restart. Borders use
 accent rail stays `MAUVE`. Custom CSS, per-session themes, and follow-terminal
 are out of scope.
 
-The Settings **Theme** picker groups choices under nonselectable **Dark** and
-**Light** headings using the catalog's explicit appearance metadata. Preview the
-highlighted choice across the whole Dashboard with the arrow keys or mouse wheel.
-**Page Up/Down** moves by six choices; **Home/End** jumps to the first/last
-filtered choice. Typing or pasting a search previews its first match immediately;
-an empty result restores the saved theme.
-**Enter** saves through the normal settings flow, while **Esc** cancels the
-preview and restores the latest saved theme. **Ctrl-g** cancels the preview and
-closes Settings. Reopening the picker while a save is pending starts from the
-latest saved choice; a response to the earlier save does not replace the new
-preview. Previewing does not write
-`dashboard.toml` or change embedded agent PTY colors.
+Appearance initially shows one compact **Theme** row. Enter replaces the list
+with a searchable picker, keeping the category sidebar on wide terminals.
+It opens on the Server's saved choice and groups all palettes under **Dark**
+and **Light**. Arrows, mouse wheel and Page Up/Down navigate; Home/End jumps to
+the first/last match. Typing or pasting filters the choices and previews the
+first match. An empty result restores saved colors and cannot save.
+
+Highlighting repaints the whole Settings view without writing. When the preview
+differs, both **Preview** and **Saved** names remain visible. Enter submits the
+canonical theme ID once and shows `saving…` until the Server publishes the
+effective value. A refusal shows its reason and restores confirmed colors.
+Escape returns to the Theme row using the latest saved colors; Ctrl-g closes
+Settings. Reopening while an earlier save is pending starts from the latest
+saved choice, and a late reply cannot replace a newer preview. Previewing
+changes neither `dashboard.toml` nor embedded agent PTY colors.
 
 The ready sound is off by default. Set `ready_sound = true` in `dashboard.toml`,
 press uppercase `S` in Browse, or use **ready sound** in the command palette to

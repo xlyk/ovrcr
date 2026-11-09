@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.96s
+     Running tests/settings_lifecycle.rs (target/debug/deps/settings_lifecycle-061942a732521fe3)
+
+running 5 tests
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpySzKmP server=91695
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7T73Ci server=91697
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwPCIBb server=91714
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXncgVG server=91723
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsecCgN server=91726
+test dashboard_shows_the_server_reading_when_the_client_cannot_read_the_document ... ok
+test dashboard_default_theme_save_waits_for_the_document_override_reading ... ok
+test dashboard_same_document_theme_save_settles_without_a_publish ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsecCgN server=94964
+test dashboard_picker_root_reorder_survives_reopen_with_unrelated_values ... ok
+test dashboard_theme_save_and_cancel_round_trip_through_the_server ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 8.18s
+

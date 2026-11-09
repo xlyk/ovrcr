@@ -1,0 +1,13 @@
+- window "OVRCR GUI" [ref=e585] app=OVRCR GUI
+  - group [ref=e586]
+    - textarea "OVRCR terminal" [ref=e587]: "Settings / Agents / + Add agent                                         \nEdit + Add agent                                                        \nValue: ▏                                              "… (+1,551 chars; (await computer.ref("e587")).value()) (focused) actions=press
+    - statictext [ref=e603]: "Settings / Agents / + Add agent                                         "
+    - statictext [ref=e604]: "Edit + Add agent                                                        "
+    - statictext [ref=e680]: "Value: ▏                                                                "
+    - statictext [ref=e681]: "! Enter a name before saving                                            "
+    - statictext [ref=e682]: "Enter saves · Esc cancels                                               "
+    - statictext [ref=e626]: " Enter save  · Esc cancel                                               "
+  - button "close" [ref=e597]
+  - button "full screen" [ref=e598]
+  - button "minimize" [ref=e599]
+  - statictext [ref=e600]: "OVRCR GUI"

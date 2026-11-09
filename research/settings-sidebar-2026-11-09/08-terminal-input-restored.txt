@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e89] app=OVRCR GUI
+  - group [ref=e90]
+    - textarea "OVRCR terminal" [ref=e91]: "󰚩 OVRCR Operator [o]        [Ctrl-o]                   [Commands] [Menu]\n   Operator              not opened│local (#1)  shell · 4m      pid 2845\n CONSIGINT ────────────────────────│──────────────────"… (+1,551 chars; (await computer.ref("e91")).value()) (focused) actions=press
+    - statictext [ref=e107]: "󰚩 OVRCR Operator [o]        [Ctrl-o]                   [Commands] [Menu]"
+    - statictext [ref=e108]: "   Operator              not opened│local (#1)  shell · 4m      pid 2845"
+    - statictext [ref=e177]: " CONSIGINT ────────────────────────│────────────────────────────────────"
+    - statictext [ref=e204]: "  󰘬 main                      root │consigint › printf 'SETTINGS_413_%s\\"
+    - statictext [ref=e205]: "▌    $ local                       │n' INPUT_OK                         "
+    - statictext [ref=e206]: "  󰘬 gui-consigint-auth-handoff     │SETTINGS_413_INPUT_OK               "
+    - statictext [ref=e207]: "     $ local                       │consigint ›                         "
+    - statictext [ref=e208]: " [1] - review auth handoff         │                                    "
+    - statictext [ref=e209]: "       └ grok:4.6                  │                                    "
+    - statictext [ref=e210]: "  󰘬 gui-consigint-worktree-lifecyc…│                                    "
+    - statictext [ref=e211]: "     $ local                       │                                    "
+    - statictext [ref=e212]: " [2] - implement lifecycle cleanup │                                    "
+    - statictext [ref=e213]: "       └ claude:sonnet-4           │                                    "
+    - statictext [ref=e214]: " [3] - review websocket shutdown   │                                    "
+    - statictext [ref=e215]: "       └ codex:gpt-5.4             │                                    "
+    - statictext [ref=e216]: " [4] - plan snapshot restore       │                                    "
+    - statictext [ref=e217]: "       └ pi:grok-4.6               │                                    "
+    - statictext [ref=e218]: " QUOTA LEFT ───────────────────────│                                    "
+    - statictext [ref=e219]: "Claude · not signed in             │                                    "
+    - statictext [ref=e220]: "Codex · unavailable · retry now    │                                    "
+    - statictext [ref=e221]: "Grok · not signed in · retry 7m    │                                    "
+    - statictext [ref=e222]: "Cursor · usage off                 │                                    "
+    - statictext [ref=e223]: "                                   │                                    "
+    - statictext [ref=e130]: "1–9 jump  Ctrl-g/Esc cancel                                             "
+  - button "close" [ref=e101]
+  - button "full screen" [ref=e102]
+  - button "minimize" [ref=e103]
+  - statictext [ref=e104]: "OVRCR GUI"

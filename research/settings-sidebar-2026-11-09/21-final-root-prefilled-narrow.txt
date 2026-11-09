@@ -1,0 +1,13 @@
+- window "OVRCR GUI" [ref=e224] app=OVRCR GUI
+  - group [ref=e493]
+    - textarea "OVRCR terminal" [ref=e492]: "Settings / Workspaces / /tmp/ovrcr-413-checks.DjTg8r/evidence           \nEdit /tmp/ovrcr-413-checks.DjTg8r/evidence                              \nValue: /tmp/ovrcr-413-checks.DjTg8r/evidence▏         "… (+1,551 chars; (await computer.ref("e492")).value()) (focused) actions=press
+    - statictext [ref=e508]: "Settings / Workspaces / /tmp/ovrcr-413-checks.DjTg8r/evidence           "
+    - statictext [ref=e509]: "Edit /tmp/ovrcr-413-checks.DjTg8r/evidence                              "
+    - statictext [ref=e555]: "Value: /tmp/ovrcr-413-checks.DjTg8r/evidence▏                           "
+    - statictext [ref=e556]: "Tab completes paths · Enter saves · Esc cancels                         "
+    - statictext [ref=e557]: "› evidence                                                              "
+    - statictext [ref=e554]: " Enter save  · Tab complete  · Esc cancel                               "
+  - button "close" [ref=e236]
+  - button "full screen" [ref=e237]
+  - button "minimize" [ref=e238]
+  - statictext [ref=e239]: "OVRCR GUI"

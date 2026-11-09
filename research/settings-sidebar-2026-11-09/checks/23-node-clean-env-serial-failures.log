@@ -1,0 +1,503 @@
+TAP version 13
+# Subtest: session switches capture OMP's exact native file and ephemeral identity
+not ok 1 - session switches capture OMP's exact native file and ephemeral identity
+  ---
+  duration_ms: 1023.575375
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:43:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+    -     'native-a',
+    -     '/private/omp/arbitrary-file.jsonl'
+    -   ],
+    -   [
+          'native-b',
+          null
+        ]
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'native-a'
+      1: '/private/omp/arbitrary-file.jsonl'
+    1:
+      0: 'native-b'
+      1: ~
+  actual:
+    0:
+      0: 'native-b'
+      1: ~
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:53:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: inert outside a managed invocation and outside the terminal UI
+ok 2 - inert outside a managed invocation and outside the terminal UI
+  ---
+  duration_ms: 2.874375
+  type: 'test'
+  ...
+# Subtest: registers OMP's lifecycle and switch events
+ok 3 - registers OMP's lifecycle and switch events
+  ---
+  duration_ms: 0.938666
+  type: 'test'
+  ...
+# Subtest: a switch names the conversation it left by id, never by its file path
+ok 4 - a switch names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 198.039333
+  type: 'test'
+  ...
+# Subtest: a same-file reload is a switch that names the conversation it is already on
+ok 5 - a same-file reload is a switch that names the conversation it is already on
+  ---
+  duration_ms: 182.110167
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 6 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 189.814875
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces this producer once and says so
+ok 7 - the reattach command re-announces this producer once and says so
+  ---
+  duration_ms: 200.505083
+  type: 'test'
+  ...
+# Subtest: a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+ok 8 - a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+  ---
+  duration_ms: 2.227625
+  type: 'test'
+  ...
+# Subtest: an approval opens and closes one namespaced request and carries no reason
+ok 9 - an approval opens and closes one namespaced request and carries no reason
+  ---
+  duration_ms: 182.361417
+  type: 'test'
+  ...
+# Subtest: a denial closes the approval exactly as an allow does
+ok 10 - a denial closes the approval exactly as an allow does
+  ---
+  duration_ms: 490.519083
+  type: 'test'
+  ...
+# Subtest: an approval from another session id or with none emits nothing
+ok 11 - an approval from another session id or with none emits nothing
+  ---
+  duration_ms: 1.306667
+  type: 'test'
+  ...
+# Subtest: two approvals overlap: each frame carries its own tool call id
+not ok 12 - two approvals overlap: each frame carries its own tool call id
+  ---
+  duration_ms: 1331.725917
+  type: 'test'
+  location: '/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:230:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        [
+          'input_open',
+    -     'approval:c1'
+    -   ],
+    -   [
+    -     'input_open',
+          'approval:c2'
+        ],
+        [
+          'input_close',
+          'approval:c1'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0:
+      0: 'input_open'
+      1: 'approval:c1'
+    1:
+      0: 'input_open'
+      1: 'approval:c2'
+    2:
+      0: 'input_close'
+      1: 'approval:c1'
+    3:
+      0: 'input_close'
+      1: 'approval:c2'
+  actual:
+    0:
+      0: 'input_open'
+      1: 'approval:c2'
+    1:
+      0: 'input_close'
+      1: 'approval:c1'
+    2:
+      0: 'input_close'
+      1: 'approval:c2'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/tests/omp_reporting_extension.mjs:238:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: the ask tool's lifetime is one question request keyed by its tool call id
+ok 13 - the ask tool's lifetime is one question request keyed by its tool call id
+  ---
+  duration_ms: 884.472792
+  type: 'test'
+  ...
+# Subtest: a tool that is not ask emits nothing
+ok 14 - a tool that is not ask emits nothing
+  ---
+  duration_ms: 1.292917
+  type: 'test'
+  ...
+# Subtest: an approval opened during a question keeps both requests and their order
+ok 15 - an approval opened during a question keeps both requests and their order
+  ---
+  duration_ms: 272.308541
+  type: 'test'
+  ...
+# Subtest: an end that failed, timed out or aborted still closes the question
+ok 16 - an end that failed, timed out or aborted still closes the question
+  ---
+  duration_ms: 258.220709
+  type: 'test'
+  ...
+# Subtest: an approval requested and resolved in one tick is delivered open before close
+ok 17 - an approval requested and resolved in one tick is delivered open before close
+  ---
+  duration_ms: 181.298375
+  type: 'test'
+  ...
+# Subtest: an ask execution that starts and ends in one tick is delivered open before close
+ok 18 - an ask execution that starts and ends in one tick is delivered open before close
+  ---
+  duration_ms: 179.550583
+  type: 'test'
+  ...
+# Subtest: a print-mode child emits no approval or question frames
+ok 19 - a print-mode child emits no approval or question frames
+  ---
+  duration_ms: 1.22325
+  type: 'test'
+  ...
+# Subtest: an end that will continue keeps the cycle open; the final end settles it as observed work
+ok 20 - an end that will continue keeps the cycle open; the final end settles it as observed work
+  ---
+  duration_ms: 200.459334
+  type: 'test'
+  ...
+# Subtest: error and aborted ends settle as error and aborted; no assistant message is none
+ok 21 - error and aborted ends settle as error and aborted; no assistant message is none
+  ---
+  duration_ms: 223.270916
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 22 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 189.087667
+  type: 'test'
+  ...
+# Subtest: an in-place session switch re-announces the conversation and closes any open cycle
+ok 23 - an in-place session switch re-announces the conversation and closes any open cycle
+  ---
+  duration_ms: 194.407916
+  type: 'test'
+  ...
+# Subtest: shutdown reports once with reason quit and disables
+ok 24 - shutdown reports once with reason quit and disables
+  ---
+  duration_ms: 179.330458
+  type: 'test'
+  ...
+# Subtest: a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+ok 25 - a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+  ---
+  duration_ms: 193.896416
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 26 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 181.633042
+  type: 'test'
+  ...
+# Subtest: a session switch re-announces the model for the new conversation
+ok 27 - a session switch re-announces the model for the new conversation
+  ---
+  duration_ms: 184.073167
+  type: 'test'
+  ...
+# Subtest: managed Pi exposes research assignment and explicit collection tools
+ok 28 - managed Pi exposes research assignment and explicit collection tools
+  ---
+  duration_ms: 43.095417
+  type: 'test'
+  ...
+# Subtest: acceptance exclusivity rejects direct registered callbacks before transport
+ok 29 - acceptance exclusivity rejects direct registered callbacks before transport
+  ---
+  duration_ms: 8.689
+  type: 'test'
+  ...
+# Subtest: registered start rejects invalid action authority before intent or transport
+ok 30 - registered start rejects invalid action authority before intent or transport
+  ---
+  duration_ms: 8.481625
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare before persistence
+ok 31 - original intent recovers a lost Prepare before persistence
+  ---
+  duration_ms: 446.618709
+  type: 'test'
+  ...
+# Subtest: original intent recovers a lost Prepare after persistence
+ok 32 - original intent recovers a lost Prepare after persistence
+  ---
+  duration_ms: 443.941666
+  type: 'test'
+  ...
+# Subtest: followup recovery retains exact private request after a lost reply
+ok 33 - followup recovery retains exact private request after a lost reply
+  ---
+  duration_ms: 474.829875
+  type: 'test'
+  ...
+# Subtest: failed registered collection releases pending follow-up without accepting either result
+ok 34 - failed registered collection releases pending follow-up without accepting either result
+  ---
+  duration_ms: 404.130958
+  type: 'test'
+  ...
+# Subtest: retry rejects a FIFO intent before a blocking open can wait for a writer
+ok 35 - retry rejects a FIFO intent before a blocking open can wait for a writer
+  ---
+  duration_ms: 11.199583
+  type: 'test'
+  ...
+# Subtest: tool queued on old recovery cannot start work after explicit new
+ok 36 - tool queued on old recovery cannot start work after explicit new
+  ---
+  duration_ms: 365.054583
+  type: 'test'
+  ...
+# Subtest: an awaited old private intent cannot reacquire auth after fork
+ok 37 - an awaited old private intent cannot reacquire auth after fork
+  ---
+  duration_ms: 266.287708
+  type: 'test'
+  ...
+# Subtest: DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+ok 38 - DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 332.357375
+  type: 'test'
+  ...
+# Subtest: Archive persists an exact private intent before transport and reconciles a lost reply
+ok 39 - Archive persists an exact private intent before transport and reconciles a lost reply
+  ---
+  duration_ms: 423.276
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers none Prepare loss
+ok 40 - prepare-only registered start reserves without effects and recovers none Prepare loss
+  ---
+  duration_ms: 485.977708
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers before Prepare loss
+ok 41 - prepare-only registered start reserves without effects and recovers before Prepare loss
+  ---
+  duration_ms: 1472.383875
+  type: 'test'
+  ...
+# Subtest: prepare-only registered start reserves without effects and recovers after Prepare loss
+ok 42 - prepare-only registered start reserves without effects and recovers after Prepare loss
+  ---
+  duration_ms: 734.394792
+  type: 'test'
+  ...
+# Subtest: prepare-only invalid flags refuse before control or private intent effects
+ok 43 - prepare-only invalid flags refuse before control or private intent effects
+  ---
+  duration_ms: 231.949583
+  type: 'test'
+  ...
+# Subtest: Codex coding and resolved-default review refuse before intent or Prepare
+ok 44 - Codex coding and resolved-default review refuse before intent or Prepare
+  ---
+  duration_ms: 271.440125
+  type: 'test'
+  ...
+# Subtest: fixture result receipt appears only after its complete JSON is written
+ok 45 - fixture result receipt appears only after its complete JSON is written
+  ---
+  duration_ms: 35.463167
+  type: 'test'
+  ...
+# Subtest: captures exact native history at each conversation boundary
+ok 46 - captures exact native history at each conversation boundary
+  ---
+  duration_ms: 233.294833
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation: registers nothing
+ok 47 - inert outside a managed invocation: registers nothing
+  ---
+  duration_ms: 7.339042
+  type: 'test'
+  ...
+# Subtest: an unavailable optional Pi API preserves ordinary reporting
+ok 48 - an unavailable optional Pi API preserves ordinary reporting
+  ---
+  duration_ms: 204.785583
+  type: 'test'
+  ...
+# Subtest: one response cycle: start, end, settled carry run, outcome and ordered sequence
+ok 49 - one response cycle: start, end, settled carry run, outcome and ordered sequence
+  ---
+  duration_ms: 315.161208
+  type: 'test'
+  ...
+# Subtest: error and aborted outcomes come from the last assistant message; a second run increments
+ok 50 - error and aborted outcomes come from the last assistant message; a second run increments
+  ---
+  duration_ms: 346.991667
+  type: 'test'
+  ...
+# Subtest: continuations inside one cycle keep the run; the last end before settled decides the outcome
+ok 51 - continuations inside one cycle keep the run; the last end before settled decides the outcome
+  ---
+  duration_ms: 211.839875
+  type: 'test'
+  ...
+# Subtest: non-tui modes never spawn a helper; shutdown reports once then disables
+ok 52 - non-tui modes never spawn a helper; shutdown reports once then disables
+  ---
+  duration_ms: 189.470458
+  type: 'test'
+  ...
+# Subtest: a print-mode shutdown drains nothing and spawns no helper
+ok 53 - a print-mode shutdown drains nothing and spawns no helper
+  ---
+  duration_ms: 7.930833
+  type: 'test'
+  ...
+# Subtest: a hung helper is killed at the deadline and the handler still resolves
+ok 54 - a hung helper is killed at the deadline and the handler still resolves
+  ---
+  duration_ms: 909.240208
+  type: 'test'
+  ...
+# Subtest: queue overflow disables reporting and sends one content-free unavailable notice
+ok 55 - queue overflow disables reporting and sends one content-free unavailable notice
+  ---
+  duration_ms: 910.26925
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 56 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 294.905833
+  type: 'test'
+  ...
+# Subtest: resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+ok 57 - resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+  ---
+  duration_ms: 191.042833
+  type: 'test'
+  ...
+# Subtest: an outer prompt span opens and closes one Input request; the title never leaves
+ok 58 - an outer prompt span opens and closes one Input request; the title never leaves
+  ---
+  duration_ms: 209.526875
+  type: 'test'
+  ...
+# Subtest: a prompt can open while no cycle is running and never touches the cycle
+ok 59 - a prompt can open while no cycle is running and never touches the cycle
+  ---
+  duration_ms: 187.519542
+  type: 'test'
+  ...
+# Subtest: a transition names the conversation it left by id, never by its file path
+ok 60 - a transition names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 499.768875
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 61 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 205.18575
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces a disabled producer once and says so
+ok 62 - the reattach command re-announces a disabled producer once and says so
+  ---
+  duration_ms: 202.286917
+  type: 'test'
+  ...
+# Subtest: a shutdown drain discards the queue and delivers only the final frame in one deadline
+ok 63 - a shutdown drain discards the queue and delivers only the final frame in one deadline
+  ---
+  duration_ms: 185.345042
+  type: 'test'
+  ...
+# Subtest: a replacement factory is a new instance that names the conversation it replaced
+ok 64 - a replacement factory is a new instance that names the conversation it replaced
+  ---
+  duration_ms: 313.662625
+  type: 'test'
+  ...
+# Subtest: reports the current model from getModel and model_select
+ok 65 - reports the current model from getModel and model_select
+  ---
+  duration_ms: 187.9045
+  type: 'test'
+  ...
+# Subtest: omits model until the session reports one
+ok 66 - omits model until the session reports one
+  ---
+  duration_ms: 181.357709
+  type: 'test'
+  ...
+# Subtest: reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+ok 67 - reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+  ---
+  duration_ms: 182.418834
+  type: 'test'
+  ...
+1..67
+# tests 67
+# suites 0
+# pass 65
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 19918.70675
+
+
+Wall time: 20.02 seconds
+
+Command exited with code 1

@@ -1,0 +1,265 @@
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3314:30
+     |
+3314 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3416:30
+     |
+3416 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3532:30
+     |
+3532 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3617:26
+     |
+3617 |             Span::styled(display, Style::default().fg(TEXT())),
+     |             ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |             |
+     |             required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0599]: no method named `settings_report_published` found for struct `settings_editor::Editor` in the current scope
+   --> crates/ovrcr-tui/src/dashboard/state.rs:766:30
+    |
+766 |         self.settings_editor.settings_report_published(&report);
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `settings_editor::Editor`
+    |
+   ::: crates/ovrcr-tui/src/dashboard/settings_editor.rs:223:1
+    |
+223 | pub(super) struct Editor {
+    | ------------------------ method `settings_report_published` not found for this struct
+
+error[E0614]: type `u16` cannot be dereferenced
+    --> crates/ovrcr-tui/src/dashboard/state.rs:2778:44
+     |
+2778 |                 let area = Rect::new(0, 0, *cols, *rows);
+     |                                            ^^^^^ can't be dereferenced
+
+error[E0614]: type `u16` cannot be dereferenced
+    --> crates/ovrcr-tui/src/dashboard/state.rs:2778:51
+     |
+2778 |                 let area = Rect::new(0, 0, *cols, *rows);
+     |                                                   ^^^^^ can't be dereferenced
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3314:30
+     |
+3314 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&std::ffi::OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3416:30
+     |
+3416 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&std::ffi::OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3532:30
+     |
+3532 |                 Span::styled(display, Style::default().fg(TEXT())),
+     |                 ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |                 |
+     |                 required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&std::ffi::OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+error[E0277]: the trait bound `Cow<'_, str>: From<(std::string::String, usize)>` is not satisfied
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:3617:26
+     |
+3617 |             Span::styled(display, Style::default().fg(TEXT())),
+     |             ------------ ^^^^^^^ the trait `From<(std::string::String, usize)>` is not implemented for `Cow<'_, str>`
+     |             |
+     |             required by a bound introduced by this call
+     |
+     = help: the following other types implement trait `From<T>`:
+               `Cow<'_, ByteStr>` implements `From<&ByteStr>`
+               `Cow<'_, ByteStr>` implements `From<&ByteString>`
+               `Cow<'_, ByteStr>` implements `From<ByteString>`
+               `Cow<'_, CStr>` implements `From<&CStr>`
+               `Cow<'_, CStr>` implements `From<&CString>`
+               `Cow<'_, CStr>` implements `From<CString>`
+               `Cow<'_, OsStr>` implements `From<&OsStr>`
+               `Cow<'_, OsStr>` implements `From<&std::ffi::OsString>`
+             and 15 others
+     = note: required for `(std::string::String, usize)` to implement `Into<Cow<'_, str>>`
+note: required by a bound in `ratatui::prelude::Span::<'a>::styled`
+    --> /Users/xlyk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-core-0.1.2/src/text/span.rs:163:12
+     |
+ 161 |     pub fn styled<T, S>(content: T, style: S) -> Self
+     |            ------ required by a bound in this associated function
+ 162 |     where
+ 163 |         T: Into<Cow<'a, str>>,
+     |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Span::<'a>::styled`
+
+warning: variable does not need to be mutable
+    --> crates/ovrcr-tui/src/dashboard/settings_editor.rs:2656:13
+     |
+2656 |         let mut push = |spans: &mut Vec<Span<'static>>, used: &mut usize, text: String| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0277, E0599, E0614.
+For more information about an error, try `rustc --explain E0277`.
+warning: `ovrcr-tui` (lib) generated 1 warning
+error: could not compile `ovrcr-tui` (lib) due to 7 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+warning: `ovrcr-tui` (lib test) generated 1 warning (1 duplicate)
+error: could not compile `ovrcr-tui` (lib test) due to 7 previous errors; 1 warning emitted

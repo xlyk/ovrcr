@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e89] app=OVRCR GUI
+  - group [ref=e90]
+    - textarea "OVRCR terminal" [ref=e91]: "Settings / Appearance / Theme                                                    \nCategories          │Choose a theme                                              \n  Alerts            │The highlighted"… (+1,767 chars; (await computer.ref("e91")).value()) (focused) actions=press
+    - statictext [ref=e107]: "Settings / Appearance / Theme                                                    "
+    - statictext [ref=e108]: "Categories          │Choose a theme                                              "
+    - statictext [ref=e109]: "  Alerts            │The highlighted palette previews this view; Enter saves.    "
+    - statictext [ref=e110]: "• Appearance        │Find a theme: Solarized Light▏  1 of 80 themes              "
+    - statictext [ref=e111]: "  Workspaces        │                                                            "
+    - statictext [ref=e112]: "  Titles            │  Light                                                     "
+    - statictext [ref=e113]: "  Usage             │› Solarized Light                                           "
+    - statictext [ref=e114]: "  Agents            │                                                            "
+    - statictext [ref=e115]: "  Remembered launch…│                                                            "
+    - statictext [ref=e116]: "  Operator          │                                                            "
+    - statictext [ref=e117]: "  Delegation        │                                                            "
+    - statictext [ref=e118]: "  Remote            │                                                            "
+    - statictext [ref=e119]: "                    │                                                            "
+    - statictext [ref=e120]: "                    │                                                            "
+    - statictext [ref=e121]: "                    │                                                            "
+    - statictext [ref=e122]: "                    │                                                            "
+    - statictext [ref=e123]: "                    │                                                            "
+    - statictext [ref=e124]: "                    │                                                            "
+    - statictext [ref=e125]: "                    │                                                            "
+    - statictext [ref=e126]: "                    │                                                            "
+    - statictext [ref=e127]: "                    │Preview: Solarized Light · Saved: Catppuccin Mocha          "
+    - statictext [ref=e128]: "                    │                                                            "
+    - statictext [ref=e129]: "                    │                                                            "
+    - statictext [ref=e130]: " ↑↓ preview  · PgUp/PgDn page  · Enter save  · Esc cancel                        "
+  - button "close" [ref=e101]
+  - button "full screen" [ref=e102]
+  - button "minimize" [ref=e103]
+  - statictext [ref=e104]: "OVRCR GUI"

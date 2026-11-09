@@ -1,0 +1,31 @@
+- window "OVRCR GUI" [ref=e89] app=OVRCR GUI
+  - group [ref=e90]
+    - textarea "OVRCR terminal" [ref=e91]: "Settings / Appearance                                                            \nCategories          │› Theme                        Solarized Light              \n  Alerts            │               "… (+1,767 chars; (await computer.ref("e91")).value()) (focused) actions=press
+    - statictext [ref=e107]: "Settings / Appearance                                                            "
+    - statictext [ref=e108]: "Categories          │› Theme                        Solarized Light              "
+    - statictext [ref=e109]: "  Alerts            │                                                            "
+    - statictext [ref=e110]: "• Appearance        │                                                            "
+    - statictext [ref=e111]: "  Workspaces        │                                                            "
+    - statictext [ref=e112]: "  Titles            │                                                            "
+    - statictext [ref=e113]: "  Usage             │                                                            "
+    - statictext [ref=e114]: "  Agents            │                                                            "
+    - statictext [ref=e115]: "  Remembered launch…│                                                            "
+    - statictext [ref=e116]: "  Operator          │                                                            "
+    - statictext [ref=e117]: "  Delegation        │                                                            "
+    - statictext [ref=e118]: "  Remote            │                                                            "
+    - statictext [ref=e119]: "                    │                                                            "
+    - statictext [ref=e120]: "                    │                                                            "
+    - statictext [ref=e121]: "                    │                                                            "
+    - statictext [ref=e122]: "                    │                                                            "
+    - statictext [ref=e123]: "                    │ Theme                                                      "
+    - statictext [ref=e124]: "                    │ Value: Solarized Light                                     "
+    - statictext [ref=e125]: "                    │ 80 built-in palettes across 27 families: 54 Dark and 26    "
+    - statictext [ref=e126]: "                    │ Light. Catppuccin Mocha is the default (alias dark);       "
+    - statictext [ref=e127]: "                    │ Catppuccin Latte also accepts light.                       "
+    - statictext [ref=e128]: "                    │ The highlighted choice previews across the Dashboard.      "
+    - statictext [ref=e129]: "                    │ Enter saves it; Esc restores the saved theme.              "
+    - statictext [ref=e130]: " Enter choose  · Ctrl-d details  · r reset  · / search  · ← categories           "
+  - button "close" [ref=e101]
+  - button "full screen" [ref=e102]
+  - button "minimize" [ref=e103]
+  - statictext [ref=e104]: "OVRCR GUI"

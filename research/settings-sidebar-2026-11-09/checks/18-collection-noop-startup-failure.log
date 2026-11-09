@@ -1,0 +1,29 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr-workspaces/feature-issue-413-settings-sidebar)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.04s
+     Running tests/settings_lifecycle.rs (target/debug/deps/settings_lifecycle-061942a732521fe3)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQ8DE1Z server=90755
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNyDhuI server=92723
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUmaU7N server=93718
+
+thread 'dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement' (606058535) panicked at tests/support/live.rs:536:9:
+fixture server socket did not appear: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUmaU7N/private/server.sock
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+live fixture shutdown response: None
+live fixture server stop: Exited(ExitStatus(unix_wait_status(256)))
+live fixture cleanup incomplete; preserved /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUmaU7N
+test dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement ... FAILED
+
+failures:
+
+failures:
+    dashboard_unchanged_collection_child_saves_settle_on_the_acknowledgement
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 21.22s
+
+error: test failed, to rerun pass `-p ovrcr --test settings_lifecycle`
