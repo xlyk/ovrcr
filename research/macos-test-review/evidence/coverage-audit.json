@@ -1,0 +1,969 @@
+{
+  "status": "complete",
+  "generated_by": "evidence/quality_targets.py",
+  "inventory_rows": 3171,
+  "totals": {
+    "expected": 3171,
+    "records": 3171,
+    "missing_ids": 0,
+    "extra_ids": 0,
+    "duplicate_ids": 0,
+    "schema_error_records": 0,
+    "reviewed_shards": 50,
+    "shards_missing_reviews": 0,
+    "shards_total": 50
+  },
+  "shards_without_review_file": [],
+  "shards": [
+    {
+      "shard_id": "app-cli-001",
+      "workstream": "app-cli",
+      "review_file": "reviews/app-cli-001.jsonl",
+      "review_present": true,
+      "records": 69,
+      "expected": 69,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 69,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-core-001",
+      "workstream": "app-core",
+      "review_file": "reviews/app-core-001.jsonl",
+      "review_present": true,
+      "records": 10,
+      "expected": 10,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 10,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-gui-001",
+      "workstream": "app-gui",
+      "review_file": "reviews/app-gui-001.jsonl",
+      "review_present": true,
+      "records": 33,
+      "expected": 33,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 33,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-operator-001",
+      "workstream": "app-operator",
+      "review_file": "reviews/app-operator-001.jsonl",
+      "review_present": true,
+      "records": 18,
+      "expected": 18,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 18,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-remote-001",
+      "workstream": "app-remote",
+      "review_file": "reviews/app-remote-001.jsonl",
+      "review_present": true,
+      "records": 11,
+      "expected": 11,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 11,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-report-001",
+      "workstream": "app-report",
+      "review_file": "reviews/app-report-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "app-report-002",
+      "workstream": "app-report",
+      "review_file": "reviews/app-report-002.jsonl",
+      "review_present": true,
+      "records": 31,
+      "expected": 31,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 31,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "extensions-installed-pi-001",
+      "workstream": "extensions-installed-pi",
+      "review_file": "reviews/extensions-installed-pi-001.jsonl",
+      "review_present": true,
+      "records": 90,
+      "expected": 90,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 90,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "extensions-installed-pi-002",
+      "workstream": "extensions-installed-pi",
+      "review_file": "reviews/extensions-installed-pi-002.jsonl",
+      "review_present": true,
+      "records": 20,
+      "expected": 20,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 20,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "lifecycle-terminal-acceptance-001",
+      "workstream": "lifecycle-terminal-acceptance",
+      "review_file": "reviews/lifecycle-terminal-acceptance-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "lifecycle-terminal-acceptance-002",
+      "workstream": "lifecycle-terminal-acceptance",
+      "review_file": "reviews/lifecycle-terminal-acceptance-002.jsonl",
+      "review_present": true,
+      "records": 75,
+      "expected": 75,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 75,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "lifecycle-terminal-acceptance-003",
+      "workstream": "lifecycle-terminal-acceptance",
+      "review_file": "reviews/lifecycle-terminal-acceptance-003.jsonl",
+      "review_present": true,
+      "records": 34,
+      "expected": 34,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 34,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-001",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-002",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-003",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-003.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-004",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-004.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-005",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-005.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-006",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-006.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "other-rust-integration-007",
+      "workstream": "other-rust-integration",
+      "review_file": "reviews/other-rust-integration-007.jsonl",
+      "review_present": true,
+      "records": 45,
+      "expected": 45,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 45,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "packaging-installers-001",
+      "workstream": "packaging-installers",
+      "review_file": "reviews/packaging-installers-001.jsonl",
+      "review_present": true,
+      "records": 213,
+      "expected": 213,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 213,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "packaging-installers-002",
+      "workstream": "packaging-installers",
+      "review_file": "reviews/packaging-installers-002.jsonl",
+      "review_present": true,
+      "records": 26,
+      "expected": 26,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 26,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "protocol-terminal-001",
+      "workstream": "protocol-terminal",
+      "review_file": "reviews/protocol-terminal-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "protocol-terminal-002",
+      "workstream": "protocol-terminal",
+      "review_file": "reviews/protocol-terminal-002.jsonl",
+      "review_present": true,
+      "records": 41,
+      "expected": 41,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 41,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-001",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-002",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-003",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-003.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-004",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-004.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-005",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-005.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-dashboard-006",
+      "workstream": "public-dashboard",
+      "review_file": "reviews/public-dashboard-006.jsonl",
+      "review_present": true,
+      "records": 3,
+      "expected": 3,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 3,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-delegation-001",
+      "workstream": "public-delegation",
+      "review_file": "reviews/public-delegation-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-delegation-002",
+      "workstream": "public-delegation",
+      "review_file": "reviews/public-delegation-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-delegation-003",
+      "workstream": "public-delegation",
+      "review_file": "reviews/public-delegation-003.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "public-delegation-004",
+      "workstream": "public-delegation",
+      "review_file": "reviews/public-delegation-004.jsonl",
+      "review_present": true,
+      "records": 19,
+      "expected": 19,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 19,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-delegation-001",
+      "workstream": "runtime-delegation",
+      "review_file": "reviews/runtime-delegation-001.jsonl",
+      "review_present": true,
+      "records": 81,
+      "expected": 81,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 81,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-delegation-002",
+      "workstream": "runtime-delegation",
+      "review_file": "reviews/runtime-delegation-002.jsonl",
+      "review_present": true,
+      "records": 15,
+      "expected": 15,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 15,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-server-session-001",
+      "workstream": "runtime-server-session",
+      "review_file": "reviews/runtime-server-session-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-server-session-002",
+      "workstream": "runtime-server-session",
+      "review_file": "reviews/runtime-server-session-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-server-session-003",
+      "workstream": "runtime-server-session",
+      "review_file": "reviews/runtime-server-session-003.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-server-session-004",
+      "workstream": "runtime-server-session",
+      "review_file": "reviews/runtime-server-session-004.jsonl",
+      "review_present": true,
+      "records": 13,
+      "expected": 13,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 13,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-storage-settings-tasks-001",
+      "workstream": "runtime-storage-settings-tasks",
+      "review_file": "reviews/runtime-storage-settings-tasks-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-storage-settings-tasks-002",
+      "workstream": "runtime-storage-settings-tasks",
+      "review_file": "reviews/runtime-storage-settings-tasks-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "runtime-storage-settings-tasks-003",
+      "workstream": "runtime-storage-settings-tasks",
+      "review_file": "reviews/runtime-storage-settings-tasks-003.jsonl",
+      "review_present": true,
+      "records": 42,
+      "expected": 42,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 42,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "shared-fixtures-001",
+      "workstream": "shared-fixtures",
+      "review_file": "reviews/shared-fixtures-001.jsonl",
+      "review_present": true,
+      "records": 28,
+      "expected": 28,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 28,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-001",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-001.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-002",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-002.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-003",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-003.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-004",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-004.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-005",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-005.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-006",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-006.jsonl",
+      "review_present": true,
+      "records": 80,
+      "expected": 80,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 80,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    },
+    {
+      "shard_id": "tui-library-007",
+      "workstream": "tui-library",
+      "review_file": "reviews/tui-library-007.jsonl",
+      "review_present": true,
+      "records": 14,
+      "expected": 14,
+      "missing_ids": [],
+      "extra_ids": [],
+      "duplicate_ids": [],
+      "schema_errors": [],
+      "schema_ok": true,
+      "assignment_vs_shard_file": {
+        "shard_file_present": true,
+        "shard_file_rows": 14,
+        "only_in_assignments": [],
+        "only_in_shard_file": []
+      }
+    }
+  ]
+}

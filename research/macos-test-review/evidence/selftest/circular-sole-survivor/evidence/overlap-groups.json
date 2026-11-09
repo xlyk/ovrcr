@@ -1,0 +1,24 @@
+[
+  {
+    "group_id": "g-a",
+    "member_test_ids": [
+      "cycle-a",
+      "cycle-b"
+    ],
+    "retained_test_ids": [
+      "cycle-b"
+    ],
+    "preservation_evidence": "cycle-b claims to preserve cycle-a's assertion"
+  },
+  {
+    "group_id": "g-b",
+    "member_test_ids": [
+      "cycle-a",
+      "cycle-b"
+    ],
+    "retained_test_ids": [
+      "cycle-a"
+    ],
+    "preservation_evidence": "cycle-a claims to preserve cycle-b's assertion"
+  }
+]

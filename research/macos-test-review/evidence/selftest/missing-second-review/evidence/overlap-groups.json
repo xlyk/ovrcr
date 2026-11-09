@@ -1,0 +1,13 @@
+[
+  {
+    "group_id": "g-protect",
+    "member_test_ids": [
+      "prune-no-receipt",
+      "protector"
+    ],
+    "retained_test_ids": [
+      "protector"
+    ],
+    "preservation_evidence": "protector asserts the same boundary at Cargo.toml:1-3"
+  }
+]

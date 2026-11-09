@@ -1,0 +1,1560 @@
+{
+  "generated_from": {
+    "review_files": 50,
+    "author_records": 3171,
+    "receipt_files": 17,
+    "receipt_records": 688,
+    "distinct_receipted_ids": 687,
+    "resolved_receipts": 92,
+    "effective_c4": 162,
+    "effective_consolidate": 56,
+    "effective_prune": 0,
+    "effective_low_confidence": 0,
+    "author_duplicate_test_ids": 0
+  },
+  "require_receipt_total": 213,
+  "satisfied": 213,
+  "missing": 0,
+  "missing_rows": [],
+  "missing_by_shard": {},
+  "requirement_list": [
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Abin%2Fovrcr|cli%3A%3Adelegation_publisher%3A%3Atests%3A%3Ainvalid_environment_never_falls_back_to_parent_or_hook_credentials|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-cli-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Abin%2Fovrcr|cli%3A%3Astartup_hooks%3A%3Atests%3A%3Aa_refused_file_is_named_before_the_screen_and_the_rest_still_connect|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-cli-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclaude_quota_probe|claude_probe_output_does_not_contain_a_fixture_credential|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclaude_quota_probe|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclaude_reporting_load|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|accepted_restart_replaces_unknown_build_through_checked_connection|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|accepted_restart_stops_older_protocol_server_and_starts_this_build|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|changed_identity_during_consent_does_not_shutdown_server|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|older_protocol_socket_replacement_during_consent_sends_no_signal|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|server_refuses_unrecognized_existing_identity_without_replacing_user_file|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup_server|socket_replacement_during_consent_never_receives_shutdown|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aclient_startup|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Acli|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Acodex_initial_prompt|codex_harness_default_and_explicit_prompt_use_the_shared_lifecycle_and_privacy_path|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Acodex_initial_prompt|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|forced_dirty_removal_keeps_generation_and_root_guards|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|missing_replacement_without_held_inode_cannot_be_pruned|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|missing_replacement_worktree_cannot_be_pruned_by_the_old_registration|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_registry_and_git_path_disagreement|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_replacement_worktree_with_different_identity|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_symlink_substitution_without_touching_either_worktree|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_to_remove_or_inspect_repository_checkout|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_to_remove_worktree_outside_registered_root|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_to_remove_worktree_with_tracked_changes|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|refuses_to_remove_worktree_with_untracked_files|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Agit_lifecycle|rejects_workspace_path_traversal_before_git|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Ainitial_prompt|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Ainitial_prompt|lost_response_reconnect_reconciles_one_exact_launch_and_duplicate_does_not_replay|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_auth|storage_refuses_insecure_directory_and_symlink_credentials|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_e2e|compiled_worker%3A%3Acompiled_workers_stream_tools_stop_independently_and_restart_without_replay|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_e2e|compiled_worker%3A%3Aoperator_close_archive_restores_history_without_replay|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_e2e|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_scope|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aoperator_worker|bash_environment_isolates_model_and_reporting_credentials|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|claude%3A%3Apublic_claude_mcp_read_confines_actual_workspace_and_authority|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|claude%3A%3Apublic_claude_question_and_scoped_answer_use_current_shared_receipt_once|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|codex%3A%3Acodex_prepare_only_reserves_exact_home_and_preserves_native_auth_on_explicit_resume|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|codex%3A%3Acodex_question_exact_answer_and_replay_use_registered_tools_and_real_child_input|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|codex%3A%3Acodex_requested_model_and_explicit_policy_reach_native_launch_without_substitution|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|coding%3A%3Apublic_coding_refuses_root_existing_id_and_traversal_without_git_effects|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|coding%3A%3Apublic_coding_replaced_parent_directory_preserves_containment_and_unrelated_work|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|coding%3A%3Apublic_coding_same_path_repository_replacement_refuses_before_creation|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|coding%3A%3Apublic_coding_uses_distinct_workspaces_and_reuses_safe_child_for_followup|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|fallback%3A%3Apublic_recovery_preserves_unanswered_question_and_accepted_answer_without_input|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|independent_review%3A%3Apublic_review_capacity_refusal_retries_one_fresh_seat_without_duplicate_team|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|independent_review%3A%3Apublic_review_direct_capacity_retry_preserves_original_readable_view_and_round|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|public_pi_research_assignment_launches_collects_and_fences_real_child|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Api_package|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aprovider_quota|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aquota_ui_option_a_smoke|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aregistry_migration|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aresource_cli|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_capacity|dashboard_rejects_old_run_input_after_same_row_reopen|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_capacity|exited_row_does_not_reduce_live_capacity_and_overflow_publishes_nothing|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_capacity|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_capacity|public_pi_admission_uses_final_slot_and_allows_more_than_four_children|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "medium",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_ownership|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_ownership|stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|archive_round_trip_survives_restart_and_rejects_old_recovery_without_deleting_history|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|claude_reopen_retains_exact_conversation_before_another_callback|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|claude_task_after_double_dash_starts_once_and_is_never_resent|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|codex_reopen_uses_exact_identity_without_prompt_across_two_restarts|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|extension_conversations_switch_and_survive_repeated_restart|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_failures|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|workspace_removal_protects_provider_history_inside_an_ignored_directory|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|agent_hook_capability_and_exit_are_enforced|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|cli_exit_preserves_session_and_shutdown_kill_cleans_up|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|desktop_notifications_bridge_click_preserves_queued_wip_shutdown_questions|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|desktop_notifications_bridge_generated_subject_and_private_history_never_leave_the_application|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|fifty_sessions_survive_detach_and_leave_no_process_groups|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|forced_workspace_removal_acknowledges_uncertain_rows_but_never_live_ones|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|fresh_pty_does_not_inherit_outer_managed_reporting_channel|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|startup_concurrent_attempts_leave_one_server|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|startup_refuses_symlinked_socket_directory|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|startup_socket_directory_is_private|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|startup_stale_concurrent_attempts_leave_one_surviving_server|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aservice|loaded_service_does_not_send_shutdown_to_a_foreign_listener|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aservice|service_install_refuses_when_sessions_exist|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aservice|uninstall_removes_only_service_files_and_preserves_task_data|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Asettings_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|git_run_cleanup_rejects_a_replacement_workspace_after_cleanup|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|git_run_cleanup_rejects_a_workspace_that_preexisted_preparation|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|git_workspace_removal_refuses_a_running_task_in_a_clean_worktree|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-006"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atask_tui|task_mouse_run_rows_cancel_and_cleanup_use_selected_run|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aterminal_acceptance|agent_search_navigates_fifty_live_sessions_through_real_dashboard|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "lifecycle-terminal-acceptance-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aterminal_acceptance|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|mouse%3A%3Adragging_tracked_mouse_into_sidebar_releases_application_button|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "public-dashboard-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Adeclining_the_save_does_not_remove_the_workspace|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Adirty_workspace_removal_asks_to_save_then_removes_only_after_yes|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Adiscard_prompt_survives_unchanged_hierarchy_then_needs_consent_after_relabel|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Aoperator_quick_escape_never_answers_or_replaces_pending_shutdown_question|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Aoperator_quick_pending_shutdown_ack_advances_under_visible_modal|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Aoperator_quick_preserves_workspace_save_chain_and_exact_pending_response|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Ashutdown_asks_once_per_dirty_worktree|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Ashutdown_pending_answer_survives_navigation_and_advances_only_on_its_exact_ok|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Ashutdown_question_rejects_already_pending_navigation_confirmation|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Ashutdown_question_rejects_notification_offer_without_inferring_an_answer|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|palette%3A%3Auncommitted_changes_alone_offer_discard_in_plain_words|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|settings%3A%3Apending_root_move_and_sound_save_match_interleaved_server_replies|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "public-dashboard-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|split%3A%3Asplit_layout_geometry_and_narrow_fallback|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "public-dashboard-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Awip_save|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Awip_save|removing_a_dirty_workspace_without_the_setting_refuses|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Awip_save|shutdown_asks_twice_and_pushes_two_refs|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|a_repository_root_cannot_be_removed_through_another_projects_workspace|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|ambiguous_and_detached_workspaces_are_addressed_by_path|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "medium",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "shared-fixtures-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|missing_replacement_worktree_cannot_be_pruned_by_the_old_registration|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|projects_sharing_a_workspace_root_never_share_a_checkout_folder|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|registration_accepts_dirty_root_on_wrong_default_without_changing_git|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|root_drift_blocks_new_processes_but_preserves_the_existing_shell|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Aworkspace_identity|unregistering_a_project_keeps_its_protected_repository_checkout|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "other-rust-integration-007"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|agent%3A%3Atests%3A%3Aagent_report_all_variants_roundtrip_and_secret_redaction|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|auto_trust%3A%3Atests%3A%3Abare_managed_launches_gain_one_provider_flag|default",
+      "criticality": 3,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|codec%3A%3Atests%3A%3Aagent_report_round_trip_and_redaction|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|delegation%3A%3Atests%3A%3Amandatory_limits_refuse_unsupported_budgets_and_out_of_range_admission|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|delegation_review%3A%3Atests%3A%3Areadable_review_context_refuses_recursion_duplicates_traversal_and_stale_selection|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|settings%3A%3Atests%3A%3Atheme_appearance_metadata_groups_every_existing_theme|default",
+      "criticality": 1,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-protocol|wire%3A%3Awire_snapshot%3A%3Ainitial_prompt_wire_debug_redacts_prompt_text|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "protocol-terminal-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime%3A%3Adelegation_fallback_files|delegation_files%3A%3Aread_tests%3A%3Acheckout_read_is_bounded_relative_and_never_follows_links|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|codex_delegation%3A%3Atests%3A%3Aprofile_is_read_only_private_and_exposes_only_scoped_publication|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|git%3A%3Acandidate%3A%3Atests%3A%3Adescriptor_reads_preserve_modes_links_deletion_and_refuse_parent_escape|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|git%3A%3Acandidate%3A%3Atests%3A%3Aprivate_paths_and_unsafe_git_paths_are_refused|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|git%3A%3Adiagnostics%3A%3Atests%3A%3Aoutput_stdin_eof_nonzero_signal_status_and_private_content_are_preserved|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|retained%3A%3Acloud_creation%3A%3Aprogress_tests%3A%3Apersisted_invalid_current_progress_fails_before_payload_cleanup|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Abuild_identity%3A%3Atests%3A%3Afingerprint_detects_byte_changes_with_same_length_and_preserves_open_build|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Adirect_agent_executable_matches_kind_when_label_omitted|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_claude_launcher_uses_agent_kind_not_ovrcr_argv0|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Adelegation_files%3A%3Aread_tests%3A%3Acheckout_read_is_bounded_relative_and_never_follows_links|default",
+      "criticality": 4,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "runtime-delegation-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Aoperator_tests%3A%3Aoperator_capacity_refuses_without_consuming_prompt_or_run|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "medium",
+      "shard_id": "runtime-server-session-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Aquota%3A%3Atests%3A%3Agrok_refresh_redeems_expired_access_token_and_rewrites_auth_json|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Aquota%3A%3Atests%3A%3Anative_client_is_not_gated_on_the_harness_version|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Aquota%3A%3Atests%3A%3Anative_error_reason_is_classified_without_its_body|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|server%3A%3Atests%3A%3Astale_close_does_not_revoke_or_stop_current_run|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|session%3A%3Atests%3A%3Adelegation_rechecks_a_to_b_to_a_binding_at_the_pty_write_boundary|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|session%3A%3Atests%3A%3Apause_resume_rejects_unsafe_group|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-server-session-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|settings%3A%3Aoperator_tests%3A%3Aoperator_settings_validate_independently_and_reject_credentials|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-002"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|task_manager%3A%3Atests%3A%3Acleanup_reports_retained_directory_without_registry_ownership|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|task_manager%3A%3Atests%3A%3Aworkspace_removal_protects_admitted_tasks_before_run_metadata_is_written|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-runtime|task_runner%3A%3Atests%3A%3Areused_pid_cannot_claim_process_group_or_children|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "runtime-storage-settings-tasks-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Acursor_detection_uses_managed_launch|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Ahermes_detection_uses_managed_launch_and_preserves_explicit_override|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_confirmed_without_unread_does_not_queue|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_health_loss_before_dispatch_cancels_pending_ready|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Anative_input_notification_payload_excludes_dynamic_question_and_answer_content|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "tui-library-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Aoperator%3A%3Atests%3A%3Atool_result_including_empty_success_and_controls_is_native_text|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "tui-library-003"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Aclose_confirm_tests%3A%3Adraw_and_hit_test_share_measured_geometry|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "tui-library-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Alaunch_tests%3A%3Aclose_confirm_does_not_submit_after_run_replacement|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "tui-library-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Alaunch_tests%3A%3Adetected_omp_model_query_exposes_exact_selectors_and_initial_prompt_support|default",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-004"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr-tui|dashboard%3A%3Arender%3A%3Aharness_agent_label_tests%3A%3Acli_created_claude_with_ovrcr_label_shows_claude_harness|default",
+      "criticality": 1,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "tui-library-005"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Abash%3A%3Atests%3A%3Abash_uses_captured_cwd_no_startup_files_and_matching_cli|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Alogin%3A%3Atests%3A%3Abrowser_launcher_exposes_only_loopback_and_redirects_hint_in_http|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Aworker%3A%3Atests%3A%3Adiagnostic_documented_unavailability_codes_preserve_credentials_without_http_status|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Aworker%3A%3Atests%3A%3Adiagnostic_endpoint_is_explicit_loopback_only_and_feature_gated|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Aworker%3A%3Atests%3A%3Adiagnostic_public_validation_codes_and_parameters_are_preserved_without_remote_descriptions|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|operator%3A%3Aworker%3A%3Atests%3A%3Areleased_rig_both_provider_wires_stream_stateless_full_history_and_fresh_credentials|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-operator-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|remote%3A%3Atests%3A%3Aan_unconfigured_gateway_refuses_tailnet_requests|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-remote-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|remote%3A%3Atests%3A%3Atailnet_requests_need_the_configured_login|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-remote-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|report%3A%3Acursor%3A%3Atests%3A%3Ahook_whitelist_validates_identity_and_discards_private_fields|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-report-001"
+    },
+    {
+      "test_id": "nextest|Test|ovrcr|report%3A%3Ahermes%3A%3Atests%3A%3Ahook_notice_drops_prompt_and_transcript_fields|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "app-report-002"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_continuation_records.mjs|fork%20cannot%20inherit%20a%20copied%20pointer|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_continuation_records.mjs|new%20cannot%20inherit%20a%20copied%20pointer|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|original%20intent%20recovers%20a%20lost%20Prepare%20after%20persistence|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|original%20intent%20recovers%20a%20lost%20Prepare%20before%20persistence|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|prepare-only%20registered%20start%20reserves%20without%20effects%20and%20recovers%20after%20Prepare%20loss|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|prepare-only%20registered%20start%20reserves%20without%20effects%20and%20recovers%20before%20Prepare%20loss|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|prepare-only%20registered%20start%20reserves%20without%20effects%20and%20recovers%20none%20Prepare%20loss|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_delegation_extension.mjs|registered%20start%20rejects%20invalid%20action%20authority%20before%20intent%20or%20transport|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Extension%20tests|tests%2Fpi_package_bootstrap.mjs|injected%20initialization%20rejects%20an%20unbound%20relative%20helper%20binary%20before%20registration|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Installed%20Pi%20effective%20child%20tools%20through%20production%20assignment%20argv|tests%2Fpi_child_tools_installed.mjs|production%20coding%20argv%20exposes%20child%20publishers%20in%20the%20installed%20effective%20catalog|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "node-test|Installed%20Pi%20effective%20child%20tools%20through%20production%20assignment%20argv|tests%2Fpi_child_tools_installed.mjs|production%20research%20argv%20exposes%20child%20publishers%20in%20the%20installed%20effective%20catalog|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "extensions-installed-pi-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|client-extra-argv%3Aln56|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20%27-1%27%2C%20str%28wire%29%5D%5D%3Aln53|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20str%28schema%29%2C%20%274294967296%27%5D%5D%3Aln53|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%5D%5D%3Aln53|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--unexpected%27%5D%5D%3Aln53|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-available%3Aln50|local-development",
+      "criticality": 3,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-schema-newer%3Aln51|local-development",
+      "criticality": 3,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-wire-newer%3Aln52|local-development",
+      "criticality": 3,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|entitlement-pin%3Aln35|local-development",
+      "criticality": 4,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|entitlement-pin%3Aln35|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|opposite-profile-extra-argv%3Aln98|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-local-startup.py|symlinked-local-assets-refused%3Aln177|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-local-startup.py|unmanaged-local-assets-preserved%3Aln167|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-local-startup.py|unmanaged-release-assets-preserved%3Aln230|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|entitlement-pin%3Aln32|local-development",
+      "criticality": 4,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|entitlement-pin%3Aln32|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|fixture-identity-accepted-production%3Aln114|local-development",
+      "criticality": 2,
+      "recommendation": "consolidate",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-startup-package.py|entitlement-pin%3Aln51|local-development",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-startup-package.py|entitlement-pin%3Aln51|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-startup-package.py|install-refuses-ad-hoc%3Aln93|local-development",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-002"
+    },
+    {
+      "test_id": "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-startup-package.py|install-refuses-ad-hoc%3Aln93|production",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-002"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_concurrent_empty_destination_is_preserved_and_stage_retained|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_broken_symlink_is_never_replaced|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_empty_directory_is_never_replaced|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_fifo_is_never_replaced|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_file_is_never_replaced|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_symlink_is_never_followed|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_existing_valid_bundle_is_never_updated|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_extra_entitlement_xml_retains_stage_without_publication|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_refuses_legacy_root_entitlements_before_copy_or_signing|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_refuses_legacy_root_entry_even_with_valid_resource_before_copy_or_signing|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-installer.py%3A%3AInstallerTests|test_local_refuses_production_destination_before_staging|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-001"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20pinned%20Cursor%20dependency%20and%20passive%20CLI%20diagnostics|tests%2Fcursor_bridge_install.py%3A%3AInstallation|test_download_selects_fixed_official_host_archive|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-002"
+    },
+    {
+      "test_id": "python-unittest|Relocated%20pinned%20Cursor%20dependency%20and%20passive%20CLI%20diagnostics|tests%2Fcursor_bridge_install.py%3A%3AInstallation|test_unmanaged_and_symlink_destination_refused|default",
+      "criticality": 4,
+      "recommendation": "keep",
+      "confidence": "high",
+      "shard_id": "packaging-installers-002"
+    }
+  ],
+  "self_review_receipts": [],
+  "self_review_definition": "receipt.second_reviewer equals the reviewer value of the same test_id row in reviews/*.jsonl; resolved receipts whose final_review.reviewer equals their own second_reviewer remain valid second reviews because the reviews row reviewer still differs (see self_review_notes).",
+  "self_review_notes": {
+    "literal_matches": 0,
+    "final_review_reviewer_equals_second_reviewer": 13,
+    "policy": "The 13 resolved receipts whose final_review.reviewer is their second_reviewer were checked against reviews/*.jsonl and are kept valid; their author rows are shard reviewers (extensions-installed-pi-001, other-rust-integration-006, public-delegation-002/003, runtime-server-session-001/002)."
+  },
+  "discounted_requirement_note": "No receipt was discounted: zero receipts have second_reviewer equal to their reviews/*.jsonl row reviewer.",
+  "duplicate_receipts": [
+    {
+      "test_id": "nextest|Test|ovrcr%3A%3Atui|unread%3A%3Aan_input_request_never_changes_unread_or_the_review_target|default",
+      "files": [
+        "research/macos-test-review/evidence/quality-review-dashboard.jsonl",
+        "research/macos-test-review/evidence/quality-review-shared.jsonl"
+      ]
+    }
+  ],
+  "receipt_counts_by_file": {
+    "quality-review-app.jsonl": 49,
+    "quality-review-dashboard.jsonl": 56,
+    "quality-review-delegation.jsonl": 37,
+    "quality-review-extensions.jsonl": 43,
+    "quality-review-integration-final.jsonl": 36,
+    "quality-review-integration-mid.jsonl": 20,
+    "quality-review-integration-tail.jsonl": 35,
+    "quality-review-integration.jsonl": 54,
+    "quality-review-lifecycle.jsonl": 33,
+    "quality-review-packaging.jsonl": 47,
+    "quality-review-protocol.jsonl": 59,
+    "quality-review-report.jsonl": 13,
+    "quality-review-runtime-delegation.jsonl": 39,
+    "quality-review-runtime.jsonl": 33,
+    "quality-review-shared.jsonl": 41,
+    "quality-review-storage.jsonl": 31,
+    "quality-review-tui.jsonl": 62
+  },
+  "criticality_downgrades_from_this_review": [
+    "nextest|Test|ovrcr%3A%3Aoperator_auth|dangling_credential_links_are_rejected|default",
+    "nextest|Test|ovrcr%3A%3Aoperator_e2e|compiled_worker%3A%3Acompiled_worker_timeout_stops_the_actual_bash_descendant_without_retry|default",
+    "nextest|Test|ovrcr%3A%3Aretained_ownership|natural_leader_exit_with_attached_job_requires_ack_before_reopen|default",
+    "nextest|Test|ovrcr%3A%3Aretained_ownership|same_boot_crash_with_surviving_descendant_requires_ack_before_fresh_shell_reopen|default",
+    "nextest|Test|ovrcr%3A%3Aretained_sessions|automatic_recovery_failure_requires_explicit_retry_even_after_reconnect|default",
+    "nextest|Test|ovrcr%3A%3Aretained_sessions|automatic_recovery_rechecks_ownership_disposition_and_identity_on_server|default",
+    "nextest|Test|ovrcr%3A%3Aretained_sessions|displayed_interrupted_claude_recovers_through_real_dashboard_and_coalesces_duplicates|default"
+  ],
+  "prior_require_receipt_total": 215,
+  "prior_missing": 0
+}

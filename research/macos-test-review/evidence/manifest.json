@@ -1,0 +1,228 @@
+{
+  "pinned_revision": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+  "revision_verified": {
+    "git_rev_parse_HEAD": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+    "branch": "chore/unit-test-review"
+  },
+  "workflow_run": {
+    "run_id": 42429838269,
+    "job_id": 128576086691,
+    "job_name": "macOS checks",
+    "url": "https://github.com/xlyk/ovrcr/actions/runs/42429838269/job/128576086691",
+    "conclusion": "success",
+    "head_sha": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+    "started_at": "2026-11-08T00:27:42Z",
+    "completed_at": "2026-11-08T01:08:00Z"
+  },
+  "retrieval": {
+    "retrieval_times_utc": {
+      "evidence/macos-job.log": "2026-11-08T06:45:51Z",
+      "evidence/run.json": "2026-11-08T06:45:47Z",
+      "source": "filesystem mtime converted to UTC; both files were already present and complete at task start"
+    },
+    "commands": {
+      "log": "gh run view 42429838269 --job 128576086691 --log > research/macos-test-review/evidence/macos-job.log",
+      "run": "gh run view 42429838269 --json conclusion,headSha,jobs > research/macos-test-review/evidence/run.json"
+    },
+    "refetch_status": "not refetched: macos-job.log ends with job cleanup and lists all steps; run.json lists 23 steps and the job conclusion"
+  },
+  "files": [
+    {
+      "path": "evidence/macos-job.log",
+      "sha256": "159592ad3a4562507b013c5ce3e0e4f057e83622b678fb82f61e175be1bef9e2",
+      "bytes": 867305
+    },
+    {
+      "path": "evidence/run.json",
+      "sha256": "a32b77493e71cd63690e763950828cc9e69c64b8f1c9ab95d0010153f0c4f55e",
+      "bytes": 7155
+    },
+    {
+      "path": "evidence/attempts.csv",
+      "sha256": "dd7c9991fb3ca9d69d5554771b4a22aec0112fe61023ec29c38ba15a3585d0c4",
+      "bytes": 990680
+    },
+    {
+      "path": "evidence/inventory_rust.csv",
+      "sha256": "23ad9a3cff2af1232b104dd9afe0864004e29f3d5e5c17c9bc902f0e225cb6d3",
+      "bytes": 1367470
+    },
+    {
+      "path": "evidence/inventory_rust_test_level.csv",
+      "sha256": "ed1b558f58f2b9615fe3ab571b6ab788c405f94c3bdff3f874076574e921f4b0",
+      "bytes": 371095
+    },
+    {
+      "path": "evidence/inventory_node.csv",
+      "sha256": "38bbc73d7126b5567bb55154a0bf016a9b411e3dd4a524fdd92daf609110c289",
+      "bytes": 60604
+    },
+    {
+      "path": "evidence/inventory_python.csv",
+      "sha256": "be0fc2329e016ca25080095604a3f33d414b102ec0cb19362d30ce6c6ec65b6a",
+      "bytes": 164897
+    },
+    {
+      "path": "evidence/inventory.csv",
+      "sha256": "e813fbe190e4d562572caefceadfee696e275c65cb2a4d825b88a09fb9921205",
+      "bytes": 1470463
+    },
+    {
+      "path": "evidence/job-steps.csv",
+      "sha256": "a9ff1f92d5b53967eaaf862b38777be32722661dc606a87ae535c4caf3111f9d",
+      "bytes": 4759
+    },
+    {
+      "path": "evidence/exclusions.csv",
+      "sha256": "7aef319ba0200b234d12078b26aeb26b8ea94194c224768edcc57c90a7a151f5",
+      "bytes": 9395
+    },
+    {
+      "path": "evidence/parse_log.py",
+      "sha256": "adfe3b2c4a58443a2ff8b2373f529debefec6030443ad109633d73c3da21ee89",
+      "bytes": 5865
+    },
+    {
+      "path": "evidence/build_inventory.py",
+      "sha256": "d55f1250dec919866b47b5a68eaa8162504d790e4234b1dc8d6017a783441bf0",
+      "bytes": 50230
+    }
+  ],
+  "reconciliation_gates": {
+    "attempt_records": {
+      "observed": 2822,
+      "expected": 2822,
+      "pass": true
+    },
+    "unique_pairs": {
+      "observed": 2820,
+      "expected": 2820,
+      "pass": true
+    },
+    "binary_ids": {
+      "observed": 56,
+      "expected": 56,
+      "pass": true
+    },
+    "failed_attempts": {
+      "observed": 2,
+      "expected": 2,
+      "pass": true
+    },
+    "cumulative_seconds": {
+      "observed": 5931.968,
+      "expected": 5931.968,
+      "pass": true
+    },
+    "codex_retry": {
+      "observed": [
+        2,
+        4.855,
+        9.227,
+        1
+      ],
+      "expected": [
+        2,
+        4.855,
+        9.227,
+        1
+      ],
+      "pass": true
+    },
+    "pi_retry": {
+      "observed": [
+        2,
+        24.507,
+        46.25,
+        1
+      ],
+      "expected": [
+        2,
+        24.507,
+        46.25,
+        1
+      ],
+      "pass": true
+    }
+  },
+  "merge_gates": {
+    "total_rows": {
+      "observed": 3171,
+      "expected": 3171,
+      "pass": true
+    },
+    "nextest_rows": {
+      "observed": 2820,
+      "expected": 2820,
+      "pass": true
+    },
+    "cargo_test_rows": {
+      "observed": 2,
+      "expected": 2,
+      "pass": true
+    },
+    "node_test_rows": {
+      "observed": 110,
+      "expected": 110,
+      "pass": true
+    },
+    "python_unittest_rows": {
+      "observed": 39,
+      "expected": 39,
+      "pass": true
+    },
+    "python_check_rows": {
+      "observed": 200,
+      "expected": 200,
+      "pass": true
+    },
+    "unique_test_ids": {
+      "observed": 3171,
+      "expected": 3171,
+      "pass": true
+    },
+    "parent_rows": {
+      "observed": 4,
+      "expected": 4,
+      "pass": true
+    },
+    "parents_resolve": {
+      "observed": [],
+      "expected": [],
+      "pass": true
+    },
+    "source_ranges": {
+      "observed": [],
+      "expected": [],
+      "pass": true
+    },
+    "revisions": {
+      "observed": 0,
+      "expected": 0,
+      "pass": true
+    },
+    "cargo_test_ids": {
+      "observed": [
+        "cargo-test|Installed%20Pi%20effective%20child%20tools%20through%20production%20assignment%20argv|ovrcr%3A%3Alib|coding%3A%3Aproduction_assignment_argv_preserves_installed_sdk_child_publication_tools|production",
+        "cargo-test|Installed%20Pi%20package%20through%20production%20materialization|ovrcr%3A%3Alib|production_materializer_loads_local_package_with_one_injected_owner|production"
+      ],
+      "expected": [
+        "cargo-test|Installed%20Pi%20effective%20child%20tools%20through%20production%20assignment%20argv|ovrcr%3A%3Alib|coding%3A%3Aproduction_assignment_argv_preserves_installed_sdk_child_publication_tools|production",
+        "cargo-test|Installed%20Pi%20package%20through%20production%20materialization|ovrcr%3A%3Alib|production_materializer_loads_local_package_with_one_injected_owner|production"
+      ],
+      "pass": true
+    }
+  },
+  "tooling": {
+    "nextest_version_in_log": "0.9.151",
+    "cargo_nextest_on_path_locally": false,
+    "identities_source": "the log's own PASS/TRY lines; no nextest installation or cargo cache change",
+    "python": "3.13.7"
+  },
+  "test_level_rule": "Body-based, first match wins: acceptance = compiled product boundary (CARGO_BIN_EXE_, support Live harness, PTY, node/.mjs); integration = controlled external dependency (tempdir/fs/sqlite, subprocess, sockets, live:: helpers) or references to >=2 distinct top-level crate modules in the test body itself; unit = otherwise. Helper/impl bodies are traced one hop for process/PTY/socket/storage boundary markers only; component breadth is never taken from helper bodies.",
+  "notes": [
+    "The two appended ignored parents use the canonical review identity (suite ovrcr::lib, variant production) with the verbatim runner names: 'production_materializer_loads_local_package_with_one_injected_owner' (tests/pi_package.rs) and 'coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools' (tests/pi_delegation/coding.rs); both are the workflow --exact arguments.",
+    "Skipped count 33 reconciles as 32 source #[ignore] tests + 1 test removed by the -E filter; 4 further tests are #[cfg(not(target_os = \"macos\"))] and are not compiled on this runner.",
+    "test_level is a bounded heuristic, not a call-graph proof: helpers are expanded one hop (unique lowercase fn names, capitalized fixture types with <=8 impl bodies, 400KB cap) and deeper indirection can still hide a boundary or a second component; unit rows therefore mean 'no boundary or composition visible from the test body plus one helper hop'."
+  ]
+}

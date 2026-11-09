@@ -1,0 +1,572 @@
+{
+  "schema": "macos-test-review/validation@1",
+  "revision": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+  "status": "complete",
+  "mode": "assemble",
+  "command_line": "/usr/local/bin/python3 -I evidence/assemble.py",
+  "command_argv": [
+    "evidence/assemble.py"
+  ],
+  "inventory_source": "evidence/inventory.csv",
+  "input_hashes": {
+    "evidence/assemble.py": {
+      "sha256": "0c132ee1ad9ccd33b5a85858f1b00ac51d0a717bdf56c3dae3b3b9682cfe200d",
+      "bytes": 110058
+    },
+    "evidence/assignments.json": {
+      "sha256": "2abcd16742597ddcd524138f82ad7fd9d09d2e940bd2d71aef791186711977b9",
+      "bytes": 424810
+    },
+    "evidence/attempts.csv": {
+      "sha256": "dd7c9991fb3ca9d69d5554771b4a22aec0112fe61023ec29c38ba15a3585d0c4",
+      "bytes": 990680
+    },
+    "evidence/build_inventory.py": {
+      "sha256": "d55f1250dec919866b47b5a68eaa8162504d790e4234b1dc8d6017a783441bf0",
+      "bytes": 50230
+    },
+    "evidence/calibration.jsonl": {
+      "sha256": "262b7c9b796d8d1aed124875e3466e81951f7efc32f0b5c335382819a6f9f47d",
+      "bytes": 18131
+    },
+    "evidence/calibration_A.jsonl": {
+      "sha256": "11b7eb7cc6b89adca216f9054b5e76974fbdc5fb6e7ab42ade933f97f6d9a697",
+      "bytes": 33241
+    },
+    "evidence/calibration_B.jsonl": {
+      "sha256": "26bbe3e394b83da21ce84db559cc6860eb7ed65caf679789669a49490dc73e32",
+      "bytes": 31863
+    },
+    "evidence/cost-analysis.json": {
+      "sha256": "28a146f735ffad4c28a7ffbc53dc86b7941ffbf823f1780c4f51744087fd75f2",
+      "bytes": 23248
+    },
+    "evidence/cost-analysis.md": {
+      "sha256": "1e2ca73bd237c53890363018d358ee1ea9febf88a88a77a56ce77e3accc37dc6",
+      "bytes": 17896
+    },
+    "evidence/coverage-audit.json": {
+      "sha256": "d999ecbab4b6f95c55c7927b9648893b943601fe27a85da742cd4b701dbcb3e5",
+      "bytes": 27333
+    },
+    "evidence/enum_node.py": {
+      "sha256": "3adb0dbe898ec95b02e215478b1da49f788b9be528f690db72d1d209940202c9",
+      "bytes": 33639
+    },
+    "evidence/enum_python.py": {
+      "sha256": "03dca01a2f14f8bfd4a944cba75bf0ac2ef62ad93521f9da633379d8244e5899",
+      "bytes": 31714
+    },
+    "evidence/exclusions.csv": {
+      "sha256": "7aef319ba0200b234d12078b26aeb26b8ea94194c224768edcc57c90a7a151f5",
+      "bytes": 9395
+    },
+    "evidence/findings-inventory.json": {
+      "sha256": "758ef3e5203deab488067b6d90d1c1f31128edf3d3d76135b0d599c71c78e348",
+      "bytes": 86427
+    },
+    "evidence/findings-inventory.md": {
+      "sha256": "9c698cc9d83cd9f4c811a98cbb390bbd87f2dd941ac6bc001764e1d82c97a867",
+      "bytes": 66182
+    },
+    "evidence/inventory.csv": {
+      "sha256": "e813fbe190e4d562572caefceadfee696e275c65cb2a4d825b88a09fb9921205",
+      "bytes": 1470463
+    },
+    "evidence/inventory_node.csv": {
+      "sha256": "38bbc73d7126b5567bb55154a0bf016a9b411e3dd4a524fdd92daf609110c289",
+      "bytes": 60604
+    },
+    "evidence/inventory_python.csv": {
+      "sha256": "be0fc2329e016ca25080095604a3f33d414b102ec0cb19362d30ce6c6ec65b6a",
+      "bytes": 164897
+    },
+    "evidence/inventory_rust.csv": {
+      "sha256": "23ad9a3cff2af1232b104dd9afe0864004e29f3d5e5c17c9bc902f0e225cb6d3",
+      "bytes": 1367470
+    },
+    "evidence/inventory_rust_test_level.csv": {
+      "sha256": "ed1b558f58f2b9615fe3ab571b6ab788c405f94c3bdff3f874076574e921f4b0",
+      "bytes": 371095
+    },
+    "evidence/job-steps.csv": {
+      "sha256": "a9ff1f92d5b53967eaaf862b38777be32722661dc606a87ae535c4caf3111f9d",
+      "bytes": 4759
+    },
+    "evidence/log.err": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "evidence/macos-job.log": {
+      "sha256": "159592ad3a4562507b013c5ce3e0e4f057e83622b678fb82f61e175be1bef9e2",
+      "bytes": 867305
+    },
+    "evidence/manifest.json": {
+      "sha256": "0d3b837533d314b9ad647bde75a20244ce7e1df98c99c3655e1d2503a624dab1",
+      "bytes": 7805
+    },
+    "evidence/merge-quality-review.py": {
+      "sha256": "b881557a1eb886243cf57585580630abb2876ed32b5a3d7c0888d148d2ef3c21",
+      "bytes": 11634
+    },
+    "evidence/methodology-draft.md": {
+      "sha256": "9b22367b71538237bcedec172cbceb5a392421d55487ac3d0028fd608f0880ff",
+      "bytes": 30073
+    },
+    "evidence/missing-receipts.json": {
+      "sha256": "3b6dd737aa39861bea4a028f8dcc61539629ebed1bc337780fad550f44c5d120",
+      "bytes": 70705
+    },
+    "evidence/node-notes.md": {
+      "sha256": "560890c01b2559a8f6d67f6598dd4ffb9ab0eb6e856320dc8c702ed0aa59a3f2",
+      "bytes": 8375
+    },
+    "evidence/node-tap.txt": {
+      "sha256": "916fa8379ca1a9186adef24275853844a46c2b79437b589a65bb9a1c294dd521",
+      "bytes": 9421
+    },
+    "evidence/overlap-groups.json": {
+      "sha256": "a3a9cb30222f1282c52d6361c09698be46326506757b75f5982db910dc850635",
+      "bytes": 35600
+    },
+    "evidence/overlap-report.md": {
+      "sha256": "e7d5aa1e1a328b2d78ed006e4514ae32f2e3a16a1d8c66a5a775670b232cbc62",
+      "bytes": 11809
+    },
+    "evidence/parse_log.py": {
+      "sha256": "adfe3b2c4a58443a2ff8b2373f529debefec6030443ad109633d73c3da21ee89",
+      "bytes": 5865
+    },
+    "evidence/plan_shards.py": {
+      "sha256": "5c4e298de9fb2fb93fa6a713b6a327267e384a34980ca3d7dfbc9e23e6300e14",
+      "bytes": 15450
+    },
+    "evidence/python-checks.md": {
+      "sha256": "45d0737a65f9da50aac84b3b6d1aee9f760ed89c868196efa4b8dec64f8804fb",
+      "bytes": 14593
+    },
+    "evidence/quality-review-app.jsonl": {
+      "sha256": "3f3d85813cdd024e2892219a86f27edbf3c77d4b9118b6b21917d1f245fb43dc",
+      "bytes": 29333
+    },
+    "evidence/quality-review-dashboard.jsonl": {
+      "sha256": "7cdc7f01c57bce9b7af85f7a16329210058247e705bb2c15be6fb00544236860",
+      "bytes": 32407
+    },
+    "evidence/quality-review-delegation.jsonl": {
+      "sha256": "60213a29efe0c344e569e91d698560a8e7ce519c0e1c94458f8ac617e148fa7b",
+      "bytes": 32820
+    },
+    "evidence/quality-review-extensions.jsonl": {
+      "sha256": "893a96ff5a53d8d98f13e5c564fbe9e8a7da3cc323ed9ff5c754a04d3568496d",
+      "bytes": 38902
+    },
+    "evidence/quality-review-integration-final.jsonl": {
+      "sha256": "97f67dc662ef0b7c8008e97ae442ed138855d6d80a7ceb292f2f68ae50ecebac",
+      "bytes": 27233
+    },
+    "evidence/quality-review-integration-mid.jsonl": {
+      "sha256": "a87674528acf6a7f1a1ef076f042a0fcfe2c44b10a5765479f4e3e136a9a5b62",
+      "bytes": 46077
+    },
+    "evidence/quality-review-integration-tail.jsonl": {
+      "sha256": "793b4af2310aa8e42042a97fc42c9b625021e41e813d33b3af622433d43747f9",
+      "bytes": 55402
+    },
+    "evidence/quality-review-integration.jsonl": {
+      "sha256": "8c08ea619543f8dac59cab561815c92cdb12d82f608776cf5c1305ba0be36ba3",
+      "bytes": 32593
+    },
+    "evidence/quality-review-lifecycle.jsonl": {
+      "sha256": "4f7782371b5d13e78ce19171777b5f461f76d3c607098a704ca159b3d43fbec9",
+      "bytes": 20392
+    },
+    "evidence/quality-review-packaging.jsonl": {
+      "sha256": "7bf5d2b73bef21f9a5601e8301154741c9e919cd291e36610408b2534665eb02",
+      "bytes": 44145
+    },
+    "evidence/quality-review-protocol.jsonl": {
+      "sha256": "879dedff8471346d0728ec27013e408981bf128b238fd38526388fcedd94cbda",
+      "bytes": 41128
+    },
+    "evidence/quality-review-report.jsonl": {
+      "sha256": "00230fe700e66a4c78bb00c4692b413689717c1f81b83aa964dd79a093f7a21b",
+      "bytes": 16399
+    },
+    "evidence/quality-review-runtime-delegation.jsonl": {
+      "sha256": "4a1dcfbc68f0ac422b714453c4d789df33e828d1554667a3cb13cbb91311c5d9",
+      "bytes": 55549
+    },
+    "evidence/quality-review-runtime.jsonl": {
+      "sha256": "f7001cd7836313555dff43f78ddd8e200f526f2b8db0b4b6bb4181122c2726d5",
+      "bytes": 27759
+    },
+    "evidence/quality-review-shared.jsonl": {
+      "sha256": "6200d1c9f3b1d8eeafbd4f9a016a626e1e8549ec452e8572a0908176ae2473cd",
+      "bytes": 42859
+    },
+    "evidence/quality-review-storage.jsonl": {
+      "sha256": "7fd32cda32203e0d9093e5c6726a3ddc70e84e36664239f735bb6a1170291e25",
+      "bytes": 15349
+    },
+    "evidence/quality-review-tui.jsonl": {
+      "sha256": "cc10f494d759f02b67cadeb31a2af7bfef154b18fbb5f6d5edc2ea2bead955eb",
+      "bytes": 48161
+    },
+    "evidence/quality-review.jsonl": {
+      "sha256": "77936cd2fe6b2be92395ac35e3121a55b2a81c5c0af7094c638fea11327fe685",
+      "bytes": 598169
+    },
+    "evidence/quality-targets.json": {
+      "sha256": "b66ce0df20fcb0be42bdd879b5f06faa034e47d403fdb85db74b69453dca5ef1",
+      "bytes": 232761
+    },
+    "evidence/quality_targets.py": {
+      "sha256": "53cab5b5f8ee8be9bfc7e51f02cf11cc0ae22ddb7fb17e24e7343101cbad1e62",
+      "bytes": 23923
+    },
+    "evidence/rubric.md": {
+      "sha256": "49ed9ba045962f32093cd71d543f73b542145860cf1e971d217862182b29d1c3",
+      "bytes": 6220
+    },
+    "evidence/run.json": {
+      "sha256": "a32b77493e71cd63690e763950828cc9e69c64b8f1c9ab95d0010153f0c4f55e",
+      "bytes": 7155
+    },
+    "evidence/schema.md": {
+      "sha256": "07ea2a16a4edae247a3b32d1d2a5af7e0e02a75a203e9b49c95cb3345c1e58b9",
+      "bytes": 18430
+    },
+    "reviews/app-cli-001.jsonl": {
+      "sha256": "5b41c21ee723ee74c3f276368a4dac525700d9a3c9e52d642ae3c5d437295d08",
+      "bytes": 96494
+    },
+    "reviews/app-core-001.jsonl": {
+      "sha256": "3b127bd422cd5a22a8a8d19bc67ecf7bc65de219743cde7936cc0eac156ed3b3",
+      "bytes": 23752
+    },
+    "reviews/app-gui-001.jsonl": {
+      "sha256": "e34a2dfdd63dc403b4a2a5cb47281681bd685f16e26d0447cf5dfbb2b48cede5",
+      "bytes": 45504
+    },
+    "reviews/app-operator-001.jsonl": {
+      "sha256": "696dab1b85f4e1de6b3909050360a5fccba475163d2dce03495e7ed5210d5398",
+      "bytes": 29533
+    },
+    "reviews/app-remote-001.jsonl": {
+      "sha256": "5c9e40795316351425d1b6e98a8fa2521cc8a5b46fd91a78a2025eb951e22bb7",
+      "bytes": 24535
+    },
+    "reviews/app-report-001.jsonl": {
+      "sha256": "18db71095e6e48d5b8c076821029fd50bb7562c5c3184193375ebeed73983089",
+      "bytes": 115488
+    },
+    "reviews/app-report-002.jsonl": {
+      "sha256": "326391d90f328c7b1bf812d9f3a89827cd03a61b38696988542c31f8fb0b34b2",
+      "bytes": 44229
+    },
+    "reviews/extensions-installed-pi-001.jsonl": {
+      "sha256": "4acc104d811cb80be1a9cd460865ff06ff44cab6c86b1fd9060b8c36ca17f6cc",
+      "bytes": 185970
+    },
+    "reviews/extensions-installed-pi-002.jsonl": {
+      "sha256": "4de627118341ff7d8679d47c6f3fddf4c3dd3d93eaea3e28bcd5661935561544",
+      "bytes": 39213
+    },
+    "reviews/lifecycle-terminal-acceptance-001.jsonl": {
+      "sha256": "1c81f56027a9adaad4cb0b66004680016d39a2ead576c7367e0617aeb8926fcd",
+      "bytes": 150727
+    },
+    "reviews/lifecycle-terminal-acceptance-002.jsonl": {
+      "sha256": "939865dfcf2f859ce7e7fe07bd96b884241c9af0bf3c1adf81233f16d144edd1",
+      "bytes": 152034
+    },
+    "reviews/lifecycle-terminal-acceptance-003.jsonl": {
+      "sha256": "62a397c3ee7c2b750037f9bcf89833f27a2c69f488613f21333ae509cfaecfa8",
+      "bytes": 64964
+    },
+    "reviews/other-rust-integration-001.jsonl": {
+      "sha256": "57461e9d3f63b4d00a0cbc580da9a2f5af43850a47c39e971f91347f356c7bc0",
+      "bytes": 155660
+    },
+    "reviews/other-rust-integration-002.jsonl": {
+      "sha256": "e02d09286838cabd9eeba64e6e3b5a4de08b51dd3df62996e4e439be4f6dde9a",
+      "bytes": 126200
+    },
+    "reviews/other-rust-integration-003.jsonl": {
+      "sha256": "ce09c7085b6a37558194ef66813c7f18746cbaead46fabd9e17ec791c3ea0cbc",
+      "bytes": 120360
+    },
+    "reviews/other-rust-integration-004.jsonl": {
+      "sha256": "53064928774f8a804d50f684d9e5c540e3d906d25f418d558a9b78591996da16",
+      "bytes": 108161
+    },
+    "reviews/other-rust-integration-005.jsonl": {
+      "sha256": "f49485c2e15448399a924025a2263cf68a6071f6aa290cb3c4486844665bb2e3",
+      "bytes": 109615
+    },
+    "reviews/other-rust-integration-006.jsonl": {
+      "sha256": "bc692d4f9ffba4a8f67dcc5663eee79038ebd116f24bcc35948f888188caab86",
+      "bytes": 121924
+    },
+    "reviews/other-rust-integration-007.jsonl": {
+      "sha256": "30d5d8095fbf7e2346bb1a5e268450735395d5a7e31d00bed4316bb471356114",
+      "bytes": 66599
+    },
+    "reviews/packaging-installers-001.jsonl": {
+      "sha256": "5d447fcd5824f2eef0b491910702d60b64c0975a80367139da15c353f497d09f",
+      "bytes": 307826
+    },
+    "reviews/packaging-installers-002.jsonl": {
+      "sha256": "41c31ef80e76e0fe6600de3aff09f87c2ecc4439f4725b5fe6ffe5b2895e8f32",
+      "bytes": 48578
+    },
+    "reviews/protocol-terminal-001.jsonl": {
+      "sha256": "4ffcb8cd5fb5b98cce6095963a267c14577d281775bb64b2316b2a7ed3e41eaf",
+      "bytes": 113440
+    },
+    "reviews/protocol-terminal-002.jsonl": {
+      "sha256": "3b264df8575794f90de37f86b28e097e5b11be5e3f06f3d7df4d9884f9e33faa",
+      "bytes": 55496
+    },
+    "reviews/public-dashboard-001.jsonl": {
+      "sha256": "5598bb08b4e0656b942ba047ac6bfce86aaab6ea83fbad71700c245aa1fe5cd6",
+      "bytes": 144669
+    },
+    "reviews/public-dashboard-002.jsonl": {
+      "sha256": "ad79e0f20cd2d1e8f0440156dfa1137e5e298ba7bf015e38132a32daecca76fb",
+      "bytes": 110810
+    },
+    "reviews/public-dashboard-003.jsonl": {
+      "sha256": "7b962983cf038634740e466543a05d4d7742fb94af09dd08916bd44ecfd388a4",
+      "bytes": 107180
+    },
+    "reviews/public-dashboard-004.jsonl": {
+      "sha256": "4d2381d1aa8a66b99b041a0342393a0714b54398f668e6f4be858ab4041447ed",
+      "bytes": 101488
+    },
+    "reviews/public-dashboard-005.jsonl": {
+      "sha256": "73b19d8fc5a0a3509bafee2cdff7c7c641834cc8fad44e7926f88ed750a96045",
+      "bytes": 126641
+    },
+    "reviews/public-dashboard-006.jsonl": {
+      "sha256": "67e7a696605cff3afb22209a82b05cf1bdafc136db2f4c5980e7f092f94a928a",
+      "bytes": 5023
+    },
+    "reviews/public-delegation-001.jsonl": {
+      "sha256": "e1835195bbe2b5b1839c9d930827aaa3baaeb6bb410dedad2cb6a9658e71cfcf",
+      "bytes": 178284
+    },
+    "reviews/public-delegation-002.jsonl": {
+      "sha256": "414f80367466c8a2bc0f2f183cb2bcfd480b4400ee6fc19c00e840c58537286c",
+      "bytes": 176523
+    },
+    "reviews/public-delegation-003.jsonl": {
+      "sha256": "acd207e1de931a52ae5eec964c47fd7d5af03006936788a15b37d3bdfcb03537",
+      "bytes": 161914
+    },
+    "reviews/public-delegation-004.jsonl": {
+      "sha256": "1fc289ccd8d60e3a92c2280b4709599324b26952182e29fe490d9e843eae9d29",
+      "bytes": 39192
+    },
+    "reviews/runtime-delegation-001.jsonl": {
+      "sha256": "da7771119a74ab7f1eb44f3f768701409c7cb77967bb9a5799b5b4cd587870e6",
+      "bytes": 166846
+    },
+    "reviews/runtime-delegation-002.jsonl": {
+      "sha256": "920ecd1cf2b061b15759b690a13c079cb0214ce12c854a159d5041944483ce62",
+      "bytes": 30040
+    },
+    "reviews/runtime-server-session-001.jsonl": {
+      "sha256": "51276623f37965fa9b11bc68bd752bc39616370b84ccb15439fe3d3e60d3e65f",
+      "bytes": 129694
+    },
+    "reviews/runtime-server-session-002.jsonl": {
+      "sha256": "24fdbb6b572aced60f52a51681b133c9f10266da195f260fe024033357cc0ccf",
+      "bytes": 135653
+    },
+    "reviews/runtime-server-session-003.jsonl": {
+      "sha256": "c1f5082b65d13ff864e1fecf78fa1278713cc6d9359091b896aa73f43adc508c",
+      "bytes": 122115
+    },
+    "reviews/runtime-server-session-004.jsonl": {
+      "sha256": "7726b4cc61e9634acece2d9751ee113bee389f9448875d3c2f3de045537ca5ad",
+      "bytes": 18883
+    },
+    "reviews/runtime-storage-settings-tasks-001.jsonl": {
+      "sha256": "57dec3211484a1fbe2ca589ec7816f020547481da74f8706d7e9106653bcc524",
+      "bytes": 165650
+    },
+    "reviews/runtime-storage-settings-tasks-002.jsonl": {
+      "sha256": "241b5b5bf5d63de2768de505613c57e301284823d3094efdd7e78d3508786e03",
+      "bytes": 151045
+    },
+    "reviews/runtime-storage-settings-tasks-003.jsonl": {
+      "sha256": "835bf8a9fcc5f23b8aebf0629c1f9959df9354fc6405b696bec4fc07772a0400",
+      "bytes": 65600
+    },
+    "reviews/shared-fixtures-001.jsonl": {
+      "sha256": "d985ce817daa40bea93dd76b52775dfafe1d1b96ca31cf6c78b2424daafe5932",
+      "bytes": 177044
+    },
+    "reviews/tui-library-001.jsonl": {
+      "sha256": "46b0b72797242f3a431f275f0c8181fe45fbd79ca66366041bfabc935761a1ef",
+      "bytes": 139644
+    },
+    "reviews/tui-library-002.jsonl": {
+      "sha256": "03fd477ca4f424129dc4d7f29977900b0d60e3fcb0f3be08e4adff37f4eee8ec",
+      "bytes": 148808
+    },
+    "reviews/tui-library-003.jsonl": {
+      "sha256": "035ff150976c37aa4e28270af51221a811adf3c699636f88b6bd262035898f62",
+      "bytes": 135173
+    },
+    "reviews/tui-library-004.jsonl": {
+      "sha256": "d463e7a23f64b7688e0f4e1ec500af5dc5507c59636bbfcadd86681b168ddcc1",
+      "bytes": 124057
+    },
+    "reviews/tui-library-005.jsonl": {
+      "sha256": "f2bf7e033c36c949b4e5d47ee08827c270c0083cc956161cc268fc223fd6e2df",
+      "bytes": 108927
+    },
+    "reviews/tui-library-006.jsonl": {
+      "sha256": "3cc97fdcf0ce1c3ff586bfd8b42bb65d5e65d6165f41c3a178aaef412bf55c9d",
+      "bytes": 146437
+    },
+    "reviews/tui-library-007.jsonl": {
+      "sha256": "b7e7169daa157f52160a02ef47526cc8c6ab2d790900cd56fba4158e36d6f2f2",
+      "bytes": 27955
+    }
+  },
+  "row_counts": {
+    "inventory_rows": 3171,
+    "csv_rows": 3171,
+    "by_runner": {
+      "cargo-test": 2,
+      "nextest": 2820,
+      "node-test": 110,
+      "python-check": 200,
+      "python-unittest": 39
+    },
+    "by_ci_step": {
+      "Extension tests": 106,
+      "Installed Pi effective child tools through production assignment argv": 3,
+      "Installed Pi package through production materialization": 3,
+      "Relocated macOS startup assets": 233,
+      "Relocated pinned Cursor dependency and passive CLI diagnostics": 6,
+      "Test": 2820
+    },
+    "by_variant": {
+      "default": 2982,
+      "local-development": 104,
+      "production": 85
+    },
+    "by_recommendation": {
+      "consolidate": 54,
+      "improve": 8,
+      "keep": 3109
+    },
+    "by_test_level": {
+      "acceptance": 949,
+      "integration": 886,
+      "unit": 1336
+    },
+    "by_target_kind": {
+      "bin": 78,
+      "integration": 1475,
+      "lib": 1269,
+      "node": 110,
+      "script-check": 200,
+      "unittest": 39
+    }
+  },
+  "score_summary": {
+    "criticality_score": {
+      "min": 25,
+      "median": 75,
+      "max": 100
+    },
+    "usefulness_score": {
+      "min": 25,
+      "median": 80,
+      "max": 100
+    },
+    "retention_score": {
+      "min": 31,
+      "median": 75,
+      "max": 100
+    }
+  },
+  "weights": {
+    "criticality_score": "25*C",
+    "usefulness_score": "10*S + 10*U + 5*F",
+    "retention_score": "10*C + 6*S + 6*U + 3*F"
+  },
+  "quality_review": {
+    "receipts": 687,
+    "calibration": "12 receipts"
+  },
+  "notes": [],
+  "csv": {
+    "path": "tests.csv",
+    "rows": 3171,
+    "sha256": "dcccdb0ec9d19a3569a05285f33f7620e71308f3765edf2d0086996ca767fb5a",
+    "bytes": 5541668
+  },
+  "checks": [
+    {
+      "check": "1 row-count-and-identity-join",
+      "status": "passed",
+      "detail": "rows=3171; unique_test_ids=3171; reviews=3171; per_runner={'nextest': 2820, 'cargo-test': 2, 'node-test': 110, 'python-unittest': 39, 'python-check': 200}; per_ci_step={'Test': 2820, 'Installed Pi package through production materialization': 3, 'Installed Pi effective child tools through production assignment argv': 3, 'Extension tests': 106, 'Relocated macOS startup assets': 233, 'Relocated pinned Cursor dependency and passive CLI diagnostics': 6}; per_variant={'default': 2982, 'production': 85, 'local-development': 104}",
+      "offending_ids": []
+    },
+    {
+      "check": "2 scores-and-formulas",
+      "status": "passed",
+      "detail": "recomputed formulas for 3171 rows (criticality_score=25*C, usefulness_score=10*S+10*U+5*F, retention_score=10*C+6*S+6*U+3*F); cross-checked 0 provided derived scores",
+      "offending_ids": []
+    },
+    {
+      "check": "3 rationale-quality",
+      "status": "passed",
+      "detail": "checked 22197 rationale cells; placeholders=0; too_short=0 (minimum 12 chars for behavior, failure_caught, and the four score reasons)",
+      "offending_ids": []
+    },
+    {
+      "check": "4 source-ranges",
+      "status": "passed",
+      "detail": "validated 3171/3171 source ranges and 5703 production_refs against 320 files under /Users/xlyk/Code/ovrcr-workspaces/chore-unit-test-review",
+      "offending_ids": []
+    },
+    {
+      "check": "5 recommendation-gates-and-reviews",
+      "status": "passed",
+      "detail": "prune_rows=0; consolidate_rows=54; c4_rows=162; low_confidence_rows=0; receipts_required=213; receipts_present=687; confirmed_groups=28",
+      "offending_ids": []
+    },
+    {
+      "check": "6 overlap-groups-and-reference-integrity",
+      "status": "passed",
+      "detail": "groups=28; structurally_valid_groups=28; removal_candidates=54; candidates_without_surviving_protection=0",
+      "offending_ids": []
+    },
+    {
+      "check": "7 hosted-evidence-gates",
+      "status": "passed",
+      "detail": "hosted gates recomputed from evidence/attempts.csv: attempts=2822, unique_tests=2820, binaries=56, cumulative_seconds=5931.968; manifest sha256 verified for 10 file(s); attempt ledger rows=2822",
+      "offending_ids": []
+    },
+    {
+      "check": "8 csv-round-trip",
+      "status": "passed",
+      "detail": "read back tests.csv (5541668 bytes, sha256 dcccdb0ec9d19a35…) and matched all 3171 rows × 40 cells",
+      "offending_ids": []
+    },
+    {
+      "check": "9 deterministic-order",
+      "status": "passed",
+      "detail": "3171 rows sorted by (retention_score, test_id) ascending",
+      "offending_ids": []
+    }
+  ]
+}

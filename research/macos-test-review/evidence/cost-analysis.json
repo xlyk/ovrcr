@@ -1,0 +1,742 @@
+{
+  "analysis": "test cost versus value",
+  "revision": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+  "run": "42429838269",
+  "job": "128576086691",
+  "inputs": [
+    "evidence/attempts.csv",
+    "evidence/inventory.csv",
+    "evidence/job-steps.csv",
+    "evidence/node-tap.txt",
+    "evidence/macos-job.log",
+    "reviews/*.jsonl (50 files, 3171 rows)",
+    "evidence/quality-review-*.jsonl (11 files, 450 rows: 405 agree, 45 resolved)"
+  ],
+  "total_picture": {
+    "step_covered_seconds": 2415,
+    "test_step_seconds": 2154,
+    "compilation_seconds": 136,
+    "nextest_execution_seconds": 2014.918,
+    "test_step_residual_seconds": 3.082,
+    "test_process_seconds_cumulative": 5931.968,
+    "nextest_tests": 2820,
+    "nextest_binaries": 56,
+    "skipped_tests": 33,
+    "attempt_rows": 2822,
+    "failed_attempt_rows": 2,
+    "derivation": {
+      "step_covered_seconds": "job-steps.csv first started 2026-11-08T00:27:42Z to last completed 2026-11-08T01:07:57Z = 2415 s",
+      "test_step_seconds": "job-steps.csv step_name=Test duration_seconds=2154",
+      "compilation_seconds": "job-steps.csv Test notes (log 502 \"Finished test profile ... in 2m 16s\")",
+      "nextest_execution_seconds": "job-steps.csv Test notes (log 505 first attempt to log 3397 FLAKY summary)",
+      "test_process_seconds_cumulative": "sum(attempts.csv.seconds) over all 2822 attempt rows; equals sum(inventory.csv.total_attempt_seconds) over the 2820 runner=nextest rows",
+      "test_step_residual_seconds": "2154 - (136 + 2014.918); step bookkeeping not attributed to compile or execution"
+    },
+    "caveat": "Per-test process durations were measured concurrently by nextest and by parallel CI steps; their sum (5931.968 s) is cumulative process time, not wall-clock time and not a speedup that could be recovered by removing tests."
+  },
+  "suite_costs": {
+    "rule": "group attempts.csv by binary_id; total_attempt_seconds=sum(seconds); attempt_rows=count(*); share_pct=total/5931.968*100",
+    "top15": [
+      {
+        "binary_id": "ovrcr::pi_delegation",
+        "total_attempt_seconds": 2380.841,
+        "attempt_rows": 260,
+        "share_pct": 40.14
+      },
+      {
+        "binary_id": "ovrcr::server_lifecycle",
+        "total_attempt_seconds": 764.781,
+        "attempt_rows": 157,
+        "share_pct": 12.89
+      },
+      {
+        "binary_id": "ovrcr::cursor_cloud",
+        "total_attempt_seconds": 702.799,
+        "attempt_rows": 47,
+        "share_pct": 11.85
+      },
+      {
+        "binary_id": "ovrcr::automatic_titles",
+        "total_attempt_seconds": 307.713,
+        "attempt_rows": 34,
+        "share_pct": 5.19
+      },
+      {
+        "binary_id": "ovrcr::retained_sessions",
+        "total_attempt_seconds": 219.666,
+        "attempt_rows": 22,
+        "share_pct": 3.7
+      },
+      {
+        "binary_id": "ovrcr::claude_quota_probe",
+        "total_attempt_seconds": 167.45,
+        "attempt_rows": 14,
+        "share_pct": 2.82
+      },
+      {
+        "binary_id": "ovrcr-runtime",
+        "total_attempt_seconds": 154.868,
+        "attempt_rows": 496,
+        "share_pct": 2.61
+      },
+      {
+        "binary_id": "ovrcr::terminal_acceptance",
+        "total_attempt_seconds": 154.485,
+        "attempt_rows": 34,
+        "share_pct": 2.6
+      },
+      {
+        "binary_id": "ovrcr::provider_quota",
+        "total_attempt_seconds": 134.734,
+        "attempt_rows": 33,
+        "share_pct": 2.27
+      },
+      {
+        "binary_id": "ovrcr::gui",
+        "total_attempt_seconds": 99.716,
+        "attempt_rows": 13,
+        "share_pct": 1.68
+      },
+      {
+        "binary_id": "ovrcr::retained_ownership",
+        "total_attempt_seconds": 94.812,
+        "attempt_rows": 13,
+        "share_pct": 1.6
+      },
+      {
+        "binary_id": "ovrcr::task_execution",
+        "total_attempt_seconds": 87.274,
+        "attempt_rows": 13,
+        "share_pct": 1.47
+      },
+      {
+        "binary_id": "ovrcr::cli",
+        "total_attempt_seconds": 66.545,
+        "attempt_rows": 50,
+        "share_pct": 1.12
+      },
+      {
+        "binary_id": "ovrcr::client_startup_server",
+        "total_attempt_seconds": 61.644,
+        "attempt_rows": 21,
+        "share_pct": 1.04
+      },
+      {
+        "binary_id": "ovrcr::retained_capacity",
+        "total_attempt_seconds": 57.052,
+        "attempt_rows": 5,
+        "share_pct": 0.96
+      }
+    ],
+    "top3_seconds": 3848.421,
+    "top3_share_pct": 64.88,
+    "top15_seconds": 5454.38,
+    "top15_share_pct": 91.95,
+    "remaining_binaries": 41,
+    "remaining_seconds": 477.588,
+    "all_binaries": 56,
+    "total_seconds": 5931.968
+  },
+  "slowest_tests": {
+    "rule": "inventory.csv runner=nextest, sorted by total_attempt_seconds desc then full test_id asc; top 30; scores/recommendation/cost_driver from the review record, replaced by quality-review final_review where verdict=resolved",
+    "count": 30,
+    "sum_seconds": 1089.436,
+    "sum_share_pct": 18.37,
+    "receipt_overrides": 0,
+    "rows": [
+      {
+        "rank": 1,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_cloud_refuses_incompatible_bridge_before_account_requests|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 68.639,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "thirteen fixtures plus PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 2,
+        "test_id": "nextest|Test|ovrcr%3A%3Aclaude_quota_probe|claude_probe_startup_without_usage_reaches_the_deadline_and_the_process_is_gone|default",
+        "source_file": "tests/claude_quota_probe.rs",
+        "total_attempt_seconds": 62.92,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 3,
+        "uniqueness": 3,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "60 s real deadline",
+        "receipt_override": false
+      },
+      {
+        "rank": 3,
+        "test_id": "nextest|Test|ovrcr%3A%3Aclaude_quota_probe|claude_probe_silent_for_sixty_seconds_times_out_and_the_process_is_gone|default",
+        "source_file": "tests/claude_quota_probe.rs",
+        "total_attempt_seconds": 62.912,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "60 s real deadline per run",
+        "receipt_override": false
+      },
+      {
+        "rank": 4,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_send_uncertainty_and_malformed_evidence_never_retry_or_become_ready|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 56.663,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "nine PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 5,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|dependencies%3A%3Apublic_dependency_lost_requests_and_replies_reconcile_original_baseline_without_duplicate_effects|default",
+        "source_file": "tests/pi_delegation/dependencies.rs",
+        "total_attempt_seconds": 55.59,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real git worktrees",
+        "receipt_override": false
+      },
+      {
+        "rank": 6,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|parent_recovery%3A%3Aparent_recovery_transfer_discovers_prepared_and_suspends_accepted_unknown_partial_effects|default",
+        "source_file": "tests/pi_delegation/recovery.rs",
+        "total_attempt_seconds": 46.25,
+        "attempt_count": 2,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real managed PTY",
+        "receipt_override": false
+      },
+      {
+        "rank": 7,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_send_crash_and_discard_boundaries_preserve_uncertainty_and_exact_late_identity|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 46.006,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "eight PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 8,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|followups%3A%3Apublic_followup_storage_limit_preserves_last_result_acceptance_and_all_receipts|default",
+        "source_file": "tests/pi_delegation/followups.rs",
+        "total_attempt_seconds": 42.056,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real managed PTY",
+        "receipt_override": false
+      },
+      {
+        "rank": 9,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_creation_crashes_retain_original_operation_and_require_explicit_discard|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 39.866,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "four restarts",
+        "receipt_override": false
+      },
+      {
+        "rank": 10,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_recovery_account_source_and_unknown_outcomes_fail_closed|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 37.103,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "six PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 11,
+        "test_id": "nextest|Test|ovrcr%3A%3Aserver_lifecycle|desktop_notifications_bridge_expired_permission_check_recovers_without_reauthorization|default",
+        "source_file": "tests/server_lifecycle.rs",
+        "total_attempt_seconds": 35.784,
+        "attempt_count": 1,
+        "criticality": 2,
+        "signal": 3,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "36s wall-clock budget",
+        "receipt_override": false
+      },
+      {
+        "rank": 12,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|independent_review%3A%3Apublic_review_partial_and_unknown_repairs_keep_original_receipt_without_replay|default",
+        "source_file": "tests/pi_delegation/review.rs",
+        "total_attempt_seconds": 35.158,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real git worktrees",
+        "receipt_override": false
+      },
+      {
+        "rank": 13,
+        "test_id": "nextest|Test|ovrcr%3A%3Aretained_ownership|exclusive_registry_lock_does_not_publish_reopen_success|default",
+        "source_file": "tests/retained_ownership.rs",
+        "total_attempt_seconds": 34.732,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 3,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real sqlite lock",
+        "receipt_override": false
+      },
+      {
+        "rank": 14,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_cancel_dispatch_races_retain_intent_without_replay_and_late_id_cancels_exact_run|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 33.503,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "five paused boundaries",
+        "receipt_override": false
+      },
+      {
+        "rank": 15,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|claude%3A%3Apublic_claude_missing_or_wrong_native_model_never_receives_initial_input|default",
+        "source_file": "tests/pi_delegation/claude.rs",
+        "total_attempt_seconds": 32.978,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "scripted Claude host",
+        "receipt_override": false
+      },
+      {
+        "rank": 16,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_same_bridge_observe_rejects_foreign_changed_missing_and_failed_progress|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 32.603,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "six PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 17,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_send_storage_faults_never_dispatch_without_claim_or_retire_unreceipted_payload|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 30.996,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "six fixtures with DB triggers",
+        "receipt_override": false
+      },
+      {
+        "rank": 18,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|public_dispatch_recovers_lost_requests_and_replies_without_duplicate_effects|default",
+        "source_file": "tests/pi_delegation.rs",
+        "total_attempt_seconds": 29.755,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "fault proxy frame loss",
+        "receipt_override": false
+      },
+      {
+        "rank": 19,
+        "test_id": "nextest|Test|ovrcr%3A%3Aretained_capacity|public_pi_admission_uses_final_slot_and_allows_more_than_four_children|default",
+        "source_file": "tests/retained_capacity.rs",
+        "total_attempt_seconds": 28.421,
+        "attempt_count": 1,
+        "criticality": 4,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "50-session matrix",
+        "receipt_override": false
+      },
+      {
+        "rank": 20,
+        "test_id": "nextest|Test|ovrcr%3A%3Atask_execution|forced_cancel_kills_pi_process_group|default",
+        "source_file": "tests/task_execution.rs",
+        "total_attempt_seconds": 28.334,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "A 40s deadline, SIGSTOP and real process-group probes",
+        "receipt_override": false
+      },
+      {
+        "rank": 21,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_creation_storage_failures_permit_only_durably_claimed_effects|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 27.911,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "six fixtures with DB triggers",
+        "receipt_override": false
+      },
+      {
+        "rank": 22,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|public_dispatch_freezes_fresh_child_target_before_metrics_and_write|default",
+        "source_file": "tests/pi_delegation.rs",
+        "total_attempt_seconds": 27.099,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "acceptance-diagnostics feature",
+        "receipt_override": false
+      },
+      {
+        "rank": 23,
+        "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|claude_reopen_retains_exact_conversation_before_another_callback|default",
+        "source_file": "tests/retained_sessions.rs",
+        "total_attempt_seconds": 26.851,
+        "attempt_count": 1,
+        "criticality": 4,
+        "signal": 3,
+        "uniqueness": 3,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "real restarts+sqlite",
+        "receipt_override": false
+      },
+      {
+        "rank": 24,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|questions%3A%3Apublic_question_sixty_four_answer_effects_exhaust_storage_without_eviction_or_replay|default",
+        "source_file": "tests/pi_delegation/questions.rs",
+        "total_attempt_seconds": 26.727,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real managed PTY",
+        "receipt_override": false
+      },
+      {
+        "rank": 25,
+        "test_id": "nextest|Test|ovrcr%3A%3Aretained_sessions|extension_conversations_switch_and_survive_repeated_restart|default",
+        "source_file": "tests/retained_sessions.rs",
+        "total_attempt_seconds": 25.901,
+        "attempt_count": 1,
+        "criticality": 4,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real restarts",
+        "receipt_override": false
+      },
+      {
+        "rank": 26,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|managed_live_cancel_known_run_requires_durable_intent_and_authoritative_outcome|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 24.248,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "four PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 27,
+        "test_id": "nextest|Test|ovrcr%3A%3Aautomatic_titles|three_failed_title_attempts_close_window_and_survive_restart|default",
+        "source_file": "tests/automatic_titles.rs",
+        "total_attempt_seconds": 22.799,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 3,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "provider exits 2 per call",
+        "receipt_override": false
+      },
+      {
+        "rank": 28,
+        "test_id": "nextest|Test|ovrcr%3A%3Acursor_cloud|ordinary_cloud_agent_validates_preview_and_cleans_owned_tree_on_exit_and_signals|default",
+        "source_file": "tests/cursor_cloud.rs",
+        "total_attempt_seconds": 22.621,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 3,
+        "recommendation": "keep",
+        "cost_driver": "four PTY sessions",
+        "receipt_override": false
+      },
+      {
+        "rank": 29,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|fallback%3A%3Adraft_public_same_run_old_future_unrelated_and_truncated_markers_stay_incomplete|default",
+        "source_file": "tests/pi_delegation/fallback.rs",
+        "total_attempt_seconds": 22.588,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real managed PTY",
+        "receipt_override": false
+      },
+      {
+        "rank": 30,
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|observation%3A%3Aproduction_observer_deadline_reconnect_overflow_and_wait_abort_leave_child_running|default",
+        "source_file": "tests/pi_delegation/observation.rs",
+        "total_attempt_seconds": 22.422,
+        "attempt_count": 1,
+        "criticality": 3,
+        "signal": 4,
+        "uniqueness": 4,
+        "fidelity": 4,
+        "recommendation": "keep",
+        "cost_driver": "real managed PTY",
+        "receipt_override": false
+      }
+    ]
+  },
+  "split": {
+    "rule_valuable": "criticality >= 3",
+    "rule_weak": "criticality <= 2 and (signal <= 2 or uniqueness <= 1 or recommendation in {consolidate, prune_candidate})",
+    "valuable_ranks": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30
+    ],
+    "valuable_count": 29,
+    "weak_ranks": [],
+    "weak_count": 0,
+    "neither_ranks": [
+      11
+    ],
+    "neither_count": 1,
+    "note": "Rank 11 (desktop_notifications_bridge_expired_permission_check_recovers_without_reauthorization) is the only C<=2 row in the 30; C2/S3/U3/F4/keep makes it neither weak nor valuable by this rule. No speedup is claimed for either bucket."
+  },
+  "retries": {
+    "rows": [
+      {
+        "test_id": "nextest|Test|ovrcr%3A%3Acodex_initial_prompt|codex_harness_default_and_explicit_prompt_use_the_shared_lifecycle_and_privacy_path|default",
+        "first_attempt_seconds": 4.855,
+        "total_attempt_seconds": 9.227,
+        "attempt_count": 2,
+        "failed_attempt_count": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "result": "FAIL",
+            "seconds": 4.855
+          },
+          {
+            "attempt": 2,
+            "result": "PASS",
+            "seconds": 4.372
+          }
+        ]
+      },
+      {
+        "test_id": "nextest|Test|ovrcr%3A%3Api_delegation|parent_recovery%3A%3Aparent_recovery_transfer_discovers_prepared_and_suspends_accepted_unknown_partial_effects|default",
+        "first_attempt_seconds": 24.507,
+        "total_attempt_seconds": 46.25,
+        "attempt_count": 2,
+        "failed_attempt_count": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "result": "FAIL",
+            "seconds": 24.507
+          },
+          {
+            "attempt": 2,
+            "result": "PASS",
+            "seconds": 21.743
+          }
+        ]
+      }
+    ],
+    "statement": "Two tests failed once and passed on the single automatic retry. A single hosted run establishes neither a flake rate nor a CI speedup; the retained total includes both attempt durations."
+  },
+  "timing_gaps": {
+    "python_unittest": {
+      "rows": 39,
+      "timed_rows": 0,
+      "timing_basis": "unmeasured",
+      "suite_totals": [
+        {
+          "suite": "native/bridge/check-installer.py::InstallerTests",
+          "tests": 33,
+          "seconds": 10.08,
+          "source": "evidence/macos-job.log:3631"
+        },
+        {
+          "suite": "cursor bridge check (python-unittest)",
+          "tests": 6,
+          "seconds": 2.076,
+          "source": "evidence/macos-job.log:3669"
+        }
+      ],
+      "limitation": "unittest prints one aggregate per module; no per-method timing exists, so rows carry null durations."
+    },
+    "python_check": {
+      "rows": 200,
+      "timed_rows": 0,
+      "timing_basis": "unmeasured",
+      "suite_totals": [
+        {
+          "group": "relocated startup assets step",
+          "seconds": 82,
+          "source": "evidence/job-steps.csv"
+        },
+        {
+          "group": "relocated startup payload checks",
+          "counts": "12 then 28",
+          "source": "evidence/macos-job.log:3634,3644"
+        },
+        {
+          "group": "packaging checks",
+          "counts": "27 then 36",
+          "source": "evidence/macos-job.log:3635,3645"
+        },
+        {
+          "group": "compiled-entry/bundle-layout checks",
+          "counts": "40 then 40",
+          "source": "evidence/macos-job.log:3636,3646"
+        },
+        {
+          "group": "actual startup recipe checks",
+          "counts": "17",
+          "source": "evidence/macos-job.log:3469"
+        }
+      ],
+      "limitation": "script checks print aggregate counts only; no per-check duration exists, so rows carry null durations."
+    },
+    "node": {
+      "rows": 110,
+      "timed_rows": 110,
+      "per_case_seconds_sum": 9.531,
+      "batch_seconds": 4.243,
+      "batch_cases": 106,
+      "source": "evidence/node-tap.txt header (duration_ms 4242.999792)",
+      "limitation": "per-case TAP durations exist for all 110 rows, but node runs files concurrently and inventory retains 110 rows for 106 reported cases, so the per-case sum exceeds the 4.243 s batch wall time and cannot be treated as additive cost."
+    },
+    "cargo_test": {
+      "rows": 2,
+      "timed_rows": 2,
+      "seconds": [
+        5.37,
+        7.25
+      ],
+      "note": "separate installed-Pi steps (31 s and 16 s step durations); per-test cargo output only"
+    }
+  },
+  "reconciliation": {
+    "nextest_inventory_rows": 2820,
+    "nextest_inventory_seconds": 5931.968,
+    "attempts_rows": 2822,
+    "attempts_seconds": 5931.968,
+    "step_covered_seconds": 2415,
+    "sum_suite_seconds": 5931.968,
+    "matches_5931_968": true
+  },
+  "data_quality": [
+    "reviews/other-rust-integration-006.jsonl: cost_drivers for forced_cancel_kills_pi_process_group is a string, not an array; recorded verbatim as the cost driver and used unchanged.",
+    "inventory.csv node-test rows sum to 9.531 s while the node-tap.txt batch header reports 4.243 s over 106 cases; per-case durations are retained as reported, batch wall time is reported separately."
+  ],
+  "job_record_wall_seconds": 2418
+}

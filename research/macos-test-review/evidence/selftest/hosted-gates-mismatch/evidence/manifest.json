@@ -1,0 +1,14 @@
+{
+  "pinned_revision": "992a1da5c59a865ebb48051e4d9d8ff7184c8dc5",
+  "gates": {
+    "attempt_records": 2822,
+    "unique_tests": 2820,
+    "binaries": 56,
+    "cumulative_seconds": 5900.0
+  },
+  "files": {
+    "evidence/attempts.csv": {
+      "sha256": "af02ef14b6df0bf479a73ee430d2da2337d20e86db44963e33bfc42c911a5fe5"
+    }
+  }
+}

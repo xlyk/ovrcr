@@ -1,0 +1,13 @@
+[
+  {
+    "group_id": "g-ok",
+    "member_test_ids": [
+      "pass-consolidate",
+      "pass-keeper"
+    ],
+    "retained_test_ids": [
+      "pass-keeper"
+    ],
+    "preservation_evidence": "pass-keeper asserts the same boundary and fixture"
+  }
+]

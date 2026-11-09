@@ -1,0 +1,117 @@
+# Raw TAP extracted from macos-job.log
+# run 42429838269 job 128576086691 revision 992a1da5c59a865ebb48051e4d9d8ff7184c8dc5
+# batch step 'Extension tests': log lines 3692-4346, 106 cases, duration_ms 4242.999792
+0.024	session switches capture OMP's exact native file and ephemeral identity
+0.006	inert outside a managed invocation and outside the terminal UI
+0.001	registers OMP's lifecycle and switch events
+0.018	a switch names the conversation it left by id, never by its file path
+0.011	a same-file reload is a switch that names the conversation it is already on
+0.031	tree navigation invalidates the response cycle and carries only idleness
+0.029	the reattach command re-announces this producer once and says so
+0.004	a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable
+0.020	an approval opens and closes one namespaced request and carries no reason
+0.045	a denial closes the approval exactly as an allow does
+0.002	an approval from another session id or with none emits nothing
+0.043	two approvals overlap: each frame carries its own tool call id
+0.023	the ask tool's lifetime is one question request keyed by its tool call id
+0.002	a tool that is not ask emits nothing
+0.023	an approval opened during a question keeps both requests and their order
+0.012	an end that failed, timed out or aborted still closes the question
+0.026	an approval requested and resolved in one tick is delivered open before close
+0.027	an ask execution that starts and ends in one tick is delivered open before close
+0.006	a print-mode child emits no approval or question frames
+0.046	an end that will continue keeps the cycle open; the final end settles it as observed work
+0.049	error and aborted ends settle as error and aborted; no assistant message is none
+0.017	a tool error followed by a successful assistant response is a successful cycle
+0.022	an in-place session switch re-announces the conversation and closes any open cycle
+0.008	shutdown reports once with reason quit and disables
+0.025	a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1
+0.015	reports the current model from getModel and model_select
+0.016	a session switch re-announces the model for the new conversation
+0.004	actual startup and both compaction outcomes reconcile the original workflow without effects
+0.000161417	fork cannot inherit a copied pointer
+0.000139166	new cannot inherit a copied pointer
+0.000329875	malformed or overflowing pointers report a gap without contacting control
+0.002	failed publication preserves original pointer and unresolved assignments
+0.0002715	a late startup reply cannot restore a retired factory
+0.000290042	current continuation and scoped legacy gaps both reach startup context
+0.0002895	a pointer with only legacy gaps preserves the real gap without invented authority
+0.000492458	explicit new retires an older recovery reply without clearing the new context
+0.001	ordinary failed or ambiguous recovery never asks for fresh logical routing
+0.095	managed Pi exposes research assignment and explicit collection tools
+0.017	acceptance exclusivity rejects direct registered callbacks before transport
+0.015	registered start rejects invalid action authority before intent or transport
+0.441	original intent recovers a lost Prepare before persistence
+0.359	original intent recovers a lost Prepare after persistence
+0.190	followup recovery retains exact private request after a lost reply
+0.388	failed registered collection releases pending follow-up without accepting either result
+0.017	retry rejects a FIFO intent before a blocking open can wait for a writer
+0.157	tool queued on old recovery cannot start work after explicit new
+0.112	an awaited old private intent cannot reacquire auth after fork
+0.242	DeclareDelivery persists an exact private intent before transport and reconciles a lost reply
+0.208	Archive persists an exact private intent before transport and reconciles a lost reply
+0.408	prepare-only registered start reserves without effects and recovers none Prepare loss
+0.441	prepare-only registered start reserves without effects and recovers before Prepare loss
+0.416	prepare-only registered start reserves without effects and recovers after Prepare loss
+0.049	prepare-only invalid flags refuse before control or private intent effects
+0.124	Codex coding and resolved-default review refuse before intent or Prepare
+0.001	only the loaded native Escape binding is supported
+0.000351167	higher-priority clipboard and fullscreen bindings refuse Escape
+0.000206584	missing, uninitialized or broken optional APIs produce a bounded unavailable result
+0.000158417	each turn samples current loaded bindings; config drift alone has no authority
+0.112	question-only observations coalesce/reconnect without exposing bodies or answering
+0.0004195	native gaps are bounded signals and never inferred question text
+0.089	content-free publication wake uses Pi followUp API and coalesces outstanding work
+0.001	observer reconnect reconciles unhandled publications without treating wake as handling
+0.001	wait AbortSignal cancels observation only and disconnection wake carries no error body
+0.084	65 pending identities drain in bounded batches without a new state change
+0.027	synchronous Pi delivery failure retains identities for retry
+0.056	handled publication suppresses its old Ready after reconnect
+0.029	handling result1 never suppresses a new result in the same contract
+0.059	returned control wakes reconciliation once without accepting or confirming
+0.030	new-context reset clears queued old handles and fences an in-flight explicit wait
+0.001	standalone package diagnoses managed launch without manufacturing tools
+0.000158458	credentials without a selected injected entry do not become an owner
+0.000125417	malformed or incompatible owner metadata refuses (8 bytes)
+0.000082916	malformed or incompatible owner metadata refuses (2 bytes)
+0.000085375	malformed or incompatible owner metadata refuses (39 bytes)
+0.000077916	malformed or incompatible owner metadata refuses (33 bytes)
+0.000135083	malformed or incompatible owner metadata refuses (8193 bytes)
+0.003	stale, symlinked and unloaded entry markers cannot certify a factory
+0.002	injected initialization rejects an unbound relative helper binary before registration
+0.098	question tools expose exact nested references and explicit fresh/recovery alternatives
+0.183	lost scoped answer reply retains exact private payload and captured parent epoch
+0.047	missing basis, blank content, UTF-8 byte overflow and mixed recovery refuse before transport
+0.046	fixture result receipt appears only after its complete JSON is written
+0.073	captures exact native history at each conversation boundary
+0.011	inert outside a managed invocation: registers nothing
+0.034	an unavailable optional Pi API preserves ordinary reporting
+0.033	one response cycle: start, end, settled carry run, outcome and ordered sequence
+0.074	error and aborted outcomes come from the last assistant message; a second run increments
+0.037	continuations inside one cycle keep the run; the last end before settled decides the outcome
+0.014	non-tui modes never spawn a helper; shutdown reports once then disables
+0.010	a print-mode shutdown drains nothing and spawns no helper
+0.915	a hung helper is killed at the deadline and the handler still resolves
+0.917	queue overflow disables reporting and sends one content-free unavailable notice
+0.026	a tool error followed by a successful assistant response is a successful cycle
+0.028	resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+0.030	an outer prompt span opens and closes one Input request; the title never leaves
+0.021	a prompt can open while no cycle is running and never touches the cycle
+0.021	a transition names the conversation it left by id, never by its file path
+0.024	tree navigation invalidates the response cycle and carries only idleness
+0.023	the reattach command re-announces a disabled producer once and says so
+0.013	a shutdown drain discards the queue and delivers only the final frame in one deadline
+0.020	a replacement factory is a new instance that names the conversation it replaced
+0.016	reports the current model from getModel and model_select
+0.013	omits model until the session reports one
+0.030	reporting fixture publishes one complete EOF-terminated Unicode frame before interruption
+0.062	lost create reply is attributable through ordinary issue list without a duplicate publication
+0.135	the bounded tracker stub exposes duplicate attempts and refuses parent modification
+
+# nested step 'Installed Pi package through production materialization' (tests/pi_package_installed.mjs): log lines 4394-4415, parent 'production_materializer_loads_local_package_with_one_injected_owner', 2 cases
+1.233	local installed package discovers one valid promoted skill and confined links
+0.106	installed package plus real injected entry keeps one runtime registration owner across reload
+
+# nested step 'Installed Pi effective child tools through production assignment argv' (tests/pi_child_tools_installed.mjs): log lines 4453-4476, parent 'coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools', 2 cases
+0.366	production research argv exposes child publishers in the installed effective catalog
+0.136	production coding argv exposes child publishers in the installed effective catalog

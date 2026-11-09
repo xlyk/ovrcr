@@ -1,0 +1,340 @@
+[
+  {
+    "group_id": "og-001",
+    "member_test_ids": [
+      "nextest|Test|ovrcr%3A%3Aautomatic_titles|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aclaude_quota_probe|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aclaude_reporting_load|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aclient_startup_server|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aclient_startup|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Acli|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Acodex_initial_prompt|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Acursor_cloud|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Agit_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Ainitial_prompt|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aoperator_e2e|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aoperator_scope|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Api_delegation|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Api_package|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aprovider_quota|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aquota_ui_option_a_smoke|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aregistry_migration|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aresource_cli|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aretained_capacity|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aretained_ownership|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aretained_sessions|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aserver_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Asettings_lifecycle|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Atask_execution|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aterminal_acceptance|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Atui|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Awip_save|live%3A%3Acommand_clears_inherited_reporting_authority|default",
+      "nextest|Test|ovrcr%3A%3Aworkspace_identity|live%3A%3Acommand_clears_inherited_reporting_authority|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr%3A%3Aautomatic_titles|live%3A%3Acommand_clears_inherited_reporting_authority|default"
+    ],
+    "preservation_evidence": "Same input/boundary: the single body tests/support/live.rs:567-579 removes the three inherited reporting environment variables and asserts their removal, and every listed target includes tests/support/live.rs verbatim (for example tests/automatic_titles.rs:1-2 for the retained execution and tests/claude_quota_probe.rs:1-3 for a candidate), with no cfg guard on the inclusion. Live::idle (tests/support/live.rs:111-149) and Live::command (tests/support/live.rs:163-196) have no cfg branch on this path, so the same production boundary and the same assertions (tests/support/live.rs:571-578) run in every binary. The 27 candidate executions are identical to the retained one; the receipt confirms the 27-way duplication."
+  },
+  {
+    "group_id": "og-003",
+    "member_test_ids": [
+      "nextest|Test|ovrcr%3A%3Atui|mouse%3A%3Adragging_tracked_mouse_into_sidebar_releases_application_button|default",
+      "nextest|Test|ovrcr%3A%3Atui|mouse%3A%3Aleaving_the_rectangle_releases_at_last_valid_cell|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr%3A%3Atui|mouse%3A%3Aleaving_the_rectangle_releases_at_last_valid_cell|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a pressed application button dragged outside the focused pane, through forward_mouse -> release_held_leaving_rectangle (crates/ovrcr-tui/src/dashboard/state.rs:3447-3461). Candidate presses at (3,4) and drags to x=10 (tests/tui/mouse.rs:532-550); retained performs the same drag to inner.x-1 (tests/tui/mouse.rs:505-523). Both points are outside the focused terminal rect and both expect identical release bytes, so the same production branch and assertion survive."
+  },
+  {
+    "group_id": "og-004",
+    "member_test_ids": [
+      "nextest|Test|ovrcr%3A%3Atui|split%3A%3Apane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane|default",
+      "nextest|Test|ovrcr%3A%3Atui|split%3A%3Asplit_layout_geometry_and_narrow_fallback|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr%3A%3Atui|split%3A%3Apane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane|default"
+    ],
+    "preservation_evidence": "Same input/boundary: the pane_rects layout at (120x40,focused=1), (80x24,focused=1) and (1x1,focused=1) (tests/tui/split.rs:187-195), through the same production function (crates/ovrcr-tui/src/dashboard/mod.rs:347-388) where focused is unused for wide geometry and the 1x1 area is empty regardless. The retained assertions cover (120x40,0), (80x24,1) and (1x1,0) (tests/tui/split.rs:174-182), exercising the same exact Rect values; the candidate adds no geometric boundary."
+  },
+  {
+    "group_id": "og-005",
+    "member_test_ids": [
+      "nextest|Test|ovrcr%3A%3Acli|agent_run_adds_default_auto_trust_only_when_the_permission_family_is_absent|default",
+      "nextest|Test|ovrcr-protocol|auto_trust%3A%3Atests%3A%3Abare_managed_launches_gain_one_provider_flag|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr%3A%3Acli|agent_run_adds_default_auto_trust_only_when_the_permission_family_is_absent|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a bare managed launch through apply_default_auto_trust (src/auto_trust.rs:54-70). Candidate asserts the four bare-launch flags at src/auto_trust.rs:81-93; retained asserts the same flag injection end-to-end through the real `ovrcr agent run`, including '--' placement and family-present cases (tests/cli.rs:2164-2236). Surviving assertions: each managed provider gains exactly one default auto-trust flag and an explicit family suppresses it. The high-criticality invariant survives in the retained test: the injected flag decides whether the agent auto-approves actions, so a wrong injection changes the agent's safety posture (tests/cli.rs:2164-2236)."
+  },
+  {
+    "group_id": "og-006",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-protocol|settings%3A%3Atests%3A%3Atheme_appearance_metadata_groups_every_existing_theme|default",
+      "nextest|Test|ovrcr-protocol|settings%3A%3Atests%3A%3Atheme_catalog_matches_the_exact_approved_manifest|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-protocol|settings%3A%3Atests%3A%3Atheme_catalog_matches_the_exact_approved_manifest|default"
+    ],
+    "preservation_evidence": "Same input/boundary: the appearance metadata of every ThemeId, through the same settings theme table. Candidate hardcodes eight themes and their appearance (src/settings.rs:1974-1992); retained iterates ThemeId::ALL (80 themes) and compares every appearance() to the shipped approved manifest, including all eight (src/settings.rs:1995-2068). Surviving assertions: each theme's appearance class and the (54,26,4,27) totals; the candidate's eight rows are a subset of that matrix."
+  },
+  {
+    "group_id": "og-007",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Abuild_identity%3A%3Atests%3A%3Acapture_covers_small_files_and_fixed_block_boundaries|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Abuild_identity%3A%3Atests%3A%3Afingerprint_detects_byte_changes_with_same_length_and_preserves_open_build|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Abuild_identity%3A%3Atests%3A%3Acapture_covers_small_files_and_fixed_block_boundaries|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a same-length byte rewrite in a file under the build tree, through the same production function executable_build (crates/ovrcr-runtime/src/server/build_identity.rs:47-105). Candidate rewrites byte 70000 of a 130000-byte file and asserts inequality only (crates/ovrcr-runtime/src/server/build_identity.rs:266-275). Retained rewrites the final byte at 3/65535/65536/65537/131079 and additionally asserts repeated-capture equality and the byte count (crates/ovrcr-runtime/src/server/build_identity.rs:278-291). Surviving assertions: fingerprint inequality on same-length rewrites plus capture repetition and byte-count stability."
+  },
+  {
+    "group_id": "og-008",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Adirect_agent_executable_matches_kind_when_label_omitted|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_claude_launcher_uses_agent_kind_not_ovrcr_argv0|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_pi_launcher_uses_agent_kind_not_ovrcr_argv0|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_pi_launcher_uses_agent_kind_not_ovrcr_argv0|default"
+    ],
+    "preservation_evidence": "Same input/boundary: an Agent-kind session whose argv0 differs from the kind, through the same default_session_label Agent arm (crates/ovrcr-runtime/src/server/mod.rs:3177-3180). Candidate passes kind codex with argv ['codex'], where kind and basename coincide, so it cannot reject an argv0-derived defect (crates/ovrcr-runtime/src/server/mod.rs:3251-3262). Retained asserts kind-versus-argv0 with a discriminating argv for pi (crates/ovrcr-runtime/src/server/mod.rs:3197-3207). Surviving assertion: the label is the kind name when argv0 names the launcher."
+  },
+  {
+    "group_id": "og-009",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_claude_launcher_uses_agent_kind_not_ovrcr_argv0|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_pi_launcher_uses_agent_kind_not_ovrcr_argv0|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-runtime|server%3A%3Adefault_session_label_tests%3A%3Amanaged_pi_launcher_uses_agent_kind_not_ovrcr_argv0|default"
+    ],
+    "preservation_evidence": "Same input/boundary: the default label for an Agent session whose argv0 is not the harness name, through default_session_label's Agent arm that returns the kind name and never reads argv (crates/ovrcr-runtime/src/server/mod.rs:3177-3180). Candidate asserts only 'claude' for an alternate --provider spelling (crates/ovrcr-runtime/src/server/mod.rs:3209-3228). Retained asserts the same arm with the same discriminating shape for pi (crates/ovrcr-runtime/src/server/mod.rs:3197-3207). Surviving assertion: the label equals the Agent kind, not argv0."
+  },
+  {
+    "group_id": "og-010",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-runtime%3A%3Adelegation_fallback_files|delegation_files%3A%3Aread_tests%3A%3Acheckout_read_is_bounded_relative_and_never_follows_links|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Adelegation_files%3A%3Aread_tests%3A%3Acheckout_read_is_bounded_relative_and_never_follows_links|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-runtime%3A%3Adelegation_fallback_files|delegation_files%3A%3Aread_tests%3A%3Acheckout_read_is_bounded_relative_and_never_follows_links|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a bounded relative read inside the delegated checkout, through ReadTree::read opening each component with O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC and still_at comparing dev/ino (crates/ovrcr-runtime/src/server/delegation_files.rs:172-230). Candidate asserts the positive nested read and thirteen negative names with still_at true then false after the checkout is renamed away (crates/ovrcr-runtime/src/server/delegation_files.rs:235-279); the retained second binary includes the identical file via #[path] (crates/ovrcr-runtime/tests/delegation_fallback_files.rs:5-6) and asserts the same positive plus thirteen negatives and the rename check (crates/ovrcr-runtime/src/server/delegation_files.rs:246-278). The high-criticality invariant survives in the retained execution: the checkout is the only file scope a delegated child is granted, so path escapes and symlink/link following remain rejected (crates/ovrcr-runtime/src/server/delegation_files.rs:33-60,172-230)."
+  },
+  {
+    "group_id": "og-011",
+    "member_test_ids": [
+      "nextest|Test|ovrcr%3A%3Aprovider_quota|codex_native_read_reaches_remaining_bars_through_real_server_and_socket|default",
+      "nextest|Test|ovrcr-runtime|server%3A%3Aquota%3A%3Atests%3A%3Anative_client_is_not_gated_on_the_harness_version|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr%3A%3Aprovider_quota|codex_native_read_reaches_remaining_bars_through_real_server_and_socket|default"
+    ],
+    "preservation_evidence": "Same input/boundary: the native quota client argv and the absence of a --version probe, through the same client (crates/ovrcr-runtime/src/server/quota.rs:975-976). Candidate asserts the exact argv '-s read-only -a never app-server' and no probe across three version strings (crates/ovrcr-runtime/src/server/quota.rs:2194-2221). Retained asserts the same exact argv and probe absence through the real server and socket (tests/provider_quota.rs:229-249). Surviving assertions: exact argv and no version gating."
+  },
+  {
+    "group_id": "og-013",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Acursor_detection_uses_managed_launch|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Ahermes_detection_uses_managed_launch_and_preserves_explicit_override|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Amanaged_agents_launch_through_the_agent_run_route|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Amanaged_agents_launch_through_the_agent_run_route|default"
+    ],
+    "preservation_evidence": "Same input/boundary: detection of the cursor-agent executable through the managed agent-run launcher and override lookup under the temp-stub/launcher fixture (crates/ovrcr-tui/src/dashboard/agents.rs:402-410). Candidate asserts the wrapped cursor-agent argv and the override argv (crates/ovrcr-tui/src/dashboard/agents.rs:321-356). Retained asserts cursor-agent's exact wrapped argv inside the MANAGED_AGENTS loop and runs the same apply_overrides lookup (crates/ovrcr-tui/src/dashboard/agents.rs:359-451,436-450). Surviving assertions: wrapped argv and explicit-override preservation for cursor-agent. The high-criticality invariant survives in the retained test: every MANAGED_AGENTS name is launched as `launcher agent run <name> -- <path>` with its auto-trust flag, so the launched agent keeps OVRCR ownership and reporting (crates/ovrcr-tui/src/dashboard/agents.rs:402-447)."
+  },
+  {
+    "group_id": "og-014",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Adetects_executables_then_shell_then_custom|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Ahermes_detection_uses_managed_launch_and_preserves_explicit_override|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Amanaged_agents_launch_through_the_agent_run_route|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Adetects_executables_then_shell_then_custom|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Aagents%3A%3Atests%3A%3Amanaged_agents_launch_through_the_agent_run_route|default"
+    ],
+    "preservation_evidence": "Same input/boundary: detection and wrapping of a managed harness executable, including the non-executable 0644 skip through executable_in (crates/ovrcr-tui/src/dashboard/agents.rs:176-191). Candidate asserts hermes wrapping, override replacement and removal after chmod 0644 (crates/ovrcr-tui/src/dashboard/agents.rs:454-501). Retained asserts hermes' exact wrapped argv in the MANAGED_AGENTS loop (crates/ovrcr-tui/src/dashboard/agents.rs:359-451) and the same 0644 skip via executable_in in detects_executables_then_shell_then_custom (crates/ovrcr-tui/src/dashboard/agents.rs:241-287). Surviving assertions: wrapped argv, override replacement, and the non-executable skip. The high-criticality invariant survives in the retained test: every MANAGED_AGENTS name is launched as `launcher agent run <name> -- <path>` with its auto-trust flag, so the launched agent keeps OVRCR ownership and reporting (crates/ovrcr-tui/src/dashboard/agents.rs:402-447)."
+  },
+  {
+    "group_id": "og-015",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_confirmed_without_unread_does_not_queue|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_does_not_queue_when_unread_is_absent|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_does_not_queue_when_unread_is_absent|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a Confirmed ResponseReady snapshot with unread None, through the producer gate that consults only unread (crates/ovrcr-tui/src/dashboard/desktop.rs:642-660). Candidate sets unread None plus Confirmed and asserts no queue (crates/ovrcr-tui/src/dashboard/desktop.rs:2083-2097). Retained uses the same snapshot(2,\"a\",ResponseReady) fixture with unread None and asserts no queue (crates/ovrcr-tui/src/dashboard/desktop.rs:2072-2081). Surviving assertion: a Ready without Unread is never queued."
+  },
+  {
+    "group_id": "og-016",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_health_loss_before_dispatch_cancels_pending_ready|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_queued_health_loss_then_recovery_stays_cancelled|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Adesktop%3A%3Atests%3A%3Adesktop_queued_health_loss_then_recovery_stays_cancelled|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a queued Ready whose session then reports health Unavailable before dispatch, through observe_desktop_session's current-session gate (crates/ovrcr-tui/src/dashboard/desktop.rs:632-660). Candidate queues Ready, applies Unavailable, then asserts no host receipt (crates/ovrcr-tui/src/dashboard/desktop.rs:1979-1998). Retained performs the same observation and asserts pending empty plus no receipt after finishing the in-flight delivery (crates/ovrcr-tui/src/dashboard/desktop.rs:1925-1957). Surviving assertion: health loss cancels the pending desktop notification."
+  },
+  {
+    "group_id": "og-017",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Alaunch_tests%3A%3Adetected_omp_model_query_exposes_exact_selectors_and_initial_prompt_support|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Alaunch_tests%3A%3Adetected_pi_model_query_exposes_exact_ids_and_keeps_its_binding|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Apalette%3A%3Alaunch_tests%3A%3Adetected_pi_model_query_exposes_exact_ids_and_keeps_its_binding|default"
+    ],
+    "preservation_evidence": "Same input/boundary: a model query for a detected preset exposing its exact selector and initial-prompt support, through the same launch-form path (crates/ovrcr-tui/src/dashboard/palette.rs:12133-12245). Candidate repeats the pi body with preset omp and its --auto-approve argv (crates/ovrcr-tui/src/dashboard/palette.rs:12248-12354). Retained asserts the same selectors and binding retention for pi (crates/ovrcr-tui/src/dashboard/palette.rs:12133-12245), with the remembered-explicit model assertion covered at crates/ovrcr-tui/src/dashboard/palette.rs:11939-12023. Surviving assertions: exact selectors, argv and binding retention."
+  },
+  {
+    "group_id": "og-018",
+    "member_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Arender%3A%3Aharness_agent_label_tests%3A%3Acli_created_claude_with_ovrcr_label_shows_claude_harness|default",
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Arender%3A%3Aharness_agent_label_tests%3A%3Acli_created_pi_with_ovrcr_label_shows_pi_harness|default"
+    ],
+    "retained_test_ids": [
+      "nextest|Test|ovrcr-tui|dashboard%3A%3Arender%3A%3Aharness_agent_label_tests%3A%3Acli_created_pi_with_ovrcr_label_shows_pi_harness|default"
+    ],
+    "preservation_evidence": "Same input/boundary: an Agent-kind session created through the CLI with the ovrcr label, through the same harness label branch (crates/ovrcr-tui/src/dashboard/render.rs:1470-1491). Candidate asserts harness_agent_name == \"claude\" and (\"claude\",\"\") (crates/ovrcr-tui/src/dashboard/render.rs:1685-1698). Retained asserts the identical branch and tuple shape with pi (crates/ovrcr-tui/src/dashboard/render.rs:1671-1682). Surviving assertion: the harness name comes from the Agent kind, not the ovrcr argv label."
+  },
+  {
+    "group_id": "og-019",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|client-extra-argv%3Aln56|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|client-extra-argv%3Aln56|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|client-extra-argv%3Aln56|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal extra-argv call at native/bridge/check-guards.py:56, which passes an argv literal rather than client_arguments (native/bridge/check-guards.py:24-25) and drives the argv-count guard at native/bridge/main.swift:24-26 before any bundle field is read; candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63. Surviving assertions: the exact failed exit code, empty stderr and one JSON line."
+  },
+  {
+    "group_id": "og-020",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20%27-1%27%2C%20str%28wire%29%5D%5D%3Aln53|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20%27-1%27%2C%20str%28wire%29%5D%5D%3Aln53|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20%27-1%27%2C%20str%28wire%29%5D%5D%3Aln53|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal --check-contract -1 <wire> call at native/bridge/check-guards.py:53-55, outside every mode branch and driving the profile-independent guard at native/bridge/main.swift:14-18; candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63, both built from the same sources by scripts/build-bridge.sh:96-105. Surviving assertions: the exact exit code, empty stderr, one JSON line and the status value."
+  },
+  {
+    "group_id": "og-021",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20str%28schema%29%2C%20%274294967296%27%5D%5D%3Aln53|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20str%28schema%29%2C%20%274294967296%27%5D%5D%3Aln53|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%2C%20str%28schema%29%2C%20%274294967296%27%5D%5D%3Aln53|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal --check-contract <schema> 4294967296 call at native/bridge/check-guards.py:53-55, outside every mode branch and driving the profile-independent guard at native/bridge/main.swift:14-18; candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63. Surviving assertions: the exact overflow exit code, empty stderr, one JSON line and the status value."
+  },
+  {
+    "group_id": "og-022",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%5D%5D%3Aln53|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%5D%5D%3Aln53|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--check-contract%27%5D%5D%3Aln53|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal-argv call at native/bridge/check-guards.py:53-55, outside every mode branch (local-development only rewrites client_arguments at native/bridge/check-guards.py:24-25 and the forced-profile block at 75-98), driving the argv-count guard at native/bridge/main.swift:14-18 which reads no bundle profile; candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63. Surviving assertions: the exact exit code, empty stderr, one JSON line and the status value."
+  },
+  {
+    "group_id": "og-023",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--unexpected%27%5D%5D%3Aln53|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--unexpected%27%5D%5D%3Aln53|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-argv%5B%5B%27--unexpected%27%5D%5D%3Aln53|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal --unexpected call at native/bridge/check-guards.py:53-55, outside every mode branch and driving the argv-count guard at native/bridge/main.swift:14-18; candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63. Surviving assertions: the exact usage exit code, empty stderr, one JSON line and the status value."
+  },
+  {
+    "group_id": "og-024",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-available%3Aln50|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-available%3Aln50|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-available%3Aln50|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the contract-availability guard at native/bridge/check-guards.py:50, outside every mode branch, driving the handshake at native/bridge/main.swift:14-21; the candidate and retained executions differ only in the bundle CI passes (.github/workflows/ci.yml:55-63), and both bundles come from the same swiftc invocation and sources with only Info.plist identity differing (scripts/build-bridge.sh:96-105,136-140) that this guard never reads. Surviving assertions: exact exit code, empty stderr, a single newline-terminated JSON line and the status value. The high-criticality invariant survives in the retained production execution: the contract handshake decides whether the Dashboard may use the bridge at all (native/bridge/main.swift:14-21)."
+  },
+  {
+    "group_id": "og-025",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-schema-newer%3Aln51|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-schema-newer%3Aln51|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-schema-newer%3Aln51|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the schema-newer contract rejection at native/bridge/check-guards.py:51, outside every mode branch and reading no bundle profile (native/bridge/main.swift:14-21); candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63, both built from the same sources by scripts/build-bridge.sh:96-105. Surviving assertions: the exact incompatible exit code, empty stderr, one JSON line and its status. The high-criticality invariant survives in the retained production execution: silent contract drift would misparse bridge replies and notification state (native/bridge/main.swift:14-21)."
+  },
+  {
+    "group_id": "og-026",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-wire-newer%3Aln52|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-wire-newer%3Aln52|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|contract-wire-newer%3Aln52|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the wire-newer contract rejection at native/bridge/check-guards.py:52, outside every mode branch and reading no bundle profile (native/bridge/main.swift:14-21); candidate and retained differ only in the bundle selected at .github/workflows/ci.yml:55-63, both built from the same sources by scripts/build-bridge.sh:96-105. Surviving assertions: the exact incompatible exit code, empty stderr, one JSON line and its status. The high-criticality invariant survives in the retained production execution: silent contract drift would misparse bridge replies and notification state (native/bridge/main.swift:14-21)."
+  },
+  {
+    "group_id": "og-027",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|entitlement-pin%3Aln35|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|entitlement-pin%3Aln35|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|entitlement-pin%3Aln35|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the standalone entitlement pin at native/bridge/check-guards.py:28-35, which has no mode reference; the local-development execution (candidate) and the production execution (retained) both copy the same entitlements file from one source (scripts/build-bridge.sh:141) and run that block byte-for-byte. Surviving assertions: file identity, the exact SHA256 pin, the exact entitlement dictionary and absence of the legacy Contents/ copy (native/bridge/check-guards.py:28-35). The high-criticality invariant survives in the retained production execution: a wrong or extra automation entitlement changes what the signed bridge may do on the user's behalf (native/bridge/entitlements.plist:1-5)."
+  },
+  {
+    "group_id": "og-028",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|opposite-profile-extra-argv%3Aln98|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|opposite-profile-extra-argv%3Aln98|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-guards.py|opposite-profile-extra-argv%3Aln98|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the literal [--client, --local-development, unexpected] call at native/bridge/check-guards.py:98; with four arguments main.swift:23-25 computes localDevelopment false and the count guard at native/bridge/main.swift:24-26 rejects before any profile branch, so the candidate (local bundle) and retained (production bundle) execute the same branch and assertion. Surviving assertions: the exact failed exit code, empty stderr and one JSON line."
+  },
+  {
+    "group_id": "og-029",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|entitlement-pin%3Aln32|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|entitlement-pin%3Aln32|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|entitlement-pin%3Aln32|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the standalone entitlement pin at native/bridge/check-packaging.py:28-32 with no validate() call and no mode branch; the same copied entitlements source bytes reach both bundles (scripts/build-bridge.sh:141). Surviving assertions: file identity, the SHA256 pin, the exact dictionary and the legacy path's absence (native/bridge/check-packaging.py:25-32). The high-criticality invariant survives in the retained production execution: the pin is what codesign seals into the shipped app (native/bridge/validate-bundle.py:59-65)."
+  },
+  {
+    "group_id": "og-030",
+    "member_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|fixture-identity-accepted-production%3Aln114|local-development",
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|fixture-identity-accepted-production%3Aln114|production"
+    ],
+    "retained_test_ids": [
+      "python-check|Relocated%20macOS%20startup%20assets|native%2Fbridge%2Fcheck-packaging.py|fixture-identity-accepted-production%3Aln114|production"
+    ],
+    "preservation_evidence": "Same input/boundary: the fixture-identity acceptance at native/bridge/check-packaging.py:103-114, outside the if local_development block (indentation at line 115), called with local=False so no --local-development flag is passed (native/bridge/check-packaging.py:34-38) and with the fixture marker popped and identity fields overwritten (lines 107-113); both executions run identically. Surviving assertions: validate-bundle.py:44-88 accepts the marker, identity, executable/display names, entitlements and assets while the local-derived fixture is indistinguishable from the production one."
+  }
+]

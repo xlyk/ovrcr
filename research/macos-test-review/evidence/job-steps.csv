@@ -1,0 +1,24 @@
+step_name,started,completed,duration_seconds,classification,command_summary,notes
+Set up job,2026-11-08T00:27:42Z,2026-11-08T00:27:45Z,3,setup,runner provisioning,
+Run actions/checkout@v4,2026-11-08T00:27:45Z,2026-11-08T00:27:51Z,6,setup,actions/checkout@v4,
+Run dtolnay/rust-toolchain@stable,2026-11-08T00:27:51Z,2026-11-08T00:27:52Z,1,setup,"rust stable + rustfmt, clippy",
+Run taiki-e/install-action@nextest,2026-11-08T00:27:52Z,2026-11-08T00:27:53Z,1,setup,taiki-e/install-action@nextest,installs cargo-nextest 0.9.151 (log 369-373)
+Run Swatinem/rust-cache@v2,2026-11-08T00:27:53Z,2026-11-08T00:28:11Z,18,setup,Swatinem/rust-cache@v2 (shared-key checks),
+Install zsh for shell integration tests,2026-11-08T00:28:11Z,2026-11-08T00:28:11Z,0,setup,apt-get install zsh (if runner.os == Linux),skipped on macOS (conclusion skipped); step conclusion: skipped
+Configure git identity,2026-11-08T00:28:11Z,2026-11-08T00:28:11Z,0,setup,git config user.name/user.email,
+Format,2026-11-08T00:28:11Z,2026-11-08T00:28:14Z,3,format-lint,cargo fmt --all -- --check,
+Lint,2026-11-08T00:28:14Z,2026-11-08T00:28:43Z,29,format-lint,cargo clippy --workspace --all-targets --all-features -- -D warnings,clippy also compiles the workspace
+Test,2026-11-08T00:28:43Z,2026-11-08T01:04:37Z,2154,test,cargo nextest run --workspace --all-targets --all-features --profile ci -E 'not test(partial_resize_connection_delivers_error_before_owner_close)',"compilation 2m16s = 136s (log 502, 'Finished test profile ... in 2m 16s'); nextest execution 2014.918s (log 505 first attempt line to 3397 FLAKY summary); 2820 tests / 56 binaries / 33 skipped (32 #[ignore] + 1 -E filter); 2 flaky tests retried once"
+Doc tests,2026-11-08T01:04:37Z,2026-11-08T01:05:26Z,49,test,cargo test --workspace --doc,"five per-crate doctest sections, 0 tests each (log 3416,3422,3428,3434,3440); no test rows created"
+Relocated macOS startup assets,2026-11-08T01:05:26Z,2026-11-08T01:06:48Z,82,package-check,"cargo build -p ovrcr --bin ovrcr; sh scripts/package-startup.sh ...; python3 -I native/bridge/check-{local-startup,installer,startup-package,packaging,guards}.py (default + local-development)","builds the CLI (log 3464: 8.31s) then validates startup assets, installer, packaging and guards"
+Relocated pinned Cursor dependency and passive CLI diagnostics,2026-11-08T01:06:48Z,2026-11-08T01:06:51Z,3,package-check,HOME=$tmp python3 -I scripts/install-cursor-bridge.py; OVRCR_CURSOR_BRIDGE_ARCHIVE=... OVRCR_TEST_EXECUTABLE=target/debug/ovrcr python3 -I tests/cursor_bridge_install.py,exercises the compiled CLI through a relocated pinned Cursor dependency
+Run actions/setup-node@v4,2026-11-08T01:06:51Z,2026-11-08T01:06:52Z,1,setup,setup-node node-version 22,
+Extension tests,2026-11-08T01:06:52Z,2026-11-08T01:06:57Z,5,test,node --test tests/pi_package_bootstrap.mjs tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs tests/pi_delegation_extension.mjs tests/pi_interrupt_extension.mjs tests/pi_question_extension.mjs tests/pi_continuation_records.mjs tests/pi_observation_extension.mjs tests/pi_workflow_tracker.mjs,9 .mjs files; tests/pi_publish_contract_installed.mjs is not invoked (ci.yml:74)
+Provision pinned Pi loader test host,2026-11-08T01:06:57Z,2026-11-08T01:07:04Z,7,provision,npm install --prefix $RUNNER_TEMP/ovrcr-pi-package-host @earendil-works/pi-coding-agent@0.87.1; copy lockfile/host package.json,
+Installed Pi package through production materialization,2026-11-08T01:07:04Z,2026-11-08T01:07:35Z,31,test,cargo test -p ovrcr --test pi_package --features acceptance-diagnostics production_materializer_loads_local_package_with_one_injected_owner -- --ignored --exact --nocapture --test-threads=1,1 test; test runtime 5.37s (log 4428); env OVRCR_TEST_PI_PACKAGE_ROOT
+Installed Pi effective child tools through production assignment argv,2026-11-08T01:07:35Z,2026-11-08T01:07:51Z,16,test,cargo test -p ovrcr --test pi_delegation --features acceptance-diagnostics coding::production_assignment_argv_preserves_installed_sdk_child_publication_tools -- --ignored --exact --nocapture --test-threads=1,1 test; test runtime 7.25s (log 4481); env OVRCR_TEST_PI_PACKAGE_ROOT
+Upload installed Pi loader evidence,2026-11-08T01:07:51Z,2026-11-08T01:07:52Z,1,upload,actions/upload-artifact@v4 (pi-package-<os>-<run>-<attempt>),uploads $RUNNER_TEMP/ovrcr-pi-package-evidence
+Post Run actions/setup-node@v4,2026-11-08T01:07:52Z,2026-11-08T01:07:52Z,0,other,post-action cleanup,
+Post Run Swatinem/rust-cache@v2,2026-11-08T01:07:52Z,2026-11-08T01:07:53Z,1,other,post-action cache save,
+Post Run actions/checkout@v4,2026-11-08T01:07:53Z,2026-11-08T01:07:53Z,0,other,post-action cleanup,
+Complete job,2026-11-08T01:07:53Z,2026-11-08T01:07:57Z,4,other,runner cleanup,
