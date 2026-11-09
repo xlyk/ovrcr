@@ -56,17 +56,47 @@ cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
-Pull requests and pushes to `main` run `macOS checks` and
-`macOS offline Cursor preflight` on separate macOS runners. Each acceptance job
-keeps its 45-minute limit; the standalone offline Cursor suite no longer shares
-the Rust, packaging and installed-Pi job's budget.
+Pull requests and pushes to `main` run `macOS checks` (four shards),
+`macOS offline Cursor preflight`, and the required `checks` aggregate.
 
-The required `checks` job waits for both acceptance jobs. Its shell guard requires
-both results to be `success`; a final step fails if the workflow was cancelled.
-Failed, cancelled or skipped dependencies cannot satisfy it. This one-minute
-macOS aggregate has no checkout or tools. Its job and guards use `always()` to
-evaluate failures and cancellation; the acceptance jobs remain cancellable, so a
-superseded pull-request run releases its expensive work normally.
+`macOS checks` is a four-leg matrix. Each leg runs the same nextest invocation
+for its slice of the selection, so the suite runs in parallel instead of
+serially:
+
+```sh
+cargo nextest run --workspace --all-targets --all-features --profile ci \
+  -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
+  --partition hash:$SHARD/4
+```
+
+Hash partitioning assigns by binary ID and test name, so a new test or a new
+test binary joins a shard automatically and needs no list update. It also
+divides the large `pi_delegation` binary, which a whole-binary split cannot.
+Every leg keeps the same profile, feature set, filter and nextest version, and
+matrix `fail-fast` is off so a red run reports every shard's result instead of
+cancelling its siblings.
+
+Only shard 1 runs the steps that are not the test selection: format, lint,
+doctests, the relocated startup-asset and Cursor packaging checks, the
+extension batch, Pi provisioning, and the two exact ignored installed-Pi
+parents with their nested Node children. Those stay single so no packaging or
+installed-host coverage is duplicated. Four shards plus the offline Cursor job
+is the five-concurrent-macOS-job limit on a free plan, so adding a fifth macOS
+job would queue rather than run in parallel.
+
+Each leg keeps its 45-minute limit, and the offline Cursor suite keeps its own
+budget. Shards record `hw.logicalcpu` and the resolved `cargo nextest` version,
+because the expected three slots per runner comes from the runner image
+specification rather than a measurement.
+
+The required `checks` job waits for `macOS checks` and the offline Cursor job.
+Its shell guard requires both results to be `success`, which for a matrix means
+every shard succeeded; a final step fails if the workflow was cancelled. Failed,
+cancelled or skipped dependencies cannot satisfy it, so one green shard never
+stands in for a missing one. This one-minute macOS aggregate has no checkout or
+tools. Its job and guards use `always()` to evaluate failures and cancellation;
+the acceptance jobs remain cancellable, so a superseded pull-request run
+releases its expensive work normally.
 
 The `linux`, `linux capacity` and `linux memory high-water` jobs run only on
 manual dispatch: GitHub **Actions → CI → Run workflow**, then select the branch.
