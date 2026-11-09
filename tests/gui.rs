@@ -79,11 +79,14 @@ fn wait_dashboard(terminal: &mut Terminal) -> Result<()> {
         let screen = terminal.screen();
         let text = screen.contents();
         // Settings notices can replace the Browse footer on a ready Dashboard.
+        // The retired Operator [o] heading is gone; the title row names the
+        // Dashboard and carries the action controls in its right-hand cells.
         if screen.alternate_screen()
-            && text
-                .lines()
-                .next()
-                .is_some_and(|header| header.contains("OVRCR") && header.contains("Operator [o]"))
+            && text.lines().next().is_some_and(|header| {
+                header.contains("OVRCR")
+                    && header.contains("[Commands]")
+                    && header.contains("[Menu]")
+            })
         {
             return Ok(());
         }

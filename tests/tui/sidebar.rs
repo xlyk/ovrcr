@@ -53,13 +53,13 @@ fn dashboard_layout() {
         })
         .collect::<Vec<_>>();
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    assert_eq!(buffer[(0, 5)].symbol(), "▌");
-    assert!(rendered[0].contains("OVRCR Operator [o]"));
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
+    assert!(rendered[0].starts_with("󰚩 OVRCR") && !rendered[0].contains("Operator"));
     assert!(!rendered.iter().any(|row| row.contains("ctx ")));
     assert!(rendered.iter().any(|row| row.contains("Space Menu")));
     assert!(rendered.iter().any(|row| row.contains("? Help")));
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
-    assert_eq!(buffer[(39, 10)].symbol(), "│");
+    assert_eq!(buffer[(39, 9)].symbol(), "│");
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     // The header leads with the title; the pid sits muted at the far right.
     let header = rendered[1].chars().skip(40).collect::<String>();
@@ -77,9 +77,9 @@ fn dashboard_layout() {
         "─".repeat(80),
         "the title is not repeated on line 2"
     );
-    assert!(buffer[(8, 8)].modifier.contains(Modifier::DIM));
-    assert_eq!(buffer[(0, 5)].symbol(), "▌");
-    assert_eq!(buffer[(1, 5)].bg, Color::Rgb(49, 50, 68));
+    assert!(buffer[(8, 7)].modifier.contains(Modifier::DIM));
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
+    assert_eq!(buffer[(1, 4)].bg, Color::Rgb(49, 50, 68));
 
     dashboard.install_focus(SessionId(2));
     terminal
@@ -107,49 +107,49 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     let buffer = terminal.backend().buffer();
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     let rule = |used: usize| "─".repeat(39 - used);
-    // The title band pins Operator above projects; the brand keeps its mauve band.
+    // The title band is the brand alone; the first project leads the sidebar.
     let title = (0..40).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
-    assert_eq!(title.trim_end(), "󰚩 OVRCR Operator [o]            [Ctrl-o]");
+    assert_eq!(title.trim_end(), "󰚩 OVRCR");
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     // Project section header: upper case, blue bold, rule to the edge, no chevron.
-    assert_eq!(row(2), format!(" CONSIGINT {}", rule(11)));
-    assert_eq!(buffer[(1, 2)].fg, Color::Rgb(137, 180, 250));
-    assert!(buffer[(1, 2)].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[(20, 2)].fg, Color::Rgb(88, 91, 112));
+    assert_eq!(row(1), format!(" CONSIGINT {}", rule(11)));
+    assert_eq!(buffer[(1, 1)].fg, Color::Rgb(137, 180, 250));
+    assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(20, 1)].fg, Color::Rgb(88, 91, 112));
     // Workspace: branch glyph, bold name.
-    assert_eq!(row(3).trim_end(), "  󰘬 auth");
-    assert_eq!(buffer[(2, 3)].fg, Color::Rgb(108, 112, 134));
-    assert_eq!(buffer[(4, 3)].fg, Color::Rgb(205, 214, 244));
-    assert!(buffer[(4, 3)].modifier.contains(Modifier::BOLD));
+    assert_eq!(row(2).trim_end(), "  󰘬 auth");
+    assert_eq!(buffer[(2, 2)].fg, Color::Rgb(108, 112, 134));
+    assert_eq!(buffer[(4, 2)].fg, Color::Rgb(205, 214, 244));
+    assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     // Selected local shell: mauve bar, surface background, subtext glyph and name.
-    assert_eq!(row(4).trim_end(), "▌    $ local");
-    assert_eq!(buffer[(0, 4)].fg, Color::Rgb(203, 166, 247));
+    assert_eq!(row(3).trim_end(), "▌    $ local");
+    assert_eq!(buffer[(0, 3)].fg, Color::Rgb(203, 166, 247));
     for x in 0..39 {
-        assert_eq!(buffer[(x, 4)].bg, Color::Rgb(49, 50, 68), "column {x}");
+        assert_eq!(buffer[(x, 3)].bg, Color::Rgb(49, 50, 68), "column {x}");
     }
-    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(166, 173, 200));
-    assert_eq!(buffer[(7, 4)].fg, Color::Rgb(166, 173, 200));
+    assert_eq!(buffer[(5, 3)].fg, Color::Rgb(166, 173, 200));
+    assert_eq!(buffer[(7, 3)].fg, Color::Rgb(166, 173, 200));
     // Session: status glyph at column 5, regular-weight name, agent right-aligned in
     // the provider colour, one trailing cell.
-    assert_eq!(row(5), format!("     - review{}claude ", " ".repeat(19)));
-    assert_eq!(buffer[(5, 5)].fg, Color::Rgb(108, 112, 134));
-    assert_eq!(buffer[(7, 5)].fg, Color::Rgb(205, 214, 244));
-    assert!(!buffer[(7, 5)].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[(32, 5)].fg, Color::Rgb(250, 179, 135));
-    assert_eq!(buffer[(4, 5)].bg, Color::Rgb(30, 30, 46));
-    assert_eq!(row(6).trim_end(), "  󰘬 lifecycle");
-    assert_eq!(row(7).trim_end(), "     $ local");
-    assert_eq!(row(8), format!("     · implement{}claude ", " ".repeat(16)));
-    assert!(buffer[(7, 8)].modifier.contains(Modifier::DIM));
-    assert_eq!(buffer[(33, 8)].fg, Color::Rgb(173, 127, 104));
+    assert_eq!(row(4), format!("     - review{}claude ", " ".repeat(19)));
+    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
+    assert_eq!(buffer[(7, 4)].fg, Color::Rgb(205, 214, 244));
+    assert!(!buffer[(7, 4)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(buffer[(4, 4)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(row(5).trim_end(), "  󰘬 lifecycle");
+    assert_eq!(row(6).trim_end(), "     $ local");
+    assert_eq!(row(7), format!("     · implement{}claude ", " ".repeat(16)));
+    assert!(buffer[(7, 7)].modifier.contains(Modifier::DIM));
+    assert_eq!(buffer[(33, 7)].fg, Color::Rgb(173, 127, 104));
     // Blank gap line before the next project, then its header.
-    assert_eq!(row(9).trim_end(), "");
-    assert_eq!(row(10), format!(" SPACELIFT-AGENT {}", rule(17)));
-    assert_eq!(buffer[(1, 10)].fg, Color::Rgb(137, 180, 250));
-    assert_eq!(row(11).trim_end(), "  󰘬 progress");
-    assert_eq!(row(12).trim_end(), "     $ local");
-    assert_eq!(row(13).trim_end(), "");
-    assert_eq!(buffer[(39, 3)].symbol(), "│");
+    assert_eq!(row(8).trim_end(), "");
+    assert_eq!(row(9), format!(" SPACELIFT-AGENT {}", rule(17)));
+    assert_eq!(buffer[(1, 9)].fg, Color::Rgb(137, 180, 250));
+    assert_eq!(row(10).trim_end(), "  󰘬 progress");
+    assert_eq!(row(11).trim_end(), "     $ local");
+    assert_eq!(row(12).trim_end(), "");
+    assert_eq!(buffer[(39, 2)].symbol(), "│");
 
     // Selecting another session moves the bar and background with it.
     dashboard.install_focus(SessionId(1));
@@ -157,11 +157,11 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(0, 5)].symbol(), "▌");
-    assert_eq!(buffer[(20, 5)].bg, Color::Rgb(49, 50, 68));
-    assert_eq!(buffer[(0, 4)].symbol(), " ");
-    assert_eq!(buffer[(20, 4)].bg, Color::Rgb(30, 30, 46));
-    assert_eq!(buffer[(32, 5)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
+    assert_eq!(buffer[(20, 4)].bg, Color::Rgb(49, 50, 68));
+    assert_eq!(buffer[(0, 3)].symbol(), " ");
+    assert_eq!(buffer[(20, 3)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 
     // Selecting a workspace container by its name uses the same bar and background.
@@ -169,7 +169,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -178,11 +178,11 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(0, 3)].symbol(), "▌");
-    assert_eq!(buffer[(0, 3)].fg, Color::Rgb(203, 166, 247));
-    assert_eq!(buffer[(20, 3)].bg, Color::Rgb(49, 50, 68));
-    assert_eq!(buffer[(4, 3)].fg, Color::Rgb(205, 214, 244));
-    assert_eq!(buffer[(0, 5)].symbol(), " ");
+    assert_eq!(buffer[(0, 2)].symbol(), "▌");
+    assert_eq!(buffer[(0, 2)].fg, Color::Rgb(203, 166, 247));
+    assert_eq!(buffer[(20, 2)].bg, Color::Rgb(49, 50, 68));
+    assert_eq!(buffer[(4, 2)].fg, Color::Rgb(205, 214, 244));
+    assert_eq!(buffer[(0, 4)].symbol(), " ");
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 5)];
+        let cell = &terminal.backend().buffer()[(5, 4)];
         assert_eq!(cell.symbol(), "✓", "{health:?}");
         assert_eq!(cell.fg, color, "{health:?}");
     }
@@ -261,12 +261,12 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(5, 5)].symbol(), marker);
+        assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), marker);
         assert_eq!(
-            terminal.backend().buffer()[(5, 5)].fg,
+            terminal.backend().buffer()[(5, 4)].fg,
             Color::Rgb(166, 227, 161)
         );
-        assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), "$");
+        assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
     }
     review.activity = AgentActivity::Idle;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
@@ -275,7 +275,7 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1100))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 5)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), " ");
     // An exited process cannot remain busy, even if an old signal is retained.
     let mut implement = fixture_hierarchy().projects[1].workspaces[0].sessions[0].clone();
     implement.activity = AgentActivity::Busy;
@@ -285,7 +285,7 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 8)].symbol(), "·");
+    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
 }
 
 #[test]
@@ -398,7 +398,7 @@ fn agent_hook_sidebar_states_are_literal() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 5)];
+        let cell = &terminal.backend().buffer()[(5, 4)];
         assert_eq!(cell.symbol(), glyph, "{activity:?}");
         assert_eq!(cell.fg, color, "{activity:?}");
     }
@@ -411,8 +411,8 @@ fn agent_hook_sidebar_states_are_literal() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 8)].symbol(), "·");
-    assert_eq!(terminal.backend().buffer()[(5, 8)].fg, muted);
+    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
+    assert_eq!(terminal.backend().buffer()[(5, 7)].fg, muted);
     // A local shell stays quiet until a hook reports real activity inside it.
     let mut progress = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
     progress.activity = AgentActivity::Error;
@@ -422,8 +422,8 @@ fn agent_hook_sidebar_states_are_literal() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 12)].symbol(), "!");
-    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), "$");
+    assert_eq!(terminal.backend().buffer()[(5, 11)].symbol(), "!");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 }
 
 #[test]
@@ -581,7 +581,7 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), "$");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
@@ -616,7 +616,7 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 100))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), "⠙");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "⠙");
 
     let mut summary = fixture_hierarchy().projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Idle;
@@ -630,7 +630,7 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 200))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), "$");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 }
 
 #[test]
@@ -643,12 +643,12 @@ fn selected_session_uses_a_soft_bar_on_one_line() {
     let buffer = terminal.backend().buffer();
 
     for col in 0..39 {
-        assert_eq!(buffer[(col, 5)].bg, Color::Rgb(49, 50, 68), "column {col}");
+        assert_eq!(buffer[(col, 4)].bg, Color::Rgb(49, 50, 68), "column {col}");
     }
-    for row in [4, 6] {
+    for row in [3, 5] {
         assert_eq!(buffer[(0, row)].bg, Color::Rgb(30, 30, 46));
     }
-    let rendered = (4..=6)
+    let rendered = (3..=5)
         .map(|row| {
             (0..39)
                 .map(|col| buffer[(col, row)].symbol())
@@ -666,10 +666,10 @@ fn selected_session_uses_a_soft_bar_on_one_line() {
         ]
     );
     // The selected row keeps its own status and provider colours.
-    assert_eq!(buffer[(0, 5)].fg, Color::Rgb(203, 166, 247));
-    assert_eq!(buffer[(5, 5)].fg, Color::Rgb(108, 112, 134));
-    assert_eq!(buffer[(7, 5)].fg, Color::Rgb(205, 214, 244));
-    assert_eq!(buffer[(32, 5)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(buffer[(0, 4)].fg, Color::Rgb(203, 166, 247));
+    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
+    assert_eq!(buffer[(7, 4)].fg, Color::Rgb(205, 214, 244));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 }
 
@@ -735,7 +735,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         row,
         modifiers: KeyModifiers::NONE,
     };
-    for (row, id) in [(4, 5), (5, 1), (7, 4), (8, 2), (12, 3)] {
+    for (row, id) in [(3, 5), (4, 1), (6, 4), (7, 2), (11, 3)] {
         let mut dashboard = dashboard_fixture();
         dashboard.mouse_action(click(7, row), area);
         assert_eq!(
@@ -750,7 +750,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
     }
     let mut workspace = dashboard_fixture();
     assert_eq!(
-        workspace.mouse_action(click(2, 6), area),
+        workspace.mouse_action(click(2, 5), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -758,22 +758,22 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 6).contains("▸"),
+        sidebar_row(&terminal, 5).contains("▸"),
         "workspace click on the disclosure column should fold the group"
     );
     let mut project = dashboard_fixture();
     assert_eq!(
-        project.mouse_action(click(0, 10), area),
+        project.mouse_action(click(0, 9), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 10).contains("▸"),
+        sidebar_row(&terminal, 9).contains("▸"),
         "project disclosure should fold the section"
     );
-    for row in [9, 14] {
+    for row in [8, 13] {
         let mut blank = dashboard_fixture();
         assert_eq!(
             blank.mouse_action(click(7, row), area),
@@ -799,13 +799,13 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
         .unwrap();
     let buffer = terminal.backend().buffer();
 
-    assert!(buffer[(4, 3)].modifier.contains(Modifier::BOLD));
-    assert!(buffer[(4, 6)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(4, 5)].modifier.contains(Modifier::BOLD));
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(5), "     - review          claude:sonnet-4 ");
-    assert_eq!(buffer[(23, 5)].fg, Color::Rgb(250, 179, 135));
-    assert_eq!(row(8), "     · implement         unknown:model ");
-    assert_eq!(buffer[(25, 8)].fg, Color::Rgb(144, 150, 175));
+    assert_eq!(row(4), "     - review          claude:sonnet-4 ");
+    assert_eq!(buffer[(23, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(row(7), "     · implement         unknown:model ");
+    assert_eq!(buffer[(25, 7)].fg, Color::Rgb(144, 150, 175));
 }
 
 #[test]
@@ -942,12 +942,12 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
             .collect::<String>()
     };
     assert_eq!(
-        narrow_row(5),
+        narrow_row(4),
         "▌    - review-a-very-long-se…",
         "a label that cannot share the line leaves the whole line to the name"
     );
     assert_eq!(
-        narrow_row(6),
+        narrow_row(5),
         "▌      └ claude:opus-4.5-wi… ",
         "the agent and model take the next line, clipped like any other text"
     );
@@ -973,32 +973,32 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     };
     // Twenty-nine cells cannot hold a twelve-cell name beside `pi:grok-4.7`, so the
     // model is not dropped: the label moves under the name. The shell above stays one line.
-    assert_eq!(row(&terminal, 4), "     $ local                 ");
-    assert_eq!(row(&terminal, 5), "▌    - review                ");
-    assert_eq!(row(&terminal, 6), "▌      └ pi:grok-4.7         ");
-    assert_eq!(row(&terminal, 7).trim_end(), "  󰘬 lifecycle");
+    assert_eq!(row(&terminal, 3), "     $ local                 ");
+    assert_eq!(row(&terminal, 4), "▌    - review                ");
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
+    assert_eq!(row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
     // Stacking is all or nothing: `claude` alone would fit, but it stacks with the column.
-    assert_eq!(row(&terminal, 8), "     $ local                 ");
-    assert_eq!(row(&terminal, 9), "     · implement             ");
-    assert_eq!(row(&terminal, 10), "       └ claude              ");
+    assert_eq!(row(&terminal, 7), "     $ local                 ");
+    assert_eq!(row(&terminal, 8), "     · implement             ");
+    assert_eq!(row(&terminal, 9), "       └ claude              ");
     let buffer = terminal.backend().buffer();
     assert_eq!(
-        buffer[(9, 6)].fg,
+        buffer[(9, 5)].fg,
         Color::Rgb(203, 166, 247),
         "provider colour"
     );
     assert_eq!(
-        buffer[(11, 6)].fg,
+        buffer[(11, 5)].fg,
         Color::Rgb(108, 112, 134),
         "model stays quiet"
     );
-    for y in [5, 6] {
+    for y in [4, 5] {
         assert_eq!(buffer[(0, y)].fg, Color::Rgb(203, 166, 247));
         for x in 0..29 {
             assert_eq!(buffer[(x, y)].bg, Color::Rgb(49, 50, 68), "({x}, {y})");
         }
     }
-    assert_eq!(buffer[(0, 7)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(buffer[(0, 6)].bg, Color::Rgb(30, 30, 46));
 
     // Keys treat both lines as one session: `j` lands on the next row, `k` returns.
     assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
@@ -1006,7 +1006,7 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(7), "lifecycle workspace");
+    assert_eq!(selection_bar_row(&terminal), Some(6), "lifecycle workspace");
     dashboard.key(KeyCode::Char('k'));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 
@@ -1018,25 +1018,25 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
         row,
         modifiers: KeyModifiers::NONE,
     };
-    dashboard.mouse_action(click(9, 6), area);
+    dashboard.mouse_action(click(9, 5), area);
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    hover(&mut dashboard, 27, 6, area);
+    hover(&mut dashboard, 27, 5, area);
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert_eq!(
-        row(&terminal, 5),
+        row(&terminal, 4),
         "▌    - review             [x]",
         "hovering the label line marks the session's first line"
     );
-    assert_eq!(row(&terminal, 6), "▌      └ pi:grok-4.7         ");
+    assert_eq!(row(&terminal, 5), "▌      └ pi:grok-4.7         ");
     // The mark itself is only on the first line; its column on the label line selects.
     dashboard.install_focus(SessionId(5));
-    dashboard.mouse_action(click(27, 6), area);
+    dashboard.mouse_action(click(27, 5), area);
     assert!(!palette_text(&dashboard).contains("Close terminal?"));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert!(matches!(
-        dashboard.mouse_action(click(27, 5), area),
+        dashboard.mouse_action(click(27, 4), area),
         DashboardAction::Redraw
     ));
     assert!(palette_text(&dashboard).contains("Close terminal?"));
@@ -1067,21 +1067,21 @@ fn sidebar_stacks_every_agent_label_or_none() {
             .collect::<Vec<_>>()
     };
     let inline = draw("claude");
-    assert_eq!(inline[5], "     - review         claude");
-    assert_eq!(inline[6], "  󰘬 lifecycle");
-    assert_eq!(inline[8], "     · implement      claude");
-    assert_eq!(inline[9], "");
+    assert_eq!(inline[4], "     - review         claude");
+    assert_eq!(inline[5], "  󰘬 lifecycle");
+    assert_eq!(inline[7], "     · implement      claude");
+    assert_eq!(inline[8], "");
     let stacked = draw("pi / grok-4.7");
-    assert_eq!(stacked[5], "     - review");
-    assert_eq!(stacked[6], "       └ pi:grok-4.7");
-    assert_eq!(stacked[7], "  󰘬 lifecycle");
-    assert_eq!(stacked[8], "     $ local", "shells never stack");
-    assert_eq!(stacked[9], "     · implement");
+    assert_eq!(stacked[4], "     - review");
+    assert_eq!(stacked[5], "       └ pi:grok-4.7");
+    assert_eq!(stacked[6], "  󰘬 lifecycle");
+    assert_eq!(stacked[7], "     $ local", "shells never stack");
+    assert_eq!(stacked[8], "     · implement");
     assert_eq!(
-        stacked[10], "       └ claude",
+        stacked[9], "       └ claude",
         "a label that fits still stacks"
     );
-    assert_eq!(stacked[11], "");
+    assert_eq!(stacked[10], "");
 }
 
 #[test]
@@ -1096,17 +1096,17 @@ fn wide_session_row_keeps_the_agent_and_model_on_one_line() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert_eq!(
-        sidebar_row(&terminal, 5),
+        sidebar_row(&terminal, 4),
         format!("     - review{}pi:grok-4.7 ", " ".repeat(14))
     );
-    assert_eq!(sidebar_row(&terminal, 6).trim_end(), "  󰘬 lifecycle");
+    assert_eq!(sidebar_row(&terminal, 5).trim_end(), "  󰘬 lifecycle");
     let area = Rect::new(0, 0, 120, 40);
     let mut clicked = dashboard_fixture();
     clicked.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 7,
-            row: 6,
+            row: 5,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -1133,8 +1133,8 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
             terminal
                 .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
                 .unwrap();
-            let row = sidebar_row(&terminal, 5);
-            let under = sidebar_row(&terminal, 6);
+            let row = sidebar_row(&terminal, 4);
+            let under = sidebar_row(&terminal, 5);
             if with_model {
                 // `agent:shared-model` fits beside a twelve-cell name only for short
                 // agent names; the others keep the whole model on the line under the name.
@@ -1175,12 +1175,12 @@ fn long_sidebar_names_clip_to_one_screen_line() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     let project = (0..39)
-        .map(|column| buffer[(column, 2)].symbol())
+        .map(|column| buffer[(column, 1)].symbol())
         .collect::<String>();
     assert!(project.trim_end().ends_with('…'));
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     let review = (0..39)
-        .map(|column| buffer[(column, 5)].symbol())
+        .map(|column| buffer[(column, 4)].symbol())
         .collect::<String>();
     // The title keeps its room first: the agent label goes before the title clips.
     assert_eq!(review, "▌    - review-a-very-long-session-name…");
@@ -1196,10 +1196,10 @@ fn long_sidebar_names_clip_to_one_screen_line() {
             .map(|column| buffer[(column, y)].symbol())
             .collect::<String>()
     };
-    assert_eq!(row(5), "▌    - review-a-very-lo…");
-    assert_eq!(row(6), "▌      └ claude         ");
+    assert_eq!(row(4), "▌    - review-a-very-lo…");
+    assert_eq!(row(5), "▌      └ claude         ");
+    assert_eq!(buffer[(24, 4)].symbol(), "│");
     assert_eq!(buffer[(24, 5)].symbol(), "│");
-    assert_eq!(buffer[(24, 6)].symbol(), "│");
 }
 
 #[test]
@@ -1239,7 +1239,7 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
         modifiers: KeyModifiers::NONE,
     };
     let area = Rect::new(0, 0, 120, 40);
-    let action = dashboard.mouse_action(mouse(2, 3), area);
+    let action = dashboard.mouse_action(mouse(2, 2), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -1247,43 +1247,43 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
         .unwrap();
     // A folded workspace shows how many sessions it hides.
     assert_eq!(
-        sidebar_row(&terminal, 3),
+        sidebar_row(&terminal, 2),
         format!("  󰘬 auth{}▸ 2 ", " ".repeat(27))
     );
-    let action = dashboard.mouse_action(mouse(2, 3), area);
+    let action = dashboard.mouse_action(mouse(2, 2), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    let action = dashboard.mouse_action(mouse(4, 5), area);
+    let action = dashboard.mouse_action(mouse(4, 4), area);
     assert!({
         let _ = action;
         matches!(dashboard.drain_outbox().as_slice(), [_])
     });
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    let action = dashboard.mouse_action(mouse(0, 2), area);
+    let action = dashboard.mouse_action(mouse(0, 1), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     // A folded project shows its workspace count and keeps its rule.
     assert_eq!(
-        sidebar_row(&terminal, 2),
+        sidebar_row(&terminal, 1),
         format!(" CONSIGINT {} ▸ 2 ws ", "─".repeat(20))
     );
-    assert_eq!(sidebar_row(&terminal, 3).trim_end(), "");
+    assert_eq!(sidebar_row(&terminal, 2).trim_end(), "");
     assert_eq!(
-        sidebar_row(&terminal, 4),
+        sidebar_row(&terminal, 3),
         format!(" SPACELIFT-AGENT {}", "─".repeat(22))
     );
     let action = dashboard.mouse_action(
         MouseEvent {
             column: 60,
-            ..mouse(4, 7)
+            ..mouse(4, 6)
         },
         area,
     );
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     enter_terminal(&mut dashboard);
     assert_eq!(
-        dashboard.mouse_action(mouse(4, 6), area),
+        dashboard.mouse_action(mouse(4, 5), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
@@ -1303,7 +1303,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
     let mut project = dashboard_fixture();
     enter_terminal(&mut project);
     assert_eq!(
-        project.mouse_action(click(5, 2), area),
+        project.mouse_action(click(5, 1), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(project.focused_session().is_none());
@@ -1311,26 +1311,26 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project, 0))
         .unwrap();
     assert!(
-        !sidebar_row(&terminal, 2).contains("▸"),
+        !sidebar_row(&terminal, 1).contains("▸"),
         "label click must not fold the project"
     );
 
     let mut project_disclosure = dashboard_fixture();
     enter_terminal(&mut project_disclosure);
     assert_eq!(
-        project_disclosure.mouse_action(click(0, 2), area),
+        project_disclosure.mouse_action(click(0, 1), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project_disclosure, 0))
         .unwrap();
-    assert!(sidebar_row(&terminal, 2).contains("▸"));
+    assert!(sidebar_row(&terminal, 1).contains("▸"));
     assert_eq!(project_disclosure.focused_session(), Some(SessionId(1)));
 
     let mut workspace = dashboard_fixture();
     enter_terminal(&mut workspace);
     assert_eq!(
-        workspace.mouse_action(click(5, 3), area),
+        workspace.mouse_action(click(5, 2), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(workspace.focused_session().is_none());
@@ -1338,14 +1338,14 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace, 0))
         .unwrap();
     assert!(
-        !sidebar_row(&terminal, 3).contains("▸"),
+        !sidebar_row(&terminal, 2).contains("▸"),
         "workspace label click must not fold"
     );
 
     let mut session = dashboard_fixture();
     enter_terminal(&mut session);
     assert!({
-        let _ = session.mouse_action(click(6, 4), area);
+        let _ = session.mouse_action(click(6, 3), area);
         matches!(session.drain_outbox().as_slice(), [_])
     });
     assert_eq!(session.focused_session(), Some(SessionId(5)));
@@ -1386,7 +1386,7 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 5,
-                row: 3,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             },
             area,
@@ -1415,7 +1415,7 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 5,
-                row: 3,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             },
             area,
@@ -1487,7 +1487,7 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 5,
-                row: 3,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             },
             area,
@@ -1658,16 +1658,16 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[32],
+        rendered[31],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
     assert_eq!(
-        rendered[33].trim_end(),
+        rendered[32].trim_end(),
         " QUOTA LEFT ───────────────────────────",
         "the quota section"
     );
     // The last tree row remains selectable; the quota section cannot select/close a session.
-    for (index, row) in [32, 33].into_iter().enumerate() {
+    for (index, row) in [31, 32].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1702,7 +1702,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                 MouseEvent {
                     kind: MouseEventKind::ScrollDown,
                     column: 4,
-                    row: 11,
+                    row: 10,
                     modifiers: KeyModifiers::NONE,
                 },
                 Rect::new(0, 0, 120, 40),
@@ -1713,7 +1713,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    for (row, expected) in [(2, "session-4"), (3, "session-5"), (4, "session-6")] {
+    for (row, expected) in [(1, "session-4"), (2, "session-5"), (3, "session-6")] {
         let text = (0..39)
             .map(|col| terminal.backend().buffer()[(col, row)].symbol())
             .collect::<String>();
@@ -1723,7 +1723,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -1803,7 +1803,7 @@ fn ux_live_metadata_is_readable_and_preserves_selection() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     // The first local shell is unselected on row 3; its name must stay readable.
-    let color = buffer[(8, 4)].fg;
+    let color = buffer[(8, 3)].fg;
     let Color::Rgb(r, g, b) = color else {
         panic!("expected RGB metadata: {color:?}")
     };
@@ -1812,7 +1812,7 @@ fn ux_live_metadata_is_readable_and_preserves_selection() {
         "faint metadata: {color:?}"
     );
     // The selected review uses the soft selection background.
-    assert_eq!(buffer[(8, 5)].bg, Color::Rgb(49, 50, 68));
+    assert_eq!(buffer[(8, 4)].bg, Color::Rgb(49, 50, 68));
 }
 
 fn selection_bar_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
@@ -1827,14 +1827,14 @@ fn browse_jk_moves_across_project_workspace_and_session_rows() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(5), "review session");
+    assert_eq!(selection_bar_row(&terminal), Some(4), "review session");
 
     dashboard.key(KeyCode::Char('k'));
     assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(4), "local under auth");
+    assert_eq!(selection_bar_row(&terminal), Some(3), "local under auth");
 
     assert_eq!(
         dashboard.key(KeyCode::Char('k')),
@@ -1845,37 +1845,37 @@ fn browse_jk_moves_across_project_workspace_and_session_rows() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(3), "auth workspace");
-    assert!(sidebar_row(&terminal, 3).contains("auth"));
+    assert_eq!(selection_bar_row(&terminal), Some(2), "auth workspace");
+    assert!(sidebar_row(&terminal, 2).contains("auth"));
 
     dashboard.key(KeyCode::Char('k'));
     assert!(dashboard.focused_session().is_none());
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(2), "consigint project");
-    assert!(sidebar_row(&terminal, 2).contains("CONSIGINT"));
+    assert_eq!(selection_bar_row(&terminal), Some(1), "consigint project");
+    assert!(sidebar_row(&terminal, 1).contains("CONSIGINT"));
 
     dashboard.key(KeyCode::Char('j'));
     assert!(dashboard.focused_session().is_none());
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(3), "back to auth");
+    assert_eq!(selection_bar_row(&terminal), Some(2), "back to auth");
 
     dashboard.key(KeyCode::Down);
     assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(4));
+    assert_eq!(selection_bar_row(&terminal), Some(3));
 
     dashboard.key(KeyCode::Up);
     assert!(dashboard.focused_session().is_none());
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(3));
+    assert_eq!(selection_bar_row(&terminal), Some(2));
 }
 
 #[test]
@@ -1892,11 +1892,11 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 3).contains("▸"),
+        sidebar_row(&terminal, 2).contains("▸"),
         "Enter on a workspace should fold it"
     );
     assert_eq!(
-        sidebar_row(&terminal, 3),
+        sidebar_row(&terminal, 2),
         format!("▌ 󰘬 auth{}▸ 2 ", " ".repeat(27))
     );
 
@@ -1905,10 +1905,10 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        !sidebar_row(&terminal, 3).contains("▸"),
+        !sidebar_row(&terminal, 2).contains("▸"),
         "second Enter should expand the workspace"
     );
-    assert_eq!(selection_bar_row(&terminal), Some(3));
+    assert_eq!(selection_bar_row(&terminal), Some(2));
 
     // Climb to the project header and fold it.
     dashboard.key(KeyCode::Char('k'));
@@ -1917,11 +1917,11 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 2).contains("▸"),
+        sidebar_row(&terminal, 1).contains("▸"),
         "Enter on a project should fold it"
     );
     assert_eq!(
-        sidebar_row(&terminal, 2),
+        sidebar_row(&terminal, 1),
         format!("▌CONSIGINT {} ▸ 2 ws ", "─".repeat(20))
     );
 
@@ -1930,7 +1930,7 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        !sidebar_row(&terminal, 2).contains("▸"),
+        !sidebar_row(&terminal, 1).contains("▸"),
         "second Enter should expand the project"
     );
 
@@ -1991,10 +1991,10 @@ fn j_from_a_folded_workspace_skips_hidden_sessions() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 4).contains("lifecycle"),
+        sidebar_row(&terminal, 3).contains("lifecycle"),
         "j from folded auth should land on the next visible workspace"
     );
-    assert_eq!(selection_bar_row(&terminal), Some(4));
+    assert_eq!(selection_bar_row(&terminal), Some(3));
 }
 
 #[test]
@@ -2005,7 +2005,7 @@ fn jk_from_a_hidden_session_steps_off_the_folded_header() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 2,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2017,9 +2017,9 @@ fn jk_from_a_hidden_session_steps_off_the_folded_header() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(4));
+    assert_eq!(selection_bar_row(&terminal), Some(3));
     assert!(
-        sidebar_row(&terminal, 4).contains("lifecycle"),
+        sidebar_row(&terminal, 3).contains("lifecycle"),
         "j after mouse-folding auth should leave the header, not jump to the first project"
     );
 }
@@ -2075,8 +2075,8 @@ fn keyboard_selecting_a_project_scrolls_it_into_view() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(2));
-    assert!(sidebar_row(&terminal, 2).contains("PROJECT"));
+    assert_eq!(selection_bar_row(&terminal), Some(1));
+    assert!(sidebar_row(&terminal, 1).contains("PROJECT"));
 }
 
 #[test]
@@ -2114,7 +2114,7 @@ fn container_selection_does_not_close_or_switch_a_split() {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 5,
-                row: 3,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             },
             area,
@@ -2146,7 +2146,7 @@ fn removing_a_project_drops_its_container_selection() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        !sidebar_row(&terminal, 2).contains("▸"),
+        !sidebar_row(&terminal, 1).contains("▸"),
         "Enter must not fold a project that was removed"
     );
 }
@@ -2159,7 +2159,7 @@ fn container_click_in_terminal_mode_returns_to_browse() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
-            row: 2,
+            row: 1,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -2179,7 +2179,7 @@ fn highlighted_session_row_shows_close_mark() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let review = sidebar_row(&terminal, 5);
+    let review = sidebar_row(&terminal, 4);
     assert!(
         !review.contains("[x]") && review.contains("claude"),
         "a highlighted row hides the mark until the pointer is over it, got {review:?}"
@@ -2188,7 +2188,7 @@ fn highlighted_session_row_shows_close_mark() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -2196,23 +2196,23 @@ fn highlighted_session_row_shows_close_mark() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let review = sidebar_row(&terminal, 5);
+    let review = sidebar_row(&terminal, 4);
     assert!(
         review.trim_end().ends_with("[x]") && !review.contains("claude"),
         "hover replaces the agent label with the close mark, got {review:?}"
     );
     let mark_x = review.trim_end().len() - 3;
     assert_eq!(
-        terminal.backend().buffer()[(mark_x as u16, 5)].fg,
+        terminal.backend().buffer()[(mark_x as u16, 4)].fg,
         Color::Rgb(203, 166, 247),
         "close mark uses the title-bar action colour"
     );
-    let local = sidebar_row(&terminal, 4);
+    let local = sidebar_row(&terminal, 3);
     assert!(
         !local.contains("[x]"),
         "unselected session must not show the close mark, got {local:?}"
     );
-    let project = sidebar_row(&terminal, 2);
+    let project = sidebar_row(&terminal, 1);
     assert!(
         !project.contains("[x]"),
         "project row must not show the close mark, got {project:?}"
@@ -2223,12 +2223,12 @@ fn highlighted_session_row_shows_close_mark() {
 fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    hover(&mut dashboard, 10, 5, area);
+    hover(&mut dashboard, 10, 4, area);
     let action = dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2259,12 +2259,12 @@ fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
 fn dismissing_the_close_mark_confirm_archives_nothing() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    hover(&mut dashboard, 10, 5, area);
+    hover(&mut dashboard, 10, 4, area);
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2279,12 +2279,12 @@ fn close_mark_from_terminal_mode_returns_to_browse() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     enter_terminal(&mut dashboard);
-    hover(&mut dashboard, 10, 5, area);
+    hover(&mut dashboard, 10, 4, area);
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2307,26 +2307,26 @@ fn pointer_over_another_session_shows_its_close_mark() {
         row,
         modifiers: KeyModifiers::NONE,
     };
-    dashboard.mouse_action(moved(10, 8), area);
+    dashboard.mouse_action(moved(10, 7), area);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 8).contains("[x]"),
+        sidebar_row(&terminal, 7).contains("[x]"),
         "hovered session must show the close mark, got {:?}",
-        sidebar_row(&terminal, 8)
+        sidebar_row(&terminal, 7)
     );
     assert!(
-        !sidebar_row(&terminal, 5).contains("[x]"),
+        !sidebar_row(&terminal, 4).contains("[x]"),
         "only the hovered row shows the close mark"
     );
     dashboard.mouse_action(moved(80, 7), area);
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert!(!sidebar_row(&terminal, 8).contains("[x]"));
-    assert!(!sidebar_row(&terminal, 5).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 4).contains("[x]"));
 }
 
 #[test]
@@ -2337,7 +2337,7 @@ fn clicking_a_hovered_close_mark_archives_that_row_without_switching_the_pane() 
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2346,7 +2346,7 @@ fn clicking_a_hovered_close_mark_archives_that_row_without_switching_the_pane() 
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2373,7 +2373,7 @@ fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2382,7 +2382,7 @@ fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2392,22 +2392,22 @@ fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 4).starts_with('▌'),
+        sidebar_row(&terminal, 3).starts_with('▌'),
         "confirm must highlight the clicked row, got {:?}",
-        sidebar_row(&terminal, 4)
+        sidebar_row(&terminal, 3)
     );
     assert!(
-        !sidebar_row(&terminal, 5).starts_with('▌'),
+        !sidebar_row(&terminal, 4).starts_with('▌'),
         "focused pane session must not stay highlighted during confirm, got {:?}",
-        sidebar_row(&terminal, 5)
+        sidebar_row(&terminal, 4)
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert!(!sidebar_row(&terminal, 4).starts_with('▌'));
-    assert!(sidebar_row(&terminal, 5).starts_with('▌'));
+    assert!(!sidebar_row(&terminal, 3).starts_with('▌'));
+    assert!(sidebar_row(&terminal, 4).starts_with('▌'));
     dashboard.key(KeyCode::Char('X'));
     let text = palette_text(&dashboard);
     assert!(text.contains("review (#1)"), "{text}");
@@ -2429,7 +2429,7 @@ fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 7,
+            row: 6,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2438,7 +2438,7 @@ fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 7,
+            row: 6,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2457,7 +2457,7 @@ fn pointer_on_a_workspace_row_clears_the_hover_mark() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 8,
+            row: 7,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2466,7 +2466,7 @@ fn pointer_on_a_workspace_row_clears_the_hover_mark() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 6,
+            row: 5,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2475,12 +2475,12 @@ fn pointer_on_a_workspace_row_clears_the_hover_mark() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert!(!sidebar_row(&terminal, 8).contains("[x]"));
-    assert!(!sidebar_row(&terminal, 5).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 4).contains("[x]"));
     assert!(
-        sidebar_row(&terminal, 6).contains("[x]"),
+        sidebar_row(&terminal, 5).contains("[x]"),
         "{:?}",
-        sidebar_row(&terminal, 6)
+        sidebar_row(&terminal, 5)
     );
 }
 
@@ -2488,12 +2488,12 @@ fn pointer_on_a_workspace_row_clears_the_hover_mark() {
 fn palette_keeps_the_mouse_from_a_second_close_mark() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    hover(&mut dashboard, 10, 5, area);
+    hover(&mut dashboard, 10, 4, area);
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2502,7 +2502,7 @@ fn palette_keeps_the_mouse_from_a_second_close_mark() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 8,
+            row: 7,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2511,7 +2511,7 @@ fn palette_keeps_the_mouse_from_a_second_close_mark() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 8,
+            row: 7,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2529,7 +2529,7 @@ fn losing_mouse_capture_clears_a_hover_mark() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 8,
+            row: 7,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2539,8 +2539,8 @@ fn losing_mouse_capture_clears_a_hover_mark() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert!(!sidebar_row(&terminal, 8).contains("[x]"));
-    assert!(!sidebar_row(&terminal, 5).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 7).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 4).contains("[x]"));
 }
 
 fn sidebar_contains_close_mark(dashboard: &Dashboard) -> bool {
@@ -2590,13 +2590,13 @@ fn clicking_the_close_mark_confirms_a_paused_session() {
     review_session_mut(&mut hierarchy).phase = SessionPhase::Paused;
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    hover(&mut dashboard, 10, 5, Rect::new(0, 0, 120, 40));
+    hover(&mut dashboard, 10, 4, Rect::new(0, 0, 120, 40));
     assert_eq!(
         dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 36,
-                row: 5,
+                row: 4,
                 modifiers: KeyModifiers::NONE,
             },
             Rect::new(0, 0, 120, 40),
@@ -2614,13 +2614,13 @@ fn clicking_the_close_mark_confirms_a_paused_session() {
 fn clicking_the_close_mark_archives_an_exited_session_immediately() {
     let mut dashboard = dashboard_fixture();
     dashboard.install_focus(SessionId(2));
-    hover(&mut dashboard, 10, 8, Rect::new(0, 0, 120, 40));
+    hover(&mut dashboard, 10, 7, Rect::new(0, 0, 120, 40));
     assert_eq!(
         dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 36,
-                row: 8,
+                row: 7,
                 modifiers: KeyModifiers::NONE,
             },
             Rect::new(0, 0, 120, 40),
@@ -2646,7 +2646,7 @@ fn clicking_beside_the_close_mark_still_opens_the_session() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 10,
-            row: 5,
+            row: 4,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -2681,7 +2681,7 @@ fn close_mark_is_absent_until_hover_and_inert_without_mouse_capture() {
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 36,
-                row: 5,
+                row: 4,
                 modifiers: KeyModifiers::NONE,
             },
             Rect::new(0, 0, 120, 40),
@@ -2715,7 +2715,7 @@ fn selected_project_row_hides_the_session_close_mark() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -2734,7 +2734,7 @@ fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2743,7 +2743,7 @@ fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
         MouseEvent {
             kind: MouseEventKind::Moved,
             column: 10,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         area,
@@ -2753,30 +2753,30 @@ fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert!(
-        sidebar_row(&terminal, 4).contains("[x]"),
+        sidebar_row(&terminal, 3).contains("[x]"),
         "{:?}",
-        sidebar_row(&terminal, 4)
+        sidebar_row(&terminal, 3)
     );
-    assert!(!sidebar_row(&terminal, 5).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 4).contains("[x]"));
 }
 
 #[test]
 fn hovering_a_workspace_shows_close_mark_and_click_opens_remove() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    hover(&mut dashboard, 10, 3, area);
+    hover(&mut dashboard, 10, 2, area);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let row = sidebar_row(&terminal, 3);
+    let row = sidebar_row(&terminal, 2);
     assert!(row.contains("[x]") && row.contains("auth"), "{row:?}");
-    assert!(!sidebar_row(&terminal, 2).contains("[x]"));
+    assert!(!sidebar_row(&terminal, 1).contains("[x]"));
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 36,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         },
         area,

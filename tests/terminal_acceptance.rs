@@ -29,10 +29,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 fn dashboard_header_visible(screen: &str) -> bool {
-    screen
-        .lines()
-        .next()
-        .is_some_and(|header| header.contains("OVRCR") && header.contains("Operator [o]"))
+    screen.lines().next().is_some_and(|header| {
+        header.contains("OVRCR") && header.contains("[Commands]") && header.contains("[Menu]")
+    })
 }
 
 /// A live server hosted by the compiled `ovrcr` binary, plus the CLI and

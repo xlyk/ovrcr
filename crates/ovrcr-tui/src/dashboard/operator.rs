@@ -524,27 +524,6 @@ impl Dashboard {
                     .is_some_and(|turn| turn.state == OperatorTurnState::Running)
         })
     }
-    pub(super) fn operator_header_rect(&self, area: Rect) -> Rect {
-        let sidebar =
-            super::sidebar_width_for(area, self.sidebar_preference()).max(area.width.min(35));
-        let indent = sidebar.min(7);
-        Rect::new(
-            area.x.saturating_add(indent),
-            area.y,
-            sidebar.saturating_sub(indent),
-            area.height.min(1),
-        )
-    }
-    pub(super) fn operator_quick_header_rect(&self, area: Rect) -> Rect {
-        let header = self.operator_header_rect(area);
-        let width = header.width.min(8);
-        Rect::new(
-            header.right().saturating_sub(width),
-            header.y,
-            width,
-            header.height,
-        )
-    }
     fn capture_operator_context(&self) -> OperatorContext {
         let (project, workspace_id) = self.creation_context();
         let workspace = super::state::find_workspace(self, &project, &workspace_id);
@@ -954,15 +933,10 @@ impl Dashboard {
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
             return Some(action);
         }
-        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
-        if self.operator_header_rect(area).contains(point)
-            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        {
-            return Some(self.open_operator());
-        }
         if !self.operator.visible || self.operator.chat.is_none() {
             return None;
         }
+        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
         let content = content_area(self, area);
         if !content.contains(point) {
             return None;
@@ -1370,39 +1344,6 @@ impl Dashboard {
             chat.reviewed = chat.unread.take().or(chat.reviewed);
         }
     }
-    pub(super) fn draw_operator_header(&self, frame: &mut Frame<'_>) {
-        let unread = self
-            .operator
-            .chat
-            .as_ref()
-            .is_some_and(|chat| chat.unread.is_some());
-        let label = if unread {
-            " Operator [o] · 1 unread".to_string()
-        } else {
-            " Operator [o]".into()
-        };
-        let mut header = self.operator_header_rect(frame.area());
-        let quick = self.operator_quick_header_rect(frame.area());
-        header.width = quick.x.saturating_sub(header.x);
-        frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(super::render::MAUVE()).bg(
-                if self.operator.visible {
-                    super::render::SURFACE0()
-                } else {
-                    super::render::BASE()
-                },
-            )),
-            header,
-        );
-        frame.render_widget(
-            Paragraph::new("[Ctrl-o]").style(
-                Style::default()
-                    .fg(super::render::MAUVE())
-                    .bg(super::render::CRUST()),
-            ),
-            quick,
-        );
-    }
     pub(super) fn draw_operator(&self, frame: &mut Frame<'_>, now_unix_ms: u64) {
         if !self.operator.visible {
             return;
@@ -1629,8 +1570,11 @@ mod tests {
     #[test]
     fn operator_is_one_navigation_row_and_opens_the_singleton_directly() {
         let mut d = dashboard();
-        let row = d.sidebar_rects(d.outer_area).operator;
+        let rects = d.sidebar_rects(d.outer_area);
+        let row = rects.operator;
         assert_eq!(row.height, 1, "exactly one fixed navigation row");
+        assert_eq!(row.bottom(), 23, "the dock is the sidebar's last line");
+        assert_eq!(rects.tree.y, 1, "the first project starts under the title");
         let screen = draw(&mut d, 140, 24);
         assert!(screen.contains("Operator"), "{screen}");
         for removed in ["[+]", "▸", "[x]", "Chats", "New Conversation"] {
@@ -2369,8 +2313,8 @@ mod tests {
             let mut first = frame.lines();
             let header = first.next().unwrap();
             assert!(
-                header.contains("Operator"),
-                "title bar identifies Operator at {cols}x{rows}: {header}"
+                header.starts_with("󰚩 OVRCR") && !header.contains("Operator"),
+                "title bar stays clear at {cols}x{rows}: {header}"
             );
             let content = content_area(&d, d.outer_area);
             let main: String = frame
@@ -2416,10 +2360,17 @@ mod tests {
                 assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
             }
             assert_eq!(
-                rects.tree.y,
-                rects.operator.y + rects.operator.height,
-                "the tree starts under the row"
+                rects.operator.bottom(),
+                rows - 1,
+                "Operator stays just above the footer at {cols}x{rows}"
             );
+            assert_eq!(
+                rects.tree.y, 1,
+                "the tree starts under the title at {cols}x{rows}"
+            );
+            assert_eq!(rects.tree.bottom(), rects.attention.y);
+            assert_eq!(rects.attention.bottom(), rects.quota.y);
+            assert_eq!(rects.quota.bottom(), rects.operator.y);
         }
         d.install_area(Rect::new(0, 0, 140, 24));
         let row = d.sidebar_rects(d.outer_area).operator;

@@ -148,8 +148,10 @@ impl Dashboard {
                 .as_ref()
                 .is_some_and(|chat| activity(chat) == AgentActivity::Busy)
     }
-    /// One fixed navigation row above Projects: activity and Unread only. It
-    /// has no count, collapse arrow, plus button, child row or close target.
+    /// One fixed navigation row below the tree: the first project starts at the
+    /// top, and the row's right-hand words say whether a conversation can be
+    /// opened, holds a draft or unread reply, or needs inspection. It has no
+    /// count, collapse arrow, plus button, child row or close target.
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
         if self.sidebar_preference() == Some(0) {
             return;
@@ -167,38 +169,69 @@ impl Dashboard {
                     chat.unread.is_some(),
                     now,
                 );
+                let turn = chat.summary.current_turn.as_ref().map(|turn| turn.state);
+                // A failure or interruption stays identifiable even while the
+                // worker's stop is still unconfirmed; the dock spells both out
+                // instead of reusing the full view's longer status sentence.
+                let outcome = match (turn, chat.summary.worker_stopped) {
+                    (Some(OperatorTurnState::Error), true) => Some("Turn failed"),
+                    (Some(OperatorTurnState::Error), false) => Some("Failed · stop unconfirmed"),
+                    (Some(OperatorTurnState::Interrupted), true) => Some("Interrupted"),
+                    (Some(OperatorTurnState::Interrupted), false) => {
+                        Some("Interrupted · stop unconfirmed")
+                    }
+                    (Some(OperatorTurnState::Complete), false) => Some("Stop unconfirmed"),
+                    _ => None,
+                };
                 let clause = if chat.unread.is_some() {
                     "1 unread".to_string()
-                } else if let Some(activity) = conversation_activity(chat) {
-                    activity.label
+                } else if chat.submitting
+                    || chat.stopping
+                    || turn == Some(OperatorTurnState::Running)
+                {
+                    conversation_activity(chat)
+                        .map_or_else(|| status(chat).to_string(), |activity| activity.label)
+                } else if let Some(outcome) = outcome {
+                    outcome.to_string()
+                } else if !chat.draft.is_empty() {
+                    "Draft".to_string()
+                } else if selected {
+                    String::new()
                 } else {
-                    status(chat).to_string()
+                    "Open chat".to_string()
                 };
                 (glyph, color, clause)
             }
             None => (
                 ' ',
                 super::super::render::MUTED(),
-                if self.operator.loading {
-                    "opening".to_string()
+                if self.operator.error.is_some() {
+                    "Unavailable".to_string()
+                } else if self.operator.loading {
+                    "Opening…".to_string()
                 } else {
-                    "not opened".to_string()
+                    "Open chat".to_string()
                 },
             ),
         };
-        let clause = clip_text(&clause, width.saturating_sub(4));
-        let title = clip_text("Operator", width.saturating_sub(4 + clause.width() + 1));
+        let (inset, end) = if width < 24 { (" ", "") } else { ("  ", " ") };
+        let title = clip_text("Operator", width.saturating_sub(inset.width()));
+        let room = width.saturating_sub(inset.width() + title.width() + 1 + end.width());
+        // At the minimum sidebar width the state words outrank the activity glyph.
+        let marker = if glyph != ' ' && clause.width() + 2 <= room {
+            format!("{glyph} ")
+        } else {
+            String::new()
+        };
+        let clause = clip_text(&clause, room.saturating_sub(marker.width()));
         let line = compose_row(
-            vec![
-                Span::raw(" "),
-                Span::styled(format!("{glyph} "), Style::default().fg(color)),
-                Span::raw(title),
-            ],
+            vec![Span::raw(inset), Span::raw(title)],
             Span::raw(" "),
-            vec![Span::styled(
-                clause,
-                Style::default().fg(super::super::render::SUBTEXT()),
-            )],
+            vec![
+                Span::styled(marker, Style::default().fg(color)),
+                Span::styled(clause, Style::default().fg(super::super::render::SUBTEXT())),
+                Span::raw(end),
+            ],
             width,
             selected,
         );

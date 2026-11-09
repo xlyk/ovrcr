@@ -2809,13 +2809,6 @@ impl Dashboard {
         if !self.mouse_focused {
             return DashboardAction::None;
         }
-        if self
-            .operator_quick_header_rect(area)
-            .contains(ratatui::layout::Position::new(mouse.column, mouse.row))
-            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        {
-            return self.open_operator_quick_message();
-        }
         if matches!(self.mode, InputMode::Browse | InputMode::Terminal)
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
         {

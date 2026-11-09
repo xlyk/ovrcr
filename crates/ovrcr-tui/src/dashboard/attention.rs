@@ -473,13 +473,15 @@ mod tests {
     fn strip_sits_above_the_quota_section_and_a_click_jumps_like_the_key() {
         let mut dashboard = dashboard();
         let rows = screen(&dashboard);
-        // The strip sits directly above the six-row quota section.
-        assert!(rows[1].trim_start().starts_with("Operator"), "{}", rows[1]);
-        assert!(!rows[1].contains("[+]") && !rows[1].contains("▸"));
-        assert_eq!(rows[22].trim_end(), " ? 2 need input · ✓ 2 ready");
-        assert!(rows[23].contains("QUOTA LEFT"), "{}", rows[28]);
+        // The tree leads; the strip sits directly above the six-row quota
+        // section, and the Operator dock keeps the sidebar's last row.
+        assert!(rows[1].trim_end().starts_with(" P"), "{}", rows[1]);
+        assert_eq!(rows[21].trim_end(), " ? 2 need input · ✓ 2 ready");
+        assert!(rows[22].contains("QUOTA LEFT"), "{}", rows[22]);
+        assert!(rows[28].contains("Operator"), "{}", rows[28]);
+        assert!(!rows[28].contains("[+]") && !rows[28].contains("▸"));
         assert_eq!(
-            dashboard.mouse_action(click(22), Rect::new(0, 0, 120, 30)),
+            dashboard.mouse_action(click(21), Rect::new(0, 0, 120, 30)),
             DashboardAction::Redraw
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(2)));

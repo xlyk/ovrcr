@@ -356,6 +356,14 @@ it does not exercise receipt escaping. Escaping is covered by
 `paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail`
 (`tests/tui/operator.rs`).
 
+`tests/tui/operator_dock.rs` drives dock placement through the same production
+Dashboard input/render boundary: the first project below a clean title, both
+dock edges, representative frame sizes, tiny/hidden sidebars, the composer floor,
+and a scrolling fifty-session tree with attention, quota and divider clicks.
+`tests/tui/operator.rs` covers the dock's state priority and shared-draft behavior.
+The native dock walkthrough needs no provider turn; keep its Browse and composer
+screenshots with matching accessibility text.
+
 Keep actual native screenshots/accessibility and live subscription acceptance
 separate from loopback evidence. Interactive Dashboard fixtures may see the
 optional native-hook or Bridge offers described above; decline recognized offers
