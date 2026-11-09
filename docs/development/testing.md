@@ -56,17 +56,17 @@ cannot extend names itself in the matrix's failure and needs one table entry.
 
 ## Hosted CI schedule
 
-Pull requests and pushes to `main` run `macOS checks` (four shards),
+Pull requests and pushes to `main` run `macOS checks` (three shards),
 `macOS offline Cursor preflight`, and the required `checks` aggregate.
 
-`macOS checks` is a four-leg matrix. Each leg runs the same nextest invocation
+`macOS checks` is a three-leg matrix. Each leg runs the same nextest invocation
 for its slice of the selection, so the suite runs in parallel instead of
 serially:
 
 ```sh
 cargo nextest run --workspace --all-targets --all-features --profile ci \
   -E 'not test(partial_resize_connection_delivers_error_before_owner_close)' \
-  --partition hash:$SHARD/4
+  --partition hash:$SHARD/3
 ```
 
 Hash partitioning assigns by binary ID and test name, so a new test or a new
@@ -80,9 +80,13 @@ Only shard 1 runs the steps that are not the test selection: format, lint,
 doctests, the relocated startup-asset and Cursor packaging checks, the
 extension batch, Pi provisioning, and the two exact ignored installed-Pi
 parents with their nested Node children. Those stay single so no packaging or
-installed-host coverage is duplicated. Four shards plus the offline Cursor job
-is the five-concurrent-macOS-job limit on a free plan, so adding a fifth macOS
-job would queue rather than run in parallel.
+installed-host coverage is duplicated.
+
+The shard count is a queueing decision, not a parallelism one. Four shards plus
+the offline Cursor job sat exactly on the five-concurrent-macOS-job limit and
+one leg waited 421s for an arm64 runner, which became the run's critical path;
+three shards leave headroom. More shards shorten test execution but increase the
+chance that a leg spends its time waiting for a machine.
 
 Each leg keeps its 45-minute limit, and the offline Cursor suite keeps its own
 budget. Shards record `hw.logicalcpu` and the resolved `cargo nextest` version,
