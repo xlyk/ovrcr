@@ -1,0 +1,16 @@
+󰚩 OVRCR Operator [o]       [Ctrl-o]        [Commands] [Menu]
+Operator · pi · openai/gpt-6.1-sol · ready
+❯ You
+  ▸ Context · global
+  Review this workspace.
+
+│ Operator
+│ I will inspect its sessions.
+│ ▸ succeeded · (no output) · Output
+
+ Managing global
+ ──────────────────────────────────────────────────────────
+ > ▏
+
+ ──────────────────────────────────────────────────────────
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

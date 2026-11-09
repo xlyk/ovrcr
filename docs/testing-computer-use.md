@@ -147,10 +147,10 @@ Theme row; press Escape. In the unfiltered palette confirm session rows read
 absent while they cannot run. Press `v`; confirm the second pane opens behind a
 `New pane · choose its session` list that highlights its session and omits the
 left pane's session. Type part of another session's branch, press Return, and
-confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the Operator
-view closes at once, the terminal panes return and the footer reads
-`BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the draft remains,
-and press `Ctrl-g` again. Click another application, then click a running
+confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the one
+Operator conversation closes at once, the terminal panes return and the footer
+reads `BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the same
+history and draft remain, and press `Ctrl-g` again. Click another application, then click a running
 terminal pane once: the footer must stay BROWSE; a second click focuses the pane
 for typing.
 Press Space then `w` then `t`; confirm the key popup closes and the terminal form opens
@@ -332,8 +332,76 @@ become ready while the pointer rests on a tree row and confirm no row moves.
 Click the quota section at the bottom of the sidebar and confirm the quota details
 open. Shorten the window: the quota section compacts to provider summaries, then a details
 pointer, then hides before the attention line,
-and the tree keeps three lines under the OPERATOR heading. Keep screenshots and
-accessibility text for each outcome.
+and the tree keeps three lines under the one Operator navigation row. Keep
+screenshots and accessibility text for each outcome.
+
+### Operator
+
+The Operator is one durable conversation run by the installed pi agent. From
+Browse press `o`, click the single **Operator** row above Projects, or click the
+title-bar Operator control. Confirm there is exactly one sidebar row with no
+conversation count, collapse arrow, plus button, child row or close control, and
+that `Ctrl-n` does nothing. The header reads `Operator · pi` before any model has
+been selected and `Operator · pi · provider/id` afterwards; never an invented
+`unknown/unknown`. The composer is focused, and `Ctrl-l` reveals the ordinary
+Projects sidebar rather than a conversation list.
+
+Start the GUI provider helper against the launcher's fixture root and wait for
+`OPERATOR_PI_GUI_READY` before sending:
+
+```sh
+OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e operator_pi_gui_provider -- --ignored --nocapture
+```
+
+The helper prints the fixture workspace and marker path when it starts. It does
+not interpret arbitrary requests: each turn must contain one of its exact markers,
+otherwise it answers only `FIXTURE_FOLLOWUP_DONE`. Send this sequence:
+
+1. `REQUEST_ONE_REAL_TOOLS` — real `write`, `read` and `edit` operations on
+   `gui-fixture-marker.txt` in the fixture workspace (it ends `OFFLINE_MARKER_v2`),
+   then a Bash `printf BASH_ && "$OVRCR_EXECUTABLE" --json project list`, then
+   `TURN_ONE_DONE`. Confirm the streamed text and the expandable file and Bash
+   receipts.
+2. `REQUEST_TWO_RESUME` — `TURN_TWO_DONE`; the same singleton continues with turn
+   one's messages still in the journal. The helper writes
+   `operator-pi/fixture-requests.jsonl` only when it exits, so that file is
+   post-exit evidence that turn one's messages were provider context; the live
+   evidence is the continuing conversation itself.
+3. `REQUEST_THREE_HELD` — streams `HELD_BEFORE_RELEASE` and then holds. This is
+   the held stream; the tool sequence above is a separate request.
+4. While it is held, open `Ctrl-o` from another pane. The Quick overlay names
+   `Operator · pi` and the captured target and edits the same draft as the full
+   view. Send must preserve that draft with the busy or stop-unconfirmed reason
+   instead of queuing, steering or creating another conversation. A Quick draft
+   dismissed with Esc before the conversation exists leaves no conversation; once
+   it exists, Esc only hides the overlay and the shared draft stays. Leave
+   Operator, select another session, and reopen Quick to confirm the overlay and
+   the full composer both name the newly selected target.
+5. Release the held stream by creating the marker under the fixture root, for
+   example `touch "$OVRCR_OPERATOR_GUI_HOME/operator-pi/fixture-release"`, and
+   confirm the third turn completes with `HELD_BEFORE_RELEASE`.
+6. `REQUEST_FOUR_BACKGROUND` — a Bash command with a background child, held for
+   the Stop check below.
+
+Confirm the sidebar row's activity clause tracks Sending, Responding, Waiting for
+`<tool>` result and Stop unconfirmed, and that the row is the only place the
+conversation appears.
+
+While `REQUEST_FOUR_BACKGROUND` runs, press `Ctrl-x` (or `Ctrl-c` in the empty
+full composer). The activity row says Stopping, the partial text and receipt stay
+in the journal, and once the Server's retained `worker_stopped` proof arrives the
+turn reads `interrupted` with no Stop control instead of `interrupted · stop
+unconfirmed`. `operator-pi/fixture-stop` is not emitted when Operator stops: it is
+an input that exits the provider helper's serving loop, so creating it mid-run
+kills the provider needed for later turns. Reserve it for fixture cleanup and read
+controlled-stop proof from the retained `worker_stopped` status. Then send
+`REQUEST_FIVE_AFTER_INTERRUPT` — `TURN_FIVE_DONE`; the fifth turn's model context
+contains the last completed checkpoint, not the interrupted request or its tool
+output. Return to the terminal panes with `Ctrl-g`, run a normal shell command and
+confirm independent output, then reopen with `o` and confirm history and the draft
+remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
+confirm the same conversation is attached (startup `Current` creates nothing).
+Keep fresh screenshots and AX text for every changed state.
 
 ### Pane header
 

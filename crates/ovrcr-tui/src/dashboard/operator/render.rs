@@ -6,7 +6,7 @@ use crate::dashboard::render::{
 use ovrcr_protocol::AgentActivity;
 
 fn activity(chat: &Chat) -> AgentActivity {
-    if chat.closing || chat.stopping {
+    if chat.stopping {
         return AgentActivity::Busy;
     }
     match chat.summary.current_turn.as_ref().map(|turn| turn.state) {
@@ -62,9 +62,11 @@ impl Dashboard {
             return;
         }
         let caption = format!(
-            "{} / {} · {}",
-            quick.provider.label(),
-            display_text(&quick.model),
+            "{} · {}",
+            self.operator
+                .chat
+                .as_ref()
+                .map_or_else(|| "Operator · pi".into(), identity),
             context_label(&quick.context)
         );
         frame.render_widget(
@@ -130,88 +132,24 @@ impl Dashboard {
         }
         let hint = match quick.phase {
             QuickPhase::Editing => "Enter Send  Shift-Enter Newline  Ctrl-c Clear  Esc Dismiss",
-            QuickPhase::Creating => "Creating conversation… · Esc Dismiss",
-            QuickPhase::Submitting => "Sending first message… · Esc Dismiss",
+            QuickPhase::Opening => "Opening Operator… · Esc Dismiss",
+            QuickPhase::Submitting => "Sending message… · Esc Dismiss",
         };
         frame.render_widget(
             Paragraph::new(hint).style(Style::default().fg(MAUVE())),
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
         );
     }
-    pub(in crate::dashboard) fn operator_ids(&self) -> Vec<Id> {
-        self.operator
-            .chats
-            .iter()
-            .filter_map(|(id, chat)| (!chat.summary.archived).then_some(Id(*id)))
-            .collect()
-    }
-    pub(in crate::dashboard) fn open_operator_conversation(&mut self, id: Id) -> DashboardAction {
-        if !self.operator_ids().contains(&id) {
-            return DashboardAction::None;
-        }
-        if !self.operator.visible {
-            self.retarget(crate::dashboard::state::PaneChange::Focus);
-        }
-        self.operator.visible = true;
-        self.mode = InputMode::Browse;
-        self.operator_select(id);
-        DashboardAction::Redraw
-    }
-    pub(super) fn operator_reconcile_tree(&mut self, previous: Rect) {
-        if previous != self.sidebar_rects(self.outer_area).tree {
-            self.ensure_selection_visible(&self.visible_rows());
-        }
-    }
-    pub(super) fn operator_set_collapsed(&mut self, collapsed: bool) {
-        let previous = self.sidebar_rects(self.outer_area).tree;
-        self.operator.collapsed = collapsed;
-        self.operator_reconcile_tree(previous);
-    }
-    pub(in crate::dashboard) fn operator_ensure_visible(&mut self) {
-        let height = usize::from(
-            self.sidebar_rects(self.outer_area)
-                .operator
-                .height
-                .saturating_sub(1),
-        );
-        let ids = self.operator_ids();
-        let max = ids.len().saturating_sub(height);
-        self.operator.list_offset = self.operator.list_offset.min(max);
-        if let Some(index) = ids
-            .iter()
-            .position(|id| Some(*id) == self.operator.selected)
-        {
-            if index < self.operator.list_offset {
-                self.operator.list_offset = index;
-            }
-            if height > 0 && index >= self.operator.list_offset + height {
-                self.operator.list_offset = index + 1 - height;
-            }
-        }
-    }
     pub(in crate::dashboard) fn operator_sidebar_busy(&self) -> bool {
-        if self.sidebar_preference() == Some(0) || self.operator.collapsed {
-            return false;
-        }
-        let height = self
-            .sidebar_rects(self.outer_area)
-            .operator
-            .height
-            .saturating_sub(1) as usize;
-        self.operator_ids()
-            .into_iter()
-            .skip(self.operator.list_offset)
-            .take(height)
-            .any(|id| activity(&self.operator.chats[&id.0]) == AgentActivity::Busy)
+        self.sidebar_preference() != Some(0)
+            && self
+                .operator
+                .chat
+                .as_ref()
+                .is_some_and(|chat| activity(chat) == AgentActivity::Busy)
     }
-    fn operator_row_close(&self, id: Id, width: u16) -> bool {
-        width >= 3
-            && (self.operator.hovered == Some(id)
-                || self.operator.visible
-                    && self.operator.new.is_none()
-                    && self.operator.list_focus
-                    && self.operator.selected == Some(id))
-    }
+    /// One fixed navigation row above Projects: activity and Unread only. It
+    /// has no count, collapse arrow, plus button, child row or close target.
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
         if self.sidebar_preference() == Some(0) {
             return;
@@ -221,70 +159,57 @@ impl Dashboard {
             return;
         }
         let width = usize::from(area.width);
-        let suffix = if self.operator.collapsed {
-            format!(" ▸ {} [+]", self.operator_ids().len())
-        } else {
-            " [+]".into()
+        let selected = self.operator.visible;
+        let (glyph, color, clause) = match &self.operator.chat {
+            Some(chat) => {
+                let (glyph, color) = crate::dashboard::status::sidebar_activity_glyph(
+                    activity(chat),
+                    chat.unread.is_some(),
+                    now,
+                );
+                let clause = if chat.unread.is_some() {
+                    "1 unread".to_string()
+                } else if let Some(activity) = conversation_activity(chat) {
+                    activity.label
+                } else {
+                    status(chat).to_string()
+                };
+                (glyph, color, clause)
+            }
+            None => (
+                ' ',
+                super::super::render::MUTED(),
+                if self.operator.loading {
+                    "opening".to_string()
+                } else {
+                    "not opened".to_string()
+                },
+            ),
         };
-        let heading = compose_row(
+        let clause = clip_text(&clause, width.saturating_sub(4));
+        let title = clip_text("Operator", width.saturating_sub(4 + clause.width() + 1));
+        let line = compose_row(
+            vec![
+                Span::raw(" "),
+                Span::styled(format!("{glyph} "), Style::default().fg(color)),
+                Span::raw(title),
+            ],
+            Span::raw(" "),
             vec![Span::styled(
-                clip_text(" OPERATOR ", width.saturating_sub(suffix.len())),
-                Style::default().fg(BLUE()).add_modifier(Modifier::BOLD),
+                clause,
+                Style::default().fg(super::super::render::SUBTEXT()),
             )],
-            Span::styled("─", Style::default().fg(SURFACE2())),
-            vec![Span::styled(suffix, Style::default().fg(MAUVE()))],
             width,
-            false,
+            selected,
         );
         frame.render_widget(
-            Paragraph::new(heading),
-            Rect::new(area.x, area.y, area.width, 1),
+            Paragraph::new(line).style(Style::default().fg(TEXT()).bg(if selected {
+                SURFACE0()
+            } else {
+                BASE()
+            })),
+            area,
         );
-        for (row, id) in self
-            .operator_ids()
-            .into_iter()
-            .skip(self.operator.list_offset)
-            .take(area.height.saturating_sub(1) as usize)
-            .enumerate()
-        {
-            let chat = &self.operator.chats[&id.0];
-            let selected = self.operator.visible
-                && self.operator.new.is_none()
-                && self.operator.selected == Some(id);
-            let close = self.operator_row_close(id, area.width);
-            let (glyph, color) = crate::dashboard::status::sidebar_activity_glyph(
-                activity(chat),
-                chat.unread.is_some(),
-                now,
-            );
-            let title = clip_text(
-                &display_text(&chat.summary.title),
-                width.saturating_sub(4 + if close { 3 } else { 0 }),
-            );
-            let line = compose_row(
-                vec![
-                    Span::raw(" "),
-                    Span::styled(format!("{glyph} "), Style::default().fg(color)),
-                    Span::raw(title),
-                ],
-                Span::raw(" "),
-                if close {
-                    vec![Span::styled("[x]", Style::default().fg(MAUVE()))]
-                } else {
-                    vec![]
-                },
-                width,
-                selected,
-            );
-            frame.render_widget(
-                Paragraph::new(line).style(Style::default().fg(TEXT()).bg(if selected {
-                    SURFACE0()
-                } else {
-                    BASE()
-                })),
-                Rect::new(area.x, area.y + 1 + row as u16, area.width, 1),
-            );
-        }
     }
     pub(super) fn operator_sidebar_mouse(
         &mut self,
@@ -295,66 +220,14 @@ impl Dashboard {
             return None;
         }
         let rect = self.sidebar_rects(area).operator;
+        if rect.is_empty() || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return None;
+        }
         let point = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let inside = rect.contains(point);
-        let ids = self.operator_ids();
-        let id = inside
-            .then(|| usize::from(mouse.row.saturating_sub(rect.y + 1)) + self.operator.list_offset)
-            .filter(|_| mouse.row > rect.y)
-            .and_then(|index| ids.get(index).copied());
-        if mouse.kind == MouseEventKind::Moved {
-            let changed = self.operator.hovered != id;
-            self.operator.hovered = id;
-            if changed || inside {
-                return Some(if changed {
-                    DashboardAction::Redraw
-                } else {
-                    DashboardAction::None
-                });
-            }
+        if !rect.contains(point) {
             return None;
         }
-        if !inside {
-            return None;
-        }
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && mouse.row == rect.y
-            && rect.width >= 3
-            && mouse.column >= rect.right() - 3
-        {
-            return Some(self.open_operator_quick_message());
-        }
-        let close_visible = id.is_some_and(|id| self.operator_row_close(id, rect.width));
-        if self.operator.visible {
-            self.operator.list_focus = true;
-        }
-        self.mouse.hovered = None;
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) if mouse.row == rect.y => {
-                self.operator_set_collapsed(!self.operator.collapsed);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(id) = id {
-                    if close_visible && mouse.column >= rect.right().saturating_sub(3) {
-                        return Some(self.open_close_operator_for(id));
-                    }
-                    self.open_operator_conversation(id);
-                    self.operator.list_focus = area.width >= 100;
-                    self.operator.sidebar_open = self.operator.list_focus;
-                }
-            }
-            MouseEventKind::ScrollUp if rect.height > 1 => {
-                self.operator.list_offset = self.operator.list_offset.saturating_sub(1)
-            }
-            MouseEventKind::ScrollDown if rect.height > 1 => {
-                self.operator.list_offset = (self.operator.list_offset + 1).min(
-                    ids.len()
-                        .saturating_sub(rect.height.saturating_sub(1) as usize),
-                )
-            }
-            _ => {}
-        }
-        Some(DashboardAction::Redraw)
+        Some(self.open_operator())
     }
 }
 
@@ -405,6 +278,14 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
     let mut index = 0;
     while index < chat.messages.len() {
         let message = &chat.messages[index];
+        // The selected model is retained metadata; it never becomes a journal row.
+        if matches!(
+            message.content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_))
+        ) {
+            index += 1;
+            continue;
+        }
         let first_line = lines.len();
         let mut ordinal = message.ordinal;
         let expanded = chat.expanded.contains(&ordinal);
@@ -443,14 +324,20 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     );
                 }
                 if expanded {
+                    // The captured target is per-message; the agent working
+                    // directory is fixed for the conversation's lifetime.
                     let detail = format!(
-                        "  project: {}\n  workspace: {}\n  workspace id: {}\n  cwd: {}\n  session: {} · run: {}",
+                        "  project: {}\n  workspace: {}\n  workspace id: {}\n  captured cwd: {}\n  agent workdir: {}\n  session: {} · run: {}",
                         context.project.as_deref().unwrap_or("global"),
                         context.workspace.as_deref().unwrap_or("none"),
                         context.workspace_id.as_deref().unwrap_or("none"),
                         context.cwd.as_ref().map_or_else(
-                            || "operator workdir".into(),
+                            || "none".into(),
                             |cwd| cwd.to_string_lossy().into_owned()
+                        ),
+                        chat.workdir.as_ref().map_or_else(
+                            || "fixed operator workdir".into(),
+                            |workdir| workdir.to_string_lossy().into_owned()
                         ),
                         context
                             .session
@@ -576,7 +463,8 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     );
                 }
             }
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed(_)) => {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_)) => {}
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed) => {
                 push_lines(
                     &mut lines,
                     ordinal,
@@ -791,8 +679,8 @@ impl Dashboard {
         let body = content_area(self, area);
         let draft = self
             .operator
-            .selected
-            .and_then(|id| self.operator.chats.get(&id.0))
+            .chat
+            .as_ref()
             .map_or("", |chat| chat.draft.as_str());
         // Reserve the cursor cell too, so an exactly full final row remains editable.
         let draft_rows = wrapped_lines(
@@ -862,32 +750,7 @@ impl Dashboard {
             .header
             .width
             .saturating_sub(if stop { 13 } else { 0 });
-        let width = usize::from(title_width);
-        let provider = chat.summary.provider.label();
-        let state = status(chat);
-        let sidebar = self.sidebar_rects(frame.area()).operator;
-        let selected_visible = self.sidebar_preference() != Some(0)
-            && !sidebar.is_empty()
-            && self
-                .operator_ids()
-                .into_iter()
-                .skip(self.operator.list_offset)
-                .take(sidebar.height.saturating_sub(1) as usize)
-                .any(|id| id == chat.summary.id);
-        let identity = if selected_visible {
-            "Operator".into()
-        } else {
-            display_text(&chat.summary.title)
-        };
-        let identity = clip_text(
-            &identity,
-            width.saturating_sub(provider.width() + state.width() + 9),
-        );
-        let model = clip_text(
-            &display_text(&chat.summary.model),
-            width.saturating_sub(identity.width() + provider.width() + state.width() + 9),
-        );
-        let title = format!("{identity} · {provider} / {model} · {state}");
+        let title = format!("{} · {}", identity(chat), status(chat));
         frame.render_widget(
             Paragraph::new(clip_text(&title, title_width as usize))
                 .style(Style::default().fg(super::super::render::SUBTEXT())),
@@ -938,8 +801,7 @@ impl Dashboard {
                 area,
             );
         }
-        let focused =
-            self.operator.editing && !self.operator.list_focus && !self.operator.transcript_focus;
+        let focused = self.operator.editing && !self.operator.transcript_focus;
         frame.render_widget(
             Paragraph::new(if focused { ">" } else { "·" }).style(Style::default().fg(MAUVE())),
             Rect::new(layout.composer.x.saturating_sub(2), layout.composer.y, 1, 1),

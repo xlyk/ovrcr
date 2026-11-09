@@ -1,0 +1,40 @@
+󰚩 OVRCR Operator [o]            [Ctrl-o]                                                                                   [Commands] [Menu]
+▌  Operator                       ready│Operator · pi · openai/gpt-6.1-sol · ready
+                                       │❯ You
+                                       │  ▸ Context · global
+                                       │  Review this workspace.
+                                       │
+                                       ││ Operator
+                                       ││ I will inspect its sessions.
+                                       ││ ▸ succeeded · (no output) · Output
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │ Managing global
+Codex · usage off                      │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

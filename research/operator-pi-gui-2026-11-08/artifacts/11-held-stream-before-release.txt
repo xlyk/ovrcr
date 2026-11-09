@@ -1,0 +1,75 @@
+OVRCR GUI
+* OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+Responding
+Operator • pi • fixture/operator-fixture • running
+[stop Ctrl-x]
+CONSIGINT
+P main
+root
+• Context • consigint / main / #1 run 1
+$ Local
+REQUEST_ONE_REAL_TOOLS
+} gui-consigint-auth-handoff
+$ Local
+• write
+- review auth
+handoff
+grok:4.6
+write [call-writel
+f gui-consigint-worktree-lifecycle
+{"content":"OFFLINE_MARKER_v1\n"
+,"path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-dB0LsN/operato
+$ Local
+r-target/gui-fixture-marker.txt"}
+- implement lifecycle cleanup
+• succeeded • Output
+- review websocket shutdown
+• read
+- plan snapshot restore
+pi
+succeeded • Output
+edit
+SPACELIFT-AGENT
+• succeeded • Output
+} main
+root
+• bash
+$ local
+• succeeded • Output
+} gui-spacelift-agent-pipeline-progr…
+TURNLONE_DONE
+$ Local
+- build pipeline progress claude
+) You
+} gui-spacelift-agent-scope-quality
+REQUEST_TWO_RESUME
+$ local
+- review
+scope quality
+codex
+Operator
+TURN_TWO_DONE
+) You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+* Responding
+QUOTA LEFT
+Claude
+•checking
+Managing consigint / main / #1 run 1
+Codex • unavailable • retry
+9m
+Grok
+wk -
+45%
+> I
+Cursor
+usage off
+OPERATOR
+Shift-Enter Newline Ctrl-g Browse
+Ctrl-x Stop selected turn Ctrl hold Jump to visible Agent

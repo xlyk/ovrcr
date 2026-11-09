@@ -14,7 +14,7 @@ One Reporter (`src/report/reporter.rs`) owns every managed invocation's reportin
 - Runtime and TUI depend on protocol/terminal primitives, not on each other. Keep root facades thin; put implementations in the owning crate.
 - Keep modules focused and exports small. Reuse existing helpers and dependencies before adding abstractions or libraries. Do not introduce Tokio, an agent SDK, or a new crate without a concrete requirement in the approved design. SQLite is already approved for project and workspace metadata (#112 / #113).
 - The locked `vt100 0.16.2` source is locally patched in `vendor/vt100` so `CSI 3 J` clears saved lines in place without resetting terminal state. Keep its upstream manifest, provenance and MIT license; do not publish this local patch. Recheck session parser regressions before updating it.
-- The approved built-in Operator uses Rig and Tokio only in root application workers; the Server remains synchronous. See the [Operator runtime reference](operator.md) and [approved design](../superpowers/specs/2026-10-29-rig-operator-design.md).
+- The built-in Operator drives the installed pi coding agent through its RPC protocol in a root application worker. The Server stays synchronous and owns the worker's lifetime and controlled-stop proof; pi owns authentication, model catalog, tools, inference and context management. See the [Operator runtime reference](operator.md).
 - Update constructors, exhaustive matches, public re-exports, CLI output, and optional-feature callers together when shared types change. Which providers may produce Ready, Unread, review targets and alerts is decided once by `AgentProvider::supports_readiness`; never compare a provider literal at a consumer.
 
 Root `src/` and control-role tests speak to the server through `ovrcr_protocol::client` for request/response round trips; dashboard-role code that consumes events reads frames directly. Do not hand-roll `ClientMessage` frames for a plain request.
@@ -130,25 +130,28 @@ later Send/run receipt boundary. See [Cursor cloud](../cursor-cloud.md).
 
 Cursor cloud profiles are typed `Settings.cursor_cloud_accounts` values in the
 same settings document. Ordinary Agent creation generates `cursor-cloud:ACCOUNT`
-choices with explicit managed argv, independent of PATH discovery. Protocol 70 combines Operator close/archive/run fields with opaque original-attachment Cursor cursors and locally ordered progress revisions; protocol 65 appended original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
-appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Readiness uses exact verified run observations; titles and active conversation
+choices with explicit managed argv, independent of PATH discovery. Protocol 70 appended opaque original-attachment Cursor cursors and locally ordered progress revisions; protocol 65 appended original-attachment observation progress; protocol 64 adds exact recovery/reconciliation and explicit recovery cancellation; protocol 63 adds explicit cancellation commands; protocol 62 includes immutable Send commands; protocol 60
+appends `AgentProvider::CursorCloud`; local Cursor remains `Cursor`. Protocol 76
+replaces the Operator's Create/List/Close requests with `Current`/`Open`, makes the
+conversation a per-instance singleton and reports an optional pi model instead of a
+provider enum. Readiness uses exact verified run observations; titles and active conversation
 recovery remain unavailable. See
 [Cursor cloud](../cursor-cloud.md) and [published source](../adr/0011-cursor-cloud-published-source.md).
 
 Schema version 27 preserves the schema-26 Operator addition of explicit `SessionScope::Workspace` or
 `OperatorConversation` metadata. Existing rows remain Workspace sessions. Global
 Operator sessions stay in inventory and never synthesize registered projects or
-workspaces. The same SessionStore connection owns dedicated Operator conversation,
-turn, message, completed model-history and batch-receipt tables. History-only rows
-are stopped and allocate no process. Journal submission atomically records the
-user message/captured stable context and advances retained run intent; the caller
-still owns live-slot admission and process publication. Ordered worker batches
-commit before acknowledgment, deduplicate exact retries, and reject stale runs,
-sequence gaps and conflicting replays. Restart interrupts unfinished turns without
-claiming process exit or replaying commands. Raw chat lives only in these journal
-tables, never in content-free Events. Completed SDK history is versioned JSON and
-is loaded separately from byte-bounded visible history pages; shared crates have
-no Rig SDK dependency.
+workspaces. The same SessionStore connection owns the singleton Operator
+conversation, its turns, messages and batch receipts. History-only rows are
+stopped and allocate no process. Journal submission atomically records the user
+message/captured stable context and advances retained run intent; the caller still
+owns live-slot admission and process publication. Ordered worker batches commit
+before acknowledgment, deduplicate exact retries, and reject stale runs, sequence
+gaps and conflicting replays. Restart interrupts unfinished turns without claiming
+process exit or replaying commands. Raw chat lives only in these journal tables,
+never in content-free Events. There is no SDK model-history write path; the
+versioned history table remains only as preserved legacy bytes, and no shared
+crate depends on an agent SDK.
 
 Schema version 28 removes the retained-session name uniqueness constraint while
 preserving IDs, deleted-ID allocation history, recovery references, subjects and
@@ -158,6 +161,19 @@ session IDs remain the authority. Migration rebuilds the table with foreign-key
 cascades disabled inside the migration connection, verifies the references before
 commit, then restores foreign-key enforcement before returning that connection.
 
+Schema version 29 makes the Operator a singleton: `operator_conversations.singleton`
+with a unique partial index for the one row, `pi_checkpoint_turn` naming the last
+completed turn whose native pi session is the next turn's context base, and
+`operator_turns.model_override` snapshotting `operator.model` when Submit is
+accepted. `Current` reads without creating a record or process; `Open` atomically
+gets or creates the sole row and never starts pi. Legacy Operator rows, journals,
+model-history bytes and credentials are preserved on disk but hidden from the
+Dashboard and Archived palette, and Operator archive/unarchive/delete/close
+routes are refused for that scope. Exact-run `acknowledge-stopped` still works for
+legacy recovery.
+
 Operator defaults are typed `Settings.operator` values in the same settings
-catalog, loader, editor and snapshots. Provider defaults to `chat_gpt`; provider
-model choices are optional until selected. Settings never contain credentials.
+catalog, loader, editor and snapshots. It holds one optional `model` string
+(`provider/model`); unset uses the dedicated pi profile's current default before
+each turn, and an explicit value is captured per accepted Submit. Settings never
+contain credentials.

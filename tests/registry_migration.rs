@@ -1,7 +1,10 @@
 #[path = "support/live.rs"]
 mod live;
+#[path = "support/operator_harness.rs"]
+mod operator_harness;
 
 use live::{Live, wait_deadline};
+use ovrcr::protocol::{Request, Response};
 use rusqlite::{Connection, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
@@ -421,4 +424,298 @@ fn custom_home_keeps_task_and_settings_namespaces() {
     let other_tasks: serde_json::Value = serde_json::from_slice(&other_tasks.stdout).unwrap();
     assert_eq!(other_tasks, serde_json::json!([]));
     assert!(!live.root.path().join("beta.sock").exists());
+}
+
+/// The schema-28 Operator shape, applied to the fixture's own registry.
+fn downgrade_operator_to_schema_28(connection: &Connection) {
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .unwrap();
+    connection
+        .execute_batch(
+            "DROP INDEX IF EXISTS operator_single_conversation;
+             DROP INDEX IF EXISTS operator_one_running_turn;
+             CREATE TABLE operator_conversations_28 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
+                session INTEGER NOT NULL UNIQUE REFERENCES retained_sessions(id) ON DELETE RESTRICT,
+                provider TEXT NOT NULL, model TEXT NOT NULL, title TEXT NOT NULL);
+             INSERT INTO operator_conversations_28(id,session,provider,model,title)
+                SELECT id,session,provider,model,title FROM operator_conversations;
+             DROP TABLE operator_conversations;
+             ALTER TABLE operator_conversations_28 RENAME TO operator_conversations;
+             CREATE TABLE operator_turns_28 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
+                conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
+                run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL,
+                sequence INTEGER NOT NULL DEFAULT 0, UNIQUE(conversation,run));
+             INSERT INTO operator_turns_28(id,conversation,run,state,sequence)
+                SELECT id,conversation,run,state,sequence FROM operator_turns;
+             DROP TABLE operator_turns;
+             ALTER TABLE operator_turns_28 RENAME TO operator_turns;
+             PRAGMA user_version = 28;",
+        )
+        .unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+}
+
+#[test]
+fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() {
+    let live = Live::idle().bounded();
+    live.start_binary();
+    let opened = {
+        let mut client = operator_harness::OperatorClient::connect(&live);
+        client.open()
+    };
+    let shutdown = run(&live, &["shutdown", "--kill"]);
+    assert!(
+        shutdown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shutdown.stderr)
+    );
+    live.join();
+
+    let database = database(&live);
+    let connection = Connection::open(&database).unwrap();
+    let first_conversation: i64 = connection
+        .query_row("SELECT id FROM operator_conversations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let first_session: i64 = connection
+        .query_row(
+            "SELECT session FROM operator_conversations WHERE id=?1",
+            [first_conversation],
+            |row| row.get(0),
+        )
+        .unwrap();
+    // A legacy chat keeps its pre-singleton provider/model dialect bytes.
+    connection
+        .execute(
+            "UPDATE operator_conversations SET provider='Grok',model='legacy-model-9',title='Legacy Chat One',singleton=0 WHERE id=?1",
+            [first_conversation],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE retained_sessions SET disposition=1, stopped=1 WHERE id=?1",
+            [first_session],
+        )
+        .unwrap();
+    // A second legacy conversation with its own retained session.
+    let second_session = {
+        connection
+            .execute(
+                "INSERT INTO retained_sessions (run,project,workspace,name,label,cwd,kind,title_revision,stopped,disposition,scope)
+                 SELECT 0,project,workspace,'operator-legacy-two','Legacy Two',cwd,kind,0,1,0,?1 FROM retained_sessions WHERE id=?2",
+                rusqlite::params![
+                    format!("{{\"OperatorConversation\":{{\"conversation\":{}}}}}", first_conversation + 1),
+                    first_session
+                ],
+            )
+            .unwrap();
+        connection.last_insert_rowid()
+    };
+    connection
+        .execute(
+            "INSERT INTO operator_conversations(id,session,provider,model,title,singleton)
+             VALUES(?1,?2,'ChatGpt','legacy-two-model','Legacy Chat Two',0)",
+            rusqlite::params![first_conversation + 1, second_session],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO operator_turns(conversation,run,state,sequence) VALUES(?1,1,'Complete',3)",
+            [first_conversation],
+        )
+        .unwrap();
+    let first_turn = connection.last_insert_rowid();
+    connection
+        .execute(
+            "INSERT INTO operator_turns(conversation,run,state,sequence) VALUES(?1,1,'Error',1)",
+            [first_conversation + 1],
+        )
+        .unwrap();
+    let second_turn = connection.last_insert_rowid();
+    let legacy_payloads = [
+        (first_conversation, first_turn, "{\"User\":{\"text\":\"legacy one\",\"context\":{\"project\":null,\"workspace\":null,\"workspace_id\":null,\"cwd\":null,\"session\":null,\"run\":null}}}".to_string()),
+        (first_conversation, first_turn, "{\"Worker\":{\"AssistantDelta\":\"legacy answer one\"}}".to_string()),
+        (first_conversation + 1, second_turn, "{\"Worker\":{\"Failed\":\"legacy provider failure\"}}".to_string()),
+    ];
+    for (conversation, turn, content) in &legacy_payloads {
+        connection
+            .execute(
+                "INSERT INTO operator_messages(conversation,turn,content) VALUES(?1,?2,?3)",
+                rusqlite::params![conversation, turn, content],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO operator_batches(turn,sequence,digest) VALUES(?1,1,'legacy-digest')",
+            [first_turn],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO operator_model_history(conversation,turn,history) VALUES(?1,?2,'{\"legacy\":true}')",
+            rusqlite::params![first_conversation, first_turn],
+        )
+        .unwrap();
+    let before: Vec<String> = connection
+        .prepare("SELECT content FROM operator_messages ORDER BY ordinal")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(before.len(), legacy_payloads.len());
+    downgrade_operator_to_schema_28(&connection);
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        28
+    );
+    drop(connection);
+
+    // The application upgrade is the migration path under test.
+    live.start_binary();
+    // The published socket can precede the first registry open; wait for the
+    // application's own upgrade to become visible.
+    assert!(matches!(
+        live.request(Request::List),
+        Response::Hierarchy(_)
+    ));
+    let connection = Connection::open(&database).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut version: i64 = 0;
+    while version != 29 && std::time::Instant::now() < deadline {
+        version = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(version, 29, "the application upgrades schema 28 to 29");
+    let columns: Vec<String> = connection
+        .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert!(columns.contains(&"singleton".to_string()));
+    assert!(columns.contains(&"pi_checkpoint_turn".to_string()));
+    let turn_columns: Vec<String> = connection
+        .prepare("SELECT name FROM pragma_table_info('operator_turns')")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert!(turn_columns.contains(&"model_override".to_string()));
+
+    let after: Vec<String> = connection
+        .prepare("SELECT content FROM operator_messages ORDER BY ordinal")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(after, before, "legacy journal bytes are preserved verbatim");
+    let legacy: Vec<(String, String, String)> = connection
+        .prepare("SELECT provider,model,title FROM operator_conversations ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        legacy,
+        vec![
+            (
+                "Grok".into(),
+                "legacy-model-9".into(),
+                "Legacy Chat One".into()
+            ),
+            (
+                "ChatGpt".into(),
+                "legacy-two-model".into(),
+                "Legacy Chat Two".into()
+            ),
+        ],
+        "legacy provider dialect bytes are never decoded or rewritten"
+    );
+    let model_history: String = connection
+        .query_row("SELECT history FROM operator_model_history", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(model_history, "{\"legacy\":true}");
+    let singleton_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM operator_conversations WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(singleton_count, 0, "migration creates no conversation");
+    let violations: Vec<String> = connection
+        .prepare("SELECT \"table\" FROM pragma_foreign_key_check")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert!(
+        violations.is_empty(),
+        "foreign keys stay valid: {violations:?}"
+    );
+    drop(connection);
+
+    // Current and reconnect start nothing and create nothing.
+    let mut client = operator_harness::OperatorClient::connect(&live);
+    assert!(
+        client.current().is_none(),
+        "no singleton exists before Open"
+    );
+    drop(client);
+    let mut client = operator_harness::OperatorClient::connect(&live);
+    assert!(client.current().is_none());
+    let fresh = client.open();
+    assert_ne!(fresh.id.0, opened.id.0);
+    assert_eq!(fresh.title, "Operator");
+    let registry = operator_harness::Registry::of(&live);
+    let ids = registry.conversation_ids();
+    assert_eq!(
+        ids.len(),
+        3,
+        "two legacy rows plus the fresh singleton: {ids:?}"
+    );
+    assert!(ids.contains(&opened.id.0));
+    assert_eq!(
+        client.session(fresh.session).pid,
+        None,
+        "Open starts no worker"
+    );
+    assert!(matches!(
+        client.exchange(Request::Operator(ovrcr::protocol::OperatorRequest::Read {
+            conversation: opened.id,
+            after: 0,
+            limit: 100,
+        })),
+        Response::Error { .. }
+    ));
+    assert!(matches!(
+        live.request(Request::UnarchiveSession {
+            session: opened.session,
+            expected_run: ovrcr::protocol::SessionRunId(0),
+        }),
+        Response::Error { .. }
+    ));
+
+    let shutdown = run(&live, &["shutdown", "--kill"]);
+    assert!(shutdown.status.success());
+    live.join();
 }

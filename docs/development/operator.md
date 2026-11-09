@@ -2,164 +2,226 @@
 
 User setup and controls are in [Use the built-in operator](../operator.md).
 
-## Worker and Bash behavior
+The Operator is one durable conversation per OVRCR instance, driven by the
+installed [pi](https://github.com/earendil-works/pi) coding agent 0.87.1 through
+its RPC protocol. There is no embedded model client, no Rig agent and no custom
+OAuth: pi owns authentication, model catalog, the agent loop, tool definitions,
+inference and context management. The Server stays synchronous; a managed
+same-executable worker owns each turn's pi process.
 
-Each submitted turn runs a separate managed worker, with at most twenty model
-calls and one Bash tool at a time. The Server saves streaming text and tool
-boundaries before acknowledging them. Completed model context is retained for
-the next turn; interrupted commands are never replayed. Stop affects the selected
-turn only. OVRCR operations that were already accepted may finish afterward.
+## Package layout
 
-The Bash tool accepts `command`, optional absolute `cwd`, and optional
-`timeout_seconds` (120 by default, at most 600). It runs
-`bash --noprofile --norc -c`, retains at most 64 KiB of combined stdout/stderr,
-and records exit status and truncation. It defaults to the captured workspace
-or the instance's `operator-workdir`. `$OVRCR_EXECUTABLE` names the matching
-absolute CLI; public instance socket/configuration variables are preserved.
-Provider and private reporting credentials are removed from the Bash environment;
-unrelated user tool credentials remain available. Startup-file environment hooks
-are disabled.
+- `src/operator/pi.rs` — executable resolution, the dedicated profile, launch
+  command construction, extension materialization and bounded model listing.
+- `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
+  worker and `ovrcr operator models`.
+- `src/operator/worker.rs` — one turn: authenticated Start, attempt directory,
+  fresh native session, checkpoint restore, exact model resolution, one prompt,
+  ordered journal batches, session promotion, Completed and authenticated Retire.
+- `src/pi-operator-extension.mjs` — the only custom code loaded into pi. It
+  publishes the readiness contract, overrides `bash` with an attached execution
+  adapter, and turns pi's tool callbacks into the durable admission handshake.
 
-Timeout first records the observed partial output and timeout status, then asks
-the Server to stop that exact turn and its owned worker/Bash group. The worker
-cannot continue or retry an uncertain command. A completed response or worker
-socket closure alone is not process-stop proof; the Server's confirmed controlled
-stop frees the conversation for another turn.
+`OVRCR_PI_EXECUTABLE`, when set and nonempty, names the pi executable; otherwise
+`pi` is resolved on `PATH`. A missing executable is reported as
+`Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.` and no turn
+proceeds.
 
-## Subscription authentication
+## Dedicated profile
 
-Operator credentials belong to one OVRCR instance. The operator never imports
-personal Codex, Pi or Grok profiles, reads API-key environment variables, or falls
-back to API-key billing. Login is explicit; tests use local HTTP fixtures and
-synthetic credentials. Live account acceptance is recorded separately from
-those fixtures.
+All Operator state lives inside the instance directory (`RegistryPath::resolve`):
 
-ChatGPT uses [Sign in with ChatGPT for open-source clients](https://developers.openai.com/siwc/token-sharing-open-source).
-The browser flow registers OVRCR with `dynamic_agent_client`, a persistent
-instance host ID, fresh state/nonce and PKCE S256. The loopback listener binds
-`127.0.0.1` before the browser opens. The code exchange uses the issued client ID,
-the exact callback URI and `resource=https://api.openai.com/v1`. ID-token signature,
-issuer, audience, expiry and nonce are validated before credentials become active.
-Returning login keeps the selected registration and verified subject separate from
-other named profiles. Identity-only consent is saved but cannot authorize inference.
-The token grant must include `chatgpt.tokens.use.direct`.
+| Path | Mode | Purpose |
+| --- | --- | --- |
+| `<instance>/operator-pi` | 0700 | Pi's `PI_CODING_AGENT_DIR`: native auth, models and settings |
+| `<instance>/operator-pi/turns` | 0700 | One attempt directory per turn id |
+| `<instance>/operator-workdir` | 0700 | Fixed pi process cwd for the whole conversation |
 
-[Account-specific model discovery](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-uses `GET https://api.openai.com/v1/models` with the selected OAuth bearer token.
-Only `visibility:list` choices are displayed, preserving server order and slugs.
-ChatGPT inference must use `POST https://api.openai.com/v1/responses`, `store:false`
-and `stream:true`; successful completion requires `response.completed`. The public
-subscription route can omit Content-Type on successful SSE. Only ChatGPT's exact
-configured Responses POST with `stream:true` supplies the missing SSE header for
-HTTP200; explicit content types, non-200 replies, other routes and Grok are untouched.
-The original stream and completion validation remain intact. The worker
-uses Rig's public OpenAI Responses provider rather than its legacy ChatGPT preset.
-It sends the complete saved SDK history on each HTTP request, including encrypted
-reasoning continuation metadata. A narrow outbound transformation groups Bash
-under the `ovrcr` tool namespace required by the
-[SIWC preview contract](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
-It omits unsupported sampling, output-limit and persistent-conversation fields.
-Grok retains the normal xAI function-tool encoding. Each model turn must have a
-normalized Stop or ToolCalls outcome before tool dispatch or successful
-finalization. Incomplete, filtered and unknown outcomes preserve visible partial
-text as a failed turn and never save completed model history.
+Existing paths that are symlinks, non-directories, owned by another user, or
+group/world-writable are refused rather than replaced. The personal pi profile
+and OVRCR credentials are never copied. Every child runs with umask `077`.
 
-Grok uses the device authorization and refresh flow from
-[Pi at f09d01b85e0384647fcab6779d35ab9dabe04be3](https://github.com/earendil-works/pi/tree/f09d01b85e0384647fcab6779d35ab9dabe04be3/packages/ai/src/auth/oauth).
-It posts to `https://auth.x.ai/oauth2/device/code`, polls
-`https://auth.x.ai/oauth2/token`, handles pending/slow-down/denied/expired/cancelled
-states, and refreshes through the same token endpoint. The OAuth access token is
-passed directly as the bearer credential to Rig's normal xAI Responses provider at
-`https://api.x.ai/v1/responses`. Grok's curated tool-capable choices are
-[Grok 4.7](https://docs.x.ai/developers/models/grok-4.7),
-[Grok 4.3](https://docs.x.ai/developers/models/grok-4.3-latest) and
-[Grok 4.20 Reasoning](https://docs.x.ai/developers/models/grok-4.20).
-This catalog is a supported selection list, not evidence of account entitlement.
-Only an authorized live request can prove access. The Pi MIT notice is retained in
-[third-party notices](../../THIRD_PARTY_NOTICES.md).
+Each attempt is `operator-pi/turns/<turn-id>`, created exclusively with 0700; an
+existing directory is an uncertain prior attempt and refuses the turn instead of
+replaying it. The deterministic native session id is
+`operator-<conversation-id>`, so every attempt resumes the same pi conversation.
 
-Credentials are private `0600` files under the instance's `operator-auth/` directory
-(`0700`). The public CLI and workers use the default registration. Internal named profile
-identifiers are hashed into filenames. The stable host ID
-is shared by these registrations. Symlinked, multiply linked, foreign-owned or
-nonprivate files are refused. Updates write and sync a private temporary file,
-atomically replace the record, and sync the directory. Per-provider/profile file
-locks serialize refresh across processes; the lock is released before returning
-a bearer snapshot for inference. Replacement refresh tokens, scopes and expiry
-are saved together. Omitted replacement tokens retain the previous refresh token.
-Persistence failure returns an error and supplies no new bearer snapshot.
+Environment for every child: `PI_CODING_AGENT_DIR=<instance>/operator-pi`,
+`PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK=1`, `OVRCR_EXECUTABLE` pointing at the
+matching OVRCR binary, cwd `<instance>/operator-workdir`, and the ordinary tool
+environment. Inherited OVRCR reporting, hook and delegation authority,
+`OVRCR_PI_ENTRY`, `OVRCR_CLAUDE_ARTIFACTS`, `BASH_ENV`, `ENV`, `PI_SESSION_*`,
+`PI_CODING_AGENT_SESSION*` and provider credential variables from pi's
+environment-variable table are removed.
 
-Tokens, login URLs with ID-token hints, auth responses and remote error descriptions
-must never enter settings, the conversation journal, diagnostics, terminal commands
-or shell environments. Credential-bearing types have redacted `Debug`; errors
-contain fixed local messages. Provider failures retain only Rig's fixed classification,
-known numeric HTTP status, a fixed response-shape label, exact allowlisted public provider codes
-and known request parameter names. Other remote strings and request IDs remain private.
-Recovery guidance follows [SIWC errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery);
-model discovery alone does not prove inference permission. Failures never automatically
-retry, change billing, clear credentials or create a conversation. Worker code must pass bearer snapshots directly to
-the SDK without serializing or logging them.
+## Launch commands
 
-ChatGPT logout attempts renewable-session revocation and clears local access,
-refresh and ID tokens while retaining the registration and host ID. The return
-value distinguishes confirmed remote revocation from local-only logout; unconfirmed
-revocation should direct the user to ChatGPT Settings. Grok logout clears local
-credentials and does not claim remote revocation.
+Managed turn (`pi.rs::rpc_command`):
 
-## Dependency and runtime boundary
+```text
+pi --mode rpc --no-extensions --no-skills --no-prompt-templates
+   --no-themes --no-context-files --no-approve --offline
+   --tools read,bash,edit,write
+   --session-dir <attempt> --session-id operator-<conversation-id>
+   --append-system-prompt <policy>
+   --extension <operator-pi>/pi-operator-extension.mjs
+```
 
-The root application pins `rig =0.45.0` with only `agent`, `reqwest` and `rustls`.
-Its released MSRV is Rust 1.97.1. Rig types remain in the root application; shared
-protocol/runtime/TUI crates do not depend on Rig. Workers create a Tokio
-current-thread runtime with I/O/time enabled. Auth uses that runtime and does not
-create its own runtime or background owner.
+pi stays in the worker's process group (no `process_group(0)`), so the Server's
+lifetime Session owns pi and its tool children. `ovrcr operator models` runs in
+its own task-owned group with `--mode rpc --no-session --no-tools` and the same
+isolation flags; it always terminates and reaps that group.
 
-## Offline acceptance endpoint
+Interactive setup (`ovrcr operator setup`) execs native pi with `--no-session
+--no-tools --no-extensions --no-skills --no-prompt-templates --no-themes
+--no-context-files --no-approve`, without `--offline` so `/login`, `/model` and
+`/logout` can use the network. It requires a TTY, refuses `--json`, and starts no
+Server.
 
-Only builds with `acceptance-diagnostics` accept `OVRCR_OPERATOR_TEST_API_BASE`.
-The value must be an HTTP URL with a literal loopback IP and no credentials,
-query or fragment. Supplying it to a normal build, or supplying an invalid value,
-fails the turn before inference. There is no credential bypass: fixtures sign in
-through the real AuthManager and use protected synthetic OAuth records. Normal
-builds use the fixed production endpoints above.
+## One turn
 
-## Ownership and wire identity
+1. Authenticated `Reporter::operator_start` from the Server. A refused Start
+   creates no pi resources. The returned `OperatorWorkerStart` carries the identity, the
+   turn's captured `model` override, text, context and `checkpoint_turn`.
+2. Create the exclusive attempt directory, materialize the extension, and launch
+   pi. `get_state` resolves the fresh profile's model and thinking level; the
+   session id must equal `operator-<conversation-id>`; the trusted extension must
+   bind before anything else happens.
+3. If `checkpoint_turn` is set, copy
+   `<instance>/operator-pi/turns/<checkpoint-turn>/session.jsonl` into the
+   attempt as a private 0600 file (regular, non-symlink, owned), validate its
+   session header (type `session`, id, version 1–3, absolute cwd equal to the
+   agent workdir), then `switch_session` pointing at the copy. `switch_session`
+   must report success with `cancelled:false`, bind the extension again, and the
+   following `get_state` must report exactly that file.
+4. Resolve the model: split the captured override at the first `/`, otherwise use
+   the fresh profile default (never the resumed session's old model). The exact
+   provider/id must appear in `get_available_models`; `set_model` must return the
+   same identity; the profile's thinking level is restored with
+   `set_thinking_level`. Then `set_auto_retry` off and `set_auto_compaction` on.
+   A missing or unavailable model fails the turn; there is no fallback.
+5. Commit `ModelSelected`, then send exactly one `prompt` whose message is the
+   captured context JSON followed by the user text, so input such as `/new` is
+   never a native command.
+6. Stream until `agent_settled`. `prompt.success` is acceptance only. Success
+   also requires the final assistant message's `stopReason == "stop"`, no
+   unresolved admitted tool, and no transport or extension error. Auto-compaction
+   runs inside the one conversation.
+7. Final `get_state`, bounded `clear_queue` and `abort`, then close stdin and
+   drain/reap pi within two seconds. The native session at the reported path,
+   confined to the attempt directory, is renamed to `session.jsonl` when needed
+   and fsynced with its directory.
+8. Commit unit `Completed`. That transaction atomically promotes
+   `pi_checkpoint_turn` to this turn. Only after the acknowledgement is the
+   superseded checkpoint's `session.jsonl` and its now-empty attempt directory
+   removed.
+9. Authenticated `Reporter::operator_retire` returns ownership to the Server.
 
-The existing SessionStore owns conversation rows, turns, visible messages and
-versioned completed model context. Protocol 70 carries conversation/turn/session/run
-identities and bounded sequenced worker batches. Schema 27 retains global
-OperatorConversation sessions without registering a project or workspace.
+A failed, interrupted or uncertain turn keeps its partial journal and its attempt
+files as evidence and never becomes the checkpoint. The next explicit turn
+resumes from the last completed checkpoint; the rollback is model context only.
+No prompt is ever replayed automatically. With no prior completed turn the next
+attempt starts empty with the same deterministic session id.
 
-CLI terminal JSON includes the canonical serialized session scope: `"Workspace"`
-or `{"OperatorConversation":{"conversation":1}}`. Global operator rows have
-empty project/workspace fields. Their original working directory is still
-`cwd`. Generic `terminal kill` and
-`terminal close` refuse Operator rows; open the Operator conversation and use native
-Stop (`Ctrl-x`) to interrupt its exact turn without archiving conversation history.
-After independent process-stop confirmation, exact-run `acknowledge-stopped`
-interrupts any unfinished turn before recording ownership proof. Live workers and
-stale runs remain refused.
+`OperatorWorkerStart.model` is the `operator.model` override captured when Submit
+was durably accepted, not the setting's value when the worker starts; a settings
+edit cannot change an accepted turn.
 
-The Dashboard receives coalesced dirty notifications and reads durable history.
-A summary's `run` is the current retained authority, which can advance beyond
-its historical latest turn on archive and restore; `archived` reuses retained
-disposition. Native `Close { conversation, expected_run }` uses per-conversation
-control admission, validates the current Dashboard owner and exact retained run,
-then confirms owned worker termination before archiving. Never-run and already
-stopped conversations need no invented turn. Close preserves messages and completed
-model history; active work first receives the ordinary durable interruption.
-Stop/journal failures leave the conversation unarchived and readable. Termination
-runs outside mutation/retained/Session locks, and the final archive revalidates
-owner, retained run and stopped proof under retained → Dashboard lock order.
+## Standard pi tools and durable admission
 
-Active listing filters archived rows before pagination; Read remains available.
-The Archived sessions palette offers Operator Unarchive, which advances the
-retained run without launching a worker. Only a fresh explicit Submit using that
-restored run atomically activates the returned record and adds a new turn/message.
-Permanent Operator deletion is refused by both the palette and Server.
-Archive and Unarchive publish `OperatorChanged` for durable catch-up.
+pi supplies `read`, `bash`, `edit` and `write` with their native schemas,
+validation, truncation and rendering. The extension replaces only `bash`, using
+`createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment:
+false })`. Its `operations.exec` runs `/bin/bash --noprofile --norc -c` with
+`detached:false`, piped stdout/stderr, no new process group, pi's native command
+and optional timeout schema, and a 64 KiB journal cap. On timeout the call is
+recorded as timed-out and the whole turn stops; control never returns to another
+model request. Trailing output from a completed background child is drained
+within a short idle window so a held pipe cannot hang the tool.
 
-A summary's `worker_stopped` comes from retained controlled-stop proof. Natural
-exit, terminal turn state and socket loss do not establish that proof. Model and
-Bash waits run in per-turn workers; process termination stays outside dispatcher
-and retained/Session locks.
+The extension reports a version-1 contract through `ctx.ui.setStatus` with the
+session id and `getActiveTools()`. The worker requires exactly the four tools and
+the expected session id before prompting; a missing or wrong contract refuses the
+turn with `Pi Operator integration is unavailable; no prompt was sent.`
+
+Tool calls use an awaited `confirm` dialog titled
+`OVRCR Operator tool admission` carrying `{toolCallId, toolName, input}`. The
+worker validates the four-tool allowlist, the id and argument bounds, requires
+the matching completed assistant message with `stopReason` `toolUse` or `stop`
+and the same call id/name/arguments, flushes preceding assistant text, commits
+`ToolCall`, and only then answers `confirmed:true`. Admissions are serialized.
+
+Results use an awaited dialog titled `OVRCR Operator tool result` carrying
+`{toolCallId, output, truncated, status}`. The worker maps `succeeded`/`failed`/
+`timedout`, replaces NUL with U+FFFD, bounds output to 64 KiB, combines that with
+pi's native truncation, commits `ToolOutput`, and only then acknowledges. A
+refused acknowledgement aborts and holds the turn as uncertain.
+
+No other dialog is answered: the worker cancels it and fails with
+`Unsupported Pi interaction; the turn was stopped.` Display-only notifications,
+partial tool updates and duplicate execution notifications are ignored.
+Thinking blocks are never journaled.
+
+## RPC driver
+
+The driver splits records only on LF, tolerates a trailing CR, and caps every
+complete or incomplete record at 16 MiB (`rpc::FRAME_LIMIT`). Reads are
+nonblocking in 16 × 16 KiB batches with a 10 ms poll, so deadlines and
+cancellation are never starved. Responses are matched by request id while
+unsolicited events are processed in order. Startup and control commands use a
+20-second deadline; prompt execution has no added wall-clock deadline. stderr is
+drained by a helper thread into a bounded ring (64 KiB retained, 4 KiB excerpt)
+and never persisted. Malformed JSON, failed required commands, premature EOF and
+required-extension errors fail the turn.
+
+Fixed user-facing failures, never with native stderr or provider bodies:
+
+- `Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.`
+- `No Pi model selected; run ovrcr operator setup.`
+- `Configured Operator model is unavailable in the dedicated Pi profile.`
+- `Operator Pi context is unavailable; saved data was preserved.`
+- `Pi Operator integration is unavailable; no prompt was sent.`
+- `Pi request failed; inspect the partial journal before retrying.`
+- `Unsupported Pi interaction; the turn was stopped.`
+
+pi's placeholder model object (`provider`/`id` both `unknown`) is normalized to
+"no model selected".
+
+## Stop, failure and retirement
+
+Hard Stop remains a Server path: durably interrupt, revoke authority, release
+locks, terminate the owned group, record controlled-stop proof. The worker
+installs SIGTERM/SIGHUP flags and a 2-second watchdog; while shutting down it
+best-effort sends `clear_queue`/`abort` and drains, and commits nothing after
+authority is revoked. pi exit alone is never stop proof: only the Server's scoped
+termination establishes `worker_stopped`. Stop frees the conversation for another
+turn; an OVRCR operation already accepted may finish.
+
+A worker-detected transport, provider or bootstrap failure commits the fixed
+`Failed` message and requests Retire. A tool timeout requests authenticated Stop.
+A failed reporting commit blocks further admissions and requests Stop. The worker
+never launches a replacement child or resends a prompt, and an uncertain tool
+result holds the turn until the Server terminates it or the user stops it.
+
+## Model selection and settings
+
+`ovrcr operator models` prints `provider/id<TAB>name`, or JSON
+`{"models":[{"provider":"...","id":"...","name":"..."}]}`, bounded to 4096
+validated, deduplicated entries. An empty native list prints no invented
+defaults and points at `ovrcr operator setup`.
+
+`operator.model` is one optional `provider/model` string in the shared settings
+document. Empty/unset uses the dedicated profile's current default before each
+turn; an explicit value overrides it and is captured per accepted Submit. The
+legacy `operator.provider`, `operator.chat_gpt_model` and `operator.grok_model`
+keys are not translated; the unknown-setting findings identify them, and the
+document is never rewritten automatically.
+
+## Removed engine
+
+The previous Rig-based engine, its custom OAuth login, embedded Bash tool,
+provider-specific request transformation and SDK model-history persistence are
+gone. Root dependencies on `rig`, `tokio`, `futures`, `reqwest` and
+`jsonwebtoken` were removed for the Operator. Legacy Operator rows, journals,
+model-history bytes and credentials stay on disk untouched and hidden from the
+Dashboard; see [Use the built-in operator](../operator.md#existing-data).

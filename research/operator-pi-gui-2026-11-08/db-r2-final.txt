@@ -1,0 +1,13 @@
+Captured against /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-USVhMB/registry.sqlite3
+after the mid-Bash-tool Stop and before closing the second GUI.
+
+operator_conversations:
+id  singleton  provider  model             pi_checkpoint_turn
+1   1          fixture   operator-fixture  (null)
+
+operator_turns:
+id  run  state
+1   1    Interrupted
+
+operator-target/gui-background.pid held 5678; `ps -p 5678` showed it gone after the
+Server's owned-group termination. operator-pi/turns contained attempt 1.

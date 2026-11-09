@@ -6,7 +6,6 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# Rig 0.45 requires Rust 1.97.1.
 rust-version = "1.97.1"
 license = "MIT"
 
@@ -67,12 +66,6 @@ path = "src/bin/ovrcr-gui.rs"
 required-features = ["gui"]
 
 [dependencies]
-rig = { version = "=0.45.0", default-features = false, features = ["agent", "reqwest", "rustls"] }
-tokio = { version = "1", features = ["rt", "time", "net", "io-util", "sync", "macros", "process"] }
-futures = "0.3"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
-base64 = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 anyhow = { workspace = true }
@@ -90,6 +83,7 @@ portable-pty = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+signal-hook = { workspace = true }
 tempfile = { workspace = true }
 vt100 = { workspace = true }
 
@@ -97,6 +91,5 @@ vt100 = { workspace = true }
 bincode = { workspace = true }
 sha2 = { workspace = true }
 ratatui = { workspace = true }
-signal-hook = { workspace = true }
 rusqlite = { workspace = true }
 tempfile = { workspace = true }

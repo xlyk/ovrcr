@@ -21,7 +21,7 @@ pub(super) enum Attention {
 }
 
 /// Paused sessions never need input (they cannot take an answer until resumed), and Operator
-/// conversations stay out: the Operator heading counts their own Unread.
+/// conversations stay out: the one Operator navigation row shows its own Unread.
 pub(super) fn attention(session: &SessionSummary) -> Option<Attention> {
     let activity = super::ready::activity(session);
     if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
@@ -474,7 +474,8 @@ mod tests {
         let mut dashboard = dashboard();
         let rows = screen(&dashboard);
         // The strip sits directly above the six-row quota section.
-        assert!(rows[1].starts_with(" OPERATOR"), "{}", rows[1]);
+        assert!(rows[1].trim_start().starts_with("Operator"), "{}", rows[1]);
+        assert!(!rows[1].contains("[+]") && !rows[1].contains("▸"));
         assert_eq!(rows[22].trim_end(), " ? 2 need input · ✓ 2 ready");
         assert!(rows[23].contains("QUOTA LEFT"), "{}", rows[28]);
         assert_eq!(

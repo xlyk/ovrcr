@@ -4604,9 +4604,16 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
     assert_ne!(
         action,
         DashboardAction::None,
-        "o must open the native Operator hub"
+        "o must open the native Operator view"
     );
-    dashboard.drain_outbox();
+    let requests = dashboard.drain_outbox();
+    assert!(
+        requests.iter().any(|message| matches!(
+            message.request,
+            crate::protocol::Request::Operator(crate::protocol::OperatorRequest::Open)
+        )),
+        "the full view opens the singleton: {requests:?}"
+    );
     let action = dashboard.event_action(Event::Paste("first\nsecond".into()));
     assert!(
         !matches!(action, DashboardAction::PtyBytes(_)),
@@ -4626,8 +4633,12 @@ fn operator_hub_opens_without_terminal_input_and_paste_never_submits() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(
-        text.contains("New Conversation"),
-        "native creation form must be visible: {text}"
+        text.contains("Opening Operator"),
+        "the singleton view must be visible without a creation form: {text}"
+    );
+    assert!(
+        !text.contains("New Conversation") && !text.contains("Ctrl-n"),
+        "no conversation creation or switching controls: {text}"
     );
 }
 

@@ -474,7 +474,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         key_binding(
             "Ctrl-o",
             "Quick message",
-            "Start an Operator conversation with configured defaults. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
+            "Send a message to the Operator from any pane; it targets the one conversation the full view shows. In Terminal mode Ctrl-o goes to the program; press Ctrl-g first".into(),
             KeyCode::Char('o'),
             Action::OperatorQuick,
         )
@@ -501,18 +501,6 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
-        if dashboard.operator_has_form() && !dashboard.operator_sidebar_focused() {
-            return vec![KeyGroup {
-                title: "New Operator conversation".into(),
-                keys: vec![
-                    native("Enter", "Create", Enter, KeyModifiers::NONE),
-                    native("Tab", "Provider/model", Tab, KeyModifiers::NONE),
-                    native("←/→", "Choose provider", KeyCode::Right, KeyModifiers::NONE),
-                    native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
-                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
-                ],
-            }];
-        }
         if dashboard.operator_transcript_focused() {
             return vec![KeyGroup {
                 title: "Operator transcript".into(),
@@ -526,45 +514,13 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 ],
             }];
         }
-        if dashboard.operator_sidebar_focused() {
-            return vec![KeyGroup {
-                title: "Operator conversations".into(),
-                keys: vec![
-                    native(
-                        "j/k",
-                        "Select conversation",
-                        KeyCode::Down,
-                        KeyModifiers::NONE,
-                    ),
-                    native("Enter", "Open composer", Enter, KeyModifiers::NONE),
-                    native("X", "Close conversation", Char('X'), KeyModifiers::NONE),
-                    native("←", "Collapse", KeyCode::Left, KeyModifiers::NONE),
-                    native("→", "Expand", KeyCode::Right, KeyModifiers::NONE),
-                    native("Tab", "Transcript", Tab, KeyModifiers::NONE),
-                    native("Ctrl-l", "Composer", Char('l'), KeyModifiers::CONTROL),
-                    native(
-                        "Ctrl-n",
-                        "New Conversation",
-                        Char('n'),
-                        KeyModifiers::CONTROL,
-                    ),
-                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
-                ],
-            }];
-        }
         let mut keys = vec![
             native("Enter", "Send", Enter, KeyModifiers::NONE).unless(
                 (!dashboard.operator_submit_available()).then_some("conversation cannot submit"),
             ),
             native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
-            native("Ctrl-l", "Chats", Char('l'), KeyModifiers::CONTROL),
-            native(
-                "Ctrl-n",
-                "New Conversation",
-                Char('n'),
-                KeyModifiers::CONTROL,
-            ),
-            native("Tab", "Chats", Tab, KeyModifiers::NONE),
+            native("Ctrl-l", "Toggle sidebar", Char('l'), KeyModifiers::CONTROL),
+            native("Tab", "Transcript", Tab, KeyModifiers::NONE),
             native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
             native("PageDown", "Later", PageDown, KeyModifiers::NONE),
             native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
@@ -860,7 +816,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         key_binding(
             "o",
             "Operator",
-            "Open concurrent Operator conversations".into(),
+            "Open the one Operator conversation".into(),
             Char('o'),
             Action::Operator,
         )

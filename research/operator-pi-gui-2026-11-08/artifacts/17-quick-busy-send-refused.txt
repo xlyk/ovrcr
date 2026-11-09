@@ -1,0 +1,61 @@
+OVRCR GUI
+• OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+• Operator
+Responding
+Local
+(#1)
+shell • 21m
+pid 47861
+CONSIGINT
+f main
+root
+consigint›
+$ Local
+} gui-consigint-auth-handoff
+$ Local
+- review auth handoff
+grok:4.6
+f gui-consigint-worktree-lifecycle
+$ Local
+- implement lifecycle cleanup
+- review websocket shutdown
+- plan snapshot restore
+pi
+SPACELIFT-AGENT
+} main
+root
+$ local
+} gui-spacelift-agent-pipeline-progr…
+$ Local
+- build pipeline progress
+claude
+f gui-spaceLift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+Quick message • Ctrl-o -
+loperator • pi • fixture/operator-fixture • consigint / main / #1 run 1
+busy quick draftl
+The Operator is busy or its worker stop is unconfirmed; draft retained.
+Enter Send Shift-Enter Newline Ctrl-c Clear Esc Dismiss
+QUOTA
+LEFT
+Claude
+checking
+Codex
+unavailable retry
+4m
+Grok
+wk
+42%
+Cursor
+usage off
+BROWSE
+Space
+Menu
+: Commands
+? Help

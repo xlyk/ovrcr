@@ -1,0 +1,53 @@
+OVRCR GUI
+OVRCR
+Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator
+not opened
+Local
+(#1)
+shell • Om
+pid 89132
+CONSIGINT
+f main
+root
+consigint›
+$ Local
+} gui-consigint-auth-handoff
+$ local
+- review auth handoff
+grok:4.6
+f gui-consigint-worktree-lifecycle
+$ Local
+- implement lifecycle cleanup
+- review websocket shutdown
+- plan snapshot restore
+pi
+SPACELIFT-AGENT
+} main
+root
+$ Local
+} gui-spacelift-agent-pipeline-progr.
+$ Local
+- build pipeline progress
+claude
+gui-spacelift-agent-scope-quality
+$ local
+- review
+scope quality
+codex
+QUOTA
+LEFT
+Claude
+checking
+Codex
+checking
+Grok
+wk -
+33%
+Cursor
+• usage off
+Claude and
+Codex status off - :connect to set
+Up

@@ -1032,9 +1032,12 @@ fn operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty() -> Result<()
     let result = (|| -> Result<()> {
         wait_dashboard(&mut terminal)?;
         terminal.send(b"o")?;
-        wait_screen(&terminal, "New Conversation")?;
-        terminal.send(b"\r")?;
+        // The full view opens the one conversation directly; there is no create form,
+        // chat list or archive control, and the header names pi before a model is known.
         wait_screen(&terminal, "Managing")?;
+        wait_screen(&terminal, "Operator · pi")?;
+        wait_screen_absent(&terminal, "New Conversation")?;
+        wait_screen_absent(&terminal, "Chats")?;
         for quick in [false, true] {
             if quick {
                 send(&mut terminal, key(Key::O, Modifiers::CTRL))?;
@@ -1108,8 +1111,55 @@ fn operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty() -> Result<()
             assert_eq!(
                 count,
                 i64::from(table == "operator_conversations"),
-                "editing must neither submit nor create a Quick conversation: {table}"
+                "opening the singleton is the only record; editing must neither submit nor create another conversation: {table}"
             );
+        }
+        // A Send on the unconfigured private profile surfaces one of the fixed
+        // local Pi failures as a durable journal row; no remote body or token.
+        terminal.send(b"SETUP_CHECK\r")?;
+        const FIXED_FAILURES: [&str; 7] = [
+            "No Pi model selected; run ovrcr operator setup.",
+            "Configured Operator model is unavailable in the dedicated Pi profile.",
+            "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+            "Operator Pi context is unavailable; saved data was preserved.",
+            "Pi Operator integration is unavailable; no prompt was sent.",
+            "Pi request failed; inspect the partial journal before retrying.",
+            "Unsupported Pi interaction; the turn was stopped.",
+        ];
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let text = terminal.screen().contents();
+            if FIXED_FAILURES.iter().any(|failure| text.contains(failure)) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                bail!("Operator never showed a fixed Pi failure:\n{text}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let failed = terminal.screen().contents();
+        assert!(
+            failed.contains("Error: "),
+            "the failure must be a durable Operator journal row:\n{failed}"
+        );
+        let database = rusqlite::Connection::open_with_flags(
+            root.join("registry.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let conversations: i64 =
+            database.query_row("SELECT count(*) FROM operator_conversations", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(
+            conversations, 1,
+            "the failed turn must not create a second conversation"
+        );
+        for table in ["operator_turns", "operator_messages"] {
+            let count: i64 =
+                database.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })?;
+            assert!(count > 0, "the failed turn left no {table} row");
         }
         Ok(())
     })();

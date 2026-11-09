@@ -4,39 +4,39 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const MAX_OPERATOR_TEXT_BYTES: usize = 64 * 1024;
-pub const MAX_OPERATOR_HISTORY_BYTES: usize = 256 * 1024;
 pub const MAX_OPERATOR_BATCH_EVENTS: usize = 32;
 pub const MAX_OPERATOR_PAGE_MESSAGES: u16 = 100;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperatorProvider {
-    #[default]
-    ChatGpt,
-    Grok,
+/// One exact Pi model identity: its provider and its model id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorModel {
+    pub provider: String,
+    pub id: String,
 }
-impl OperatorProvider {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ChatGpt => "chat_gpt",
-            Self::Grok => "grok",
-        }
+impl OperatorModel {
+    /// Splits `provider/id` at the first slash; the id may contain more slashes.
+    pub fn parse(selection: &str) -> Result<Self, String> {
+        let (provider, id) = selection
+            .split_once('/')
+            .ok_or_else(|| "invalid operator model".to_string())?;
+        let model = Self {
+            provider: provider.into(),
+            id: id.into(),
+        };
+        model.validate()?;
+        Ok(model)
     }
 
-    /// The name people know the provider by; `as_str` stays the saved identifier.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::ChatGpt => "ChatGPT",
-            Self::Grok => "Grok",
+    pub fn validate(&self) -> Result<(), String> {
+        validate_token(&self.provider)?;
+        validate_token(&self.id)?;
+        if self.provider.trim() != self.provider
+            || self.id.trim() != self.id
+            || self.provider.contains('/')
+        {
+            return Err("invalid operator model".into());
         }
-    }
-
-    /// The display name for a saved identifier, or the identifier itself.
-    pub fn label_of(text: &str) -> &str {
-        [Self::ChatGpt, Self::Grok]
-            .into_iter()
-            .find(|provider| provider.as_str() == text)
-            .map_or(text, |provider| provider.label())
+        Ok(())
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -114,32 +114,14 @@ pub struct OperatorTurn {
 pub struct OperatorConversationSummary {
     /// Current retained authority; the latest turn can belong to an older run.
     pub run: SessionRunId,
-    pub archived: bool,
     /// Derived only from the retained exact-run controlled-stop proof.
     pub worker_stopped: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
-    pub provider: OperatorProvider,
-    pub model: String,
+    /// The last pi model the worker selected; `None` before the first selection.
+    pub model: Option<OperatorModel>,
     pub title: String,
     pub current_turn: Option<OperatorTurn>,
-}
-/// Version 1 contains the SDK's JSON message array; interpreted only by the worker.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OperatorModelHistory {
-    pub version: u16,
-    pub json: String,
-}
-impl OperatorModelHistory {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.version != 1
-            || self.json.len() > MAX_OPERATOR_HISTORY_BYTES
-            || !serde_json::from_str::<serde_json::Value>(&self.json).is_ok_and(|v| v.is_array())
-        {
-            return Err("invalid or unsupported operator model history".into());
-        }
-        Ok(())
-    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -161,12 +143,13 @@ pub enum OperatorWorkerEvent {
         truncated: bool,
         status: OperatorToolStatus,
     },
-    Completed(OperatorModelHistory),
+    ModelSelected(OperatorModel),
+    Completed,
     Failed(String),
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Completed(_) | Self::Failed(_))
+        matches!(self, Self::Completed | Self::Failed(_))
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +173,8 @@ impl OperatorEventBatch {
                 return Err("terminal operator event must be last".into());
             }
             match event {
-                OperatorWorkerEvent::Completed(history) => history.validate()?,
+                OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
+                OperatorWorkerEvent::Completed => {}
                 OperatorWorkerEvent::AssistantDelta(text) | OperatorWorkerEvent::Failed(text) => {
                     validate_text(text)?;
                     bytes += text.len();
@@ -240,11 +224,10 @@ fn validate_token(value: &str) -> Result<(), String> {
     }
 }
 pub fn validate_operator_model(value: &str) -> Result<(), String> {
-    validate_token(value)?;
-    if value.trim() != value || value.trim().is_empty() {
-        Err("invalid operator model".into())
-    } else {
+    if crate::DelegationSettings::valid_model(value) {
         Ok(())
+    } else {
+        Err("invalid operator model".into())
     }
 }
 fn validate_text(value: &str) -> Result<(), String> {
@@ -277,14 +260,10 @@ pub struct OperatorHistory {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorRequest {
-    Create {
-        provider: OperatorProvider,
-        model: String,
-    },
-    List {
-        after: u64,
-        limit: u16,
-    },
+    /// Reads the sole conversation; never creates a record or a process.
+    Current,
+    /// Atomically gets or creates the sole conversation; never starts pi.
+    Open,
     Read {
         conversation: OperatorConversationId,
         after: u64,
@@ -299,23 +278,14 @@ pub enum OperatorRequest {
     Stop {
         identity: OperatorTurnIdentity,
     },
-    Close {
-        conversation: OperatorConversationId,
-        expected_run: SessionRunId,
-    },
 }
 impl OperatorRequest {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Create { model, .. } => validate_operator_model(model),
-            Self::List { limit, .. } | Self::Read { limit, .. }
-                if *limit == 0 || *limit > MAX_OPERATOR_PAGE_MESSAGES =>
-            {
+            Self::Read { limit, .. } if *limit == 0 || *limit > MAX_OPERATOR_PAGE_MESSAGES => {
                 Err("invalid operator page limit".into())
             }
-            Self::Read { conversation, .. } | Self::Close { conversation, .. }
-                if conversation.0 == 0 =>
-            {
+            Self::Read { conversation, .. } if conversation.0 == 0 => {
                 Err("zero conversation identity".into())
             }
             Self::Submit {
@@ -340,12 +310,11 @@ impl OperatorRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorResponse {
-    Created(OperatorConversationSummary),
-    Conversations(Vec<OperatorConversationSummary>),
+    Current(Option<OperatorConversationSummary>),
+    Opened(OperatorConversationSummary),
     History(OperatorHistory),
     Submitted(OperatorTurn),
     Stopped(OperatorTurn),
-    Closed(OperatorConversationSummary),
 }
 /// Auth must be verified against the current owned worker by the Server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,32 +328,23 @@ pub struct OperatorExchangeResult {
     pub sequence: u64,
     pub duplicate: bool,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OperatorSettings {
-    pub provider: OperatorProvider,
-    pub chat_gpt_model: Option<String>,
-    pub grok_model: Option<String>,
-}
-impl Default for OperatorSettings {
-    fn default() -> Self {
-        Self {
-            provider: OperatorProvider::ChatGpt,
-            chat_gpt_model: None,
-            grok_model: None,
-        }
-    }
+    /// `provider/model`; unset means the dedicated Pi profile's current default.
+    pub model: Option<String>,
 }
 
 /// Immutable bootstrap data read only by the authenticated current worker.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerStart {
     pub identity: OperatorTurnIdentity,
-    pub provider: OperatorProvider,
-    pub model: String,
+    /// The `operator.model` override captured when Submit was durably accepted.
+    pub model: Option<String>,
     pub text: String,
     pub context: OperatorContext,
-    pub history: Option<OperatorModelHistory>,
+    /// The last completed turn whose native session is this turn's context base.
+    pub checkpoint_turn: Option<OperatorTurnId>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
@@ -414,23 +374,27 @@ pub enum OperatorWorkerResult {
 mod tests {
     use super::*;
     #[test]
-    fn close_validates_conversation_and_accepts_never_run_zero() {
+    fn read_validates_conversation_and_current_open_need_no_identity() {
         assert!(
-            OperatorRequest::Close {
+            OperatorRequest::Read {
                 conversation: OperatorConversationId(1),
-                expected_run: SessionRunId(0)
+                after: 0,
+                limit: 100
             }
             .validate()
             .is_ok()
         );
         assert!(
-            OperatorRequest::Close {
+            OperatorRequest::Read {
                 conversation: OperatorConversationId(0),
-                expected_run: SessionRunId(0)
+                after: 0,
+                limit: 100
             }
             .validate()
             .is_err()
         );
+        assert!(OperatorRequest::Current.validate().is_ok());
+        assert!(OperatorRequest::Open.validate().is_ok());
     }
 
     #[test]
@@ -453,21 +417,28 @@ mod tests {
             "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
         )];
         assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::Completed];
+        assert!(batch.validate().is_ok());
         batch.events = vec![
             OperatorWorkerEvent::Failed("failed".into()),
             OperatorWorkerEvent::AssistantDelta("late".into()),
         ];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::Completed(OperatorModelHistory {
-            version: 2,
-            json: "[]".into(),
+        batch.events = vec![
+            OperatorWorkerEvent::Completed,
+            OperatorWorkerEvent::AssistantDelta("late".into()),
+        ];
+        assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+            provider: String::new(),
+            id: "id".into(),
         })];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::Completed(OperatorModelHistory {
-            version: 1,
-            json: "not json".into(),
+        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+            provider: "openai".into(),
+            id: "gpt".into(),
         })];
-        assert!(batch.validate().is_err());
+        assert!(batch.validate().is_ok());
     }
     #[test]
     fn empty_tool_output_has_explicit_outcome_without_relaxing_other_text() {
@@ -509,10 +480,7 @@ mod tests {
     }
     #[test]
     fn operator_requests_and_worker_batches_round_trip_framed() {
-        let request = crate::Request::Operator(OperatorRequest::Create {
-            provider: OperatorProvider::ChatGpt,
-            model: "model".into(),
-        });
+        let request = crate::Request::Operator(OperatorRequest::Open);
         let mut bytes = Vec::new();
         crate::write_frame(&mut bytes, &request).unwrap();
         let decoded: crate::Request =
@@ -527,13 +495,22 @@ mod tests {
             .validate()
             .is_err()
         );
-        assert!(
-            OperatorRequest::Create {
-                provider: OperatorProvider::Grok,
-                model: " ".into()
+        assert_eq!(
+            OperatorModel::parse("openai/gpt-5.1-codex/mini").unwrap(),
+            OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.1-codex/mini".into()
             }
-            .validate()
-            .is_err()
         );
+        assert!(
+            OperatorModel::parse("openai").is_err(),
+            "a bare model id has no provider"
+        );
+        assert!(OperatorModel::parse("/id").is_err());
+        assert!(OperatorModel::parse("openai/").is_err());
+        assert!(OperatorModel::parse(" openai/id").is_err());
+        assert!(validate_operator_model("openai/id/with/slashes").is_ok());
+        assert!(validate_operator_model(" ").is_err());
+        assert!(validate_operator_model("openai").is_err());
     }
 }

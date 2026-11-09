@@ -584,9 +584,9 @@ fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
 fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     use ovrcr_protocol::{
         AgentSecret, ClientMessage, OperatorConversationId, OperatorEventBatch,
-        OperatorExchangeResult, OperatorProvider, OperatorTurnId, OperatorTurnIdentity,
-        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId,
-        SessionRunId, SupervisorAuth, read_frame, write_frame,
+        OperatorExchangeResult, OperatorTurnId, OperatorTurnIdentity, OperatorWorkerCommand,
+        OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId, SessionRunId,
+        SupervisorAuth, read_frame, write_frame,
     };
     use std::os::unix::net::UnixStream;
     let identity = OperatorTurnIdentity {
@@ -622,11 +622,10 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                             Response::OperatorWorker(OperatorWorkerResult::Start(Box::new(
                                 OperatorWorkerStart {
                                     identity,
-                                    provider: OperatorProvider::Grok,
-                                    model: "fixture".into(),
+                                    model: None,
                                     text: "prompt".into(),
                                     context: Default::default(),
-                                    history: None,
+                                    checkpoint_turn: None,
                                 },
                             )))
                         }

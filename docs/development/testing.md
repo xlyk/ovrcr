@@ -149,25 +149,15 @@ A private source copy keeps these writes separate from the host checkout.
 
 ## Commands and isolated acceptance
 
-Operator activity regressions exercise derived state/cadence in the owning TUI
-unit suite, clock-controlled `draw_dashboard_at` through the public Dashboard,
-and `compiled_worker::operator_activity_waits_for_real_model_and_tool` in
-`operator_e2e` with `acceptance-diagnostics`. The latter holds a real Submitted
-receipt, a silent acknowledged model request and an actual Bash result, then
-releases each gate once through private synthetic OAuth and loopback inference.
-Native no-message frame pairs separately prove idle redraw; fixed TestBackend
-timestamps alone cannot prove event-loop animation.
-The [initial activity record](../../research/operator-activity-2026-10-30/native-01/README.md)
-proves silent native animation; its later lock remains recorded. The
-[unlocked correction](../../research/operator-activity-2026-10-30/native-02/README.md)
-adds actual pending-tool movement with Operator collapsed, completed indicator
-absence and normal CUA close on the same frozen product revision.
-The [inline activity and message-input acceptance](../../research/operator-inline-input-2026-10-30/README.md)
-captures activity after message/tool entries, history scroll-away and retained
-viewport through completion, full/Quick Unicode edits, selected Ctrl+C Stop,
-independent response survival and ordinary terminal Ctrl+C on matching native
-artifacts. Known-repeat/frozen-receipt/overlay permutations remain explicitly
-separate automated evidence.
+Operator activity is derived once by `operator::conversation_activity` (the
+transient journal row and composer busy state) and `operator::render::activity`
+(the fixed sidebar row, rendered with `dashboard::status` glyphs), and covered in
+the owning TUI suites: the derived states, the 100 ms spinner cadence (including
+the fixed sidebar row), the transient journal row, and clock-controlled
+`draw_dashboard_at` through the public Dashboard. The installed-pi test drives a
+programmatic `DashboardDriver` and never draws a terminal, so it cannot prove
+spinner animation; native render evidence comes from the opt-in GUI walkthrough in
+[computer-use testing](../testing-computer-use.md).
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
 
@@ -279,41 +269,88 @@ This fixture prerequisite does not add joins or general client containment.
 
 ## Built-in Operator acceptance
 
-The [Operator reference](operator.md) documents its feature-gated loopback model
-endpoint. The fixture signs in through a local OAuth server and normal credential
-storage; it neither imports personal accounts nor bypasses authentication.
+The [Operator runtime reference](operator.md) documents the dedicated pi profile,
+the RPC driver, the one-conversation worker and its fixed failures. Offline
+suites never use a personal pi profile or account; the installed-pi case is opt-in.
 
 ```sh
-rtk cargo test -p ovrcr --test operator_auth
-rtk cargo test -p ovrcr --test operator_worker
-rtk cargo test -p ovrcr --test operator_e2e --features acceptance-diagnostics
-rtk cargo test -p ovrcr --test operator_scope
+cargo test -p ovrcr --test operator_worker
+cargo test -p ovrcr --test operator_scope
+cargo test -p ovrcr --test operator_e2e --features acceptance-diagnostics
 ```
 
-The E2E fixture executes the compiled worker, real Bash/CLI, authenticated framing,
-Server journal and native Dashboard actions. It asserts concurrent streams,
-independent Stop, context resume without command replay, real timeout-child
-termination, missing-auth retirement and incomplete-response rejection. Explicit
-ignored fixture entrypoints are invoked and checked by their owning parent or
-native acceptance; they are not passing product cases merely because ignored.
+`tests/operator_worker.rs` installs a task-owned fake `pi` executable and drives
+the compiled worker and Server through it. It covers the `setup`/`models` CLI
+shape and refusal before launching pi, LF-only framing with Unicode separators,
+the exact 16 MiB record limit, profile-default selection, checkpoint promotion
+only after an acknowledged Completed, interrupted and failed turns keeping their
+journal without a checkpoint, startup/contract refusal before any prompt, a
+resumed turn using the fresh profile default plus the last completed checkpoint,
+the per-turn `operator.model` snapshot, prefix-deduplicated assistant text, failed
+and timed-out tool results, sequential admissions with no command after a refusal,
+results for unadmitted calls, credential sentinels never reaching the journal,
+settings or events, and direct-worker termination/reaping. The fixture `pi` prints
+deterministic records; it proves OVRCR's composition and refusal behavior, not
+provider inference.
+
+`tests/operator_e2e.rs` drives the compiled binary through the real lifecycle and
+adds the opt-in gates below (`--features acceptance-diagnostics` enables the
+diagnostics-gated paths). Ignored entry points are product evidence only when
+their owning parent or native run explicitly selects and checks them.
+
+Installed pi (actual native tools and one conversation):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_single_conversation -- --ignored --nocapture
+```
+
+It creates synthetic auth and models only in the fixture's own `operator-pi`,
+uses a local streaming provider, and must observe real `read`/`write`/`edit`/
+`bash` effects, the same native session id with prior messages on the second turn,
+a held assistant stream released by the fixture (the third turn), an interrupted
+fourth turn (an attached Bash command with an ordinary background child) whose
+request and tool output never enter the fifth turn's context, and authenticated
+stop proof. It does not prove subscription entitlement; account sign-in stays a
+separate user-operated `ovrcr operator setup` step.
+
+GUI provider helper for the native walkthrough in
+[computer-use testing](../testing-computer-use.md):
+
+```sh
+OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  operator_pi_gui_provider -- --ignored --nocapture
+```
+
+It requires that root to contain `registry.sqlite3` and `server.sock`, refuses any
+root outside a task-owned GUI fixture, seeds only that root's `operator-pi` with
+synthetic auth/models/settings for the loopback provider, prints
+`OPERATOR_PI_GUI_READY`, holds a stream until a private
+`operator-pi/fixture-release` marker, and serves until the fixture root disappears
+or a private `operator-pi/fixture-stop` cleanup marker appears (the marker is an
+input to the helper, never Operator's stop output). Run it beside the still-open
+GUI launcher and wait for the ready line before Send.
+
+The Dashboard path is asserted by `tests/tui/operator.rs` and the crate's own unit
+suite: one fixed sidebar navigation row, direct open with composer focus, no
+create/list/archive controls, Quick sharing the one conversation and its capture,
+draft retention while busy or stop-unconfirmed, a cancelled unsent Quick creating
+nothing, late replies after dismissal, Unicode input, narrow layout, unread, paged
+history, and reopening either composer capturing the reselected target for the
+next message. `tests/operator_scope.rs` covers Operator-scope lifecycle refusals
+and the hidden legacy rows. The TUI snapshot test renders the singleton at 140×40,
+100×24, 80×24, 60×24 and 60×16 with the composer at its two-row minimum; its
+journal holds one empty collapsed successful receipt and no control characters, so
+it does not exercise receipt escaping. Escaping is covered by
+`paged_history_scrolls_receipts_and_escapes_controls` (TUI unit) and
+`paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail`
+(`tests/tui/operator.rs`).
+
 Keep actual native screenshots/accessibility and live subscription acceptance
-separate from loopback evidence.
-
-Layout acceptance also holds real Create/Submit receipts outside the Dashboard to
-prove a dismissed quick message keeps its captured text and context, submits once,
-and preserves terminal focus while another chat completes. The close/archive case
-records two real Bash child groups, closes A, completes B and receives terminal
-output, then restarts and restores A without replay before an explicit new turn.
-The outer-PTY `operator_quick` case sends Ctrl+G then Ctrl+O (in Terminal mode
-Ctrl+O goes to the program), CSI-u Shift+Enter and bracketed paste through the
-compiled Dashboard, checks separate editor lines, dismisses to Browse, re-enters
-the original terminal, and verifies no conversation was created.
-See the [2026-10-30 layout acceptance record](../../research/operator-layout-2026-10-30/README.md)
-for exact revisions, native JPEG/AX evidence, commands, failures and platform gaps.
-The [Working journal native acceptance record](../../research/operator-working-journal-2026-10-30/README.md)
-adds matching-source journal/receipt/quick captures, the native 80×24 frame and
-kernel-confirmed nested 60×24/60×16 frames, with original owner waits and gate limits.
-
-The [2026-10-29–30 Operator acceptance record](../../research/rig-operator-2026-10-29/README.md)
-contains real ChatGPT GUI turns and a separate controlled concurrent-chat run,
-with executable hashes, cleanup receipts and remaining gate limitations.
+separate from loopback evidence. Interactive Dashboard fixtures may see the
+optional native-hook or Bridge offers described above; decline recognized offers
+with `n` and wait for the alternate-screen Dashboard before sending input. The
+native walkthrough in [computer-use testing](../testing-computer-use.md) is the
+place for the real keyboard/mouse receipts.

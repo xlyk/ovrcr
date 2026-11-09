@@ -1,0 +1,50 @@
+OVRCR GUI
+d OVRCR Operator [o]
+[Ctrl-o]
+[Commands] [Menu]
+Operator • pi • fixture/operator-fixture • complete
+REQUEST_ONE_REAL_TOOLS
+• write
+write [call-writel
+{"content": "OFFLINE_MARKER_v1\n","path":"/private/var/folders/j9/h6rlffxd1r794s9g9p
+s_52t40000gn/T/ovrcr-gui-dB0LsN/operator-target/gui-fixture-marker.txt"}
+• succeeded • Output
+• read
+• succeeded • Output
+• edit
+• succeeded • Output
+• bash
+• succeeded • Output
+TURN_ONE_DONE
+) You
+REQUEST_TWO_RESUME
+Operator
+TURN_TWO_DONE
+You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+You
+REQUEST_FOUR_BACKGROUND
+• bash
+• succeeded • Output
+FIXTURE_FOLLOWUP_DONE
+)
+You
+quick draft must stay unsent
+Operator
+FIXTURE_FOLLOWUP_DONE
+)
+You
+REQUEST_THREE_HELD
+Operator
+HELD_BEFORE_RELEASE
+Interrupted • accepted operations may finish; no rollback.
+)
+You
+busy quick draftREQUEST_FIVE_AFTER_INTERRUPT
+Operator
+TURN_FIVE_DONE
+Managing consigint / main / #1 run 1
+• clearme
+OPERATOR Enter Expand details Ctrl-g Browse

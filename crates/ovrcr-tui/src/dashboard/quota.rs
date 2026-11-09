@@ -244,7 +244,8 @@ impl Dashboard {
             }
         });
         let content = desired.saturating_sub(1);
-        // The ladder keeps the Operator heading and three tree lines: full (blank optional), compact, pointer, then nothing.
+        // The ladder keeps the Operator navigation row and three tree lines: full
+        // (blank optional), compact, pointer, then nothing.
         let height = if desired == 0 || quota_space < 5 {
             0
         } else if quota_space >= desired + 4 {
@@ -257,13 +258,8 @@ impl Dashboard {
             1
         };
         let available = quota_space - height;
-        let heading = u16::from(available > 0);
-        let rows = if self.operator.collapsed {
-            0
-        } else {
-            self.operator_ids().len().min(5) as u16
-        };
-        let operator_height = heading + rows.min(available.saturating_sub(heading + 3));
+        // The fixed Operator row is reserved with three tree lines beneath it.
+        let operator_height = u16::from(available > 3);
         super::SidebarRects {
             attention: Rect::new(
                 sidebar.x,
@@ -1011,7 +1007,7 @@ mod layout_tests {
     }
 
     #[test]
-    fn the_strip_then_the_quota_section_yield_to_the_operator_heading_and_three_tree_lines() {
+    fn the_strip_then_the_quota_section_yield_to_the_operator_row_and_three_tree_lines() {
         let mut dashboard = Dashboard::new(TerminalSize {
             rows: 30,
             cols: 120,
