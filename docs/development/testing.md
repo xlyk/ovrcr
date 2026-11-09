@@ -95,14 +95,23 @@ budget. Shards record `hw.logicalcpu` and the resolved `cargo nextest` version,
 because the expected three slots per runner comes from the runner image
 specification rather than a measurement.
 
-The required `checks` job waits for `macOS checks` and the offline Cursor job.
-Its shell guard requires both results to be `success`, which for a matrix means
-every shard succeeded; a final step fails if the workflow was cancelled. Failed,
-cancelled or skipped dependencies cannot satisfy it, so one green shard never
-stands in for a missing one. This one-minute macOS aggregate has no checkout or
-tools. Its job and guards use `always()` to evaluate failures and cancellation;
-the acceptance jobs remain cancellable, so a superseded pull-request run
-releases its expensive work normally.
+Every shard uploads its `cargo nextest list --message-format json` output. The
+`test selection audit` job — on Linux, so it costs no macOS slot — compares those
+manifests against the test-capable targets `cargo metadata` reports, and fails if
+a declared target is absent from any shard. The check exists because a target can
+fail to build while every shard stays green and the counts still add up: nextest
+then partitions a short list and that target's tests never run. It happened with
+`ovrcr::operator_auth`, which vanished for two runs at unchanged source before
+the check existed.
+
+The required `checks` job waits for `macOS checks`, the offline Cursor job, and
+the selection audit. Its shell guard requires all three results to be `success`,
+which for a matrix means every shard succeeded; a final step fails if the
+workflow was cancelled. Failed, cancelled or skipped dependencies cannot satisfy
+it, so one green shard never stands in for a missing one. This one-minute macOS
+aggregate has no checkout or tools. Its job and guards use `always()` to evaluate
+failures and cancellation; the acceptance jobs remain cancellable, so a
+superseded pull-request run releases its expensive work normally.
 
 The `linux`, `linux capacity` and `linux memory high-water` jobs run only on
 manual dispatch: GitHub **Actions → CI → Run workflow**, then select the branch.

@@ -50,7 +50,11 @@ jobs:
         uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: checks
+          # A shared target cache restored a state where a declared test target
+          # was considered fresh but had no binary, so the selection silently ran
+          # without it. The versioned key forces a complete rebuild; the audit
+          # job now fails loudly if it ever happens again.
+          shared-key: checks-shards
           cache-on-failure: true
       - name: Install zsh for shell integration tests
         if: runner.os == 'Linux'
@@ -179,9 +183,27 @@ jobs:
       - name: Offline Cursor cloud preflight
         run: python3 -I -m unittest discover -s experiments/cursor-cloud -p test_client.py -v
 
+  coverage_audit:
+    name: test selection audit
+    needs: [macos_checks]
+    # Runs on Linux: it only reads the manifests each shard uploaded, so it must
+    # not consume one of the five macOS slots.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nextest-selection-*
+          path: ${{ runner.temp }}/selection
+      - name: Require every declared test target in the selection
+        run: python3 -I scripts/check-test-selection.py "$RUNNER_TEMP/selection"
+
   checks:
     name: checks
-    needs: [macos_checks, offline_cursor]
+    needs: [macos_checks, offline_cursor, coverage_audit]
     # Only this short aggregate survives cancellation; the acceptance jobs remain cancellable.
     if: ${{ always() }}
     runs-on: macos-latest
@@ -193,9 +215,11 @@ jobs:
         env:
           MACOS_RESULT: ${{ needs.macos_checks.result }}
           CURSOR_RESULT: ${{ needs.offline_cursor.result }}
+          AUDIT_RESULT: ${{ needs.coverage_audit.result }}
         run: |
           test "$MACOS_RESULT" = success
           test "$CURSOR_RESULT" = success
+          test "$AUDIT_RESULT" = success
       - name: Reject workflow cancellation
         if: ${{ always() && cancelled() }}
         shell: bash
