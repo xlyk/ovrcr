@@ -1,7 +1,8 @@
 //! The shared sidebar is the sole conversation list and hit-test geometry.
 use super::*;
 use crate::dashboard::render::{
-    BASE, BLUE, GREEN, MAUVE, SURFACE0, SURFACE2, TEAL, TEXT, clip_text, compose_row,
+    BASE, BLUE, GREEN, MAUVE, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEAL, TEXT, clip_text,
+    compose_row,
 };
 use ovrcr_protocol::AgentActivity;
 
@@ -275,7 +276,35 @@ pub(super) struct OperatorLayout {
     pub bottom_rule: Rect,
 }
 
-type Anchor = (u64, usize, usize);
+pub(super) type Anchor = (u64, usize, usize);
+
+#[derive(Clone, Copy)]
+pub(super) struct TranscriptEntry {
+    pub(super) ordinal: u64,
+    pub(super) expanded: bool,
+}
+
+pub(super) struct TranscriptRow {
+    pub(super) line: Line<'static>,
+    pub(super) anchor: Option<Anchor>,
+    pub(super) entry: Option<TranscriptEntry>,
+}
+
+const THINKING_PREVIEW_LINES: usize = 6;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ThinkingDisplay {
+    Capped,
+    Collapsed,
+    Expanded,
+}
+
+#[derive(Clone, Copy)]
+enum ThinkingLine {
+    Header(OperatorTurnId),
+    Body,
+}
+
 struct TranscriptLine {
     line: Line<'static>,
     ordinal: u64,
@@ -283,6 +312,8 @@ struct TranscriptLine {
     byte: usize,
     prose: bool,
     gutter: &'static str,
+    entry: Option<TranscriptEntry>,
+    thinking: Option<ThinkingLine>,
 }
 fn push_lines(
     lines: &mut Vec<TranscriptLine>,
@@ -301,6 +332,8 @@ fn push_lines(
             byte,
             prose,
             gutter: "│ ",
+            entry: None,
+            thinking: None,
         });
         byte += text.len() + 1;
     }
@@ -325,8 +358,9 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
             continue;
         }
         let first_line = lines.len();
+        let owner = message.ordinal;
         let mut ordinal = message.ordinal;
-        let expanded = chat.expanded.contains(&ordinal);
+        let expanded = chat.expanded.get(&owner).copied().unwrap_or(false);
         let disclosure = if expanded { "▾" } else { "▸" };
         let quiet = Style::default().fg(super::super::render::SUBTEXT());
         let normal = Style::default().fg(TEXT());
@@ -420,33 +454,47 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 ordinal = chat.messages[index].ordinal;
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_)) => {
-                let label = index == 0
-                    || !matches!(
-                        chat.messages[index - 1].content,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_))
-                    );
+                let turn = message.turn;
                 let mut text = String::new();
                 while let Some(OperatorMessage {
                     content:
                         OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(delta)),
+                    turn: delta_turn,
                     ..
                 }) = chat.messages.get(index)
                 {
+                    if *delta_turn != turn {
+                        break;
+                    }
                     text.push_str(delta);
                     index += 1;
                 }
+                // Only stream terminators are structural; interior blank lines stay.
+                let trimmed = text.trim_end_matches('\n').len();
+                text.truncate(trimmed);
                 if !text.is_empty() {
-                    if label {
-                        push_lines(
-                            &mut lines,
-                            ordinal,
-                            0,
-                            "Thinking".into(),
-                            quiet.add_modifier(Modifier::BOLD),
-                            true,
-                        );
+                    let thinking_style =
+                        Style::default().fg(PEACH()).add_modifier(Modifier::ITALIC);
+                    push_lines(
+                        &mut lines,
+                        owner,
+                        0,
+                        "Thinking".into(),
+                        quiet.add_modifier(Modifier::BOLD),
+                        true,
+                    );
+                    lines[first_line].thinking = Some(ThinkingLine::Header(turn));
+                    push_lines(
+                        &mut lines,
+                        owner,
+                        3,
+                        display_text(&text),
+                        thinking_style,
+                        true,
+                    );
+                    for line in &mut lines[first_line + 1..] {
+                        line.thinking = Some(ThinkingLine::Body);
                     }
-                    push_lines(&mut lines, ordinal, 3, display_text(&text), quiet, true);
                 }
                 index -= 1;
                 ordinal = chat.messages[index].ordinal;
@@ -575,22 +623,26 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 line.gutter = if line.part == 0 { "❯ " } else { "  " };
             }
         }
-        if chat.messages.get(index + 1).is_none_or(|next| {
-            matches!(message.content, OperatorMessageContent::User { .. })
-                || matches!(next.content, OperatorMessageContent::User { .. })
-        }) {
+        if expandable(message) {
+            let entry = TranscriptEntry {
+                ordinal: owner,
+                expanded: chat.expanded.get(&owner).copied().unwrap_or(false),
+            };
+            for line in &mut lines[first_line..] {
+                line.entry = Some(entry);
+            }
+        }
+        if lines.len() > first_line
+            && chat.messages.get(index + 1).is_none_or(|next| {
+                matches!(message.content, OperatorMessageContent::User { .. })
+                    || matches!(next.content, OperatorMessageContent::User { .. })
+            })
+        {
             push_lines(&mut lines, ordinal, 4, String::new(), normal, true);
         }
         index += 1;
     }
     lines
-}
-#[cfg(test)]
-pub(super) fn transcript_lines(chat: &Chat) -> Vec<Line<'static>> {
-    logical_lines(chat)
-        .into_iter()
-        .map(|line| line.line)
-        .collect()
 }
 // Retain each grapheme's style and logical byte position through wrapping.
 fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<(Line<'static>, (usize, usize))> {
@@ -624,15 +676,94 @@ pub(super) fn wrapped_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'
         .map(|(line, _)| line)
         .collect()
 }
-pub(super) fn transcript_rows(
+
+/// A missing override follows the turn; an explicit choice always wins.
+fn thinking_display(
     chat: &Chat,
-    width: u16,
-    now_unix_ms: u64,
-) -> Vec<(Line<'static>, Option<Anchor>)> {
+    ordinal: u64,
+    turn: OperatorTurnId,
+    total: usize,
+) -> ThinkingDisplay {
+    match chat.expanded.get(&ordinal).copied() {
+        Some(true) => ThinkingDisplay::Expanded,
+        Some(false) => ThinkingDisplay::Collapsed,
+        None => {
+            let current_running = chat.summary.current_turn.as_ref().is_some_and(|current| {
+                current.state == OperatorTurnState::Running && current.identity.turn == turn
+            });
+            if !current_running {
+                ThinkingDisplay::Collapsed
+            } else if total > THINKING_PREVIEW_LINES {
+                ThinkingDisplay::Capped
+            } else {
+                ThinkingDisplay::Expanded
+            }
+        }
+    }
+}
+
+fn thinking_header(display: ThinkingDisplay, total: usize) -> Line<'static> {
+    let (disclosure, count) = match display {
+        ThinkingDisplay::Expanded => ("▾ Thinking", format!(" · {total} lines")),
+        ThinkingDisplay::Collapsed => ("▸ Thinking", format!(" · {total} lines")),
+        ThinkingDisplay::Capped => (
+            "▸ Thinking",
+            format!(" · showing last {THINKING_PREVIEW_LINES} of {total} lines"),
+        ),
+    };
+    Line::from(vec![
+        Span::styled(
+            disclosure,
+            Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(count, Style::default().fg(SUBTEXT())),
+    ])
+}
+
+/// Clip a styled header to one row; headers never wrap.
+fn clip_line(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        return line;
+    }
+    if width == 0 {
+        return Line::default();
+    }
+    let base = line.style;
+    let mut budget = width - 1;
+    let mut spans = Vec::new();
+    let mut last_style = Style::default();
+    for span in line.spans {
+        let mut text = String::new();
+        let mut used = 0;
+        let mut stopped = false;
+        for grapheme in span.styled_graphemes(base) {
+            let cells = grapheme.symbol.width();
+            if used + cells > budget {
+                stopped = true;
+                break;
+            }
+            text.push_str(grapheme.symbol);
+            used += cells;
+        }
+        if !text.is_empty() {
+            last_style = span.style;
+            spans.push(Span::styled(text, span.style));
+            budget -= used;
+        }
+        if stopped || budget == 0 {
+            break;
+        }
+    }
+    spans.push(Span::styled("…", last_style));
+    Line::from(spans)
+}
+
+pub(super) fn transcript_rows(chat: &Chat, width: u16, now_unix_ms: u64) -> Vec<TranscriptRow> {
     // Deltas share visual paragraphs, but their anchors keep the actual durable
-    // source. Answer and thinking runs are separate paragraphs.
+    // source. Answer and thinking runs are separate paragraphs; thinking blocks
+    // never merge across turns.
     let mut sources: HashMap<u64, Vec<(usize, u64)>> = HashMap::new();
-    let mut group: Option<(u64, bool)> = None;
+    let mut group: Option<(u64, bool, OperatorTurnId)> = None;
     let mut byte = 0;
     for message in &chat.messages {
         let (thinking, text) = match &message.content {
@@ -648,57 +779,115 @@ pub(super) fn transcript_rows(
                 continue;
             }
         };
-        if group.is_none_or(|(_, kind)| kind != thinking) {
-            group = Some((message.ordinal, thinking));
+        if group
+            .is_none_or(|(_, kind, turn)| kind != thinking || (thinking && turn != message.turn))
+        {
+            group = Some((message.ordinal, thinking, message.turn));
             byte = 0;
         }
-        let start = group.map_or(message.ordinal, |(start, _)| start);
+        let start = group.map_or(message.ordinal, |(start, _, _)| start);
         sources
             .entry(start)
             .or_default()
             .push((byte, message.ordinal));
         byte += display_text(text).len();
     }
-    let mut rows: Vec<_> = logical_lines(chat)
-        .into_iter()
-        .flat_map(|entry| {
-            let limit = width.saturating_sub(2).max(1);
-            let line = if !entry.prose && entry.part == 0 {
-                Line::styled(
-                    clip_text(&entry.line.to_string(), usize::from(limit)),
-                    entry.line.style,
-                )
-            } else {
-                entry.line
+    let limit = width.saturating_sub(2).max(1);
+    let body_width = width.saturating_sub(4).max(1);
+    let thinking_style = Style::default().fg(PEACH()).add_modifier(Modifier::ITALIC);
+    let mut rows = Vec::new();
+    let mut lines = logical_lines(chat).into_iter().peekable();
+    while let Some(entry) = lines.next() {
+        if let Some(ThinkingLine::Header(turn)) = entry.thinking {
+            // Consume the block's body before wrapping, so its visible row count
+            // follows the one real wrap rather than a second guess.
+            let mut body_text = Vec::new();
+            let mut body_bytes = Vec::new();
+            while lines
+                .peek()
+                .is_some_and(|next| matches!(next.thinking, Some(ThinkingLine::Body)))
+            {
+                let body = lines.next().expect("peeked body row");
+                body_text.push(body.line);
+                body_bytes.push(body.byte);
+            }
+            let wrapped = wrapped_rows(body_text, body_width);
+            let total = wrapped.len();
+            let display = thinking_display(chat, entry.ordinal, turn, total);
+            let disclosure = display == ThinkingDisplay::Expanded;
+            let entry_choice = Some(TranscriptEntry {
+                ordinal: entry.ordinal,
+                expanded: disclosure,
+            });
+            let header = clip_line(thinking_header(display, total), usize::from(limit));
+            let mut spans = vec![Span::styled("│ ", Style::default().fg(SURFACE2()))];
+            spans.extend(header.spans);
+            rows.push(TranscriptRow {
+                line: Line::from(spans),
+                anchor: Some((entry.ordinal, 0, 0)),
+                entry: entry_choice,
+            });
+            let body_source = sources.get(&entry.ordinal);
+            let skip = match display {
+                ThinkingDisplay::Expanded => 0,
+                ThinkingDisplay::Collapsed => total,
+                ThinkingDisplay::Capped => total.saturating_sub(THINKING_PREVIEW_LINES),
             };
-            let source = (entry.part == 3)
-                .then(|| sources.get(&entry.ordinal))
-                .flatten();
-            wrapped_rows(vec![line], limit)
-                .into_iter()
-                .map(move |(line, (_, byte))| {
-                    let byte = entry.byte + byte;
-                    let (start, ordinal) = source
-                        .and_then(|sources| sources.iter().rev().find(|(start, _)| *start <= byte))
-                        .copied()
-                        .unwrap_or((0, entry.ordinal));
-                    // Decoration follows source-byte calculation, so scroll anchors stay durable.
-                    let gutter = if entry.part == 4 { "  " } else { entry.gutter };
-                    let color = if gutter == "❯ " {
-                        MAUVE()
-                    } else {
-                        SURFACE2()
-                    };
-                    let mut spans = vec![Span::styled(gutter, Style::default().fg(color))];
-                    spans.extend(line.spans);
-                    (Line::from(spans), Some((ordinal, entry.part, byte - start)))
-                })
-        })
-        .collect();
+            for (line, (logical, start)) in wrapped.into_iter().skip(skip) {
+                let byte = body_bytes.get(logical).copied().unwrap_or(0) + start;
+                // The visible row keeps the delta that actually owns its bytes.
+                let (start, ordinal) = body_source
+                    .and_then(|sources| sources.iter().rev().find(|(start, _)| *start <= byte))
+                    .copied()
+                    .unwrap_or((0, entry.ordinal));
+                let mut spans = vec![Span::styled("│ ", Style::default().fg(SURFACE2()))];
+                spans.push(Span::styled("  ", thinking_style));
+                spans.extend(line.spans);
+                rows.push(TranscriptRow {
+                    line: Line::from(spans),
+                    anchor: Some((ordinal, 3, byte - start)),
+                    entry: entry_choice,
+                });
+            }
+            continue;
+        }
+        let line = if !entry.prose && entry.part == 0 {
+            Line::styled(
+                clip_text(&entry.line.to_string(), usize::from(limit)),
+                entry.line.style,
+            )
+        } else {
+            entry.line
+        };
+        let source = (entry.part == 3)
+            .then(|| sources.get(&entry.ordinal))
+            .flatten();
+        for (line, (_, byte)) in wrapped_rows(vec![line], limit) {
+            let byte = entry.byte + byte;
+            let (start, ordinal) = source
+                .and_then(|sources| sources.iter().rev().find(|(start, _)| *start <= byte))
+                .copied()
+                .unwrap_or((0, entry.ordinal));
+            // Decoration follows source-byte calculation, so scroll anchors stay durable.
+            let gutter = if entry.part == 4 { "  " } else { entry.gutter };
+            let color = if gutter == "❯ " {
+                MAUVE()
+            } else {
+                SURFACE2()
+            };
+            let mut spans = vec![Span::styled(gutter, Style::default().fg(color))];
+            spans.extend(line.spans);
+            rows.push(TranscriptRow {
+                line: Line::from(spans),
+                anchor: Some((ordinal, entry.part, byte - start)),
+                entry: entry.entry,
+            });
+        }
+    }
     if let Some(activity) = conversation_activity(chat) {
         if rows
             .last()
-            .is_some_and(|(_, anchor)| anchor.is_some_and(|a| a.1 == 4))
+            .is_some_and(|row| row.anchor.is_some_and(|anchor| anchor.1 == 4))
         {
             rows.pop();
         }
@@ -709,8 +898,8 @@ pub(super) fn transcript_rows(
         } else {
             activity.label
         };
-        rows.push((
-            Line::from(vec![
+        rows.push(TranscriptRow {
+            line: Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     clip_text(&label, usize::from(width.saturating_sub(2))),
@@ -721,21 +910,18 @@ pub(super) fn transcript_rows(
                     }),
                 ),
             ]),
-            None,
-        ));
+            anchor: None,
+            entry: None,
+        });
     }
     rows
 }
-pub(super) fn transcript_offset(
-    chat: &Chat,
-    rows: &[(Line<'_>, Option<Anchor>)],
-    height: usize,
-) -> usize {
+pub(super) fn transcript_offset(chat: &Chat, rows: &[TranscriptRow], height: usize) -> usize {
     if !chat.follow
         && let Some(anchor) = chat.anchor
     {
         rows.iter()
-            .rposition(|(_, start)| start.is_some_and(|start| start <= anchor))
+            .rposition(|row| row.anchor.is_some_and(|start| start <= anchor))
             .unwrap_or(0)
     } else {
         rows.len()
@@ -855,13 +1041,15 @@ impl Dashboard {
             .into_iter()
             .skip(offset)
             .take(height)
-            .map(|(line, anchor)| {
+            .map(|row| {
                 if self.operator.transcript_focus
-                    && anchor.is_some_and(|anchor| chat.entry_focus == Some(anchor.0))
+                    && row
+                        .entry
+                        .is_some_and(|entry| chat.entry_focus == Some(entry.ordinal))
                 {
-                    line.style(Style::default().bg(SURFACE0()))
+                    row.line.style(Style::default().bg(SURFACE0()))
                 } else {
-                    line
+                    row.line
                 }
             })
             .collect();

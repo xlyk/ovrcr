@@ -140,8 +140,20 @@ scroll to the tail. Stopping has its own label, and `Stop unconfirmed` is static
 until stop proof arrives.
 
 Displayable provider thinking streams into a distinct **Thinking** block in the
-order it arrives. The answer follows it without repeating the thinking text. A
-provider that emits no displayable thinking adds no empty block.
+order it arrives. Its body is peach and italic; the header stays muted and upright.
+While its turn runs, an untouched block shows all wrapped lines up to six, then
+only the latest six with `▸ Thinking · showing last 6 of N lines`. Short blocks
+show `▾ Thinking · N lines`. When the turn ends, untouched blocks collapse to
+`▸ Thinking · N lines`, including failed, interrupted and older turns. Empty
+thinking adds no block. Counts include interior blank lines but exclude trailing
+newline terminators, and change with the available width.
+
+Enter on a selected block or a click on its header or body toggles that block.
+Manual expansion shows all lines and survives completion and reopening. Manual
+collapse hides the body even while more thinking arrives. Other blocks keep their
+own choices. Toggling keeps a visible header at the same screen row; blank space
+below a collapsed block is intentional. The journal has one scroll, so PageDown
+or the wheel reaches the answer below an expanded block.
 
 `PageUp` and `PageDown` scroll the journal. User prompts are marked, and assistant
 and tool activity share a fine guide. Tool call and output receipts stay
@@ -156,7 +168,8 @@ draft; `o` returns to the same conversation, history and draft. Completed replie
 stay Unread until the loaded tail is actually drawn.
 
 `Tab` cycles the transcript and composer. With the transcript focused, Up/Down
-select a context or tool entry and Enter expands it. `Ctrl-l` shows or hides the
+select a context, tool or thinking entry and Enter toggles it. A thinking block
+is one entry even when it arrives in many deltas. `Ctrl-l` shows or hides the
 ordinary Projects sidebar; it never opens a conversation list. At widths below 100
 columns the conversation uses the full width by default. Below 60×16, resize
 guidance preserves drafts and active work.

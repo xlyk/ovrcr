@@ -674,8 +674,11 @@ fn operator_session_identity_is_the_conversation_session() {
 
 #[cfg(feature = "acceptance-diagnostics")]
 mod installed_pi {
-    use super::{live, operator_harness, operator_provider};
-    use crossterm::event::{Event, KeyCode};
+    use super::{
+        fake_pi::{Scenario, Step},
+        fixture, live, operator_harness, operator_provider,
+    };
+    use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use operator_provider::{Chunk, Plan, Provider};
     use ovrcr::protocol::{
         self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorMessageContent,
@@ -683,7 +686,7 @@ mod installed_pi {
         ServerMessage, SessionPhase, TerminalSize,
     };
     use ovrcr::tui::{Dashboard, Settings};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
     use serde_json::{Value, json};
     use std::{
         collections::{HashMap, VecDeque},
@@ -917,16 +920,19 @@ mod installed_pi {
         }
 
         /// The actual public Dashboard render, including ephemeral activity.
-        fn screen(&mut self) -> String {
+        fn screen_buffer(&mut self) -> Buffer {
             self.pump();
             let backend = TestBackend::new(160, 50);
             let mut terminal = Terminal::new(backend).unwrap();
             terminal
                 .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
                 .unwrap();
-            terminal
-                .backend()
-                .buffer()
+            terminal.backend().buffer().clone()
+        }
+
+        /// The flattened render text existing callers already assert on.
+        fn screen(&mut self) -> String {
+            self.screen_buffer()
                 .content
                 .iter()
                 .map(|cell| cell.symbol())
@@ -1000,6 +1006,385 @@ mod installed_pi {
     fn session_header(path: &Path) -> Value {
         let text = std::fs::read_to_string(path).unwrap();
         serde_json::from_str(text.lines().next().unwrap()).unwrap()
+    }
+
+    fn buffer_row(buffer: &Buffer, row: u16) -> String {
+        (0..buffer.area.width)
+            .map(|column| buffer[(column, row)].symbol())
+            .collect()
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        buffer.content.iter().map(|cell| cell.symbol()).collect()
+    }
+
+    fn find_row(buffer: &Buffer, needle: &str) -> u16 {
+        (0..buffer.area.height)
+            .find(|row| buffer_row(buffer, *row).contains(needle))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the Dashboard never rendered {needle:?}; rows:\n{}",
+                    (0..buffer.area.height)
+                        .map(|row| buffer_row(buffer, row))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })
+    }
+
+    fn cell_column(buffer: &Buffer, row: u16, needle: &str) -> u16 {
+        let mut text = String::new();
+        let mut cells = Vec::new();
+        for column in 0..buffer.area.width {
+            cells.push((text.len(), column));
+            text.push_str(buffer[(column, row)].symbol());
+        }
+        let byte = text.find(needle).unwrap_or_else(|| {
+            panic!("row {row} never rendered {needle:?}: {text}");
+        });
+        cells
+            .iter()
+            .rev()
+            .find(|(start, _)| *start <= byte)
+            .map(|(_, column)| *column)
+            .expect("the row has at least one cell")
+    }
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn thinking_for_turn(history: &OperatorHistory, turn: u64) -> String {
+        history
+            .messages
+            .iter()
+            .filter(|message| message.turn.0 == turn)
+            .filter_map(|message| match &message.content {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text)) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The worker suite's held-stream recipe with forty numbered lines split
+    /// across multiple thinking deltas, then a held final message.
+    fn held_thinking_scenario(thinking: &str, release: &Path, answer: &str) -> Scenario {
+        let lines: Vec<&str> = thinking.split('\n').collect();
+        let groups = lines.len().div_ceil(10);
+        let mut steps = vec![Step::Start, Step::ThinkingStart { index: 0 }];
+        for (group, chunk) in lines.chunks(10).enumerate() {
+            let mut text = chunk.join("\n");
+            if group + 1 < groups {
+                text.push('\n');
+            }
+            steps.push(Step::thinking_delta(0, &text));
+        }
+        steps.push(Step::WaitFile(release.to_path_buf()));
+        steps.push(Step::ThinkingMessageEnd {
+            thinking: thinking.to_owned(),
+            text: answer.to_owned(),
+            stop: "stop".into(),
+        });
+        steps.push(Step::Settle);
+        let mut scenario = Scenario::new();
+        scenario.steps(steps);
+        scenario
+    }
+
+    /// The real Server/worker/Dashboard path with fake Pi: the running preview,
+    /// completion collapse, keyboard and mouse disclosure, and an explicit
+    /// expansion that survives a second held turn's completion.
+    #[test]
+    fn thinking_block_disclosure_through_live_server() {
+        const CAPPED: &str = "▸ Thinking · showing last 6 of 40 lines";
+        const ENDED: &str = "▸ Thinking · 40 lines";
+        const EXPANDED: &str = "▾ Thinking · 40 lines";
+        let release_dir = tempfile::tempdir().unwrap();
+        let first_release = release_dir.path().join("release-first");
+        let second_release = release_dir.path().join("release-second");
+        let lines = (1..=40)
+            .map(|line| format!("THINKING_LINE_{line:02}"))
+            .collect::<Vec<_>>();
+        let thinking = lines.join("\n");
+        let answer = "THINKING_ANSWER_AFTER_RELEASE";
+        let area = Rect::new(0, 0, 160, 50);
+
+        let (live, fake, client) =
+            fixture(&held_thinking_scenario(&thinking, &first_release, answer));
+        // The DashboardDriver must own the one dashboard slot; `fixture`'s
+        // harness client claims it only long enough to prove the Server speaks.
+        drop(client);
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let opened = driver.conversation();
+        driver.submit("first held thinking turn");
+
+        // The held turn's preview is a durable history fact, not a delay.
+        let running = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| {
+                    turn.state == OperatorTurnState::Running
+                        && thinking_for_turn(history, turn.identity.turn.0) == thinking
+                })
+        });
+        let first_turn = running
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        assert_eq!(
+            delta_text(&running).matches(answer).count(),
+            0,
+            "the answer is still held: {running:#?}"
+        );
+
+        let preview = driver.screen_buffer();
+        let preview_text = buffer_text(&preview);
+        assert!(preview_text.contains(CAPPED), "{preview_text}");
+        for line in 35..=40 {
+            let marker = format!("THINKING_LINE_{line:02}");
+            assert!(
+                preview_text.contains(&marker),
+                "missing {marker}: {preview_text}"
+            );
+        }
+        assert!(
+            !preview_text.contains("THINKING_LINE_34"),
+            "the running preview shows only its latest six body rows: {preview_text}"
+        );
+
+        std::fs::write(&first_release, "go").unwrap();
+        let completed = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| {
+                    turn.identity.turn.0 == first_turn && turn.state == OperatorTurnState::Complete
+                })
+                && history.conversation.worker_stopped
+                && delta_text(history).matches(answer).count() == 1
+        });
+        assert_eq!(
+            completed.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Complete
+        );
+        assert!(
+            completed.conversation.worker_stopped,
+            "completion waits for controlled-stop proof"
+        );
+
+        let collapsed = driver.screen_buffer();
+        let collapsed_text = buffer_text(&collapsed);
+        assert!(collapsed_text.contains(ENDED), "{collapsed_text}");
+        assert!(
+            !collapsed_text.contains("THINKING_LINE_"),
+            "completion collapses the automatic block: {collapsed_text}"
+        );
+        assert!(collapsed_text.contains(answer), "{collapsed_text}");
+        let header_before = find_row(&collapsed, ENDED);
+
+        // Keyboard disclosure: one stop for the many-delta block.
+        driver.dashboard.key(KeyCode::Tab);
+        driver.dashboard.key(KeyCode::End);
+        driver.dashboard.key(KeyCode::Enter);
+        let expanded = driver.screen_buffer();
+        let expanded_text = buffer_text(&expanded);
+        assert!(expanded_text.contains(EXPANDED), "{expanded_text}");
+        assert!(
+            expanded_text.contains("THINKING_LINE_01"),
+            "expansion shows the first body row: {expanded_text}"
+        );
+        let header_expanded = find_row(&expanded, EXPANDED);
+        assert_eq!(
+            header_before, header_expanded,
+            "the toggled header keeps its screen row"
+        );
+
+        // A body row collapses the whole block through the public mouse path.
+        let body_row = find_row(&expanded, "THINKING_LINE_");
+        let body_column = cell_column(&expanded, body_row, "THINKING_LINE_");
+        driver
+            .dashboard
+            .mouse_action(click(body_column, body_row), area);
+        let mouse_collapsed = driver.screen_buffer();
+        let mouse_collapsed_text = buffer_text(&mouse_collapsed);
+        assert!(
+            mouse_collapsed_text.contains(ENDED),
+            "{mouse_collapsed_text}"
+        );
+        assert!(
+            !mouse_collapsed_text.contains("THINKING_LINE_"),
+            "a body click collapses every body row: {mouse_collapsed_text}"
+        );
+        assert_eq!(
+            header_before,
+            find_row(&mouse_collapsed, ENDED),
+            "a body click leaves the header on the same screen row"
+        );
+
+        // The header itself expands it again, still at the same row.
+        let mouse_header_column = cell_column(&mouse_collapsed, header_before, ENDED);
+        driver
+            .dashboard
+            .mouse_action(click(mouse_header_column, header_before), area);
+        let mouse_expanded = driver.screen_buffer();
+        assert!(
+            buffer_text(&mouse_expanded).contains(EXPANDED),
+            "the header click expands the block: {}",
+            buffer_text(&mouse_expanded)
+        );
+        assert_eq!(
+            header_before,
+            find_row(&mouse_expanded, EXPANDED),
+            "the header click leaves the disclosure header on the same row"
+        );
+
+        // One transcript scroll reaches the body's tail and the answer.
+        for _ in 0..4 {
+            driver.dashboard.key(KeyCode::PageDown);
+        }
+        let scrolled = driver.screen_buffer();
+        let scrolled_text = buffer_text(&scrolled);
+        assert!(
+            scrolled_text.contains("THINKING_LINE_40"),
+            "{scrolled_text}"
+        );
+        assert!(scrolled_text.contains(answer), "{scrolled_text}");
+        let tail_body_row = find_row(&scrolled, "THINKING_LINE_40");
+        let tail_body_column = cell_column(&scrolled, tail_body_row, "THINKING_LINE_40");
+        driver
+            .dashboard
+            .mouse_action(click(tail_body_column, tail_body_row), area);
+        let recovered = driver.screen_buffer();
+        let recovered_text = buffer_text(&recovered);
+        assert!(recovered_text.contains(ENDED), "{recovered_text}");
+        assert!(
+            !recovered_text.contains("THINKING_LINE_"),
+            "a body click below a scrolled-past header still collapses: {recovered_text}"
+        );
+        assert!(
+            find_row(&recovered, ENDED) < tail_body_row,
+            "the collapsed header lands above the clicked body row"
+        );
+
+        // Second held turn: an explicit expansion before completion survives it.
+        driver.dashboard.key(KeyCode::Tab);
+        fake.script(&held_thinking_scenario(&thinking, &second_release, answer));
+        driver.submit("second held thinking turn");
+        let second_running = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| {
+                    turn.identity.turn.0 != first_turn
+                        && turn.state == OperatorTurnState::Running
+                        && thinking_for_turn(history, turn.identity.turn.0) == thinking
+                })
+        });
+        let second_turn = second_running
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn
+            .0;
+        assert_eq!(
+            delta_text(&second_running).matches(answer).count(),
+            1,
+            "the second answer is still held after the first turn's: {second_running:#?}"
+        );
+        let second_preview = driver.screen_buffer();
+        let second_preview_text = buffer_text(&second_preview);
+        assert!(
+            second_preview_text.contains(CAPPED),
+            "{second_preview_text}"
+        );
+        let second_header_before = find_row(&second_preview, CAPPED);
+
+        driver.dashboard.key(KeyCode::Tab);
+        driver.dashboard.key(KeyCode::End);
+        driver.dashboard.key(KeyCode::Enter);
+        let second_expanded = driver.screen_buffer();
+        let second_expanded_text = buffer_text(&second_expanded);
+        assert!(
+            second_expanded_text.contains(EXPANDED),
+            "{second_expanded_text}"
+        );
+        assert!(
+            second_expanded_text.contains("THINKING_LINE_01"),
+            "the second block expands before completion: {second_expanded_text}"
+        );
+        let second_header_row = find_row(&second_expanded, EXPANDED);
+        assert_eq!(
+            second_header_before, second_header_row,
+            "the running block keeps its header row on expansion"
+        );
+
+        std::fs::write(&second_release, "go").unwrap();
+        let second_completed = driver.wait_history(opened.id, |history| {
+            history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| {
+                    turn.identity.turn.0 == second_turn && turn.state == OperatorTurnState::Complete
+                })
+                && history.conversation.worker_stopped
+                && delta_text(history).matches(answer).count() == 2
+        });
+        assert_eq!(
+            second_completed
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .state,
+            OperatorTurnState::Complete
+        );
+        let survived = driver.screen_buffer();
+        let survived_text = buffer_text(&survived);
+        assert!(
+            survived_text.contains(EXPANDED),
+            "an explicit expansion survives completion: {survived_text}"
+        );
+        assert!(
+            survived_text.contains("THINKING_LINE_01"),
+            "the body remains expanded after completion: {survived_text}"
+        );
+        assert_eq!(
+            second_header_row,
+            find_row(&survived, EXPANDED),
+            "completion does not move an explicitly expanded header"
+        );
+        for _ in 0..4 {
+            driver.dashboard.key(KeyCode::PageDown);
+        }
+        let second_scrolled = driver.screen_buffer();
+        let second_scrolled_text = buffer_text(&second_scrolled);
+        assert!(
+            second_scrolled_text.contains("THINKING_LINE_40"),
+            "the retained expansion still reaches its final body row: {second_scrolled_text}"
+        );
+        assert!(
+            second_scrolled_text.contains(answer),
+            "the transcript scroll reaches the completion answer: {second_scrolled_text}"
+        );
     }
 
     fn delta_text(history: &OperatorHistory) -> String {
@@ -1455,6 +1840,7 @@ mod installed_pi {
                 "REQUEST_SKILL_CLI",
                 "REQUEST_SKILL_RESUME",
                 "REQUEST_THINKING_HELD",
+                "REQUEST_THINKING_LONG_HELD",
                 "COMPACT_ONE",
                 "COMPACT_TWO",
             ]
@@ -1588,6 +1974,20 @@ mod installed_pi {
                 ])
                 .holding()
                 .then_text_after_release("THINKING_ANSWER_AFTER_RELEASE"),
+                // Forty lines arrive as forty thinking chunks between single
+                // newlines with no final terminator, then the answer is held.
+                ("REQUEST_THINKING_LONG_HELD", 0) => Plan::new(
+                    (1..=40)
+                        .map(|line| {
+                            Chunk::Thinking(format!(
+                                "THINKING_LINE_{line:02}{}",
+                                if line < 40 { "\n" } else { "" }
+                            ))
+                        })
+                        .collect(),
+                )
+                .holding()
+                .then_text_after_release("THINKING_LONG_ANSWER"),
                 ("COMPACT_ONE", 0) if mode.inflate_compaction_turn => {
                     Plan::text(&format!("COMPACT_ONE_DONE {}", "C".repeat(60_000)))
                 }
