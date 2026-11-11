@@ -248,10 +248,6 @@ impl ServerState {
                     .operator
                     .clone();
                 let turn = {
-                    #[cfg(test)]
-                    if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
-                        hook();
-                    }
                     // Assigned human input also acquires retained before the Dashboard slot.
                     let mut retained = self.retained.lock();
                     self.dashboard
@@ -375,6 +371,12 @@ impl ServerState {
         conversation: OperatorConversationId,
         run: SessionRunId,
     ) -> Result<bool> {
+        // Submit's warm check is its first retained boundary. Keep the lock-order
+        // seam here so the test observes waits before any Dashboard slot is held.
+        #[cfg(test)]
+        if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+            hook();
+        }
         let summary = self.retained.lock().operator_conversation(conversation)?;
         if summary.run != run
             || !self.retained.lock().operator_worker_leased(conversation)?

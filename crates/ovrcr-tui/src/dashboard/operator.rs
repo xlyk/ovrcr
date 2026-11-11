@@ -1431,16 +1431,15 @@ impl Dashboard {
         if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
             return false;
         }
-        if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn) {
-            if new.identity.run.0 < old.identity.run.0
+        if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn)
+            && (new.identity.run.0 < old.identity.run.0
                 || (new.identity.run == old.identity.run
                     && (new.identity.turn.0 < old.identity.turn.0
                         || (new.identity.turn == old.identity.turn
                             && (new.sequence < old.sequence
-                                || (chat.summary.worker_stopped && !summary.worker_stopped)))))
-            {
-                return false;
-            }
+                                || (chat.summary.worker_stopped && !summary.worker_stopped))))))
+        {
+            return false;
         }
         if chat.summary.model != summary.model || chat.summary.reasoning != summary.reasoning {
             self.operator.reasoning_picker = None;
