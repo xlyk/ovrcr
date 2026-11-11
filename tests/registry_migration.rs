@@ -591,13 +591,13 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     let connection = Connection::open(&database).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut version: i64 = 0;
-    while version != 29 && std::time::Instant::now() < deadline {
+    while version != 30 && std::time::Instant::now() < deadline {
         version = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(version, 29, "the application upgrades schema 28 to 29");
+    assert_eq!(version, 30, "the application upgrades schema 28 to 30");
     let columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
         .unwrap()
@@ -607,6 +607,7 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
         .unwrap();
     assert!(columns.contains(&"singleton".to_string()));
     assert!(columns.contains(&"pi_checkpoint_turn".to_string()));
+    assert!(columns.contains(&"reasoning".to_string()));
     let turn_columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_turns')")
         .unwrap()
@@ -615,6 +616,7 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     assert!(turn_columns.contains(&"model_override".to_string()));
+    assert!(turn_columns.contains(&"thinking_level".to_string()));
 
     let after: Vec<String> = connection
         .prepare("SELECT content FROM operator_messages ORDER BY ordinal")

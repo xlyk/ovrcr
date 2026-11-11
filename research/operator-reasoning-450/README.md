@@ -131,3 +131,22 @@ started, stopped or upgraded. No provider-specific capability table, new
 dependency, per-conversation override, or extra reasoning policy was added.
 
 Issue: https://github.com/xlyk/ovrcr/issues/450
+
+## 2026-11-11 CI follow-up
+
+[macOS shard 1](https://github.com/xlyk/ovrcr/actions/runs/42982894977/job/130397212977)
+failed in the root `registry_migration` integration suite: the schema-28 upgrade
+case still waited for version 29 and asserted `30 == 29`. The aggregate `checks`
+failure was a consequence of that shard failure.
+
+The exact test reproduced locally before editing (one test failed; preserved in
+`ci-migration-red.log.gz`). Its expected current version is now 30, and it also
+asserts the new conversation `reasoning` and turn `thinking_level` columns exist.
+The fixture's historical schema 28, legacy journal/provider/model bytes,
+singleton lifecycle, foreign-key assertions and deadlines are unchanged.
+
+`cargo test -p ovrcr --all-features --test registry_migration -- --test-threads=4`
+then passed 13 tests with one internal helper ignored
+(`ci-migration-green.log.gz`). `just fmt-check` and `just lint` passed. This fix
+changes the integration test only; it changes no product behavior or workflow
+selection.
