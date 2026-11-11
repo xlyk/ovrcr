@@ -8,7 +8,7 @@ Rust runs used two build jobs and cleared inherited agent socket/token authority
 
 | Check | Result | Source revision |
 | --- | --- | --- |
-| TUI unit suite | 460 passed | 1869f446, identical final code tree |
+| TUI unit suite | 460 passed | 1869f446, hover correction tree |
 | Dashboard integration suite | 532 passed | 1869f446 |
 | Application library | 164 passed | 168b9cba |
 | Runtime + protocol, nine suites | 670 passed, 1 ignored | 168b9cba |
@@ -25,11 +25,11 @@ Rust runs used two build jobs and cleared inherited agent socket/token authority
 | Palette integration filter, serial | 122 passed, 410 filtered | Follow-up correction |
 | Follow-up fmt/diff check, workspace all-target/all-feature check and clippy | Passed | Follow-up correction |
 | Assigned view-only switch regression, before behavior fix | 0 passed, 1 failed at the missing completion redraw assertion | Latest follow-up, red |
-| Assigned view-only switch regression, after behavior fix | 1 passed, 460 filtered | Latest follow-up |
-| TUI unit suite | 461 passed | Latest follow-up |
-| Dashboard integration suite with isolated missing-Pi parent | 532 passed | Latest follow-up |
-| Real PTY assigned-child takeover/return acceptance | 1 passed, 34 filtered | Latest follow-up |
-| Latest fmt, diff check, workspace all-target/all-feature check and clippy | Passed | Latest follow-up |
+| Assigned view-only switch regression, after behavior fix | 1 passed, 460 filtered | 3870ae64 |
+| TUI unit suite | 461 passed | 3870ae64 |
+| Dashboard integration suite with isolated missing-Pi parent | 532 passed | 3870ae64 |
+| Real PTY assigned-child takeover/return acceptance | 1 passed, 34 filtered | 3870ae64 |
+| Latest fmt, diff check, workspace all-target/all-feature check and clippy | Passed | 3870ae64 |
 
 The live Usage case accepts the same-conversation sequence 100 → rebind 90 → 110 and retains 100 then advances to 110. The terminal case covers actual application PTYs, four mixed panes, focus/input routing, header double-click zoom/unzoom, divider reset, repeated resize and nonce-tagged kernel dimensions.
 
@@ -39,13 +39,13 @@ An earlier full all-target workspace run failed twenty tests; it is not reported
 
 ## Hosted verification
 
-[PR checks](https://github.com/xlyk/ovrcr/pull/464/checks) and manual jobs below are results from the previously published head `fb7cd309`; they do not validate the follow-up corrections in this worktree. After the corrected head is published, the existing workflow runs Linux headless tests, actual Linux resource sampling, isolated 50-session capacity and memory high-water acceptance. These manual jobs are policy-skipped on ordinary PR events. No workflow exclusions or required checks were weakened by this change. The existing partial-resize exclusion and paid/ignored tests remain separate limits.
+[Current PR checks](https://github.com/xlyk/ovrcr/pull/464/checks) and the PR description record final-head hosted status. The historical runs below explain the corrected defects; they do not substitute for current-head verification. The existing manually dispatched workflow runs Linux headless tests, actual Linux resource sampling, isolated 50-session capacity and memory high-water acceptance. These manual jobs are policy-skipped on ordinary PR events. No workflow exclusions or required checks were weakened by this change. The existing partial-resize exclusion and paid/ignored tests remain separate limits.
 
 Hosted CI at `fb7cd309` exposed Linux-only parser visibility errors in resource tests and an `unused_mut` warning in macOS-specific settings row customization. The follow-up correction described above addresses those compile issues. The raw Linux job log is `/tmp/ovrcr-448-context/ci-linux-fb7.log`.
 
 The typed-branch live Server test failed all three retries in each of two hosted shard runs (6/6 failures; raw logs `/tmp/ovrcr-448-context/ci-macos-shard2-fb7.log` and `/tmp/ovrcr-448-context/ci-pr-shard2-fb7.log`). The Server queues its greeting, starts its writer, then publishes settings; the test previously installed `fixture-agent` only in Dashboard memory. A late initial `SettingsChanged` could therefore remove the launcher and remembered project choice before form submission. The regression now waits for and checks the Server's initial settings, and writes the matching launcher and choice to the isolated `dashboard.toml` before Server startup. It failed against the default Server settings with `agents: []` and passes after the fixture correction. The Git fixture initializes explicitly with `git init -b main`; no reliance on user `init.defaultBranch` remains. The test's runner-controlled `PATH` is isolated by `Live`, and the exact test passed with both missing-Pi and `/bin/sh` Pi environment settings.
 
-The local machine does not have `nextest`, so the exact test was run with `cargo test --all-features`, `CI=true`, `GITHUB_ACTIONS=true`, and `NEXTEST=1`; this is not claimed as a nextest run. The corrected source has not yet been rerun on hosted Linux or the hosted macOS shards. Those hosted results remain pending.
+The local machine does not have `nextest`, so the exact test was run with `cargo test --all-features`, `CI=true`, `GITHUB_ACTIONS=true`, and `NEXTEST=1`; this is not claimed as a nextest run. The typed-branch correction subsequently passed cleanly on the hosted `53373993` PR shard. That PR run completed with seven passed checks and three Linux policy skips; its takeover case required three attempts. The latest loading-state and deadline corrections require their own current-head hosted results, recorded on the PR.
 
 ## Linux TUI fixture follow-up
 
