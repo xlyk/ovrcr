@@ -74,11 +74,11 @@ ovrcr new --project myapp --workspace feature/cleanup --name review -- claude
 ovrcr
 ```
 
-Dashboard: `j`/`k` select, `Enter` focus, `Ctrl-g` browse, `q` detach.
+Dashboard: `j`/`k` select, `Enter` focus, `Space s` opens pane actions, `Ctrl-g` browse, `q` detach.
 
 ## Features
 
-- One or two panes; Browse, Terminal, Copy, and History modes.
+- Up to four panes with directional focus, swap, and zoom; Browse, Terminal, Copy, and History modes.
 - [Built-in Operator](docs/operator.md): native saved conversations, concurrent token streaming, ChatGPT/Grok subscription sign-in, and Bash/CLI control.
 - After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart.
 - 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.

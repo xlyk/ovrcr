@@ -34,6 +34,15 @@ again when it fits. Focus and visible-geometry changes go through
 `retarget(PaneChange)` and revoke input until the one in-flight view request is
 acknowledged for all of its pane snapshots.
 
+`Space s` exposes split, directional focus, swap, zoom, next, and close through
+the shared keymap. Directional focus and swap are popup-only so Browse's
+arrows and `j` / `k` keep their sidebar behavior. Choose a neighbour by greatest
+perpendicular overlap, then shortest edge distance, then pane index for a
+stable final tie-break. Swapping changes the tree's pane indices and preserves
+focus on the same session. Zoom draws and sizes one focused leaf while keeping
+the tree unchanged; zoom, focus, swap, split, and close still use `retarget` so
+input permission follows the acknowledged visible view.
+
 Sidebar session-jump labels are derived from the drawn tree order, viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
