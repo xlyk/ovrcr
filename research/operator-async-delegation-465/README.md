@@ -35,10 +35,17 @@ Tests cleared `OVRCR_AGENT_SOCKET` and `OVRCR_AGENT_TOKEN`.
 
 Draft CI at `3083aac1` found an existing expectation that still requires Operator
 to be refused at 50 Workspace sessions:
-`operator_capacity_refuses_without_consuming_prompt_or_run`. Its intentional
-behavior update is pending. [Failed macOS shard](https://github.com/xlyk/ovrcr/actions/runs/43102686631/job/130797927456).
+`operator_capacity_refuses_without_consuming_prompt_or_run`.
+[Failed macOS shard](https://github.com/xlyk/ovrcr/actions/runs/43102686631/job/130797927456).
 The other three macOS shards, offline Cursor preflight and selection audit passed;
 Linux gates were skipped. These results apply only to that draft revision.
+
+Correction `caae6b32` replaces the superseded refusal assertion with acceptance,
+journal/run advancement, and completion at 50 Workspace sessions. The owning
+runtime regression passed (1 test; 503 filtered); formatting and diff checks
+passed. [Attempt metadata](466-attempts.md) preserves the observed failures,
+commands, exit statuses and known evidence limits. Hosted CI for this correction
+is pending.
 
 ## Remaining acceptance
 
