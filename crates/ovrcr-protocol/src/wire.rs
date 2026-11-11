@@ -142,8 +142,8 @@ impl DashboardView {
         if self.revision == 0 {
             return Err("view revision must be greater than zero".into());
         }
-        if self.panes.len() > 2 {
-            return Err("view cannot contain more than two panes".into());
+        if self.panes.len() > 4 {
+            return Err("view cannot contain more than four panes".into());
         }
         for (index, pane) in self.panes.iter().enumerate() {
             if pane.size.rows == 0 || pane.size.cols == 0 {
@@ -3969,13 +3969,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044f017301630168016c0104",
+            "2a0450017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044f017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0450017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4025,18 +4025,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044f0000"),
+        ("Response::NotificationNavigation", "0d04500000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044f017301630168016c0104",
+            "0e01016e0450017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044f017301630168016c0164",
+            "0f0107080901016901010450017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044f010708090101690101044f017301630168016c0164",
+            "1004500107080901016901010450017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4076,7 +4076,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044f017301630168016c0104",
+            "08016e0450017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4700,5 +4700,35 @@ mod tests {
             cols: 1000,
         });
         assert!(at_limit.validate().is_ok(), "1000 by 1000 must pass");
+    }
+
+    #[test]
+    fn view_limit_accepts_four_panes_and_rejects_five_and_duplicates() {
+        let target = |session| PaneTarget {
+            session: SessionId(session),
+            run: SessionRunId(1),
+            size: TerminalSize { rows: 8, cols: 20 },
+        };
+        let mut view = DashboardView {
+            revision: 1,
+            panes: (1..=4).map(target).collect(),
+            focused: Some(SessionId(4)),
+        };
+        assert!(view.validate().is_ok(), "four distinct panes must pass");
+
+        view.panes.push(target(5));
+        view.focused = Some(SessionId(5));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain more than four panes"
+        );
+
+        view.panes.pop();
+        view.panes[3].session = SessionId(3);
+        view.focused = Some(SessionId(3));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain duplicate sessions"
+        );
     }
 }

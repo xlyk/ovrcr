@@ -41,8 +41,10 @@ pub(super) enum Action {
     CopyScreen,
     History,
     Split,
+    SplitDown,
     ClosePane,
     OtherPane,
+    PreviousPane,
     NextSession,
     PreviousSession,
     /// Select the next session that needs the user; see `attention`.
@@ -222,6 +224,12 @@ impl KeyBinding {
         if self.press_only && key.kind != KeyEventKind::Press {
             return false;
         }
+        if self.action == Action::PreviousPane {
+            return key.code == KeyCode::BackTab;
+        }
+        if self.action == Action::OtherPane && key.code == KeyCode::BackTab {
+            return false;
+        }
         if let Action::OperatorKey(code, modifiers) = self.action {
             return key.code == code && key.modifiers == modifiers;
         }
@@ -357,7 +365,8 @@ impl Dashboard {
             Action::MarkReviewed => self.mark_reviewed_request(),
             Action::CopyScreen => self.begin_copy(),
             Action::History => self.begin_history_request(false),
-            Action::Split => self.open_split_chooser(),
+            Action::Split => self.open_split_chooser(super::SplitDirection::Right),
+            Action::SplitDown => self.open_split_chooser(super::SplitDirection::Down),
             Action::ClosePane => {
                 if self.action_session().is_some() {
                     self.close_focused_pane();
@@ -368,8 +377,14 @@ impl Dashboard {
             // own words, so every action holds its own bound: this one keeps the
             // pane count the "only one pane" reason reports.
             Action::OtherPane => {
-                if self.action_session().is_some() && self.panes.len() == 2 {
-                    self.focus_pane((self.focused_pane + 1) % 2);
+                if self.action_session().is_some() && self.panes.len() > 1 {
+                    self.focus_pane((self.focused_pane + 1) % self.panes.len());
+                }
+                DashboardAction::Redraw
+            }
+            Action::PreviousPane => {
+                if self.action_session().is_some() && self.panes.len() > 1 {
+                    self.focus_pane((self.focused_pane + self.panes.len() - 1) % self.panes.len());
                 }
                 DashboardAction::Redraw
             }
@@ -871,32 +886,26 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .group('v', ":"),
         key_binding(
             "v",
-            "Split",
-            format!(
-                "Open a second pane beside {target} and choose its session; Esc keeps the suggestion"
-            ),
+            "Split right",
+            format!("Split {target} to the right and choose a session; Esc keeps the suggestion"),
             Char('v'),
             Action::Split,
         )
-        .unless(
-            (dashboard.panes.len() >= 2)
-                .then_some("already split")
-                .or(missing)
-                .or_else(|| {
-                    (dashboard
-                        .visible_rows()
-                        .iter()
-                        .filter(|r| matches!(r, TreeRow::Session { .. }))
-                        .count()
-                        < 2)
-                    .then_some("no other visible session")
-                }),
-        )
+        .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Right)))
         .group('v', "v"),
         key_binding(
-            "Tab/Shift-Tab",
+            "V",
+            "Split down",
+            format!("Split {target} down and choose a session; Esc keeps the suggestion"),
+            Char('V'),
+            Action::SplitDown,
+        )
+        .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Down)))
+        .group('v', "V"),
+        key_binding(
+            "Tab",
             "Next pane",
-            "Focus the other pane; sessions keep running".into(),
+            "Focus the next pane; sessions keep running".into(),
             Tab,
             Action::OtherPane,
         )
@@ -905,7 +914,20 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "Tab/Shift-Tab"),
+        .group('v', "Tab"),
+        key_binding(
+            "Shift-Tab",
+            "Previous pane",
+            "Focus the previous pane; sessions keep running".into(),
+            KeyCode::BackTab,
+            Action::PreviousPane,
+        )
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
+        .group('v', "Shift-Tab"),
         key_binding(
             "x",
             "Close pane",

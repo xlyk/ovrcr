@@ -1771,16 +1771,19 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    /// `v`: open the second pane on the next visible session, then let the
+    /// Split the focused pane, then let the
     /// user choose its session. Enter places the highlighted one; Esc keeps
     /// the suggestion.
-    pub(super) fn open_split_chooser(&mut self) -> DashboardAction {
-        if !self.split_pane() {
+    pub(super) fn open_split_chooser(
+        &mut self,
+        direction: super::SplitDirection,
+    ) -> DashboardAction {
+        if !self.split_pane_in(direction) {
             return DashboardAction::Redraw;
         }
         let suggestion = self.focused_session();
         let selected = self
-            .session_entries(self.other_pane_session())
+            .split_session_entries()
             .iter()
             .position(
                 |entry| matches!(entry.command, Command::Switch(id) if Some(id) == suggestion),
@@ -1796,12 +1799,20 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    fn other_pane_session(&self) -> Option<SessionId> {
-        self.panes
-            .iter()
-            .enumerate()
-            .find(|(index, _)| *index != self.focused_pane)
-            .and_then(|(_, pane)| pane.session)
+    fn split_session_entries(&self) -> Vec<Entry> {
+        let focused = self.focused_session();
+        self.session_entries(None)
+            .into_iter()
+            .filter(|entry| match &entry.command {
+                Command::Switch(id) => {
+                    Some(*id) == focused
+                        || !self.panes.iter().enumerate().any(|(index, pane)| {
+                            index != self.focused_pane && pane.session == Some(*id)
+                        })
+                }
+                _ => true,
+            })
+            .collect()
     }
 
     /// One `project / branch / title` entry per session. The ID is added only
@@ -3099,7 +3110,7 @@ impl Dashboard {
         split: bool,
     ) -> Vec<Entry> {
         if split {
-            let mut entries = self.session_entries(self.other_pane_session());
+            let mut entries = self.split_session_entries();
             retain_matching(&mut entries, query);
             return entries;
         }
