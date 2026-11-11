@@ -1857,6 +1857,165 @@ fn write_fifo_bounded(path: &Path, bytes: &[u8], timeout: Duration) -> Result<()
 }
 
 #[test]
+fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+
+    // The fixture's existing waiting and mouse shells also report their kernel
+    // PTY size. Add two task-owned shells so the test can fill four distinct panes.
+    for (name, marker) in [("third", "THIRD"), ("fourth", "FOURTH")] {
+        let script = format!(
+            r#"printf '{marker}_READY'; while IFS= read -r line; do case "$line" in *SIZE_TOKEN*) printf '{marker}_SIZE_ACK_%s' "$(stty size)";; esac; done"#
+        );
+        let output = fixture.cli(&[
+            "new",
+            "--project",
+            "fixture",
+            "--workspace",
+            "feature/acceptance",
+            "--name",
+            name,
+            "--",
+            "sh",
+            "-c",
+            &script,
+        ])?;
+        require_success(output, "nested split PTY shell")?;
+    }
+    fixture.managed_pgids = fixture.session_pgids()?;
+
+    let session_pid = |fixture: &AcceptanceFixture, name: &str| -> Result<u32> {
+        fixture
+            .list()?
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .flat_map(|workspace| workspace.sessions)
+            .find(|session| session.name == name)
+            .and_then(|session| session.pid)
+            .with_context(|| format!("{name} session PID"))
+    };
+    let names = ["waiting", "mouse", "third", "fourth"];
+    let original_pids = names
+        .iter()
+        .map(|name| session_pid(&fixture, name))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let wait_focused_ready = |dashboard: &mut OuterDashboard, name: &str| {
+        let focused = format!("> {name} ");
+        dashboard
+            .wait_until(
+                |screen| {
+                    screen.lines().any(|line| line.contains(&focused))
+                        && !screen.contains("Pane is loading")
+                },
+                wait_deadline(),
+            )
+            .with_context(|| format!("waiting for the focused {name} pane view"))
+    };
+    dashboard.click_visible_text("waiting")?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
+    dashboard.send(b"v\r")?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
+
+    // Split the right pane down; the new chooser filters to an unassigned shell.
+    dashboard.send(b"Vthird\r")?;
+    dashboard.wait_for(b"THIRD_READY", wait_deadline())?;
+    dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    // Click the initial left pane header, then split it down with the fourth shell.
+    dashboard.send(b"\x1b[<0;43;2M")?;
+    wait_focused_ready(&mut dashboard, "waiting")?;
+    dashboard.send(b"\x07Vfourth\r")?;
+    dashboard.wait_for(b"FOURTH_READY", wait_deadline())?;
+
+    let rects = [
+        ratatui::layout::Rect::new(40, 3, 39, 16),
+        ratatui::layout::Rect::new(40, 22, 39, 17),
+        ratatui::layout::Rect::new(80, 3, 40, 16),
+        ratatui::layout::Rect::new(80, 22, 40, 17),
+    ];
+    let ready = |screen: &str| {
+        ["waiting", "fourth", "mouse", "third"]
+            .iter()
+            .all(|name| screen.contains(name))
+    };
+    dashboard.wait_until(ready, wait_deadline())?;
+    anyhow::ensure!(
+        dashboard
+            .rendered()
+            .lines()
+            .map(|line| line.matches("pid ").count())
+            .sum::<usize>()
+            == 4,
+        "expected four pane headers before size probes: {}",
+        dashboard.rendered()
+    );
+
+    // The tree is [waiting/fourth] on the left and [mouse/third] on the right.
+    // Query each actual child PTY; the view labels alone do not prove a resize.
+    let targets = [
+        ((42, 1), 0, "waiting", "SIZE_ACK_16 39"),
+        ((42, 20), 1, "fourth", "FOURTH_SIZE_ACK_17 39"),
+        ((82, 1), 2, "mouse", "SIZE_ACK_16 40"),
+        ((82, 20), 3, "third", "THIRD_SIZE_ACK_17 40"),
+    ];
+    for ((column, row), index, name, response) in targets {
+        let click = format!("\x1b[<0;{};{}M", column + 1, row + 1);
+        dashboard.send(click.as_bytes())?;
+        wait_focused_ready(&mut dashboard, name)?;
+        dashboard.send(b"SIZE_TOKEN\r")?;
+        dashboard.wait_for(response.as_bytes(), wait_deadline())?;
+        dashboard.find_text_in_rect(rects[index], response)?;
+        for (_, other_index, other_name, _) in targets {
+            if other_index != index {
+                anyhow::ensure!(
+                    dashboard
+                        .find_text_in_rect(rects[other_index], response)
+                        .is_err(),
+                    "{response} from {name} appeared in {other_name}'s pane"
+                );
+            }
+        }
+    }
+
+    // Closing the focused pane only removes its view. Its Server session and PID
+    // remain available, as do all other task-owned sessions.
+    dashboard.send(b"\x07x")?;
+    dashboard
+        .wait_until(
+            |screen| {
+                screen
+                    .lines()
+                    .map(|line| line.matches("pid ").count())
+                    .sum::<usize>()
+                    < 4
+            },
+            wait_deadline(),
+        )
+        .context("waiting for the closed pane to leave the dashboard view")?;
+    for (name, pid) in names.into_iter().zip(original_pids) {
+        assert_eq!(
+            session_pid(&fixture, name)?,
+            pid,
+            "closing a pane stopped {name}"
+        );
+    }
+
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
 fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;

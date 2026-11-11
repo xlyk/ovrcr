@@ -120,8 +120,8 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
-| `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
-| `Tab` / `Shift-Tab` | Focus the other pane |
+| `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Open New agent session |
 | `w` | Create a branch (form) |
@@ -402,17 +402,22 @@ explanation and leave wheel-up quiet.
 
 ## Panes
 
-`v` opens a second pane on the next different visible session and, over it, a
-session chooser with that suggestion highlighted. `Enter` shows the highlighted
-session in the new pane, typing filters by project, branch and title, and `Esc`
-keeps the suggestion. The chooser does not offer the session the other pane
-already shows. Sidebar navigation replaces the focused pane's session; selecting the session already
-shown in the other pane moves focus there instead. `x` closes the focused pane
-and expands the survivor, leaving its session running. If the window becomes too
-narrow for both panes, only the focused pane is drawn; widening it restores both.
-A new attachment starts with one pane. Each pane is capped at 1000 rows and
-1000 columns; a `SetView` requesting a larger pane is rejected before any PTY
-resize.
+`v` splits the focused pane to the right; `V` splits it down. Each opens a
+session chooser with the next different visible session highlighted. `Enter`
+shows the highlighted session in the new pane, typing filters by project,
+branch and title, and `Esc` keeps the suggestion. The chooser omits sessions
+already assigned to another pane. A layout can contain up to four panes, each
+at least 20 columns wide and 8 rows tall including its header. The footer gives
+the reason when another split cannot fit or the four-pane limit is reached.
+Drag any divider to resize its neighboring panes; click a pane to focus it.
+`Tab` and `Shift-Tab` cycle through panes. Sidebar navigation replaces the
+focused pane's session; selecting a session already shown elsewhere moves focus
+to that pane instead. `x` closes the focused pane and gives its space to its
+sibling, leaving the session running. If the window becomes too small for the
+layout, only the focused pane is drawn and its header says `split hidden`;
+widening the window restores the full layout. A new attachment starts with one
+pane. Each pane is capped at 1000 rows and 1000 columns; a `SetView` requesting
+a larger pane is rejected before any PTY resize.
 
 ## Sidebar and status
 
@@ -426,6 +431,14 @@ checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
 stay on that workspace. Folded project and workspace rows show counts before
 their fold marker: `?N` sessions needing input and `✓N` ready Unread responses.
+A project row shows `[+]` at its right edge while hovered. A hovered workspace row
+shows `[+]` just before `[x]`. The project menu offers **New workspace** and
+**New agent session**; the workspace menu offers **New agent session** and
+**New terminal**. Each opens its existing form with that row's context. Use Up
+and Down to move, Enter to choose, or click an entry; Esc closes the menu. A
+launch action that cannot run is dimmed with its reason. The root workspace can
+still open the Agent branch picker, where its unavailable branch remains
+guarded.
 A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
@@ -551,6 +564,8 @@ for provider reporting behavior.
 
 In Browse and Terminal modes:
 
+- Hovering a project or workspace row shows `[+]`; the workspace keeps `[x]`
+  immediately to its right. Click `[+]` for that row's creation menu.
 - Clicking a session row selects it. `[x]` shows only while the pointer is over a session or workspace row. On a session it replaces the agent label and archives that session, the same as `X`, without switching the pane. A live or paused session asks first. An exited session archives immediately. On a workspace it opens Remove workspace for that row and does not clear the pane. A root workspace refuses, as the key does.
 - Clicking a project or workspace name selects it. Clicking the first cell of a
   project header, or the branch glyph of a workspace, folds or unfolds it. The

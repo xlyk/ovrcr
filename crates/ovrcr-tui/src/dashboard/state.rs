@@ -535,6 +535,15 @@ fn point_in_rect(mouse: MouseEvent, rect: Rect) -> bool {
         && mouse.row < rect.bottom()
 }
 
+fn pane_bounds(pane: super::PaneRects) -> Rect {
+    Rect::new(
+        pane.metadata.x,
+        pane.metadata.y,
+        pane.metadata.width,
+        pane.metadata.height.saturating_add(pane.terminal.height),
+    )
+}
+
 fn relative_mouse(mouse: MouseEvent, inner: Rect) -> Option<MouseEvent> {
     if !point_in_rect(mouse, inner) {
         return None;
@@ -659,6 +668,7 @@ impl Dashboard {
             mode: InputMode::Browse,
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
+            pane_layout: super::PaneLayout::Pane(0),
             handshake: Default::default(),
             navigation: Default::default(),
             agent_typing: None,
@@ -677,7 +687,6 @@ impl Dashboard {
             history: None,
             history_begin_request: None,
             mouse: super::MouseForwarding::default(),
-            split_preference: None,
             sidebar_width: None,
             sidebar_hidden: false,
             mouse_focused: true,
@@ -689,6 +698,7 @@ impl Dashboard {
             #[cfg(test)]
             model_agent_entries: None,
             whichkey: None,
+            sidebar_create_menu: None,
             selected_container: None,
             configuration_paths: None,
             connect_status: None,
@@ -1359,10 +1369,90 @@ impl Dashboard {
     }
 
     pub fn split_pane(&mut self) -> bool {
-        if self.panes.len() >= 2 {
+        self.split_pane_in(super::SplitDirection::Right)
+    }
+
+    pub(super) fn split_pane_in(&mut self, direction: super::SplitDirection) -> bool {
+        if let Some(reason) = self.split_refusal(direction) {
+            if matches!(reason, "no session selected" | "no other visible session") {
+                self.set_error("No other visible session to split");
+            } else {
+                self.set_limit(format!("split refused: {reason}"));
+            }
             return false;
         }
-        let current = self.focused_session();
+        let Some(session) = self.split_session_candidate() else {
+            self.set_error("No other visible session to split");
+            return false;
+        };
+        self.retarget(PaneChange::Split);
+        let size = self.focused_size();
+        let mut pane = super::PaneState::new(size);
+        pane.session = Some(session);
+        pane.run = find_session(self, session).map(|summary| summary.run);
+        let new_index = self.focused_pane + 1;
+        let mut layout = self.pane_layout.clone();
+        if !layout.insert_after(self.focused_pane, direction, new_index) {
+            self.set_error("Pane layout could not be split");
+            return false;
+        }
+        self.panes.insert(new_index, pane);
+        self.pane_layout = layout;
+        self.focused_pane = new_index;
+        if let Some(rect) = self
+            .pane_rects(self.outer_area)
+            .into_iter()
+            .find(|rect| rect.pane_index == new_index)
+        {
+            let size = TerminalSize {
+                rows: rect.terminal.height.max(1),
+                cols: rect.terminal.width.max(1),
+            };
+            if let Some(pane) = self.panes.get_mut(new_index) {
+                pane.size = size;
+                pane.desired_size = size;
+            }
+        }
+        true
+    }
+
+    pub(super) fn split_refusal(&self, direction: super::SplitDirection) -> Option<&'static str> {
+        if self.panes.len() >= super::MAX_PANE_COUNT {
+            return Some("four panes is the most");
+        }
+        if self.action_session().is_none() {
+            return Some("no session selected");
+        }
+        if self.split_session_candidate().is_none() {
+            return Some("no other visible session");
+        }
+        let Some(rect) = self
+            .pane_rects(self.outer_area)
+            .into_iter()
+            .find(|rect| rect.pane_index == self.focused_pane)
+        else {
+            return Some("panes would be too small");
+        };
+        let width = rect.metadata.width;
+        let height = rect.metadata.height.saturating_add(rect.terminal.height);
+        match direction {
+            super::SplitDirection::Right if width < 41 => {
+                Some("panes would be narrower than 20 columns")
+            }
+            super::SplitDirection::Right if height < super::MIN_PANE_HEIGHT => {
+                Some("panes would be shorter than 8 rows")
+            }
+            super::SplitDirection::Down if height < 17 => {
+                Some("panes would be shorter than 8 rows")
+            }
+            super::SplitDirection::Down if width < super::MIN_PANE_WIDTH => {
+                Some("panes would be narrower than 20 columns")
+            }
+            _ => None,
+        }
+    }
+
+    fn split_session_candidate(&self) -> Option<SessionId> {
         let sessions = self
             .visible_rows()
             .into_iter()
@@ -1374,27 +1464,23 @@ impl Dashboard {
                 | TreeRow::ProvisionalSession { .. } => None,
             })
             .collect::<Vec<_>>();
-        let Some(current_index) =
-            current.and_then(|id| sessions.iter().position(|candidate| *candidate == id))
-        else {
-            self.set_error("No other visible session to split");
-            return false;
-        };
-        let Some(session) = (1..sessions.len())
-            .map(|offset| sessions[(current_index + offset) % sessions.len()])
-            .next()
-        else {
-            self.set_error("No other visible session to split");
-            return false;
-        };
-        self.retarget(PaneChange::Split);
-        let size = self.focused_size();
-        let mut pane = super::PaneState::new(size);
-        pane.session = Some(session);
-        pane.run = find_session(self, session).map(|summary| summary.run);
-        self.panes.push(pane);
-        self.focused_pane = 1;
-        true
+        if sessions.is_empty() {
+            return None;
+        }
+        let current = self.action_session()?;
+        let already_shown = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.focused_pane)
+            .filter_map(|(_, pane)| pane.session)
+            .collect::<HashSet<_>>();
+        let start = sessions
+            .iter()
+            .position(|candidate| *candidate == current)?;
+        (1..=sessions.len())
+            .map(|offset| sessions[(start + offset) % sessions.len()])
+            .find(|session| *session != current && !already_shown.contains(session))
     }
 
     pub(crate) fn focus_pane(&mut self, index: usize) -> bool {
@@ -1411,10 +1497,16 @@ impl Dashboard {
         if self.panes.len() < 2 {
             return false;
         }
+        let removed = self.focused_pane;
+        let sibling = self.pane_layout.sibling_first(removed).unwrap_or(removed);
         self.retarget(PaneChange::Close);
-        self.panes.remove(self.focused_pane);
+        let layout = std::mem::replace(&mut self.pane_layout, super::PaneLayout::Pane(0));
+        self.pane_layout = layout.remove(removed).unwrap_or(super::PaneLayout::Pane(0));
+        self.panes.remove(removed);
         self.selected_container = None;
-        self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
+        self.focused_pane = sibling
+            .saturating_sub(usize::from(sibling > removed))
+            .min(self.panes.len().saturating_sub(1));
         true
     }
 
@@ -1882,6 +1974,11 @@ impl Dashboard {
             // Enhanced keyboard mode reports releases for ordinary keys too; they are not
             // Keystrokes and must never be encoded into a child PTY.
             return DashboardAction::None;
+        }
+        if self.sidebar_create_menu.is_some() {
+            return self
+                .sidebar_create_menu_key(key)
+                .unwrap_or(DashboardAction::None);
         }
         if self.sidebar_jump.is_some()
             && (self.sidebar_jump_modal_priority_open() || self.opens_operator_quick(key))
@@ -2730,6 +2827,7 @@ impl Dashboard {
                 self.events_paste(&text)
             }
             Event::Paste(_) if self.details.is_some() => DashboardAction::None,
+            Event::Paste(_) if self.sidebar_create_menu.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
@@ -2762,6 +2860,7 @@ impl Dashboard {
             }
             Event::FocusLost => {
                 self.cancel_sidebar_jump();
+                self.sidebar_create_menu = None;
                 self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
@@ -2787,6 +2886,9 @@ impl Dashboard {
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         if self.sidebar_jump.is_some() && mouse.kind != MouseEventKind::Moved {
             self.cancel_sidebar_jump();
+        }
+        if self.sidebar_create_menu.is_some() {
+            return self.sidebar_create_menu_mouse(mouse, area);
         }
         if let Some(action) = self.operator_quick_mouse(mouse, area) {
             return action;
@@ -2861,6 +2963,9 @@ impl Dashboard {
         if self.operator.visible || self.operator_quick_visible() {
             return true;
         }
+        if self.sidebar_create_menu.is_some() {
+            return true;
+        }
         if self.details.is_some() {
             return true;
         }
@@ -2882,7 +2987,7 @@ impl Dashboard {
 
     pub(crate) fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
-        self.mouse.split_dragging = false;
+        self.mouse.split_dragging = None;
         self.mouse.sidebar_dragging = false;
         if let Some(copy) = &mut self.copy {
             copy.dragging = false;
@@ -2913,11 +3018,15 @@ impl Dashboard {
     }
 
     pub fn pane_rects(&self, area: Rect) -> Vec<super::PaneRects> {
-        super::pane_rects_with_preference(
+        self.pane_layout_rects(area).panes
+    }
+
+    pub(super) fn pane_layout_rects(&self, area: Rect) -> super::PaneLayoutRects {
+        super::pane_layout_rects(
             area,
+            &self.pane_layout,
             self.panes.len(),
             self.focused_pane,
-            self.split_preference,
             self.sidebar_preference(),
         )
     }
@@ -2936,24 +3045,55 @@ impl Dashboard {
         }
     }
 
+    pub(super) fn row_shows_create_mark(&self, row: &TreeRow) -> bool {
+        if matches!(self.mode, InputMode::History | InputMode::Copy) {
+            return false;
+        }
+        match (&self.mouse.hovered, row) {
+            (Some(super::HoveredRow::Project(name)), TreeRow::Project { name: row_name }) => {
+                name == row_name
+            }
+            (
+                Some(super::HoveredRow::Workspace { project, id }),
+                TreeRow::Workspace {
+                    project: row_project,
+                    id: row_id,
+                },
+            ) => project == row_project && id == row_id,
+            _ => false,
+        }
+    }
+
     fn hovered_row_at(&self, sidebar: Rect, row: u16) -> Option<super::HoveredRow> {
         let row_index = self.tree_offset + usize::from(row.saturating_sub(sidebar.y));
         let rows = self.visible_rows();
         let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
         match tree_line_at(&rows, &heights, row_index)?.0 {
             TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
+            TreeRow::Project { name } => Some(super::HoveredRow::Project(name.clone())),
             TreeRow::Workspace { project, id } | TreeRow::ProvisionalWorkspace { project, id } => {
                 Some(super::HoveredRow::Workspace {
                     project: project.clone(),
                     id: id.clone(),
                 })
             }
-            TreeRow::Project { .. } | TreeRow::ProvisionalSession { .. } => None,
+            TreeRow::ProvisionalSession { .. } => None,
         }
     }
 
     fn close_mark_hit(&self, column: u16, width: u16) -> bool {
         width >= 3 && column >= width - 3
+    }
+
+    fn create_mark_hit(&self, column: u16, width: u16, row: &TreeRow) -> bool {
+        if !self.row_shows_create_mark(row) {
+            return false;
+        }
+        match row {
+            TreeRow::Project { .. } => width >= 3 && column >= width - 3,
+            TreeRow::Workspace { .. } => width >= 6 && (width - 6..width - 3).contains(&column),
+            _ => false,
+        }
     }
 
     fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
@@ -3029,10 +3169,43 @@ impl Dashboard {
                         self.select_session(id);
                         Some(self.request_selected())
                     }
+                    TreeRow::Project { name }
+                        if self.create_mark_hit(
+                            column,
+                            sidebar.width,
+                            &TreeRow::Project { name: name.clone() },
+                        ) =>
+                    {
+                        Some(self.open_sidebar_create_menu(
+                            TreeRow::Project { name },
+                            ratatui::layout::Position::new(
+                                sidebar.x + sidebar.width.saturating_sub(3),
+                                mouse.row,
+                            ),
+                        ))
+                    }
                     TreeRow::Project { name } if column == 0 => {
                         self.toggle_row_collapse(&TreeRow::Project { name });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
+                    }
+                    TreeRow::Workspace { project, id }
+                        if self.create_mark_hit(
+                            column,
+                            sidebar.width,
+                            &TreeRow::Workspace {
+                                project: project.clone(),
+                                id: id.clone(),
+                            },
+                        ) =>
+                    {
+                        Some(self.open_sidebar_create_menu(
+                            TreeRow::Workspace { project, id },
+                            ratatui::layout::Position::new(
+                                sidebar.x + sidebar.width.saturating_sub(6),
+                                mouse.row,
+                            ),
+                        ))
                     }
                     TreeRow::Workspace { project, id }
                         if self.close_mark_hit(column, sidebar.width)
@@ -3073,17 +3246,17 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
             return None;
         }
-        if self.mouse.split_dragging {
+        if let Some(path) = self.mouse.split_dragging.clone() {
             return match mouse.kind {
                 MouseEventKind::Drag(MouseButton::Left) => {
-                    Some(if self.resize_split(area, mouse.column) {
+                    Some(if self.resize_split(area, &path, mouse.column, mouse.row) {
                         DashboardAction::Redraw
                     } else {
                         DashboardAction::None
                     })
                 }
                 MouseEventKind::Up(MouseButton::Left) => {
-                    self.mouse.split_dragging = false;
+                    self.mouse.split_dragging = None;
                     Some(DashboardAction::Redraw)
                 }
                 _ => Some(DashboardAction::None),
@@ -3107,7 +3280,8 @@ impl Dashboard {
         }
 
         let sidebar = super::render::sidebar_area(area, self.sidebar_preference());
-        let rects = self.pane_rects(area);
+        let layout = self.pane_layout_rects(area);
+        let rects = &layout.panes;
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && mouse.row >= sidebar.y
             && mouse.row < sidebar.bottom()
@@ -3119,17 +3293,22 @@ impl Dashboard {
                 self.mouse.sidebar_dragging = true;
                 return Some(DashboardAction::Redraw);
             }
-            if rects.len() == 2 && mouse.column == rects[0].terminal.right() {
-                self.queue_held_releases();
-                self.mouse.split_dragging = true;
-                return Some(DashboardAction::Redraw);
-            }
+        }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some(boundary) = layout
+                .boundaries
+                .iter()
+                .find(|boundary| point_in_rect(mouse, boundary.divider))
+        {
+            self.queue_held_releases();
+            self.mouse.split_dragging = Some(boundary.path.clone());
+            return Some(DashboardAction::Redraw);
         }
 
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && let Some(pane) = rects
                 .iter()
-                .find(|pane| point_in_rect(mouse, pane.terminal))
+                .find(|pane| point_in_rect(mouse, pane_bounds(**pane)))
         {
             if self.panes[pane.pane_index].session.is_none() {
                 return Some(DashboardAction::Redraw);
@@ -3183,24 +3362,50 @@ impl Dashboard {
         self.retarget(PaneChange::Resize);
     }
 
-    fn resize_split(&mut self, area: Rect, column: u16) -> bool {
-        let rects = self.pane_rects(area);
-        if rects.len() != 2 {
-            self.mouse.split_dragging = false;
+    fn resize_split(&mut self, area: Rect, path: &[bool], column: u16, row: u16) -> bool {
+        let Some(boundary) = self
+            .pane_layout_rects(area)
+            .boundaries
+            .into_iter()
+            .find(|boundary| boundary.path == path)
+        else {
+            self.mouse.split_dragging = None;
+            return false;
+        };
+        let (position, origin, dimension, minimum) = match boundary.direction {
+            super::SplitDirection::Right => (
+                column,
+                boundary.area.x,
+                boundary.area.width.saturating_sub(1),
+                super::MIN_PANE_WIDTH,
+            ),
+            super::SplitDirection::Down => (
+                row,
+                boundary.area.y,
+                boundary.area.height.saturating_sub(1),
+                super::MIN_PANE_HEIGHT,
+            ),
+        };
+        let first = position
+            .saturating_sub(origin)
+            .clamp(minimum, dimension.saturating_sub(minimum));
+        let old_first = match boundary.direction {
+            super::SplitDirection::Right => boundary.divider.x.saturating_sub(boundary.area.x),
+            super::SplitDirection::Down => boundary.divider.y.saturating_sub(boundary.area.y),
+        };
+        if first == old_first {
             return false;
         }
-        let available = rects[0]
-            .terminal
-            .width
-            .saturating_add(rects[1].terminal.width);
-        let left = column.saturating_sub(rects[0].terminal.x).clamp(
-            super::MIN_SPLIT_PANE_WIDTH,
-            available - super::MIN_SPLIT_PANE_WIDTH,
-        );
-        if left == rects[0].terminal.width {
+        if !self.pane_layout.set_ratio(
+            path,
+            super::SplitRatio {
+                first,
+                available: dimension,
+            },
+        ) {
+            self.mouse.split_dragging = None;
             return false;
         }
-        self.split_preference = Some(super::SplitPreference { left, available });
         self.apply_pane_sizes(area);
         true
     }
@@ -4513,15 +4718,32 @@ impl Dashboard {
         if removed {
             let focused_survives = focused_before.is_some_and(|id| existing.contains(&id));
             self.retarget(PaneChange::ServerRemoved { focused_survives });
-            // `retain` below shifts pane indices and `focused_pane` follows them, so a parked
-            // wheel deferral no longer names the pane the user scrolled; `retarget` already
-            // cleared it above.
-            self.panes
-                .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
+            let remove = self
+                .panes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, pane)| {
+                    (!pane.session.is_some_and(|id| existing.contains(&id))).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            for index in remove.into_iter().rev() {
+                let layout = std::mem::replace(&mut self.pane_layout, super::PaneLayout::Pane(0));
+                self.pane_layout = layout.remove(index).unwrap_or(super::PaneLayout::Pane(0));
+                self.panes.remove(index);
+            }
             if self.panes.is_empty() {
                 self.panes.push(super::PaneState::new(self.focused_size()));
+                self.pane_layout = super::PaneLayout::Pane(0);
+                self.focused_pane = 0;
+            } else {
+                self.focused_pane = focused_before
+                    .and_then(|session| {
+                        self.panes
+                            .iter()
+                            .position(|pane| pane.session == Some(session))
+                    })
+                    .unwrap_or_else(|| self.focused_pane.min(self.panes.len() - 1));
             }
-            self.focused_pane = self.focused_pane.min(self.panes.len() - 1);
             if !self.operator.visible
                 && self.panes.iter().all(|pane| pane.session.is_none())
                 && let Some(id) = self.visible_rows().iter().find_map(|row| match row {

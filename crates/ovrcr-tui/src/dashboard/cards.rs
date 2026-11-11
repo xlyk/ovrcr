@@ -60,7 +60,7 @@ impl Dashboard {
         }
         // Every drawn pane without a session gets a card: the one a selected project or
         // workspace emptied, and in a split also a pane whose session opened elsewhere.
-        let titled = self.panes.len() == 2;
+        let titled = self.panes.len() > 1;
         for rect in self.pane_rects(frame.area()) {
             if !self
                 .panes

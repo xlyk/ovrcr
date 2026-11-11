@@ -24,6 +24,16 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
+Pane arrangement is Dashboard-owned: `PaneLayout` stores a tree of right or
+down splits, while `DashboardView` sends only the visible sessions and their
+terminal sizes. The Server does not retain the tree, and a new attachment starts
+with one pane. Geometry keeps each pane at least 20 columns wide and 8 rows
+high including its header. If the full tree no longer fits, render only the
+focused pane while preserving every assignment and split ratio; render the tree
+again when it fits. Focus and visible-geometry changes go through
+`retarget(PaneChange)` and revoke input until the one in-flight view request is
+acknowledged for all of its pane snapshots.
+
 Sidebar session-jump labels are derived from the drawn tree order, viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
@@ -57,6 +67,10 @@ Key bindings live in one table, `dashboard::keymap`: it holds each key's label, 
 Ordinary palette forms submit Enter from any field after `form_problem` checks the visible fields top to bottom (required, pick value in its list, Branch after the prefix and valid under `git check-ref-format --branch` via `branch_name_problem`); the first problem takes the focus and is drawn under its field from `Palette.invalid`. A pick field's value is its highlighted option (`accept_pick` after every arrow, cycle or filter edit). New-agent Branch, Agent harness and Model, plus child Create-branch Project, are compact pickers: Enter opens or accepts the choice and leaves the creation form active; Alt-Enter starts or creates. Other form pickers keep ordinary Enter submission into their existing confirmation flow. These creation menus are bounded overlays anchored to the focused value surface: opening one does not resize or reflow the form, and a menu can temporarily cover nearby fields. The same `creation_picker_popup` rectangle and option-row map drive rendering and mouse hits. Lists use `PickList::lines_bounded`, keep the highlighted item visible while scrolling, flip above the anchor when needed, and stay within the form body. A click on an option accepts it; an outside click closes the menu and is consumed by the palette. Clicking another visible picker field switches the anchored menu. Escape closes the menu before the form, while Tab/Shift-Tab closes it and advances focus. The Initial prompt field is multiline: Enter inserts a newline and the visible Alt-Enter chord submits or retries. `form_keys` builds the footer from the form and its focused field, and Tab remains in the active dialog.
 New-agent and child branch forms use one bordered card with theme-backed field surfaces. Harness and Model share a row only when both columns fit. The optional prompt keeps its `Initial prompt` field identity and a bounded, cursor-aware viewport (three rows when wide); mouse targeting uses the same page-aware dialog and field rows as rendering.
 Git failure text omits preparation progress before the fatal reason, so narrow creation forms show the cause of the refusal.
+Sidebar row menus use the selected `TreeRow` as form context and reuse the
+`keymap` action's availability reason. `tree_line_text` draws the hover-only
+`[+]` spans, while `sidebar_mouse_action` keeps their hit boxes beside the
+existing disclosure and `[x]` cells; preserve those cell positions together.
 A Lifecycle job submitted from the palette carries that palette on its Provisional row while the job runs (`take_palette_for_job`). On failure, `fail_lifecycle_job` returns it through `return_to_form`, which replays the failure through `palette_response` exactly as a synchronous refusal, so recovery pages (RecoverLaunch, WIP save, discard) are shared. Only when the form cannot come back (another overlay, or a non-Browse mode) does a failed row stay. Workspace removal with running sessions sends CloseTerminal for each and then the removal, chaining each request from the previous `LifecycleCompleted` through `Provisional.then`. Standalone `w` opens the branch-only form; the New agent Branch picker can suspend its parent form and open that same child. Branch creation completes through a matching lifecycle receipt and fresh Inspect/List readback, and never starts an Agent. The parent Agent request is submitted separately after the new checkout becomes its selected destination.
 
 The separate Initial prompt field travels through one-use intent allocation. A

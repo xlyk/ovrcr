@@ -261,6 +261,9 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 1;
     let request = dashboard
@@ -1096,6 +1099,9 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     let mut other = super::PaneState::new(TerminalSize { rows: 4, cols: 20 });
     other.session = Some(SessionId(2));
     other.run = Some(crate::protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(other);
     let summary = |id| SessionSummary {
         scope: ovrcr_protocol::SessionScope::Workspace,
@@ -1310,6 +1316,9 @@ fn mouse_release_precedes_the_replacement_view_request() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
 
@@ -1455,6 +1464,9 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
     let request = dashboard
@@ -4277,10 +4289,15 @@ fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     // The per-action state the footer used to show still lives in the table.
     dashboard.hierarchy.projects[0].workspaces[0]
         .sessions
-        .push(keymap_session(13, SessionPhase::Running));
+        .extend((13..=15).map(|id| keymap_session(id, SessionPhase::Running)));
     assert!(binding_named(&dashboard, "v").enabled());
     assert!(dashboard.split_pane());
-    assert_eq!(binding_named(&dashboard, "v").reason, Some("already split"));
+    assert!(dashboard.split_pane());
+    assert!(dashboard.split_pane());
+    assert_eq!(
+        binding_named(&dashboard, "v").reason,
+        Some("four panes is the most")
+    );
     assert_eq!(
         super::hints::footer(&dashboard, 120),
         "BROWSE  Space Menu  : Commands  ? Help"

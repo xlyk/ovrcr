@@ -49,6 +49,24 @@ fn split(dashboard: &mut Dashboard) {
     pump_view(dashboard, action);
 }
 
+fn split_down(dashboard: &mut Dashboard) {
+    let action = dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(dashboard, action);
+}
+
+fn four_pane_dashboard() -> Dashboard {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab);
+    split_down(&mut dashboard);
+    dashboard
+}
+
 fn close_pane(dashboard: &mut Dashboard) {
     let action = dashboard.key(KeyCode::Char('x'));
     pump_view(dashboard, action);
@@ -86,7 +104,9 @@ fn split_state_focus_and_close_preserve_sessions() {
     assert_eq!(dashboard.pane_rects(area).len(), 2);
     let right = dashboard.focused_session().unwrap();
     assert_ne!(right, SessionId(1));
-    split(&mut dashboard);
+    split_down(&mut dashboard);
+    assert_eq!(dashboard.pane_rects(area).len(), 3);
+    close_pane(&mut dashboard);
     assert_eq!(dashboard.pane_rects(area).len(), 2);
     close_pane(&mut dashboard);
     assert_eq!(dashboard.pane_rects(area).len(), 1);
@@ -193,6 +213,299 @@ fn split_layout_geometry_and_narrow_fallback() {
     assert_eq!(narrow[0].pane_index, 1);
     assert_eq!(narrow[0].terminal, Rect::new(40, 3, 40, 20));
     assert!(pane_rects(Rect::new(0, 0, 1, 1), 2, 1).is_empty());
+}
+
+#[test]
+fn nested_splits_right_and_down_fill_four_panes() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(&mut dashboard, DashboardAction::Redraw);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(&mut dashboard, DashboardAction::Redraw);
+
+    let rects = dashboard.pane_rects(area);
+    assert_eq!(rects.len(), 4);
+    assert_eq!(
+        rects.iter().map(|pane| pane.terminal).collect::<Vec<_>>(),
+        [
+            Rect::new(40, 3, 39, 16),
+            Rect::new(40, 22, 39, 17),
+            Rect::new(80, 3, 40, 16),
+            Rect::new(80, 22, 40, 17),
+        ]
+    );
+}
+
+#[test]
+fn split_limits_refuse_with_reasons_and_restore_after_too_small_layout() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    assert_eq!(dashboard.pane_rects(area).len(), 4);
+    dashboard.key(KeyCode::Char('v'));
+    assert!(banner(&dashboard).contains("split refused: four panes is the most"));
+
+    let mut narrow = dashboard_fixture();
+    let area = Rect::new(0, 0, 80, 24);
+    narrow.install_area(area);
+    narrow.key(KeyCode::Char('v'));
+    assert!(banner(&narrow).contains("split refused: panes would be narrower than 20 columns"));
+
+    let mut short = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 18);
+    short.install_area(area);
+    short.key(KeyCode::Char('V'));
+    assert!(banner(&short).contains("split refused: panes would be shorter than 8 rows"));
+
+    let hidden = Rect::new(0, 0, 80, 24);
+    assert_eq!(dashboard.pane_rects(hidden).len(), 1);
+    assert!(drawn_contains(
+        &dashboard,
+        hidden.width,
+        hidden.height,
+        "split hidden"
+    ));
+    assert_eq!(dashboard.pane_rects(wide_area()).len(), 4);
+}
+
+#[test]
+fn view_handshake_covers_four_panes_and_retarget_revokes_input_until_ack() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    for _ in 0..dashboard.pane_rects(area).len() {
+        if dashboard
+            .focused_session()
+            .is_some_and(|session| fixture_session(session).phase == SessionPhase::Running)
+        {
+            break;
+        }
+        dashboard.key(KeyCode::Tab);
+    }
+    let request = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("before".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Split the lower right pane down to create the fourth pane.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(dashboard.pane_rects(area).len(), 4);
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after split".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    let request = request_view(&mut dashboard, area, 0);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 4);
+    let sessions = view
+        .panes
+        .iter()
+        .map(|pane| pane.session)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(sessions.len(), 4);
+    let expected = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|rect| TerminalSize {
+            rows: rect.terminal.height,
+            cols: rect.terminal.width,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        view.panes.iter().map(|pane| pane.size).collect::<Vec<_>>(),
+        expected
+    );
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after split ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Focus by cycling; the new focus is not authorized until its view is acknowledged.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Tab);
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after focus".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    let request = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after focus ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Dragging the root divider changes every pane's geometry in one request.
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            79,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            75,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after drag".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            75,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    let request = request_view(&mut dashboard, area, 0);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 4);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after drag ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Closing removes one target without archiving its session and revokes focus readiness.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('x'));
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after close".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    let request = request_view(&mut dashboard, area, 0);
+    assert_eq!(set_view(&request).panes.len(), 3);
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn nested_dividers_drag_independently_and_pane_headers_focus_the_clicked_pane() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    let initial = request_view(&mut dashboard, area, 0);
+    let pane_sessions = set_view(&initial)
+        .panes
+        .iter()
+        .map(|pane| pane.session)
+        .collect::<Vec<_>>();
+    assert_eq!(pane_sessions.len(), 4);
+    acknowledge_view_request(&mut dashboard, initial);
+
+    // A click in a pane's metadata selects that pane without forwarding it to the PTY.
+    let previous = dashboard.focused_session();
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                100,
+                22,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let clicked = dashboard.focused_session().expect("clicked pane session");
+    assert_ne!(Some(clicked), previous);
+    assert_eq!(Some(clicked), pane_sessions.get(3).copied());
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("must not reach an unfocused pane".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Move each of the two child dividers. Each resize revokes the previous view
+    // permission until the complete four-pane geometry is acknowledged.
+    let mut previous_geometry = dashboard
+        .pane_rects(area)
+        .iter()
+        .map(|pane| pane.terminal)
+        .collect::<Vec<_>>();
+    for (down, drag) in [((50, 19), (50, 24)), ((100, 19), (100, 17))] {
+        assert_eq!(
+            dashboard.mouse_action(
+                mouse_event(
+                    MouseEventKind::Down(MouseButton::Left),
+                    down.0,
+                    down.1,
+                    KeyModifiers::NONE,
+                ),
+                area,
+            ),
+            DashboardAction::Redraw
+        );
+        let action = dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                drag.0,
+                drag.1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        );
+        assert_eq!(
+            action,
+            DashboardAction::Redraw,
+            "drag {down:?}->{drag:?}: {}",
+            rendered_rows(&dashboard, 120, 40).join("\n")
+        );
+        assert!(!matches!(
+            dashboard.event_action(Event::Paste("must wait for child resize ack".into())),
+            DashboardAction::PtyBytes(_)
+        ));
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                drag.0,
+                drag.1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        );
+        let request = request_view(&mut dashboard, area, 0);
+        let geometry = dashboard
+            .pane_rects(area)
+            .iter()
+            .map(|pane| pane.terminal)
+            .collect::<Vec<_>>();
+        assert_eq!(set_view(&request).panes.len(), 4);
+        assert_ne!(
+            geometry, previous_geometry,
+            "drag {down:?}->{drag:?} moved a divider"
+        );
+        previous_geometry = geometry;
+        acknowledge_view_request(&mut dashboard, request);
+    }
 }
 
 #[test]
@@ -1252,12 +1565,12 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(dashboard.focused_session(), left);
     assert_eq!(
         dashboard.mouse_action(click(80, 1), area),
-        ovrcr::tui::DashboardAction::None
+        ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.focused_session(), left);
+    assert_eq!(dashboard.focused_session(), Some(right_session));
     assert_eq!(
         dashboard.mouse_action(click(80, 3), area),
-        ovrcr::tui::DashboardAction::Redraw
+        ovrcr::tui::DashboardAction::None
     );
     assert_eq!(dashboard.focused_session(), Some(right_session));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -2479,7 +2792,11 @@ fn split_error_is_cleared_by_the_view_the_next_selection_requests() {
         dashboard.key(KeyCode::Char('v')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(banner(&dashboard).contains("No other visible session to split"));
+    assert!(
+        banner(&dashboard).contains("No other visible session to split"),
+        "{}",
+        banner(&dashboard)
+    );
     let request = (0..16)
         .find_map(|_| {
             assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
@@ -3088,10 +3405,16 @@ fn ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes() {
             assert_eq!(dashboard.pane_rects(area).len(), 1);
             acknowledge_all_view_targets(&mut dashboard, request);
             let rows = rendered_rows(&dashboard, width, height);
-            assert!(
-                rows.last().unwrap().contains("? Help"),
-                "{width} split={do_split}: {rows:?}"
-            );
+            if do_split {
+                assert!(
+                    rows.last()
+                        .unwrap()
+                        .contains("split refused: panes would be narrower"),
+                    "{width} split={do_split}: {rows:?}"
+                );
+            } else {
+                assert!(rows.last().unwrap().contains("? Help"), "{width}: {rows:?}");
+            }
             assert_view_input_allowed(&mut dashboard);
             let before = dashboard.focused_session();
             dashboard.key(KeyCode::Char('j'));
