@@ -264,7 +264,7 @@ mod linux {
         }
     }
 
-    fn parse_cpu(text: &str) -> Option<CpuCounters> {
+    pub(super) fn parse_cpu(text: &str) -> Option<CpuCounters> {
         let mut fields = text.lines().next()?.split_whitespace();
         if fields.next()? != "cpu" {
             return None;
@@ -277,7 +277,7 @@ mod linux {
         Some(CpuCounters::Linux(ticks))
     }
 
-    fn parse_memory(text: &str) -> Option<super::MemoryCounters> {
+    pub(super) fn parse_memory(text: &str) -> Option<super::MemoryCounters> {
         let mut total_kib = None;
         let mut available_kib = None;
         for line in text.lines() {

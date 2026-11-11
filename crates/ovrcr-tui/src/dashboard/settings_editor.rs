@@ -582,7 +582,9 @@ fn top_items(report: &SettingsReport) -> Vec<Row> {
             Some(collection) => Kind::Collection(collection),
             None => editor_kind(entry, &report.settings),
         };
-        let mut row = top_row(entry, report, kind, collection);
+        let row = top_row(entry, report, kind, collection);
+        #[cfg(target_os = "macos")]
+        let mut row = row;
         #[cfg(target_os = "macos")]
         if entry.path == ovrcr_protocol::ReadySoundChoice::KEY
             && let Some(choice) = report.settings.ready_sound_choice
