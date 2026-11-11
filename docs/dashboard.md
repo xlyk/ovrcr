@@ -58,8 +58,9 @@ are no Operator controls in the title bar.
 
 Before the conversation is opened, the section says **Off** when the Pi
 executable is available and **Not set up** when it is missing. If Pi is missing
-when opening begins, that status remains while opening the singleton. A
-known Pi setup error after opening also shows **Not set up**. After opening, it
+when opening begins, the singleton remains **Not set up**, including when its
+journal already has replies. A queued Open with Pi available shows **Idle** until
+the first response. A known Pi setup error after opening also shows **Not set up**. After opening, it
 shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**
 with a reply preview, or **Idle** with the latest reply. The section omits the model and
 harness. Drawing it never reviews a reply or starts a worker. The
@@ -100,6 +101,8 @@ sessions using the same status as their rows; Stopped counts as Exited and
 Interrupted counts as Error. Its token total adds agent-reported input and
 output tokens, including sessions later archived or removed, from the current
 Server start. It resets when the Server restarts and does not estimate cost.
+Overlapping conversation and invocation reports contribute only the larger
+known total, and rebinding the same conversation continues its high-water count.
 The `usage.sidebar` setting controls the section and is on by default. The
 summary compacts to one line and then hides when the sidebar is short.
 
@@ -709,8 +712,8 @@ the hook-owned activity state.
 
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
 `v` View, and `s` Panes. Only groups relevant to the selected row appear. The
-Panes group lists split, directional focus, swap, resize, next pane, zoom and
-close. A resize action explains when the focused pane has no divider in that
+Panes group lists split, directional focus, swap, resize, next and previous
+pane, zoom and close. A resize action explains when the focused pane has no divider in that
 direction. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
 `q` detaches from the top level, including when the hierarchy is empty. Nothing

@@ -1734,9 +1734,18 @@ mod tests {
             .collect()
     }
     fn frame_lines(d: &mut Dashboard, cols: u16, rows: u16) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        frame_lines_at(d, cols, rows, now)
+    }
+    fn frame_lines_at(d: &mut Dashboard, cols: u16, rows: u16, now: u64) -> String {
         d.install_area(Rect::new(0, 0, cols, rows));
         let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-        d.draw(&mut terminal).unwrap();
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, d, now))
+            .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..rows)
             .map(|row| {
@@ -1796,7 +1805,13 @@ mod tests {
 
     #[test]
     fn operator_section_opens_the_singleton_directly() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::operator_section_opens_the_singleton_directly",
+        ) {
+            return;
+        }
         let mut d = dashboard();
+        d.install_area(Rect::new(0, 0, 140, 40));
         let rects = d.sidebar_rects(d.outer_area);
         let row = rects.operator;
         assert_eq!(
@@ -2468,6 +2483,11 @@ mod tests {
 
     #[test]
     fn unread_clears_only_after_the_loaded_tail_is_drawn() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::unread_clears_only_after_the_loaded_tail_is_drawn",
+        ) {
+            return;
+        }
         let mut d = dashboard();
         let out = opened(&mut d, summary());
         let read = read_request(&out);
@@ -2544,6 +2564,11 @@ mod tests {
 
     #[test]
     fn frames_at_floor_and_wide_sizes_match_the_singleton_layout() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::frames_at_floor_and_wide_sizes_match_the_singleton_layout",
+        ) {
+            return;
+        }
         let mut d = dashboard();
         let out = opened(&mut d, with_model(summary()));
         let read = read_request(&out);
@@ -2575,7 +2600,7 @@ mod tests {
             ),
         );
         for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
-            let frame = frame_lines(&mut d, cols, rows);
+            let frame = frame_lines_at(&mut d, cols, rows, 0);
             let mut first = frame.lines();
             let header = first.next().unwrap();
             assert!(

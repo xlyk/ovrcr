@@ -799,7 +799,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
         } else {
             agent.clone()
         };
-        let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","id":"demo","name":"demo","path":"/fixture","root":false,"warning":null,"sessions":[{
+        let snapshot: HierarchySnapshot = serde_json::from_value(json!({"usage":{"total_tokens":0,"server_started_unix_ms":0},"projects":[{"name":"fixture","workspaces":[{"project":"fixture","id":"demo","name":"demo","path":"/fixture","root":false,"warning":null,"sessions":[{
             "id":7,"archived":false,"cwd":"/work","run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();

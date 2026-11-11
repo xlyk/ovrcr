@@ -2,6 +2,7 @@
 use ovrcr_protocol::{AgentBinding, UsageScope, UsageSnapshot, UsageTotals};
 use std::collections::HashMap;
 
+/// One cumulative counter's high-water mark within its stable conversation identity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Component {
     baseline: Option<u64>,
@@ -13,15 +14,11 @@ impl Component {
         let Some(next) = next else {
             return;
         };
-        let delta = self.baseline.map_or(next, |previous| {
-            if next >= previous {
-                next - previous
-            } else {
-                next
-            }
-        });
+        let delta = self
+            .baseline
+            .map_or(next, |previous| next.saturating_sub(previous));
         self.total = self.total.saturating_add(delta);
-        self.baseline = Some(next);
+        self.baseline = Some(self.baseline.map_or(next, |previous| previous.max(next)));
     }
 }
 
@@ -221,6 +218,35 @@ mod tests {
         assert_eq!(
             lifetime
                 .record(1, &binding, &totals(Some(110), None))
+                .unwrap()
+                .total_tokens,
+            110
+        );
+    }
+
+    #[test]
+    fn same_conversation_rebind_cannot_reset_component_high_water() {
+        let mut lifetime = Lifetime::new(1);
+        let first = binding("conversation", "invocation");
+        assert_eq!(
+            lifetime
+                .record(1, &first, &totals(Some(100), None))
+                .unwrap()
+                .total_tokens,
+            100
+        );
+
+        let mut rebound = first.clone();
+        rebound.generation = 2;
+        assert!(
+            lifetime
+                .record(1, &rebound, &totals(Some(90), None))
+                .is_none(),
+            "an accepted same-conversation rebind does not lower or add to the high-water total"
+        );
+        assert_eq!(
+            lifetime
+                .record(1, &rebound, &totals(Some(110), None))
                 .unwrap()
                 .total_tokens,
             110

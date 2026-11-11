@@ -957,7 +957,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "Shift-Tab"),
+        .group('s', "Shift-Tab"),
         key_binding(
             "z",
             if dashboard.zoomed { "Unzoom" } else { "Zoom" },

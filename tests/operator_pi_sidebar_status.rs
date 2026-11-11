@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ovrcr::protocol::{
-    ClientMessage, HierarchySnapshot, OperatorConversationId, OperatorConversationSummary,
-    OperatorHistory, OperatorRequest, OperatorResponse, Request, Response, ServerMessage,
+    ClientMessage, HierarchySnapshot, OperatorContext, OperatorConversationId,
+    OperatorConversationSummary, OperatorHistory, OperatorMessage, OperatorMessageContent,
+    OperatorRequest, OperatorResponse, OperatorTurnId, Request, Response, ServerMessage,
     SessionRunId,
 };
 use ovrcr::session::{SessionId, TerminalSize};
@@ -130,9 +131,66 @@ fn settle_empty_open(dashboard: &mut Dashboard, open: ClientMessage) {
     });
 }
 
+fn settle_history_open(dashboard: &mut Dashboard, open: ClientMessage) {
+    let summary = conversation();
+    let opened = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: open.request_id,
+        response: Response::Operator(OperatorResponse::Opened(summary.clone())),
+    });
+    let read = opened
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Read { .. })
+            )
+        })
+        .expect("opening the singleton reads its history");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: read.request_id,
+        response: Response::Operator(OperatorResponse::History(OperatorHistory {
+            conversation: summary,
+            messages: vec![OperatorMessage {
+                ordinal: 1,
+                turn: OperatorTurnId(1),
+                content: OperatorMessageContent::User {
+                    text: "saved journal entry".into(),
+                    context: OperatorContext::default(),
+                },
+            }],
+            next_after: None,
+        })),
+    });
+}
+
 #[test]
 fn missing_pi_remains_not_set_up_after_sidebar_and_hidden_conversation_opens() {
     let pi = PiExecutableGuard::missing();
+
+    unsafe { std::env::set_var("OVRCR_PI_EXECUTABLE", "/bin/sh") };
+    let mut first_open = new_dashboard();
+    let before = screen(&mut first_open);
+    assert!(before.contains("Off"), "before first open: {before}");
+    first_open.key(KeyCode::Char('o'));
+    let pending = screen(&mut first_open);
+    assert!(
+        pending.contains("Idle"),
+        "queued Open is visible as Idle: {pending}"
+    );
+    assert!(
+        !pending.contains("Off"),
+        "queued Open is no longer Off: {pending}"
+    );
+    let open = open_message(&mut first_open);
+    settle_empty_open(&mut first_open, open);
+    let opened = screen(&mut first_open);
+    assert!(opened.contains("Idle"), "successful first Open: {opened}");
+    assert!(
+        !opened.contains("Off"),
+        "successful Open remains visible: {opened}"
+    );
+
+    unsafe { std::env::set_var("OVRCR_PI_EXECUTABLE", &pi.missing) };
 
     // The shared Open path records setup state even before the first draw and
     // while the sidebar is disabled; revealing it later keeps the reason.
@@ -166,11 +224,15 @@ fn missing_pi_remains_not_set_up_after_sidebar_and_hidden_conversation_opens() {
         ovrcr::tui::DashboardAction::Redraw
     );
     let open = open_message(&mut dashboard);
-    settle_empty_open(&mut dashboard, open);
+    settle_history_open(&mut dashboard, open);
 
     let after = screen(&mut dashboard);
     assert!(after.contains("Not set up"), "{after}");
     assert!(after.contains("run ovrcr operator setup"), "{after}");
+    assert!(
+        after.contains("saved journal entry"),
+        "history remains visible: {after}"
+    );
 
     unsafe { std::env::set_var("OVRCR_PI_EXECUTABLE", "/bin/sh") };
     let recovered = screen(&mut dashboard);

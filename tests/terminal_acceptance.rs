@@ -124,7 +124,7 @@ impl AcceptanceFixture {
             "--",
             "sh",
             "-c",
-            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *PAUSE_RESUME_TOKEN*) printf PAUSE_RESUME_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
+            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *PAUSE_RESUME_TOKEN*) printf PAUSE_RESUME_ACK;; *SIZE_TOKEN_*) printf 'WAITING_SIZE_ACK_%s_%s' \"${line##*SIZE_TOKEN_}\" \"$(stty size)\";; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
         self.managed_pgids = self.session_pgids()?;
@@ -139,7 +139,7 @@ impl AcceptanceFixture {
             "--",
             "sh",
             "-c",
-            "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
+            "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN_*) printf 'MOUSE_SIZE_ACK_%s_%s' \"${line##*SIZE_TOKEN_}\" \"$(stty size)\";; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "mouse session")?;
         self.managed_pgids = self.session_pgids()?;
@@ -828,6 +828,40 @@ impl OuterDashboard {
             join_reader(reader, Duration::from_secs(2))?;
         }
         Ok(())
+    }
+}
+
+/// Ask the focused real shell for its current kernel PTY size. A unique token
+/// makes a delayed acknowledgement from an earlier view impossible to accept.
+fn wait_for_pty_size_probe(
+    dashboard: &mut OuterDashboard,
+    next_probe: &mut u64,
+    session: &str,
+    marker: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<String> {
+    let deadline = Instant::now() + wait_deadline();
+    loop {
+        if Instant::now() >= deadline {
+            bail!(
+                "timed out waiting for fresh {session} PTY size {rows}x{cols}: {}",
+                dashboard.rendered()
+            );
+        }
+        *next_probe = (*next_probe).saturating_add(1);
+        let probe_id = *next_probe;
+        let token = format!("SIZE_TOKEN_{probe_id}\r");
+        let expected = format!("{marker}_{probe_id}_{rows} {cols}");
+        dashboard.send(token.as_bytes())?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let _ = dashboard.wait_until(
+            |screen| screen.contains(&expected),
+            remaining.min(Duration::from_millis(250)),
+        );
+        if dashboard.rendered().contains(&expected) {
+            return Ok(expected);
+        }
     }
 }
 
@@ -1866,7 +1900,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     // PTY size. Add two task-owned shells so the test can fill four distinct panes.
     for (name, marker) in [("third", "THIRD"), ("fourth", "FOURTH")] {
         let script = format!(
-            r#"printf '{marker}_READY'; while IFS= read -r line; do case "$line" in *SIZE_TOKEN*) printf '{marker}_SIZE_ACK_%s' "$(stty size)";; esac; done"#
+            r#"printf '{marker}_READY'; while IFS= read -r line; do case "$line" in *SIZE_TOKEN_*) printf '{marker}_SIZE_ACK_%s_%s' "${{line##*SIZE_TOKEN_}}" "$(stty size)";; *SIZE_TOKEN*) printf '{marker}_SIZE_ACK_%s' "$(stty size)";; esac; done"#
         );
         let output = fixture.cli(&[
             "new",
@@ -1916,12 +1950,37 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         dashboard
             .wait_until(
                 |screen| {
-                    screen.lines().any(|line| line.contains(&focused))
+                    screen
+                        .lines()
+                        .any(|line| line.contains(&focused) && line.contains("pid "))
                         && !screen.contains("Pane is loading")
                 },
                 wait_deadline(),
             )
             .with_context(|| format!("waiting for the focused {name} pane view"))
+    };
+    let pane_header_point = |dashboard: &OuterDashboard, name: &str| -> Result<(u16, u16)> {
+        dashboard
+            .rendered()
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                if !line.contains("pid ") {
+                    return None;
+                }
+                let byte_column = line.find(name)?;
+                // Header separators are multi-byte UTF-8 characters but one
+                // terminal cell; mouse coordinates use cell columns.
+                let column = line[..byte_column].chars().count();
+                Some((column as u16, row as u16))
+            })
+            .with_context(|| format!("finding the rendered {name} pane header"))
+    };
+    let click_pane_header = |dashboard: &mut OuterDashboard, name: &str| -> Result<()> {
+        let (column, row) = pane_header_point(dashboard, name)?;
+        let click = format!("\x1b[<0;{};{}M", column + 1, row + 1);
+        dashboard.send(click.as_bytes())?;
+        wait_focused_ready(dashboard, name)
     };
     let enter_focused_terminal = |dashboard: &mut OuterDashboard| -> Result<()> {
         let deadline = Instant::now() + wait_deadline();
@@ -1956,8 +2015,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     dashboard.wait_for(b"THIRD_READY", wait_deadline())?;
     dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
     // Click the initial left pane header, then split it down with the fourth shell.
-    dashboard.send(b"\x1b[<0;43;2M")?;
-    wait_focused_ready(&mut dashboard, "waiting")?;
+    click_pane_header(&mut dashboard, "waiting")?;
     dashboard.send(b"\x07Vfourth\r")?;
     dashboard.wait_for(b"FOURTH_READY", wait_deadline())?;
 
@@ -1990,21 +2048,24 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     );
 
     // Resize one side with the keyboard and ask the real child PTYs for their
-    // kernel dimensions. The focused pane grows by two columns while its
-    // sibling side shrinks; resizing from the opposite side restores both.
-    dashboard.send(b"\x1b[<0;43;2M")?;
-    wait_focused_ready(&mut dashboard, "waiting")
-        .context("focusing waiting for keyboard resize")?;
+    // kernel dimensions. A fresh, per-session token keeps a delayed response
+    // from another pane from satisfying the geometry check.
+    let mut size_probe = 0;
+    click_pane_header(&mut dashboard, "waiting").context("focusing waiting for keyboard resize")?;
     dashboard.send(b"\x07")?;
     dashboard
         .wait_until(browse_screen, wait_deadline())
         .context("returning to Browse before keyboard resize")?;
     dashboard.send(b">")?;
     enter_focused_terminal(&mut dashboard)?;
-    dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard
-        .wait_for(b"SIZE_ACK_16 41", wait_deadline())
-        .context("waiting for the widened waiting PTY")?;
+    wait_for_pty_size_probe(
+        &mut dashboard,
+        &mut size_probe,
+        "waiting",
+        "WAITING_SIZE_ACK",
+        16,
+        41,
+    )?;
     dashboard.send(b"\x07")?;
     dashboard
         .wait_until(browse_screen, wait_deadline())
@@ -2013,23 +2074,64 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     dashboard.send(b" sl")?;
     wait_focused_ready(&mut dashboard, "mouse").context("focusing mouse after divider resize")?;
     enter_focused_terminal(&mut dashboard)?;
-    dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard
-        .wait_for(b"SIZE_ACK_16 38", wait_deadline())
-        .context("waiting for the narrowed mouse PTY")?;
+    wait_for_pty_size_probe(
+        &mut dashboard,
+        &mut size_probe,
+        "mouse",
+        "MOUSE_SIZE_ACK",
+        16,
+        38,
+    )?;
     dashboard.send(b"\x07")?;
     dashboard
         .wait_until(browse_screen, wait_deadline())
-        .context("returning to Browse before restoring divider")?;
+        .context("returning to Browse before divider double-click")?;
 
-    dashboard.send(b">")?;
+    // Double-click the now-unequal left-right divider. The real Dashboard
+    // recomputes its ratio, and the later kernel probes verify both PTYs.
+    let divider_x = 81; // 40-cell sidebar + the widened 41-cell left pane.
+    let divider_y = 4;
+    let divider_down = format!("\x1b[<0;{};{}M", divider_x + 1, divider_y + 1);
+    let divider_up = format!("\x1b[<0;{};{}m", divider_x + 1, divider_y + 1);
+    dashboard.send(format!("{divider_down}{divider_up}{divider_down}{divider_up}").as_bytes())?;
+    dashboard.wait_until(restored, wait_deadline())?;
+
+    // Two repeated resize keys grow the focused pane by four columns. The
+    // sibling PTY confirms the corresponding shrink; the reverse pair is
+    // checked with the final even-layout probes below.
+    click_pane_header(&mut dashboard, "waiting")?;
+    // A single header click focuses its pane and enters Terminal mode. Leave
+    // that mode before the resize keys so they reach the Dashboard dispatcher.
+    dashboard.send(b"\x07\x1b")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
+    dashboard.send(b">>")?;
+    wait_focused_ready(&mut dashboard, "waiting")?;
     enter_focused_terminal(&mut dashboard)?;
-    dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard
-        .wait_for(b"SIZE_ACK_16 40", wait_deadline())
-        .context("waiting for the restored mouse PTY")?;
+    wait_for_pty_size_probe(
+        &mut dashboard,
+        &mut size_probe,
+        "waiting",
+        "WAITING_SIZE_ACK",
+        16,
+        43,
+    )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_until(browse_screen, wait_deadline())?;
+
+    click_pane_header(&mut dashboard, "mouse")?;
+    enter_focused_terminal(&mut dashboard)?;
+    wait_for_pty_size_probe(
+        &mut dashboard,
+        &mut size_probe,
+        "mouse",
+        "MOUSE_SIZE_ACK",
+        16,
+        36,
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
+    dashboard.send(b">>")?;
+    wait_focused_ready(&mut dashboard, "mouse")?;
     dashboard.wait_until(restored, wait_deadline())?;
 
     // The tree is [waiting/fourth] on the left and [mouse/third] on the right.
@@ -2117,6 +2219,59 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         4,
         "unzoom should restore all four panes"
     );
+
+    // The mouse has now delivered a double-click natively in the compiled
+    // Dashboard path. Verify header zoom and restoration against the real PTY.
+    dashboard.send(b"\x07\x1b")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
+    let (header_column, header_row) = pane_header_point(&dashboard, "waiting")?;
+    let header_down = format!("\x1b[<0;{};{}M", header_column + 1, header_row + 1);
+    let header_up = format!("\x1b[<0;{};{}m", header_column + 1, header_row + 1);
+    dashboard.send(
+        [
+            header_down.as_bytes(),
+            header_up.as_bytes(),
+            header_down.as_bytes(),
+            header_up.as_bytes(),
+        ]
+        .concat()
+        .as_slice(),
+    )?;
+    dashboard.wait_until(
+        |screen| {
+            screen.contains("zoomed")
+                && screen
+                    .lines()
+                    .map(|line| line.matches("pid ").count())
+                    .sum::<usize>()
+                    == 1
+        },
+        wait_deadline(),
+    )?;
+    enter_focused_terminal(&mut dashboard)?;
+    wait_for_pty_size_probe(
+        &mut dashboard,
+        &mut size_probe,
+        "waiting",
+        "WAITING_SIZE_ACK",
+        36,
+        80,
+    )?;
+    dashboard.send(b"\x07\x1b")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
+    dashboard.send(
+        [
+            header_down.as_bytes(),
+            header_up.as_bytes(),
+            header_down.as_bytes(),
+            header_up.as_bytes(),
+        ]
+        .concat()
+        .as_slice(),
+    )?;
+    dashboard.wait_until(restored, wait_deadline())?;
+    dashboard.send(b"\x07\x1b")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
 
     // Directional focus and swap use the same path in the real Dashboard. The
     // selected session remains focused after its pane changes position.
@@ -3268,7 +3423,7 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     let mut dashboard = OuterDashboard::start(
         &fixture,
         PtySize {
-            rows: 30,
+            rows: 40,
             cols: 100,
             pixel_width: 0,
             pixel_height: 0,
@@ -3286,7 +3441,7 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     dashboard.send(b"E")?;
     dashboard.wait_for(b"MOUSE_ENABLED", wait_deadline())?;
     dashboard.wait_for_mouse_capture(true, wait_deadline())?;
-    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 40), 1, 0)
         .into_iter()
         .next()
         .context("focused pane rect")?
@@ -3330,7 +3485,7 @@ fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<
     let mut dashboard = OuterDashboard::start(
         &fixture,
         PtySize {
-            rows: 30,
+            rows: 40,
             cols: 100,
             pixel_width: 0,
             pixel_height: 0,
@@ -3346,7 +3501,7 @@ fn outbox_retarget_releases_original_mouse_child_before_fresh_input() -> Result<
     dashboard.send(b"E")?;
     dashboard.wait_for(b"MOUSE_ENABLED", wait_deadline())?;
     dashboard.wait_for_mouse_capture(true, wait_deadline())?;
-    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 40), 1, 0)
         .into_iter()
         .next()
         .context("focused pane rect")?

@@ -417,6 +417,11 @@ fn dock_status_row(rows: &[String]) -> String {
 
 #[test]
 fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::closed_idle_dock_offers_open_chat_and_open_idle_omits_it",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     let rows = rendered_rows(&dashboard, 120, 40);
@@ -503,13 +508,18 @@ fn drag_sidebar_to(dashboard: &mut Dashboard, area: Rect, column: u16) {
 
 #[test]
 fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::sidebar_stays_off_while_opening_and_recognizes_known_setup_failures",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     let open = open_request(&mut dashboard);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
     assert!(
-        dock.contains("Off"),
-        "a pending Open does not imply a worker: {dock:?}"
+        dock.contains("Idle"),
+        "a queued Open is visible as Idle before there is a worker: {dock:?}"
     );
     assert!(!dock.contains("Responding"), "{dock:?}");
     assert!(
@@ -552,6 +562,11 @@ fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
 
 #[test]
 fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::dock_distinguishes_sending_tools_stopping_and_turn_outcomes",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
@@ -754,6 +769,11 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
 
 #[test]
 fn a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal",
+    ) {
+        return;
+    }
     let target = captured_context(&fixture_hierarchy(), SessionId(1));
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
@@ -804,6 +824,11 @@ fn a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal() {
 
 #[test]
 fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::dock_draws_unread_until_the_loaded_tail_is_reviewed",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
@@ -856,6 +881,11 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
 
 #[test]
 fn unread_outranks_a_retained_draft_in_the_operator_section() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::unread_outranks_a_retained_draft_in_the_operator_section",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
@@ -896,6 +926,11 @@ fn unread_outranks_a_retained_draft_in_the_operator_section() {
 
 #[test]
 fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.install_area(area);
@@ -996,6 +1031,11 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
 
 #[test]
 fn operator_section_click_opens_the_singleton_from_its_right_edge() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::operator_section_click_opens_the_singleton_from_its_right_edge",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
@@ -1796,6 +1836,11 @@ fn stop_uses_the_exact_identity_and_only_a_refresh_certifies_it() {
 
 #[test]
 fn paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_config_dir(std::path::PathBuf::from("/instance"));
     let out = opened(&mut dashboard, with_model(summary()));
@@ -2978,6 +3023,11 @@ fn narrow_and_wide_layouts_and_the_floor_guidance_keep_the_draft() {
 
 #[test]
 fn short_sidebar_compacts_then_hides_the_operator_section_to_preserve_tree() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::short_sidebar_compacts_then_hides_the_operator_section_to_preserve_tree",
+    ) {
+        return;
+    }
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
         cols: 120,
@@ -3761,6 +3811,11 @@ fn thinking_capped_header_clips_with_its_count_at_a_narrow_sidebar_view() {
 
 #[test]
 fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::compaction_activity_is_transient_and_scoped_to_the_running_turn",
+    ) {
+        return;
+    }
     let context = OperatorContext::default();
     let mut running = summary();
     running.run = SessionRunId(2);
