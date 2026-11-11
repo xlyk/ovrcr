@@ -51,18 +51,18 @@ you are away waits for you. A notice that waited behind it shows next.
 ## Operator chat
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
-starts with the first project. A fixed **Operator** dock sits below attention and
-quota, immediately above the Dashboard footer. Click anywhere on the dock or
-press `o` in Browse to open the conversation with the composer focused. There are
-no Operator controls in the title bar.
+shows attention first when needed, then a three-row **Operator** section before
+the project tree and quota. Click anywhere in the section or press `o` in Browse
+to open the conversation with the composer focused. There are no Operator
+controls in the title bar.
 
-The dock shows **Open chat** when closed and idle, **Draft** for unfinished input,
-or **1 unread** until the loaded conversation tail has been seen. Unread takes
-priority over activity; activity and exceptional outcomes take priority over a
-draft. Sending, Responding, Waiting for a tool result, Stopping, Stop unconfirmed,
-failed and interrupted turns remain visible in words. A reviewed successful turn
-returns to idle. An open, idle conversation has a selection marker instead of the
-Open chat prompt. Opening and unavailable states are distinct.
+Before the conversation is opened, the section says **Off** when the Pi
+executable is available and **Not set up** when it is missing. A known Pi setup
+error after opening also shows **Not set up**. After opening, it shows **Working** with
+elapsed time and current activity, **Reply ready · 1 unread** with a reply
+preview, or **Idle** with the latest reply. The section omits the model and
+harness. Drawing it never reviews a reply or starts a worker. The
+`operator.sidebar` setting controls the section and is on by default.
 
 **Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation
 from every view except Terminal mode; its composer edits the same draft and
@@ -78,8 +78,8 @@ plus `default`. Up/Down selects, Enter saves `operator.thinking_level`, and Esc
 closes. The header shows Pi's actual level, `(set: X)` for a substituted request,
 and `→ X next turn` when the saved choice changes during a running turn.
 
-The dock hides with the sidebar, and yields its row when fewer than three
-project-tree lines would remain. The `o` route still works. There is no New,
+The section hides with the sidebar and shrinks or disappears as a short window
+needs room for the tree. The `o` route still works. There is no New,
 switch or close action: pi compacts the one conversation when it needs room.
 `Ctrl-l` toggles the ordinary Projects sidebar and never reveals a conversation
 list. At widths below 100, the conversation opens full-width by default; reveal
@@ -93,7 +93,7 @@ See [Operator setup and controls](operator.md).
 
 ## Browse keys
 
-The sidebar's quota section, above the Operator dock, summarizes remaining Claude, Codex, Grok and Cursor account
+The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok and Cursor account
 allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
 least allowance left in any of its general windows. The number is red at 5% or
 less and yellow at 20% or less. A stale value is muted. A provider with no value
@@ -102,8 +102,8 @@ yet (still checking, failed, or every window past its reset) shows a muted
 give way from the end to `…`. Click the line, or press `u`, for the windows,
 states, ages and next checks in the [details](provider-quota.md). That page also
 covers native sources, collection settings, freshness and reset behavior. The
-line hides when the sidebar is too short to keep the Operator row and three
-tree lines. The tree scrolls above it; sidebar and pane dividers remain
+line compacts or hides when the sidebar is short so the tree keeps room; sidebar
+and pane dividers remain
 draggable over their full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
@@ -421,8 +421,10 @@ a larger pane is rejected before any PTY resize.
 
 ## Sidebar and status
 
-Each project is a section: its name in upper case with a rule to the sidebar
-edge, and a blank line before every project after the first. Workspaces follow
+The attention line leads when any session needs you. The three-row **OPERATOR**
+section follows it, then the project tree and quota. Each project is a section:
+its name in upper case with a rule to the sidebar edge, and a blank line before
+every project after the first. Workspaces follow
 with a branch glyph and the current branch name in bold. The repository-root
 workspace also shows a `root` marker. A warning marker appears when that
 checkout is not on the default branch. Duplicate visible names include the
@@ -464,15 +466,22 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
-The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
-Short windows drop the trailing blank, then use compact provider summaries,
-then a `Quota: u` pointer. Press `u` or click the section for details.
+The **OPERATOR** section shows whether the conversation is working, unread,
+idle, not yet opened, or not set up, plus its current activity or latest reply.
+It omits the model and harness. Click anywhere in the section or press `o` in
+Browse to open the conversation. The `operator.sidebar` setting controls this
+section and is on by default. A short sidebar drops section gaps, compacts quota
+and Operator, and hides them as needed to preserve room for the tree; `o` still
+opens Operator when its section is hidden.
 
-While any session needs you, a line at the bottom of the sidebar, directly above
-the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
-for more than one), or `? 1 · ✓ 2` when the words do not fit. Attention and quota
-sit above the pinned Operator dock. As attention comes and goes, the dock and
-existing tree rows stay put; only the tree's last visible line gives way. It counts every project,
+The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
+Short windows use compact provider summaries, then a `Quota: u` pointer. Press
+`u` or click the section for details.
+
+While any session needs you, a line at the top of the sidebar, above Operator,
+says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+for more than one), or `? 1 · ✓ 2` when the words do not fit. The attention
+line stays at the top and is never hidden while counts are nonzero. It counts every project,
 including folded and scrolled-away rows and the focused session, and lists needs
 input first, the order the jump visits. Needs input means a running session
 waiting for an answer (including an open [input request](#input-requests)). A
@@ -481,8 +490,8 @@ paused session does not count as needing input: it cannot take the answer until
 that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
 session that is both counts once, as needs input. The Operator conversation stays
-out; its own navigation row shows its unread reply. The line disappears when
-nothing is left, and stays visible while the quota section compacts when the sidebar is short.
+out; its section shows its unread reply. The line disappears when
+nothing is left, and stays visible while the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
 click on that line selects the next session that needs you and shows it in the

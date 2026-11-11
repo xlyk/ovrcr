@@ -388,6 +388,7 @@ impl SessionStore {
         create_conversation_schema(&connection).unwrap();
         create_conversation_subject_schema(&connection).unwrap();
         operator::create_schema(&connection).unwrap();
+        operator::migrate_sidebar_timing(&connection).unwrap();
         Self::from_connection(connection).unwrap()
     }
 

@@ -470,6 +470,9 @@ impl Loader<'_> {
             self.unknown(delegation, "delegation.");
         }
         if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
+            if let Some(value) = self.take::<bool>(&mut operator, "operator.sidebar") {
+                self.accept("operator.sidebar", &mut settings.operator.sidebar, value);
+            }
             if let Some(value) = self.take::<ovrcr_protocol::OperatorThinkingLevel>(
                 &mut operator,
                 "operator.thinking_level",
@@ -994,6 +997,7 @@ state_db = "/tmp/cursor/state.vscdb"
 [operator]
 model = "openai/chat-model"
 thinking_level = "low"
+sidebar = true
 
 [delegation]
 progress_deadline_ms = 12345
@@ -1222,6 +1226,7 @@ login = "owner@example.com"
                 "launch_choices",
                 "operator.model",
                 "operator.thinking_level",
+                "operator.sidebar",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",

@@ -163,24 +163,22 @@ for Claude, Codex, Pi and Oh My Pi. Unknown providers and references without a
 native picker keep the unavailable notice.
 
 
-The Operator occupies one fixed dock row at the bottom of the existing sidebar,
-immediately above the Dashboard footer. `SidebarRects` supplies project-tree,
-attention, quota and Operator rectangles to rendering, mouse input and viewport
-calculations in that order. The tree starts at the top. Attention and quota sit
-above the dock; their updates never move it at a fixed window size. Reserve three
-project-tree lines before a dock row; shorter sidebars yield the dock to the tree.
-The strip takes one line, and quota uses full provider bars, compact rows, a
-one-line details pointer, or hides as space shrinks, independently of the clock.
-The dock preserves its name and right-aligned state before optional glyphs. Idle
-is quiet; the open conversation uses the existing selected-row background/bar.
-Unread leads activity or exceptional outcomes, then Draft, then Open chat (omitted
-when open and idle). Opening and unavailable remain distinct. No count, collapse
-arrow, plus button, child row, hover close mark or close hit target is added.
-A server update that brings the strip in or out keeps the tree selection in view.
+The Operator occupies a three-row section below the attention line and above the
+project tree; quota stays at the bottom. `SidebarRects` supplies attention,
+Operator, project-tree and quota rectangles to rendering, mouse input and
+viewport calculations. A section can have a trailing blank row, and the shared
+height ladder removes gaps first, then compacts or hides Operator and quota to
+preserve tree space. Operator's full section shows state and one activity/reply
+detail row; the one-row form clips to its name and status. `operator.sidebar`
+controls visibility and defaults on. The section preserves the selected-row
+background when the conversation is open. Working shows the durable turn-start
+age; Idle and unread states show the durable last-reply age when known. Legacy
+turns without timestamps remain untimed. Setup detection checks for the Pi
+executable without starting a process or validating provider credentials.
 Saved summaries load asynchronously after the production handshake and initial
 terminal attachment, through `OperatorRequest::Current`, without opening Operator.
 
-Browse `o` and any cell of the dock open the single conversation with the composer
+Browse `o` and any cell of the section open the single conversation with the composer
 focused. The title bar has neither full-chat nor Quick message targets; Quick
 message remains in Commands and on its existing key routes. Terminal pane assignments survive, but the
 desired terminal view is empty while Operator is visible and native composer input
