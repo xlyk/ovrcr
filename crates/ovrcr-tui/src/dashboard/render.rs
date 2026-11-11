@@ -493,6 +493,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
+    dashboard.draw_usage(frame, now_unix_ms);
     dashboard.draw_quota(frame, now_unix_ms);
     dashboard.draw_attention(frame);
 
@@ -1881,6 +1882,7 @@ mod harness_agent_label_tests {
         });
         dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 30));
         dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![WorkspaceSummary {

@@ -204,7 +204,16 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         current[last_tree_row], "▌      └ sh",
         "the stacked label is the last selectable tree line"
     );
-    assert_eq!(last_tree_row + 1, quota_row, "{current:?}");
+    let usage_row = current
+        .iter()
+        .position(|row| row.contains("USAGE") || row.contains("Usage ·"))
+        .expect("Usage follows the tree");
+    assert_eq!(last_tree_row + 1, usage_row, "{current:?}");
+    assert_eq!(
+        usage_row + 5,
+        quota_row,
+        "Usage keeps its rows before Quota"
+    );
     dashboard.install_focus(SessionId(49));
     let action = dashboard.mouse_action(
         mouse_event(
@@ -422,9 +431,11 @@ fn details_text(dashboard: &Dashboard, now: u64) -> String {
     terminal
         .draw(|frame| draw_dashboard_at(frame, dashboard, now))
         .unwrap();
-    (0..40)
+    // Return only the quota popup. The production-default Usage section also
+    // contains the word "tokens" behind the popup, outside its own content.
+    (5..35)
         .map(|row| {
-            (0..120)
+            (19..102)
                 .map(|column| terminal.backend().buffer()[(column, row)].symbol())
                 .collect::<String>()
         })

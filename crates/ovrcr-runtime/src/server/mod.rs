@@ -44,6 +44,7 @@ mod dispatch;
 mod event_log;
 mod lifecycle;
 mod navigation;
+mod usage;
 pub use navigation::bridge_executable_sha256;
 pub mod operator;
 #[cfg(test)]
@@ -294,6 +295,7 @@ struct WipTarget {
 
 pub struct ServerState {
     server_lifetime: String,
+    usage: Mutex<usage::Lifetime>,
     delegation_observations: delegation_observation::Observations,
     callback_executable_sha256: Option<String>,
     pub tasks: Option<Arc<TaskManager>>,
@@ -332,6 +334,19 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    pub(super) fn publish_usage(
+        &self,
+        session: SessionId,
+        binding: &ovrcr_protocol::AgentBinding,
+        usage: &ovrcr_protocol::UsageTotals,
+    ) {
+        let snapshot = self.usage.lock().unwrap().record(session.0, binding, usage);
+        if let Some(snapshot) = snapshot {
+            self.dashboard
+                .try_send(ServerMessage::Event(ServerEvent::UsageChanged(snapshot)));
+        }
+    }
+
     /// Only the selected native Claude invocation can replace the retained source.
     fn refresh_claude_quota(&self) {
         let old = self.quotas.lock().unwrap().claude.clone();
@@ -1882,6 +1897,7 @@ impl ServerState {
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             server_lifetime: navigation::new_identity().unwrap(),
+            usage: Mutex::new(usage::Lifetime::new(0)),
             delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: Some(tasks),
@@ -3453,7 +3469,10 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
         }
     }
     projects.sort_by(|left, right| left.name.cmp(&right.name));
-    HierarchySnapshot { projects }
+    HierarchySnapshot {
+        projects,
+        usage: state.usage.lock().unwrap().snapshot(),
+    }
 }
 
 fn is_root_workspace(project: &ProjectRecord, workspace: &WorkspaceRecord) -> bool {

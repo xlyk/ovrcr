@@ -657,12 +657,14 @@ impl Dashboard {
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
             quotas: Some(QuotaSnapshot::default()),
+            usage: crate::protocol::UsageSnapshot::default(),
             details: None,
             transcript: Default::default(),
             settings_report: None,
             settings_editor: Default::default(),
             events: Default::default(),
             hierarchy: HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new(),
             },
             mode: InputMode::Browse,
@@ -742,6 +744,14 @@ impl Dashboard {
 
     pub fn install_hierarchy(&mut self, hierarchy: HierarchySnapshot) {
         let _ = self.update_hierarchy(hierarchy);
+    }
+
+    fn install_usage_snapshot(&mut self, incoming: crate::protocol::UsageSnapshot) {
+        if incoming.server_started_unix_ms != self.usage.server_started_unix_ms {
+            self.usage = incoming;
+        } else {
+            self.usage.total_tokens = self.usage.total_tokens.max(incoming.total_tokens);
+        }
     }
 
     pub fn install_settings(&mut self, settings: Settings) {
@@ -4449,6 +4459,7 @@ impl Dashboard {
                     self.quotas = Some(*snapshot);
                     self.ensure_selection_visible(&self.visible_rows());
                 }
+                ServerEvent::UsageChanged(snapshot) => self.install_usage_snapshot(snapshot),
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
                 ServerEvent::Recorded(event) => self.events_recorded(event),
                 ServerEvent::WipSavePrompt {
@@ -4678,6 +4689,7 @@ impl Dashboard {
         }
         self.observe_desktop_responses(&hierarchy);
         let tree = self.sidebar_rects(self.outer_area).tree;
+        self.install_usage_snapshot(hierarchy.usage);
         self.hierarchy = hierarchy;
         if self.transcript.session.is_some_and(|id| {
             !find_session(self, id).is_some_and(|summary| Some(summary.run) == self.transcript.run)
@@ -5229,6 +5241,7 @@ mod tests {
 
     fn hierarchy_with_run(id: u64, run: u64) -> HierarchySnapshot {
         HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "demo".into(),
                 workspaces: vec![WorkspaceSummary {

@@ -495,6 +495,12 @@ impl Loader<'_> {
             }
             self.unknown(operator, "operator.");
         }
+        if let Some(mut usage) = self.take::<toml::Table>(table, "usage") {
+            if let Some(value) = self.take::<bool>(&mut usage, "usage.sidebar") {
+                self.accept("usage.sidebar", &mut settings.usage.sidebar, value);
+            }
+            self.unknown(usage, "usage.");
+        }
         self.unknown(std::mem::take(table), "");
     }
 
@@ -1221,6 +1227,7 @@ login = "owner@example.com"
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
+                "usage.sidebar",
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",

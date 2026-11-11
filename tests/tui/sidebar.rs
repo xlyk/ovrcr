@@ -73,6 +73,182 @@ fn assert_selected_sidebar_row(terminal: &Terminal<TestBackend>, text: &str) {
     );
 }
 
+#[test]
+fn usage_section_renders_eight_canonical_session_counts_and_server_total() {
+    let mut hierarchy = HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot {
+            total_tokens: 4_600_000,
+            server_started_unix_ms: 0,
+        },
+        projects: vec![ProjectSummary {
+            name: "usage-fixture".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "usage-fixture".into(),
+                id: "work".into(),
+                name: "work".into(),
+                root: true,
+                warning: None,
+                path: PathBuf::from("/tmp/usage-fixture"),
+                sessions: Vec::new(),
+            }],
+        }],
+    };
+    let states = [
+        ("working", SessionPhase::Running, AgentActivity::Busy),
+        ("input", SessionPhase::Running, AgentActivity::WaitingInput),
+        ("ready", SessionPhase::Running, AgentActivity::ResponseReady),
+        ("idle", SessionPhase::Running, AgentActivity::Idle),
+        ("error", SessionPhase::Running, AgentActivity::Error),
+        ("paused", SessionPhase::Paused, AgentActivity::Busy),
+        (
+            "exited",
+            SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            },
+            AgentActivity::Unknown,
+        ),
+        ("stopped", SessionPhase::Stopped, AgentActivity::Unknown),
+        (
+            "interrupted",
+            SessionPhase::Interrupted,
+            AgentActivity::Unknown,
+        ),
+        ("unknown", SessionPhase::Running, AgentActivity::Unknown),
+    ];
+    hierarchy.projects[0].workspaces[0].sessions = states
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, phase, activity))| {
+            let mut session = session_summary(
+                index as u64 + 1,
+                "usage-fixture",
+                "work",
+                name,
+                "sh",
+                Some(index as u32 + 1),
+                0,
+            );
+            session.phase = phase;
+            session.activity = activity;
+            session
+        })
+        .collect();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 11_520_000))
+        .unwrap();
+    let sidebar = (0..40)
+        .map(|row| sidebar_row_at_width(&terminal, row, sidebar_text_width(&terminal)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for expected in [
+        "USAGE",
+        "4.6M tokens",
+        "3h12m",
+        "1 working",
+        "1 input",
+        "1 ready",
+        "1 idle",
+        "2 error",
+        "1 paused",
+        "2 exited",
+        "1 unknown",
+    ] {
+        assert!(
+            sidebar.contains(expected),
+            "missing {expected:?}: {sidebar}"
+        );
+    }
+}
+
+#[test]
+fn usage_compacts_to_one_line_and_then_hides_when_the_sidebar_is_short() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.usage = ovrcr_protocol::UsageSnapshot {
+        total_tokens: 4_600_000,
+        server_started_unix_ms: 0,
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    let mut saw_compact = false;
+    let mut saw_hidden = false;
+
+    for height in 8..=40 {
+        dashboard.install_area(Rect::new(0, 0, 120, height));
+        let mut terminal = Terminal::new(TestBackend::new(120, height)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        let screen = (0..height)
+            .map(|row| sidebar_row_at_width(&terminal, row, sidebar_text_width(&terminal)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if screen.contains("Usage · 5 sessions · 4.6M tokens") {
+            saw_compact = true;
+            assert!(
+                !screen.contains("USAGE"),
+                "compact form should replace full rows"
+            );
+        }
+        if height < 20 && !screen.contains("Usage") && !screen.contains("USAGE") {
+            saw_hidden = true;
+        }
+    }
+    assert!(saw_compact, "Usage did not reach its compact form");
+    assert!(saw_hidden, "Usage did not hide on a short sidebar");
+}
+
+#[test]
+fn usage_zero_counters_are_dimmed_and_the_setting_can_hide_the_section() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.usage = ovrcr_protocol::UsageSnapshot {
+        total_tokens: 0,
+        server_started_unix_ms: 0,
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let (zero_x, zero_y) = rendered_cell_sequence(&terminal, "⠹ 0 working", 120, 40).unwrap();
+    let (positive_x, positive_y) =
+        rendered_cell_sequence(&terminal, "- 4 unknown", 120, 40).unwrap();
+    assert_ne!(
+        terminal.backend().buffer()[(zero_x, zero_y)].fg,
+        terminal.backend().buffer()[(positive_x, positive_y)].fg,
+        "a zero counter should use the dim color"
+    );
+
+    dashboard.install_settings(ovrcr::protocol::Settings {
+        usage: ovrcr::protocol::UsageSettings { sidebar: false },
+        ..Default::default()
+    });
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let screen = (0..40)
+        .map(|row| sidebar_row_at_width(&terminal, row, sidebar_text_width(&terminal)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!screen.contains("USAGE"));
+    assert!(!screen.contains("Usage ·"));
+}
+
 fn rendered_cell_sequence(
     terminal: &Terminal<TestBackend>,
     needle: &str,
@@ -1197,9 +1373,11 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    let area = Rect::new(0, 0, 60, 24);
+    // Leave enough vertical room for the production-default Usage and Quota
+    // sections without clipping the tree row whose two-line layout is tested.
+    let area = Rect::new(0, 0, 60, 27);
     dashboard.install_area(area);
-    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(60, 27)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -1312,11 +1490,11 @@ fn sidebar_stacks_every_agent_label_or_none() {
         implement_session_mut(&mut hierarchy).label = "claude".into();
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_focus(SessionId(5));
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(60, 27)).unwrap();
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let rows = (0..24)
+        let rows = (0..27)
             .map(|y| {
                 (0..29)
                     .map(|x| terminal.backend().buffer()[(x, y)].symbol())
@@ -1328,18 +1506,18 @@ fn sidebar_stacks_every_agent_label_or_none() {
         (rows, dashboard)
     };
     let (inline, inline_dashboard) = draw("claude");
-    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 24) as usize;
-    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 24) as usize;
-    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 24) as usize;
+    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 27) as usize;
+    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 27) as usize;
+    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 27) as usize;
     assert_eq!(inline[inline_review], "     - review         claude");
     assert_eq!(inline[inline_lifecycle], "  󰘬 lifecycle");
     assert_eq!(inline[inline_implement], "     · implement      claude");
     assert_eq!(inline[inline_implement + 1], "");
     let (stacked, stacked_dashboard) = draw("pi / grok-4.7");
-    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 24) as usize;
-    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 24) as usize;
-    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 24);
-    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 24) as usize;
+    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 27) as usize;
+    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 27) as usize;
+    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 27);
+    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 27) as usize;
     assert_eq!(stacked[stacked_review], "     - review");
     assert_eq!(stacked[stacked_review + 1], "       └ pi:grok-4.7");
     assert_eq!(stacked[stacked_lifecycle], "  󰘬 lifecycle");
@@ -1911,6 +2089,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         Box::default(),
     )));
     dashboard.install_hierarchy(HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {
@@ -2816,6 +2995,7 @@ fn keyboard_selecting_a_project_scrolls_it_into_view() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_hierarchy(HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {

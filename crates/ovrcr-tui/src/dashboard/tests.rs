@@ -1131,6 +1131,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 99,
         response: Response::Hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![WorkspaceSummary {
@@ -1291,6 +1292,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
         unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {
@@ -1439,6 +1441,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {
@@ -3089,6 +3092,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
         WorkspaceSummary,
     };
     HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {

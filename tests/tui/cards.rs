@@ -161,6 +161,7 @@ fn registering_a_first_project_suggests_the_first_agent() {
     let shell = session_summary(1, "myapp", "root-id", "local", "zsh", Some(10), 0);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "myapp".into(),
                 workspaces: vec![WorkspaceSummary {

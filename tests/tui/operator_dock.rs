@@ -248,8 +248,7 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         dashboard.install_area(Rect::new(0, 0, 120, height));
         rendered_rows(dashboard, 120, height)
     };
-
-    let full = rows_at(&mut dashboard, 26);
+    let full = rows_at(&mut dashboard, 31);
     assert!(
         sidebar_line(&full[2]).trim().is_empty(),
         "the attention gap exists while roomy: {full:?}"
@@ -267,11 +266,15 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "tree follows Operator: {full:?}"
     );
     assert!(
-        full[15].contains("QUOTA LEFT"),
+        full[15].starts_with("USAGE "),
+        "Usage follows the tree: {full:?}"
+    );
+    assert!(
+        full[20].contains("QUOTA LEFT"),
         "full Quota includes its heading: {full:?}"
     );
 
-    let no_attention_gap = rows_at(&mut dashboard, 25);
+    let no_attention_gap = rows_at(&mut dashboard, 30);
     assert!(
         no_attention_gap[1].contains("needs input"),
         "attention persists: {no_attention_gap:?}"
@@ -285,7 +288,7 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "Operator gap remains for the next step: {no_attention_gap:?}"
     );
 
-    let no_operator_gap = rows_at(&mut dashboard, 24);
+    let no_operator_gap = rows_at(&mut dashboard, 29);
     assert!(
         no_operator_gap[1].contains("needs input"),
         "attention persists: {no_operator_gap:?}"
@@ -299,7 +302,19 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "second gap shrinks: {no_operator_gap:?}"
     );
 
-    let compact_quota = rows_at(&mut dashboard, 23);
+    let compact_usage = rows_at(&mut dashboard, 28);
+    assert!(
+        compact_usage
+            .iter()
+            .any(|row| row.contains("Usage · 5 sessions")),
+        "Usage compacts to one line: {compact_usage:?}"
+    );
+    assert!(
+        compact_usage.iter().any(|row| row.contains("QUOTA LEFT")),
+        "Quota stays full while Usage compacts: {compact_usage:?}"
+    );
+
+    let compact_quota = rows_at(&mut dashboard, 24);
     assert!(
         compact_quota[1].contains("needs input"),
         "attention persists: {compact_quota:?}"
@@ -314,6 +329,18 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
             "provider row {provider}: {compact_quota:?}"
         );
     }
+
+    let usage_hidden = rows_at(&mut dashboard, 18);
+    assert!(
+        !usage_hidden
+            .iter()
+            .any(|row| row.contains("USAGE") || row.contains("Usage ·")),
+        "Usage hides before Operator compacts: {usage_hidden:?}"
+    );
+    assert!(
+        usage_hidden[2].starts_with(" OPERATOR "),
+        "Operator remains expanded when Usage is hidden: {usage_hidden:?}"
+    );
 
     let compact_operator = rows_at(&mut dashboard, 16);
     assert!(

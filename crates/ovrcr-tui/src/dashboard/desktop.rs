@@ -1372,6 +1372,7 @@ mod tests {
             activity_revision: revision,
         });
         HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "project".into(),
                 workspaces: vec![WorkspaceSummary {

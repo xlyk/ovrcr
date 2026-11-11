@@ -676,6 +676,15 @@ pub enum ErrorCode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HierarchySnapshot {
     pub projects: Vec<ProjectSummary>,
+    /// The current Server lifetime's accepted agent-reported token total.
+    pub usage: UsageSnapshot,
+}
+
+/// Server-lifetime usage visible to a newly attached Dashboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub total_tokens: u64,
+    pub server_started_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -828,6 +837,8 @@ pub enum ServerEvent {
         capabilities: AgentModelCapabilities,
     },
     InitialPromptIntentChanged(Box<InitialPromptIntentSnapshot>),
+    /// Accepted agent usage increased the Server-lifetime total.
+    UsageChanged(UsageSnapshot),
 }
 
 #[cfg(test)]
@@ -1520,6 +1531,7 @@ mod wire_snapshot {
             (
                 "Hierarchy",
                 Response::Hierarchy(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),
@@ -1711,6 +1723,7 @@ mod wire_snapshot {
             (
                 "HierarchyChanged",
                 ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),

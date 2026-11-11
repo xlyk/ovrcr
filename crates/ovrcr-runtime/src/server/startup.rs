@@ -239,6 +239,7 @@ fn run_server_inner(
     let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity()?,
+        usage: Mutex::new(super::usage::Lifetime::new(quota::clock_ms())),
         delegation_observations: super::delegation_observation::Observations::default(),
         callback_executable_sha256: std::env::current_exe().ok().and_then(|path| {
             super::navigation::bridge_executable_sha256(
