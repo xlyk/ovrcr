@@ -20,6 +20,25 @@ fn sidebar_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
+fn rendered_rows_at(
+    dashboard: &Dashboard,
+    width: u16,
+    height: u16,
+    now_unix_ms: u64,
+) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, now_unix_ms))
+        .unwrap();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}
+
 fn sidebar_text_width(terminal: &Terminal<TestBackend>) -> u16 {
     (0..=39)
         .find(|column| terminal.backend().buffer()[(*column, 1)].symbol() == "│")
@@ -72,7 +91,6 @@ fn assert_selected_sidebar_row(terminal: &Terminal<TestBackend>, text: &str) {
         sidebar_row(terminal, row)
     );
 }
-
 fn rendered_cell_sequence(
     terminal: &Terminal<TestBackend>,
     needle: &str,
@@ -130,6 +148,670 @@ fn row_create_buttons_render_only_on_hover_for_projects_and_workspaces() {
         plus < close,
         "workspace buttons must be [+][x]: {}",
         rows[workspace_row]
+    );
+}
+
+#[test]
+fn m_switches_to_recent_activity_with_newest_agents_grouped_by_project() {
+    use ovrcr::protocol::{Request, SessionKind, Settings, SidebarView};
+
+    let now = 20_000_000;
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| project.workspaces.iter_mut())
+        .flat_map(|workspace| workspace.sessions.iter_mut())
+    {
+        match session.id.0 {
+            1 => {
+                session.kind = SessionKind::Agent {
+                    name: "codex".into(),
+                };
+                session.label = "codex".into();
+                session.title = Some("review newest".into());
+                session.last_activity_unix_ms = Some(now - 60_000);
+            }
+            2 => {
+                session.kind = SessionKind::Agent {
+                    name: "claude".into(),
+                };
+                session.label = "claude".into();
+                session.title = Some("implement older".into());
+                session.last_activity_unix_ms = Some(now - 3 * 60 * 60_000);
+            }
+            _ => {}
+        }
+    }
+    let mut alpha_workspace = hierarchy.projects[1].workspaces[1].clone();
+    alpha_workspace.project = "alpha".into();
+    alpha_workspace.name = "feature/alpha".into();
+    alpha_workspace.id = "alpha-workspace".into();
+    alpha_workspace.sessions.truncate(1);
+    alpha_workspace.sessions[0].project = "alpha".into();
+    alpha_workspace.sessions[0].workspace = "alpha-workspace".into();
+    alpha_workspace.sessions[0].id = SessionId(6);
+    alpha_workspace.sessions[0].run = ovrcr::session::SessionRunId(6);
+    alpha_workspace.sessions[0].name = "alpha-agent".into();
+    alpha_workspace.sessions[0].title = Some("alpha agent".into());
+    alpha_workspace.sessions[0].kind = SessionKind::Agent {
+        name: "codex".into(),
+    };
+    alpha_workspace.sessions[0].label = "codex".into();
+    alpha_workspace.sessions[0].last_activity_unix_ms = Some(now - 10_000);
+    hierarchy.projects.push(ProjectSummary {
+        name: "alpha".into(),
+        workspaces: vec![alpha_workspace],
+    });
+    hierarchy.projects.push(ProjectSummary {
+        name: "empty-project".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "empty-project".into(),
+            name: "empty".into(),
+            id: "empty".into(),
+            root: false,
+            warning: None,
+            path: PathBuf::from("/tmp/empty"),
+            sessions: Vec::new(),
+        }],
+    });
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    dashboard.install_screen(SessionId(1), &[]);
+
+    let tree = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        tree.contains("SPACELIFT-AGENT"),
+        "default view is the tree:\n{tree}"
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Char('m')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let request = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        request.request,
+        Request::SetSetting { ref path, ref value }
+            if path == "sidebar_view" && value.as_deref() == Some("\"recent\"")
+    ));
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
+    dashboard.install_settings(settings);
+
+    let rows = rendered_rows_at(&dashboard, 120, 40, now)
+        .into_iter()
+        .map(|row| row.chars().take(39).collect::<String>())
+        .collect::<Vec<_>>();
+    let text = rows.join("\n");
+    assert!(
+        !text.contains("SPACELIFT-AGENT"),
+        "terminal-only project is omitted:\n{text}"
+    );
+    assert!(
+        !text.contains("EMPTY-PROJECT"),
+        "empty project is omitted:\n{text}"
+    );
+    let alpha = rows
+        .iter()
+        .position(|line| line.contains("ALPHA"))
+        .expect("alpha project header");
+    let consigint = rows
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("consigint project header");
+    assert!(alpha < consigint, "projects remain alphabetic:\n{text}");
+    let newest = rows
+        .iter()
+        .position(|line| line.contains("review newest"))
+        .expect("newest Agent row");
+    let older = rows
+        .iter()
+        .position(|line| line.contains("implement older"))
+        .expect("older Agent row");
+    assert!(newest < older, "newest Agent sorts first:\n{text}");
+    assert!(
+        rows[newest].contains("1m"),
+        "age appears on the title line: {}",
+        rows[newest]
+    );
+    assert!(rows[newest + 1].contains("└") && rows[newest + 1].contains("auth · codex"));
+    assert!(rows[older + 1].contains("└") && rows[older + 1].contains("lifecycle · claude"));
+
+    assert_eq!(
+        dashboard.key(KeyCode::Char('m')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(matches!(
+        only_request(dashboard.drain_outbox()).request,
+        Request::SetSetting { ref path, ref value }
+            if path == "sidebar_view" && value.as_deref() == Some("\"tree\"")
+    ));
+    dashboard.install_settings(Settings::default());
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("SPACELIFT-AGENT"),
+        "returning to tree restores terminal rows"
+    );
+}
+
+#[test]
+fn recent_rows_render_two_lines_and_clip_long_titles_and_branches() {
+    use ovrcr::protocol::{SessionKind, Settings, SidebarView};
+
+    let mut hierarchy = fixture_hierarchy();
+    let session = review_session_mut(&mut hierarchy);
+    session.kind = SessionKind::Agent {
+        name: "codex".into(),
+    };
+    session.label = "codex".into();
+    session.title = Some("a very long review title that cannot fit in the sidebar".into());
+    session.last_activity_unix_ms = Some(0);
+    hierarchy.projects[1].workspaces[1].name =
+        "feature/a-branch-name-that-is-also-too-long-to-fit".into();
+
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
+    dashboard.install_settings(settings);
+
+    let rows = rendered_sidebar_rows_at(&dashboard, 120, 40, 2 * 24 * 60 * 60_000);
+    let title = rows
+        .iter()
+        .position(|row| row.contains("a very long"))
+        .expect("recent title line");
+    assert!(
+        rows[title].contains("2d"),
+        "age on first line: {}",
+        rows[title]
+    );
+    assert!(
+        rows[title].contains('…'),
+        "title clips with ellipsis: {}",
+        rows[title]
+    );
+    assert!(
+        rows[title + 1].contains("└") && rows[title + 1].contains('…'),
+        "long branch clips on the second line: {}",
+        rows[title + 1]
+    );
+}
+
+#[test]
+fn recent_view_preserves_unread_input_highlights_and_folded_counts() {
+    use ovrcr::protocol::{Settings, SidebarView};
+
+    let mut hierarchy = fixture_hierarchy();
+    let project = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .expect("fixture project");
+    let auth = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "auth")
+        .expect("auth workspace");
+    let input = auth
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(1))
+        .expect("Input Agent");
+    set_attention(input, AgentActivity::Busy, true, false);
+    input.title = Some("input-urgent".into());
+    input.last_activity_unix_ms = Some(20);
+
+    let lifecycle = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "lifecycle")
+        .expect("lifecycle workspace");
+    let unread = lifecycle
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(2))
+        .expect("Unread Agent");
+    set_attention(unread, AgentActivity::ResponseReady, false, true);
+    unread.title = Some("ready-unread".into());
+    unread.last_activity_unix_ms = Some(10);
+
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    dashboard.install_settings(Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    });
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 20))
+        .unwrap();
+    for title in ["input-urgent", "ready-unread"] {
+        let row = (0..40)
+            .find(|row| sidebar_row(&terminal, *row).contains(title))
+            .unwrap_or_else(|| panic!("recent Agent sidebar title was not rendered: {title}"));
+        let column = sidebar_row(&terminal, row).find(title).unwrap() as u16;
+        let cell = &terminal.backend().buffer()[(column, row)];
+        assert_eq!(cell.fg, Color::Rgb(205, 214, 244), "{title}");
+        assert!(
+            cell.modifier.contains(Modifier::BOLD),
+            "{title} keeps the shared Unread/Input title emphasis"
+        );
+    }
+
+    let project_row = rendered_rows(&dashboard, 120, 40)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("recent project row") as u16;
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: project_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let folded = rendered_rows(&dashboard, 120, 40);
+    let folded_project = &folded[project_row as usize];
+    assert!(
+        folded_project.contains("?1 ✓1 ▸ 2 ws"),
+        "recent project fold counts its Agent Input and Unread rows, excluding Terminals: {folded_project}"
+    );
+}
+
+#[test]
+fn recent_activity_reorders_on_session_update_without_changing_selection() {
+    use ovrcr::protocol::{SessionKind, Settings, SidebarView};
+
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| project.workspaces.iter_mut())
+        .flat_map(|workspace| workspace.sessions.iter_mut())
+    {
+        if matches!(session.id.0, 1 | 2) {
+            session.kind = SessionKind::Agent {
+                name: "codex".into(),
+            };
+            session.label = "codex".into();
+            session.title = Some(if session.id == SessionId(1) {
+                "selected review".into()
+            } else {
+                "other implement".into()
+            });
+            session.last_activity_unix_ms = Some(if session.id == SessionId(1) { 10 } else { 20 });
+        }
+    }
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy.clone());
+    dashboard.install_focus(SessionId(1));
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
+    dashboard.install_settings(settings);
+    let ordered = rendered_sidebar_rows_at(&dashboard, 120, 40, 0);
+    assert!(
+        ordered
+            .iter()
+            .position(|row| row.contains("other implement"))
+            < ordered
+                .iter()
+                .position(|row| row.contains("selected review")),
+        "newer session starts first"
+    );
+
+    let mut updated = hierarchy.projects[1].workspaces[1].sessions[0].clone();
+    updated.last_activity_unix_ms = Some(30);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        updated,
+    ))));
+    let reordered = rendered_sidebar_rows_at(&dashboard, 120, 40, 0);
+    assert!(
+        reordered
+            .iter()
+            .position(|row| row.contains("selected review"))
+            < reordered
+                .iter()
+                .position(|row| row.contains("other implement")),
+        "updated session moves to the top"
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+}
+
+#[test]
+fn live_server_dashboard_saves_and_restores_recent_sidebar_view() {
+    use crate::live::Live;
+    use ovrcr::protocol as p;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    fn dashboard_request(
+        stream: &mut UnixStream,
+        dashboard: &mut Dashboard,
+        request_id: u64,
+        request: p::Request,
+        wait_for_settings: bool,
+    ) -> p::Response {
+        p::write_frame(
+            stream,
+            &p::ClientMessage {
+                request_id,
+                request,
+            },
+        )
+        .unwrap();
+        let mut response = None;
+        let mut got_settings = !wait_for_settings;
+        while response.is_none() || !got_settings {
+            match p::read_frame::<p::ServerMessage>(stream).unwrap() {
+                p::ServerMessage::Response {
+                    request_id: received,
+                    response: value,
+                } if received == request_id => {
+                    if let p::Response::Hierarchy(hierarchy) = &value {
+                        dashboard.install_hierarchy(hierarchy.clone());
+                    } else {
+                        dashboard.handle_server_message(p::ServerMessage::Response {
+                            request_id: received,
+                            response: value.clone(),
+                        });
+                    }
+                    response = Some(value);
+                }
+                p::ServerMessage::Event(p::ServerEvent::SettingsChanged(report)) => {
+                    got_settings = true;
+                    dashboard.handle_server_message(p::ServerMessage::Event(
+                        p::ServerEvent::SettingsChanged(report),
+                    ));
+                }
+                message => {
+                    dashboard.handle_server_message(message);
+                }
+            }
+        }
+        response.unwrap()
+    }
+
+    let live = Live::idle().bounded();
+    std::fs::write(
+        live.config.join("dashboard.toml"),
+        "quota.enabled = false\n",
+    )
+    .unwrap();
+    live.start_binary();
+    live.ready("feature/sidebar-recent");
+    let p::Response::CreatedSession(agent) =
+        live.request(p::Request::CreateSession(p::CreateSessionRequest {
+            project: crate::live::PROJECT.into(),
+            workspace: crate::live::WORKSPACE.into(),
+            name: "recent-live".into(),
+            label: Some("codex".into()),
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "while :; do sleep 1; done".into(),
+            ],
+            kind: p::SessionKind::Agent {
+                name: "codex".into(),
+            },
+        }))
+    else {
+        panic!("live Agent session was not created");
+    };
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut stream = p::connect_server(&live.socket).unwrap();
+    stream
+        .set_read_timeout(Some(live.timeout().unwrap_or(Duration::from_secs(5))))
+        .unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    assert!(matches!(
+        dashboard_request(
+            &mut stream,
+            &mut dashboard,
+            900_000,
+            p::Request::DashboardHello,
+            true,
+        ),
+        p::Response::Hierarchy(_)
+    ));
+    dashboard.install_focus(agent.id);
+    let tree = rendered_rows(&dashboard, area.width, area.height).join("\n");
+    assert!(tree.contains("recent-live"), "real Dashboard tree:\n{tree}");
+    assert!(
+        tree.contains("local"),
+        "Terminal session remains in tree:\n{tree}"
+    );
+
+    assert_eq!(dashboard.key(KeyCode::Char('m')), DashboardAction::Redraw);
+    let setting = only_request(dashboard.drain_outbox());
+    assert!(matches!(
+        &setting.request,
+        p::Request::SetSetting { path, value }
+            if path == "sidebar_view" && value.as_deref() == Some("\"recent\"")
+    ));
+    let saved = dashboard_request(
+        &mut stream,
+        &mut dashboard,
+        setting.request_id,
+        setting.request,
+        true,
+    );
+    assert_eq!(saved, p::Response::Ok);
+    let recent = rendered_rows(&dashboard, area.width, area.height).join("\n");
+    assert!(
+        recent.contains("recent-live"),
+        "Agent appears in recent view:\n{recent}"
+    );
+    assert!(
+        !recent.contains("local"),
+        "Terminal is excluded from recent view:\n{recent}"
+    );
+    drop(stream);
+
+    let mut next_stream = p::connect_server(&live.socket).unwrap();
+    next_stream
+        .set_read_timeout(Some(live.timeout().unwrap_or(Duration::from_secs(5))))
+        .unwrap();
+    let mut attached = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    attached.install_area(area);
+    assert!(matches!(
+        dashboard_request(
+            &mut next_stream,
+            &mut attached,
+            900_001,
+            p::Request::DashboardHello,
+            true,
+        ),
+        p::Response::Hierarchy(_)
+    ));
+    assert!(
+        rendered_rows(&attached, area.width, area.height)
+            .join("\n")
+            .contains("recent-live"),
+        "next Dashboard attachment restored the saved view"
+    );
+}
+
+#[test]
+fn live_dashboard_input_publishes_activity_without_pty_output() {
+    use crate::live::Live;
+    use ovrcr::protocol as p;
+    use std::time::{Duration, Instant};
+
+    let live = Live::binary();
+    live.ready("feature/sidebar-input-activity");
+    let agent_ready = live.root.path().join("non-echoing-agent.ready");
+    let p::Response::CreatedSession(agent) =
+        live.request(p::Request::CreateSession(p::CreateSessionRequest {
+            project: crate::live::PROJECT.into(),
+            workspace: crate::live::WORKSPACE.into(),
+            name: "non-echoing-agent".into(),
+            label: Some("codex".into()),
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!(
+                    "stty -echo; : > '{}'; exec cat >/dev/null",
+                    agent_ready.display()
+                )
+                .into(),
+            ],
+            kind: p::SessionKind::Agent {
+                name: "codex".into(),
+            },
+        }))
+    else {
+        panic!("live Agent session was not created");
+    };
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
+    while !agent_ready.exists() {
+        assert!(
+            Instant::now() < ready_deadline,
+            "non-echoing Agent did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut stream = p::connect_server(&live.socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let p::Response::Hierarchy(hierarchy) =
+        p::client::request(&mut stream, 910_000, p::Request::DashboardHello).unwrap()
+    else {
+        panic!("live Dashboard handshake did not return hierarchy");
+    };
+    let initial = hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| &project.workspaces)
+        .flat_map(|workspace| &workspace.sessions)
+        .find(|session| session.id == agent.id)
+        .expect("live Agent in Dashboard hierarchy")
+        .last_activity_unix_ms;
+    p::write_frame(
+        &mut stream,
+        &p::ClientMessage {
+            request_id: 910_001,
+            request: p::Request::SetView {
+                view: p::DashboardView {
+                    revision: 1,
+                    panes: vec![p::PaneTarget {
+                        run: agent.run,
+                        session: agent.id,
+                        size: p::TerminalSize { rows: 24, cols: 80 },
+                    }],
+                    focused: Some(agent.id),
+                },
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        match p::read_frame::<p::ServerMessage>(&mut stream).unwrap() {
+            p::ServerMessage::Response {
+                request_id: 910_001,
+                response: p::Response::Ok,
+            } => break,
+            p::ServerMessage::Response {
+                request_id: 910_001,
+                response: p::Response::Error { code, message },
+            } => panic!("Dashboard view rejected: {code:?}: {message}"),
+            _ => {}
+        }
+    }
+
+    p::write_frame(
+        &mut stream,
+        &p::ClientMessage {
+            request_id: 910_002,
+            request: p::Request::Input {
+                session: agent.id,
+                run: agent.run,
+                bytes: b"no-echo\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let mut accepted = false;
+    let mut published_activity = None;
+    let drain_deadline = Instant::now() + Duration::from_millis(750);
+    while Instant::now() < drain_deadline && (!accepted || published_activity.is_none()) {
+        let Ok(message) = p::read_frame::<p::ServerMessage>(&mut stream) else {
+            break;
+        };
+        match message {
+            p::ServerMessage::Response {
+                request_id: 910_002,
+                response,
+            } => {
+                assert_eq!(response, p::Response::Ok, "Dashboard input was accepted");
+                accepted = true;
+            }
+            p::ServerMessage::Event(p::ServerEvent::SessionChanged(summary))
+                if summary.id == agent.id
+                    && summary
+                        .last_activity_unix_ms
+                        .is_some_and(|activity| initial.is_none_or(|before| activity > before)) =>
+            {
+                published_activity = summary.last_activity_unix_ms;
+            }
+            p::ServerMessage::Event(p::ServerEvent::Output { session, .. })
+                if session == agent.id =>
+            {
+                panic!("non-echoing Agent unexpectedly emitted PTY output");
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        accepted,
+        "Dashboard input response arrived within the bounded drain"
+    );
+    assert!(
+        published_activity.is_some(),
+        "accepted Dashboard input publishes its new activity within the bounded event drain, without relying on PTY output"
     );
 }
 
@@ -428,6 +1110,25 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         assert_eq!(cell.symbol(), "✓", "{health:?}");
         assert_eq!(cell.fg, color, "{health:?}");
     }
+}
+
+fn rendered_sidebar_rows_at(
+    dashboard: &Dashboard,
+    width: u16,
+    height: u16,
+    now_unix_ms: u64,
+) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, now_unix_ms))
+        .unwrap();
+    (0..height)
+        .map(|y| {
+            (0..width.min(39))
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
 }
 
 #[test]

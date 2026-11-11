@@ -5,7 +5,7 @@
 use crate::{
     AgentModelPolicy, DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF,
     REMOTE_OFF, ReadySoundChoice, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow,
-    SettingSource, Settings, TITLES_OFF, ThemeId,
+    SettingSource, Settings, SidebarView, TITLES_OFF, ThemeId,
 };
 use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use serde::Serialize;
@@ -98,6 +98,11 @@ const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessio
 const THEME_ABOUT: &[&str] = &[
     "80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the default (alias dark); Catppuccin Latte also accepts light.",
     "Changing theme updates the Dashboard immediately; the choice persists in dashboard.toml.",
+];
+
+const SIDEBAR_VIEW_ABOUT: &[&str] = &[
+    "Chooses the Dashboard sidebar's tree or recent-activity view.",
+    "The Dashboard saves this choice through the Server and restores it on the next attachment.",
 ];
 
 const REMOTE_ABOUT: &[&str] = &[
@@ -273,7 +278,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 35] = [
+const CATALOG: [Entry; 36] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -337,6 +342,20 @@ const CATALOG: [Entry; 35] = [
         off_state: None,
         about: THEME_ABOUT,
         value: |settings| Some(settings.theme.as_str().into()),
+        show_off: |_| false,
+    },
+    Entry {
+        path: SidebarView::KEY,
+        shape: Shape::Pick {
+            options: &["tree", "recent"],
+            expected: "\"tree\" or \"recent\"",
+        },
+        owner: SettingOwner::Dashboard,
+        group: "Appearance",
+        label: "Sidebar view",
+        off_state: None,
+        about: SIDEBAR_VIEW_ABOUT,
+        value: |settings| Some(settings.sidebar_view.as_str().into()),
         show_off: |_| false,
     },
     Entry {
@@ -725,6 +744,7 @@ mod tests {
                 "ready_sound_choice",
                 "iterm_focus",
                 "theme",
+                "sidebar_view",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",

@@ -7,6 +7,41 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+/// How the Dashboard orders workspace agent rows in its sidebar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarView {
+    #[default]
+    Tree,
+    Recent,
+}
+
+impl SidebarView {
+    pub const KEY: &'static str = "sidebar_view";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tree => "tree",
+            Self::Recent => "recent",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "tree" => Some(Self::Tree),
+            "recent" => Some(Self::Recent),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Tree => Self::Recent,
+            Self::Recent => Self::Tree,
+        }
+    }
+}
+
 /// The four approved native notification sounds; never a caller-selected path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1744,6 +1779,9 @@ pub struct Settings {
     /// not moved. The root workspace is never saved.
     #[serde(default)]
     pub save_uncommitted_work: bool,
+    /// Dashboard-owned sidebar presentation, remembered by the Server.
+    #[serde(default)]
+    pub sidebar_view: SidebarView,
 }
 
 /// Shown while `save_uncommitted_work` is off.
@@ -1781,6 +1819,7 @@ impl Default for Settings {
             delegation: DelegationSettings::default(),
             remote: RemoteSettings::default(),
             save_uncommitted_work: false,
+            sidebar_view: SidebarView::default(),
         }
     }
 }

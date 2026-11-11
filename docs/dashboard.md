@@ -119,6 +119,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
 | `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
+| `m` | Switch between the project tree and recent Agent activity; the Dashboard saves the choice through the Server |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
 | `<` / `>` | Make the focused pane two columns narrower / wider; the neighboring pane changes by the same amount |
@@ -482,6 +483,15 @@ unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.
+
+Press `m` to switch to **Recent activity**; press it again to return to the tree.
+The saved `sidebar_view` setting defaults to `tree`. Recent activity lists only
+projects with Agents and only their Agent sessions, sorted newest first within
+each alphabetically ordered project. The age uses Last activity and falls back
+to the session start time. Each row always takes two lines: status, title and age,
+then the branch and harness name. Both lines keep the same selection, hover,
+close button and click behavior as one row. Project folds hide the Agent rows
+and retain their Input and Unread counts; hovering a project still shows `[+]`.
 
 `b` hides the sidebar and the panes take the full width; `b` again shows it at
 the width it had before. The choice lasts for the attachment and is not saved.

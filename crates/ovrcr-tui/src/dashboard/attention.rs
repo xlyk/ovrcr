@@ -559,7 +559,7 @@ mod tests {
         let mut dashboard = dashboard();
         let footer = |dashboard: &Dashboard| super::super::hints::footer(dashboard, 120);
         assert!(
-            footer(&dashboard).ends_with("? Help  i Next input needed"),
+            footer(&dashboard).contains("? Help  i Next input needed"),
             "{}",
             footer(&dashboard)
         );
@@ -568,14 +568,14 @@ mod tests {
                 session.agent.as_mut().unwrap().input_requests.clear();
             }
         }
-        assert!(footer(&dashboard).ends_with("? Help  i Next ready"));
+        assert!(footer(&dashboard).contains("? Help  i Next ready"));
         for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
             for session in &mut workspace.sessions {
                 session.unread = None;
             }
         }
         assert!(
-            footer(&dashboard).ends_with("? Help"),
+            !footer(&dashboard).contains("i Next"),
             "{}",
             footer(&dashboard)
         );

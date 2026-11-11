@@ -4305,7 +4305,7 @@ fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     dashboard.install_area(Rect::new(0, 0, 240, 40));
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Commands  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity"
     );
     // Hints drop from the right when the footer is narrow.
     assert_eq!(super::hints::footer(&dashboard, 20), "BROWSE  Space Menu");
@@ -4323,7 +4323,7 @@ fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     );
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Commands  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity"
     );
     dashboard.mode = InputMode::Terminal;
     assert_eq!(

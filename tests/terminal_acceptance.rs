@@ -1943,9 +1943,8 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
             }
         }
     };
-    let browse_screen = |screen: &str| {
-        screen.contains("BROWSE") || screen.contains("No visible Agents")
-    };
+    let browse_screen =
+        |screen: &str| screen.contains("BROWSE") || screen.contains("No visible Agents");
     dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"v\r")?;

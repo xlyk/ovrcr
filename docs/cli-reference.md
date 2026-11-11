@@ -133,10 +133,14 @@ text: `true`, `"kh/"`, `["claude", "--verbose"]`, or an inline table such as
 `{ kind = "Agent", preset = "claude", model_policy = "HarnessDefault" }` for a
 launch choice. An explicit model policy uses
 `model_policy = { Explicit = "opus" }`; it is revalidated before launch. A bare
-word that is not TOML is taken as is only for a string or path setting (`branch_prefix`,
-`title_model`, `automatic_local_terminals`, `ready_sound_choice`, `picker_roots[N]`, `quota.*.command`
-and `home`, a launch choice's `kind` and `preset`), so
+word that is not TOML is taken as is only for a string, path or pick setting (`branch_prefix`,
+`title_model`, `automatic_local_terminals`, `ready_sound_choice`, `picker_roots[N]`,
+`quota.*.command`, `sidebar_view`, `home`, a launch choice's `kind` and `preset`), so
 `ovrcr settings set title_model pi/gpt-5-mini` needs no quotes.
+
+`sidebar_view` is Dashboard-owned and accepts `tree` (the default) or `recent`.
+Pressing `m` in Browse switches the view and saves the choice through the Server;
+`ovrcr settings set sidebar_view recent` selects the same view explicitly.
 
 On macOS `ovrcr settings set ready_sound_choice chime` saves one of `default`,
 `tap`, `chime` or `rise`; `ovrcr settings reset ready_sound_choice` restores
