@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-467-ci-target/debug/deps/ovrcr_runtime-8c547d91dad93461)
+
+running 1 test
+
+thread 'server::operator_tests::operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained' (654878867) panicked at crates/ovrcr-runtime/src/server/operator_tests.rs:1196:9:
+submit must reach the actual retained lock boundary
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test server::operator_tests::operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained ... FAILED
+
+failures:
+
+failures:
+    server::operator_tests::operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 506 filtered out; finished in 2.03s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`

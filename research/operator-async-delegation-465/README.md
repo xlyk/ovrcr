@@ -77,10 +77,18 @@ retain the canonical `turns/<turn>/session.jsonl` checkpoint path; cleanup remov
 superseded copies after an acknowledged completion. Native Pi and GUI acceptance
 remain separate, open gates.
 
+Hosted residency CI at `ce9193d6` found a Clippy `collapsible_if` warning and a
+lock-order test hook placed after the new first retained lookup
+([run](https://github.com/xlyk/ovrcr/actions/runs/43110937314)). Correction
+`6506e4e5` keeps the lock-order assertions, moves the hook to the first lookup,
+and uses a let-chain for the same-run UI guard. The runtime regression passed
+(1 test), owning TUI Clippy passed, and formatting/diff checks passed. New hosted
+results are pending.
+
 ## Remaining acceptance
 
 - [x] Leased and unleased worker lifecycle, same-run user turns, model updates,
-  checkpoint permissions and retirement races (#467).
+  checkpoint permissions and retirement ordering (#467).
 - [x] Forward SQLite migration and wire/controller/render coverage (#467).
 - [ ] Deterministic watch actions, baseline settlement, idle batching and durable
   wakeups with unread/draft behavior (#468).
@@ -101,3 +109,13 @@ clients and Server are required; no live instance is upgraded by this task.
 Offline fixtures establish OVRCR behavior. Native GUI evidence and any live
 provider inference are separate claims. No paid model calls are part of this
 acceptance plan.
+
+The CLI's `unread.turn` is an opaque string or null (`ReadyObservation.turn`), so
+the watch baseline preserves that identity and detects a changed non-null turn
+alongside the numeric activity revision. This corrects the spec's numeric-turn
+assumption without changing the CLI format.
+
+Watch delivery reserves its asynchronous turn through the existing extension UI
+handshake before calling `sendUserMessage`. That lets the Server serialize the
+reservation against Submit; a losing wakeup keeps its reports and starts no model
+work. Stock Pi extension APIs remain unmodified.

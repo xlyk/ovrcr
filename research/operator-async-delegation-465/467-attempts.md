@@ -54,6 +54,14 @@ Commands used `env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN`; live suites use 
 
 For #468, the worker already consumes the bounded `ovrcr_operator_watches` status in `Connection::poll_idle`; the actual `watch_sessions` tool and extension producer are not part of this change. For #469, authenticated `StartTurn` and `AbortTurn` command/result interfaces and Reporter methods are present; Server-side abort behavior and async wakeup turn creation remain downstream work.
 
+## CI follow-up on integration head
+
+- Integration head `ce9193d64d43a905d725d152f4c7214942d1b364` was merged into `codex/467-work-lease` before the fixes. The follow-up commit is `6506e4e5f2caa9d6709c73cfbc4a93b24be908d9` (`fix(operator): address residency CI findings`). The integration worktree remained at `ce9193d6` after the commit.
+- Runtime lock-order regression: on `ce9193d6`, `CARGO_TARGET_DIR=467-logs/ovrcr-467-ci-target rtk env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN cargo test -p ovrcr-runtime operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained -- --nocapture` — red, 0/1 passed, exit 101; Submit did not reach the hook because its warm lookup had already waited on retained. Log: `467-logs/ovrcr-467-ci-lock-order-red.log`.
+- Runtime lock-order regression: same command after the fix — green, 1 passed, 0 failed (506 filtered), exit 0. The test hook now observes Submit before the warm lookup's first retained lock; the later duplicate hook was removed. Log: `467-logs/ovrcr-467-ci-lock-order-green.log`.
+- TUI lint: `CARGO_TARGET_DIR=467-logs/ovrcr-467-ci-target rtk env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN cargo clippy -p ovrcr-tui --all-targets -- -D warnings` — green, exit 0. The residency guard uses a let-chain to satisfy `clippy::collapsible_if`. Log: `467-logs/ovrcr-467-ci-tui-clippy-green.log`.
+- `rtk cargo fmt --all -- --check`, `rtk git diff --check`, and staged diff checks passed. Only the two CI-fix source files were committed.
+
 ## Gaps
 
 - Live application behavior was exercised through OVRCR's Server, Dashboard driver, RPC codec, fake Pi boundary and real owned process groups. The installed Pi acceptance and native GUI walkthrough were not run in this ticket worktree; the coordinator owns the broader acceptance pass.
