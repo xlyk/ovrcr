@@ -85,12 +85,48 @@ and uses a let-chain for the same-run UI guard. The runtime regression passed
 (1 test), owning TUI Clippy passed, and formatting/diff checks passed. New hosted
 results are pending.
 
+The next run at `4244a8c4` cleared the residency Clippy and lock-order failures.
+Its required aggregate still failed because
+`nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes` failed
+three attempts ([run](https://github.com/xlyk/ovrcr/actions/runs/43115269908)).
+The four-pane failure is under separate investigation; it is not a passed gate.
+
+## Session watches and wakeups (#468)
+
+Integrated commit: `3eb28f49`.
+[Attempts and log index](468-attempts.md) preserve the development failures and
+final focused results.
+
+| Check | Result |
+| --- | --- |
+| Wire tests | 6 passed |
+| Retained Operator tests | 21 passed |
+| Server Operator tests | 20 passed; 1 ignored |
+| Dashboard Operator tests | 32 passed |
+| Operator e2e suite | 18 passed |
+| Operator worker suite, including the Node extension probe | 50 passed |
+| Formatting and diff checks | Passed |
+
+The Node probe covers add/list/remove, actual string/null baseline types,
+pre-settled catch-up, stopped Agents without a current Reporter snapshot,
+inventories containing more than 50 rows, and stale in-flight poll protection.
+Polling uses only `terminal list --json`, with a five-second timeout and bounded
+output, and does not overlap. Reports batch while busy and remain queued after a
+declined wakeup admission.
+
+The live fake-Pi trace demonstrates an early preflight denied while the previous
+turn is still committing, followed by successful idle admission. Its retry is
+response-driven at 2.5-second intervals within a fixture budget. The worker
+streams the extension-triggered turn without issuing a second RPC prompt.
+Dashboard cases cover the Operator heading, one unread result across all terminal
+outcomes, both drafts and busy refusal.
+
 ## Remaining acceptance
 
 - [x] Leased and unleased worker lifecycle, same-run user turns, model updates,
   checkpoint permissions and retirement ordering (#467).
 - [x] Forward SQLite migration and wire/controller/render coverage (#467).
-- [ ] Deterministic watch actions, baseline settlement, idle batching and durable
+- [x] Deterministic watch actions, baseline settlement, idle batching and durable
   wakeups with unread/draft behavior (#468).
 - [ ] Leased Stop/failure/timeout rollback, extension state survival and hard
   termination fallback (#469).

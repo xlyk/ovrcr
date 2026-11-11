@@ -1,0 +1,25 @@
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+error[E0603]: function `logical_lines` is private
+    --> crates/ovrcr-tui/src/dashboard/operator.rs:2308:38
+     |
+2308 |             let transcript = render::logical_lines(chat)
+     |                                      ^^^^^^^^^^^^^ private function
+     |
+note: the function `logical_lines` is defined here
+    --> crates/ovrcr-tui/src/dashboard/operator/render.rs:572:1
+     |
+ 572 | fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0616]: field `line` of struct `TranscriptLine` is private
+    --> crates/ovrcr-tui/src/dashboard/operator.rs:2310:34
+     |
+2310 |                 .map(|line| line.line.spans.into_iter().map(|span| span.content).collect::<String>())
+     |                                  ^^^^ private field
+
+Some errors have detailed explanations: E0603, E0616.
+For more information about an error, try `rustc --explain E0603`.
+error: could not compile `ovrcr-tui` (lib test) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

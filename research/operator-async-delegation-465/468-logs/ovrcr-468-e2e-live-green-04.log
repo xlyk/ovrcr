@@ -1,0 +1,10 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s
+     Running tests/operator_e2e.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNilIlk server=19136 test=an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly
+test an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 7.31s
+

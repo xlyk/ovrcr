@@ -1,0 +1,33 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running tests/operator_worker.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 1 test
+
+thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654880691) panicked at tests/operator_worker.rs:1954:5:
+extension probe failed:
+stdout: 
+stderr: file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-BmGFIE/extension.mjs:213
+    throw new Error("invalid watch baseline");
+          ^
+
+Error: invalid watch baseline
+    at validateBaseline (file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-BmGFIE/extension.mjs:213:11)
+    at validateTarget (file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-BmGFIE/extension.mjs:247:7)
+    at file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-BmGFIE/extension.mjs:343:51
+    at Array.map (<anonymous>)
+    at watchSessions (file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-BmGFIE/extension.mjs:343:36)
+    at async file:///private/tmp/ovrcr-468/tests/fixtures/operator-pi/extension_probe.mjs:204:15
+
+Node.js v22.23.2
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... FAILED
+
+failures:
+
+failures:
+    the_extension_forces_sequential_tools_and_bounds_its_bash_timeout
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_worker`

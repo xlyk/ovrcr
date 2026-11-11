@@ -1,0 +1,13 @@
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+warning: unused variable: `live`
+   --> tests/operator_e2e.rs:178:10
+    |
+178 |     let (live, fake, mut client) = fixture(&scenario);
+    |          ^^^^ help: if this is intentional, prefix it with an underscore: `_live`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ovrcr` (test "operator_e2e") generated 1 warning (run `cargo fix --test "operator_e2e" -p ovrcr` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.12s
+  Executable tests/operator_e2e.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_e2e-a590bc20bee045c7)

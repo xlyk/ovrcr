@@ -1,0 +1,22 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running tests/operator_e2e.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWoxIVa server=30894 test=an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly
+
+thread 'an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly' (655421511) panicked at tests/operator_e2e.rs:219:5:
+assertion `left == right` failed: the wakeup is the already-started native Pi request, not a second RPC prompt
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly ... FAILED
+
+failures:
+
+failures:
+    an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 7.30s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

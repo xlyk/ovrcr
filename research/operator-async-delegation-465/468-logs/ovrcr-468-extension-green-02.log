@@ -1,0 +1,30 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.89s
+     Running tests/operator_worker.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 1 test
+
+thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654634273) panicked at tests/operator_worker.rs:1954:5:
+extension probe failed:
+stdout: 
+stderr: file:///private/tmp/ovrcr-468/tests/fixtures/operator-pi/extension_probe.mjs:242
+  assert.equal(caught.watches.length, 0);
+                              ^
+
+TypeError: Cannot read properties of undefined (reading 'length')
+    at file:///private/tmp/ovrcr-468/tests/fixtures/operator-pi/extension_probe.mjs:242:31
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+
+Node.js v22.23.2
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... FAILED
+
+failures:
+
+failures:
+    the_extension_forces_sequential_tools_and_bounds_its_bash_timeout
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.19s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_worker`

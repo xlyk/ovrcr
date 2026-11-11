@@ -1,0 +1,21 @@
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.56s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/ovrcr_runtime-8c547d91dad93461)
+
+running 1 test
+
+thread 'server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn' (655299174) panicked at crates/ovrcr-runtime/src/server/operator_tests.rs:174:52:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn ... FAILED
+
+failures:
+
+failures:
+    server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 508 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`

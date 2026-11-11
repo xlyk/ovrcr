@@ -1,0 +1,22 @@
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.37s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/ovrcr_tui-4d4bbaf401d6754e)
+
+running 2 tests
+test dashboard::operator::tests::async_wakeup_attach_preserves_composer_and_quick_drafts_while_busy ... ok
+
+thread 'dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread' (655350718) panicked at crates/ovrcr-tui/src/dashboard/operator.rs:2318:13:
+assertion `left == right` failed: the async request and answer share one clean Operator heading
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread ... FAILED
+
+failures:
+
+failures:
+    dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 462 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
