@@ -950,6 +950,7 @@ mod wire_snapshot {
             label: "l".into(),
             pid: Some(2),
             started_unix_ms: Some(3),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             agent: Some(crate::AgentSnapshot {
@@ -3968,13 +3969,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044e017301630168016c0104",
+            "2a044f017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044e017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f044f017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4004,13 +4005,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "050001000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "050001000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -4024,18 +4025,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044e0000"),
+        ("Response::NotificationNavigation", "0d044f0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044e017301630168016c0104",
+            "0e01016e044f017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044e017301630168016c0164",
+            "0f010708090101690101044f017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044e010708090101690101044e017301630168016c0164",
+            "10044f010708090101690101044f017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4058,7 +4059,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "03000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "03000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -4075,7 +4076,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044e017301630168016c0104",
+            "08016e044f017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

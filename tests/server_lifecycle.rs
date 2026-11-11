@@ -803,6 +803,127 @@ fn agent_hook_sequence_does_not_regress_state() {
 }
 
 #[test]
+fn last_activity_tracks_agent_state_and_input_but_not_output_or_repeated_state() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("last-activity", "last-activity");
+    let timestamp = |fixture: &ControlFixture, id| {
+        let summary = serde_json::to_value(fixture.session_summary(id)).unwrap();
+        assert!(
+            summary
+                .as_object()
+                .is_some_and(|summary| summary.contains_key("last_activity_unix_ms")),
+            "session summary omitted Last activity: {summary}"
+        );
+        summary["last_activity_unix_ms"].as_u64().unwrap()
+    };
+    let initial = fixture.session_summary(identity.session);
+    assert_eq!(
+        timestamp(&fixture, identity.session),
+        initial.started_unix_ms.unwrap()
+    );
+    let report = |state| {
+        Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(state),
+        })
+    };
+
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::Busy)),
+        Response::Ok
+    );
+    let busy = timestamp(&fixture, identity.session);
+    assert!(busy > initial.started_unix_ms.unwrap());
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::Busy)),
+        Response::Ok
+    );
+    assert_eq!(timestamp(&fixture, identity.session), busy);
+
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::WaitingInput)),
+        Response::Ok
+    );
+    let waiting = timestamp(&fixture, identity.session);
+    assert!(waiting > busy);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: identity.session,
+            text: "pasted input".into(),
+            submit: false,
+        }),
+        Response::Ok
+    );
+    let pasted = timestamp(&fixture, identity.session);
+    assert!(pasted > waiting);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(Request::Keystroke {
+            session: identity.session,
+            expected_run: initial.run,
+            key: ":enter:".into(),
+        }),
+        Response::Ok
+    );
+    let keystroke = timestamp(&fixture, identity.session);
+    assert!(keystroke > pasted);
+
+    let mut dashboard = dashboard_socket(&fixture);
+    let view = DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: identity.session,
+            run: initial.run,
+            size: ovrcr::protocol::TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(identity.session),
+    };
+    split_view_messages(&mut dashboard, 2, &view);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            3,
+            Request::Input {
+                session: identity.session,
+                run: initial.run,
+                bytes: b"dashboard input".to_vec(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let input = timestamp(&fixture, identity.session);
+    assert!(input > keystroke);
+
+    let output_only = fixture.create_session_summary(
+        "output-only",
+        [
+            "sh",
+            "-c",
+            "printf OUTPUT_ONLY_START; sleep 0.1; printf OUTPUT_ONLY_END; sleep 10",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect(),
+    );
+    fixture.record_process_group(&output_only);
+    let output_timestamp = timestamp(&fixture, output_only.id);
+    assert_eq!(output_timestamp, output_only.started_unix_ms.unwrap());
+    fixture.wait_terminal_contains(output_only.id, "OUTPUT_ONLY_END");
+    assert_eq!(timestamp(&fixture, output_only.id), output_timestamp);
+
+    fixture.shutdown_kill();
+}
+
+#[test]
 fn agent_hook_capability_and_exit_are_enforced() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();

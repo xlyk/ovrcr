@@ -30,6 +30,14 @@ toward fifty slots. Reject stale run-tagged events, input and completion paths.
 A known pre-process launch failure is retryable; a failure after process creation
 must not claim the process or its descendants are gone.
 
+The retained session row stores nullable `last_activity_unix_ms`. The server
+updates it when an accepted agent-state change or user terminal input occurs.
+Output, focus, and selection are not activity. The in-memory summary falls back
+to `started_unix_ms` while the stored value is empty; offline retained rows keep
+the nullable stored value because their start time is unavailable. Activity is
+persisted at most once per second per session. Shutdown flushes any newer
+in-memory value before stopping, and a completed child run keeps its timestamp.
+
 Operator conversations use those same retained rows and live slots with explicit
 global scope. Submission commits its user message and next run together before the
 shared prepared-run spawn body; it never advances that run twice. Current-owner

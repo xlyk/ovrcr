@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 30;
+const SCHEMA_VERSION: i64 = 31;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -451,6 +451,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         crate::retained::operator::migrate_reasoning(&transaction)?;
         transaction.pragma_update(None, "user_version", 30)?;
     }
+    if schema_identity(&transaction)?.1 < 31 {
+        crate::retained::migrate_last_activity(&transaction)?;
+        transaction.pragma_update(None, "user_version", 31)?;
+    }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
@@ -508,6 +512,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 27
                 | 28
                 | 29
+                | 30
                 | SCHEMA_VERSION
         )
     {

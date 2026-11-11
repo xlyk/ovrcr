@@ -726,6 +726,7 @@ mod tests {
             label: String::new(),
             pid: None,
             started_unix_ms: None,
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Idle,
             agent: None,

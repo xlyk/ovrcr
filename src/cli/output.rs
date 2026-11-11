@@ -102,6 +102,7 @@ pub(super) fn terminal_value(
         "label": session.label,
         "pid": session.pid,
         "started_unix_ms": session.started_unix_ms,
+        "last_activity_unix_ms": session.last_activity_unix_ms,
         "phase": phase,
         "activity": match session.activity {
             AgentActivity::Unknown => "unknown",
@@ -230,7 +231,7 @@ pub(super) fn print_workspace(value: &Value) {
 
 pub(super) fn print_terminal_row(value: &Value) {
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         value["id"],
         value["run"],
         json_scalar(&value["kind"]),
@@ -240,6 +241,7 @@ pub(super) fn print_terminal_row(value: &Value) {
         value["label"].as_str().unwrap_or_default(),
         json_scalar(&value["pid"]),
         json_scalar(&value["started_unix_ms"]),
+        json_scalar(&value["last_activity_unix_ms"]),
         value["phase"].as_str().unwrap_or_default(),
         value["activity"].as_str().unwrap_or_default(),
         json_scalar(&value["exit_code"]),
@@ -421,6 +423,7 @@ mod tests {
             label: "label".into(),
             pid: None,
             started_unix_ms: None,
+            last_activity_unix_ms: None,
             phase: SessionPhase::Stopped,
             activity: AgentActivity::Idle,
             agent: None,
@@ -444,7 +447,8 @@ mod tests {
                 "project": "fixture", "workspace": "unavailable @ /fixture",
                 "cwd": "/fixture", "name": "local", "title": null,
                 "display_name": "local", "label": "label", "pid": null,
-                "started_unix_ms": null, "phase": "stopped", "activity": "idle",
+                "started_unix_ms": null, "last_activity_unix_ms": null,
+                "phase": "stopped", "activity": "idle",
                 "exit_code": null, "exit_signal": null, "agent": null,
                 "agent_epoch": 0, "unread": null, "recovery": null,
                 "reporting_unavailable": null, "measurement_age_ms": null,
