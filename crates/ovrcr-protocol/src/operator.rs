@@ -183,6 +183,10 @@ pub struct OperatorConversationSummary {
     pub title: String,
     pub current_turn: Option<OperatorTurn>,
     pub reasoning: Option<OperatorReasoning>,
+    /// Start of the current turn when the store recorded it; older turns may be unknown.
+    pub current_turn_started_unix_ms: Option<u64>,
+    /// Latest completed reply time; legacy turns without a stored time are unknown.
+    pub last_reply_unix_ms: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -403,12 +407,24 @@ pub struct OperatorExchangeResult {
     pub sequence: u64,
     pub duplicate: bool,
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OperatorSettings {
     /// `provider/model`; unset means the dedicated Pi profile's current default.
     pub model: Option<String>,
     pub thinking_level: OperatorThinkingLevel,
+    /// Whether the Dashboard shows the Operator section in its sidebar.
+    pub sidebar: bool,
+}
+
+impl Default for OperatorSettings {
+    fn default() -> Self {
+        Self {
+            model: None,
+            thinking_level: OperatorThinkingLevel::default(),
+            sidebar: true,
+        }
+    }
 }
 
 /// Immutable bootstrap data read only by the authenticated current worker.

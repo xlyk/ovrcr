@@ -2697,6 +2697,8 @@ mod wire_snapshot {
             }),
             title: "hello".into(),
             current_turn: Some(turn.clone()),
+            current_turn_started_unix_ms: Some(1),
+            last_reply_unix_ms: Some(2),
         };
         let auth = crate::SupervisorAuth {
             session: identity.session,

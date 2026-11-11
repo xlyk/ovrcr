@@ -470,6 +470,9 @@ impl Loader<'_> {
             self.unknown(delegation, "delegation.");
         }
         if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
+            if let Some(value) = self.take::<bool>(&mut operator, "operator.sidebar") {
+                self.accept("operator.sidebar", &mut settings.operator.sidebar, value);
+            }
             if let Some(value) = self.take::<ovrcr_protocol::OperatorThinkingLevel>(
                 &mut operator,
                 "operator.thinking_level",

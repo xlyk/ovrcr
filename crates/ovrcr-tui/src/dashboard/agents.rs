@@ -121,6 +121,17 @@ pub fn detect_agents(
     entries
 }
 
+pub fn executable_available(executable: &OsStr, path: &OsStr) -> bool {
+    if executable.is_empty() {
+        return false;
+    }
+    let candidate = Path::new(executable);
+    if candidate.components().count() > 1 {
+        return is_executable(candidate);
+    }
+    std::env::split_paths(path).any(|dir| executable_in(&dir, executable).is_some())
+}
+
 pub fn apply_overrides(
     mut entries: Vec<AgentEntry>,
     overrides: &[AgentOverride],
@@ -173,16 +184,15 @@ pub fn apply_overrides(
     entries
 }
 
-fn executable_in(dir: &Path, name: &str) -> Option<PathBuf> {
-    let path = dir.join(name);
-    let metadata = std::fs::metadata(&path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    if metadata.permissions().mode() & 0o111 == 0 {
-        return None;
-    }
-    Some(path)
+fn executable_in(dir: &Path, name: impl AsRef<OsStr>) -> Option<PathBuf> {
+    let path = dir.join(Path::new(name.as_ref()));
+    is_executable(&path).then_some(path)
+}
+
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| {
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    })
 }
 
 #[cfg(test)]
@@ -196,6 +206,22 @@ mod tests {
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(mode);
         std::fs::set_permissions(&path, permissions).unwrap();
+    }
+
+    #[test]
+    fn executable_lookup_checks_path_and_explicit_override_without_running_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_stub(dir.path(), "pi", 0o755);
+        write_stub(dir.path(), "not-executable", 0o644);
+        let path = dir.path().as_os_str();
+        assert!(executable_available(OsStr::new("pi"), path));
+        assert!(executable_available(dir.path().join("pi").as_os_str(), path));
+        assert!(!executable_available(OsStr::new("missing"), path));
+        assert!(!executable_available(
+            dir.path().join("not-executable").as_os_str(),
+            path
+        ));
+        assert!(!executable_available(OsStr::new(""), path));
     }
 
     #[test]

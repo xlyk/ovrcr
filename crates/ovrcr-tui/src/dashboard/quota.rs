@@ -23,6 +23,52 @@ pub(super) enum Details {
     Transcript,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarSection {
+    Attention,
+    Operator,
+    Tree,
+    Quota,
+}
+
+#[derive(Clone, Copy)]
+struct SidebarHeight {
+    content: u16,
+    blank: u16,
+}
+
+impl SidebarHeight {
+    fn total(self) -> u16 {
+        self.content.saturating_add(self.blank)
+    }
+}
+
+struct SidebarEntry {
+    section: SidebarSection,
+    heights: Vec<SidebarHeight>,
+    selected: usize,
+}
+
+impl SidebarEntry {
+    fn height(&self) -> SidebarHeight {
+        self.heights[self.selected]
+    }
+
+    fn shrink(&mut self) {
+        self.selected = (self.selected + 1).min(self.heights.len() - 1);
+    }
+}
+
+const SIDEBAR_SHRINK_ORDER: [(SidebarSection, usize); 7] = [
+    (SidebarSection::Attention, 1),
+    (SidebarSection::Operator, 1),
+    (SidebarSection::Quota, 1),
+    (SidebarSection::Operator, 2),
+    (SidebarSection::Quota, 2),
+    (SidebarSection::Quota, 3),
+    (SidebarSection::Operator, 3),
+];
+
 impl Dashboard {
     pub(super) fn open_quota_details(&mut self) -> DashboardAction {
         self.open_details(Details::Quota)
@@ -223,9 +269,14 @@ impl Dashboard {
     /// Rendering and every tree interaction share this reduced rectangle.
     pub(super) fn sidebar_rects(&self, area: Rect) -> super::SidebarRects {
         let sidebar = sidebar_area(area, self.sidebar_preference());
-        let attention =
-            u16::from(sidebar.width > 0 && sidebar.height > 4 && self.attention_counts() != (0, 0));
-        let quota_space = sidebar.height - attention;
+        let has_attention = sidebar.width > 0 && self.attention_counts() != (0, 0);
+        let attention_floor = u16::from(has_attention);
+        let tree_floor = if sidebar.height >= 16 {
+            8
+        } else {
+            (sidebar.height / 2).max(3)
+        }
+        .min(sidebar.height.saturating_sub(attention_floor));
         let desired = self.quotas.as_ref().map_or(0, |quota| {
             if sidebar.width < 8 {
                 0
@@ -238,37 +289,83 @@ impl Dashboard {
                 content.saturating_add(1)
             }
         });
-        let content = desired.saturating_sub(1);
-        // The ladder keeps the Operator navigation row and three tree lines: full
-        // (blank optional), compact, pointer, then nothing.
-        let height = if desired == 0 || quota_space < 5 {
-            0
-        } else if quota_space >= desired + 4 {
-            desired
-        } else if content > 0 && quota_space >= content + 4 {
-            content
-        } else if quota_space >= 8 {
-            4
+        let operator_enabled = sidebar.width > 0 && self.settings.operator.sidebar;
+        let operator_heights = if operator_enabled {
+            vec![(3, 1), (3, 0), (1, 0), (0, 0)]
         } else {
-            1
+            vec![(0, 0)]
         };
-        let available = quota_space - height;
-        // Pin the shared Operator dock to the sidebar's last row while three
-        // tree lines remain above it; shorter sidebars give the row to the
-        // tree and keep the keyboard route.
-        let operator_height = u16::from(sidebar.width > 0 && available > 3);
-        let operator_y = sidebar.bottom() - operator_height;
-        let quota_y = operator_y - height;
+        let quota_heights = if desired > 0 {
+            vec![(desired, 0), (4, 0), (1, 0), (0, 0)]
+        } else {
+            vec![(0, 0)]
+        };
+        let entry = |section, heights: &[(u16, u16)]| SidebarEntry {
+            section,
+            heights: heights
+                .iter()
+                .map(|&(content, blank)| SidebarHeight { content, blank })
+                .collect(),
+            selected: 0,
+        };
+        let mut entries = vec![
+            entry(
+                SidebarSection::Attention,
+                if has_attention { &[(1, 1), (1, 0)] } else { &[(0, 0)] },
+            ),
+            entry(SidebarSection::Operator, &operator_heights),
+            entry(SidebarSection::Tree, &[(tree_floor, 0)]),
+            entry(SidebarSection::Quota, &quota_heights),
+        ];
+        let required = |entries: &[SidebarEntry]| {
+            entries
+                .iter()
+                .map(|entry| entry.height().total())
+                .sum::<u16>()
+        };
+        for (section, next_height) in SIDEBAR_SHRINK_ORDER {
+            if required(&entries) <= sidebar.height {
+                break;
+            }
+            if let Some(entry) = entries.iter_mut().find(|entry| entry.section == section)
+                && entry.selected < next_height
+            {
+                entry.shrink();
+            }
+        }
+        let section_height = |section| {
+            entries
+                .iter()
+                .find(|entry| entry.section == section)
+                .unwrap()
+                .height()
+        };
+        let attention_height = section_height(SidebarSection::Attention);
+        let operator_height = section_height(SidebarSection::Operator);
+        let quota_height = section_height(SidebarSection::Quota);
+        let operator_y = sidebar.y + attention_height.total();
+        let tree_y = operator_y + operator_height.total();
+        let quota_y = sidebar.bottom().saturating_sub(quota_height.content);
         super::SidebarRects {
-            tree: Rect::new(
+            attention: Rect::new(
                 sidebar.x,
                 sidebar.y,
                 sidebar.width,
-                available - operator_height,
+                attention_height.content,
             ),
-            attention: Rect::new(sidebar.x, quota_y - attention, sidebar.width, attention),
-            quota: Rect::new(sidebar.x, quota_y, sidebar.width, height),
-            operator: Rect::new(sidebar.x, operator_y, sidebar.width, operator_height),
+            operator: Rect::new(
+                sidebar.x,
+                operator_y,
+                sidebar.width,
+                operator_height.content,
+            ),
+            tree: Rect::new(
+                sidebar.x,
+                tree_y,
+                sidebar.width,
+                quota_y.saturating_sub(tree_y),
+            ),
+            quota: Rect::new(sidebar.x, quota_y, sidebar.width, quota_height.content),
         }
     }
 
