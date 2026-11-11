@@ -352,3 +352,119 @@ fn a_paste_reviews_the_displayed_unread_once_and_an_undrawn_one_not_at_all() {
         "once per displayed observation"
     );
 }
+
+#[test]
+fn unread_title_is_bright_bold_and_stays_unread_when_another_row_is_selected() {
+    let mut dashboard = dashboard_fixture();
+    let mut session = focused_summary(&dashboard);
+    session.name = "visible-unread-title".into();
+    session.unread = Some(observation("one", 2));
+    publish_session(&mut dashboard, session);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..20)
+        .find(|y| {
+            (0..39)
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("visible-unread-title")
+        })
+        .expect("Unread session row");
+    let title = &buffer[(7, row)];
+    assert_eq!(title.fg, Color::Rgb(205, 214, 244));
+    assert!(title.modifier.contains(Modifier::BOLD));
+    assert_eq!(title.bg, Color::Rgb(49, 50, 68), "selection stays visible");
+
+    dashboard.key(KeyCode::Char('j'));
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..20)
+        .find(|y| {
+            (0..39)
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("visible-unread-title")
+        })
+        .expect("Unread session remains visible");
+    assert!(
+        buffer[(7, row)].modifier.contains(Modifier::BOLD),
+        "selecting another row does not review the Unread"
+    );
+}
+
+#[test]
+fn open_input_request_title_is_bright_bold() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentSnapshot, HealthSample, InputKind, InputRequest, ReporterHealth,
+        SampleQuality,
+    };
+
+    let mut dashboard = dashboard_fixture();
+    let mut session = focused_summary(&dashboard);
+    session.name = "visible-input-title".into();
+    session.phase = SessionPhase::Running;
+    let binding = observation("input", 1).binding;
+    session.agent = Some(AgentSnapshot {
+        binding: binding.clone(),
+        activity: Some(ActivitySample {
+            state: AgentActivity::Busy,
+            quality: SampleQuality::Observed,
+            turn: Some("input".into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 0,
+        health_revision: 0,
+        input_requests: vec![InputRequest {
+            id: "question:one".into(),
+            kind: InputKind::Confirm,
+        }],
+        input_revision: 1,
+        native_control: None,
+        native_control_revision: 0,
+    });
+    session.unread = None;
+    publish_session(&mut dashboard, session);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..20)
+        .find(|y| {
+            (0..39)
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("visible-input-title")
+        })
+        .expect("open Input request row");
+    let title = &buffer[(7, row)];
+    assert_eq!(title.fg, Color::Rgb(205, 214, 244));
+    assert!(title.modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn plain_session_title_is_not_bold() {
+    let dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        !terminal.backend().buffer()[(7, 4)]
+            .modifier
+            .contains(Modifier::BOLD),
+        "a plain session title stays unchanged"
+    );
+}
