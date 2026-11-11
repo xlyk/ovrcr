@@ -41,6 +41,12 @@ The typed-branch live Server test failed all three retries in each of two hosted
 
 The local machine does not have `nextest`, so the exact test was run with `cargo test --all-features`, `CI=true`, `GITHUB_ACTIONS=true`, and `NEXTEST=1`; this is not claimed as a nextest run. The corrected source has not yet been rerun on hosted Linux or the hosted macOS shards. Those hosted results remain pending.
 
+## Linux TUI fixture follow-up
+
+The next manual Linux job (`879`; raw log `/tmp/ovrcr-448-context/ci-linux-879.log`) passed the earlier Linux fixes, then failed compiling the TUI integration target because `tests/tui/main.rs` exposed `tests/support/live.rs` only on macOS. Sidebar tests at lines 922 and 1084 already use the shared Unix Server fixture on Linux. The module gate is now `cfg(unix)`; the root `deadline` module remains enabled on non-macOS and the palette's Linux import still resolves there. No tests were disabled and no production code changed.
+
+On the available macOS host, both affected real-Server sidebar tests passed (1 each), and workspace all-target/all-feature check and clippy passed after the gate change. These checks do not establish Linux compilation; the corrected hosted Linux job remains pending.
+
 The intentional red run's task-owned Server PID `35051` was absent afterward, and its private temporary root `.tmpfJ8j0a` had been removed. Green live runs use the same `Live` fixture shutdown and temporary-directory cleanup.
 
 Follow-up commands (all Rust commands used `CARGO_BUILD_JOBS=2`, the private target directory, and cleared inherited agent socket/token authority). The first exact-test command also ran before adding the Server fixture settings; the regression assertion then failed with `agents: []` (0 passed, 531 filtered), and passed after the fixture was seeded as shown here.

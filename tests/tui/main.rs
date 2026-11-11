@@ -2,7 +2,7 @@
 #[path = "../support/deadline.rs"]
 mod deadline;
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[path = "../support/live.rs"]
 mod live;
 
