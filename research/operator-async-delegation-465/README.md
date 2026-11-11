@@ -44,14 +44,44 @@ Correction `caae6b32` replaces the superseded refusal assertion with acceptance,
 journal/run advancement, and completion at 50 Workspace sessions. The owning
 runtime regression passed (1 test; 503 filtered); formatting and diff checks
 passed. [Attempt metadata](466-attempts.md) preserves the observed failures,
-commands, exit statuses and known evidence limits. Hosted CI for this correction
-is pending.
+commands, exit statuses and known evidence limits.
+
+At `130e2897`, all four macOS shards, offline Cursor preflight, selection audit and
+the required aggregate passed ([run](https://github.com/xlyk/ovrcr/actions/runs/43106035491)).
+The three Linux jobs were skipped. This covers the capacity revision only.
+
+## Work-leased residency (#467)
+
+Feature commit: `8df8b930`; integrated revision: `010e3812`.
+[Attempts and source pointers](467-attempts.md) include preserved red/green logs.
+
+| Check | Result |
+| --- | --- |
+| Operator e2e suite | 17 passed |
+| Operator worker suite | 50 passed |
+| Retained Operator tests | 20 passed |
+| Registry migration | 14 passed; 1 ignored |
+| Wire snapshot, leased-idle Dashboard, hidden CLI, runtime argv, Reporter Start | 1 passed each |
+| Combined 50 Workspace plus Operator regression after merging #466 | 1 passed |
+| Formatting and diff checks | Passed |
+
+The live fake-Pi proofs cover same-run warm turns, model override/default and
+thinking default restoration, private validated checkpoint copies, cold resume
+followed by warm turns, shutdown refusal while leased, clean retirement and forced
+owned-group cleanup. Cold worker arguments carry only the run identity. SQLite
+schema 33 preserves the journal and receipt children while removing the old
+one-turn-per-run constraint; wire protocol 85 carries the new state.
+
+Pi writes its active session under a private per-run directory. Completed turns
+retain the canonical `turns/<turn>/session.jsonl` checkpoint path; cleanup removes
+superseded copies after an acknowledged completion. Native Pi and GUI acceptance
+remain separate, open gates.
 
 ## Remaining acceptance
 
-- [ ] Leased and unleased worker lifecycle, same-run user turns, model updates,
+- [x] Leased and unleased worker lifecycle, same-run user turns, model updates,
   checkpoint permissions and retirement races (#467).
-- [ ] Forward SQLite migration and wire/controller/render coverage (#467).
+- [x] Forward SQLite migration and wire/controller/render coverage (#467).
 - [ ] Deterministic watch actions, baseline settlement, idle batching and durable
   wakeups with unread/draft behavior (#468).
 - [ ] Leased Stop/failure/timeout rollback, extension state survival and hard

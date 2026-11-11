@@ -1,0 +1,10 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGtZI6n server=34172 test=leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+test leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 5.02s
+

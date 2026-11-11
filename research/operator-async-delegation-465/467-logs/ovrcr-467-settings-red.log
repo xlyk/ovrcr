@@ -1,0 +1,150 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.81s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptg6uer server=36692 test=leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+
+thread 'leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires' (653605880) panicked at tests/support/operator_harness.rs:239:13:
+operator history deadline: OperatorHistory {
+    conversation: OperatorConversationSummary {
+        run: SessionRunId(
+            1,
+        ),
+        worker_stopped: true,
+        worker_live: false,
+        id: OperatorConversationId(
+            1,
+        ),
+        session: SessionId(
+            1,
+        ),
+        model: Some(
+            OperatorModel {
+                provider: "fixture",
+                id: "default",
+            },
+        ),
+        title: "Operator",
+        current_turn: Some(
+            OperatorTurn {
+                identity: OperatorTurnIdentity {
+                    conversation: OperatorConversationId(
+                        1,
+                    ),
+                    turn: OperatorTurnId(
+                        2,
+                    ),
+                    session: SessionId(
+                        1,
+                    ),
+                    run: SessionRunId(
+                        1,
+                    ),
+                },
+                state: Error,
+                sequence: 4,
+            },
+        ),
+        reasoning: Some(
+            OperatorReasoning {
+                requested: High,
+                level: High,
+                available: [
+                    Off,
+                    Minimal,
+                    Low,
+                    Medium,
+                    High,
+                ],
+            },
+        ),
+        current_turn_started_unix_ms: Some(
+            1794433235099,
+        ),
+        last_reply_unix_ms: Some(
+            1794433235076,
+        ),
+    },
+    messages: [
+        OperatorMessage {
+            ordinal: 1,
+            turn: OperatorTurnId(
+                1,
+            ),
+            content: User {
+                text: "launch watched work",
+                context: OperatorContext {
+                    project: None,
+                    workspace: None,
+                    workspace_id: None,
+                    cwd: None,
+                    session: None,
+                    run: None,
+                },
+            },
+        },
+        OperatorMessage {
+            ordinal: 2,
+            turn: OperatorTurnId(
+                1,
+            ),
+            content: Worker(
+                AssistantDelta(
+                    "first leased answer",
+                ),
+            ),
+        },
+        OperatorMessage {
+            ordinal: 3,
+            turn: OperatorTurnId(
+                2,
+            ),
+            content: User {
+                text: "continue while watched",
+                context: OperatorContext {
+                    project: None,
+                    workspace: None,
+                    workspace_id: None,
+                    cwd: None,
+                    session: None,
+                    run: None,
+                },
+            },
+        },
+        OperatorMessage {
+            ordinal: 4,
+            turn: OperatorTurnId(
+                2,
+            ),
+            content: Worker(
+                AssistantDelta(
+                    "second leased answer",
+                ),
+            ),
+        },
+        OperatorMessage {
+            ordinal: 5,
+            turn: OperatorTurnId(
+                2,
+            ),
+            content: Worker(
+                Failed(
+                    "Operator Pi context is unavailable; saved data was preserved.",
+                ),
+            ),
+        },
+    ],
+    next_after: None,
+}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires ... FAILED
+
+failures:
+
+failures:
+    leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 23.51s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

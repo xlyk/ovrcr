@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmNZfyL server=36336 test=kill_shutdown_terminates_a_leased_worker_and_its_pi_group
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmNZfyL pgid=36804
+test kill_shutdown_terminates_a_leased_worker_and_its_pi_group ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 4.58s
+

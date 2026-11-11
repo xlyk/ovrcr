@@ -1,0 +1,31 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.89s
+     Running tests/registry_migration.rs (target/debug/deps/registry_migration-55e05c81047ba0ff)
+
+running 15 tests
+test hold_uncommitted_sqlite_helper ... ignored, uncommitted registry writer killed by the interrupted-migration test
+test operator_harness::tests::registry_scan_finds_text_and_blob_credential_sentinels ... ok
+test operator_harness::tests::registry_scan_ignores_a_clean_database ... ok
+test operator_harness::tests::pump_keeps_a_frame_split_between_polls ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxDvORR server=74173 test=schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8Sbc4i server=74174 test=held_sqlite_write_lock_rejects_mutation_boundedly_then_recovers
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpba2JBs server=74180 test=schema_30_migrates_retained_sessions_with_empty_last_activity
+test live::command_clears_inherited_reporting_authority ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOk9caB server=74426 test=custom_home_keeps_task_and_settings_namespaces
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvwKYaA server=74427 test=interrupted_initial_sqlite_transaction_recovers_into_one_time_migration
+test offline_inventory_before_startup_does_not_create_sqlite ... ok
+test malformed_legacy_startup_and_offline_query_fail_without_replacing_source ... ok
+test nonempty_unversioned_sqlite_refuses_startup_without_legacy_fallback ... ok
+test corrupt_sqlite_refuses_startup_and_offline_without_legacy_fallback ... ok
+test incompatible_sqlite_refuses_startup_and_offline_without_legacy_fallback ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxDvORR server=74468 test=schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open
+test schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvwKYaA server=75186 test=interrupted_initial_sqlite_transaction_recovers_into_one_time_migration
+test custom_home_keeps_task_and_settings_namespaces ... ok
+test interrupted_initial_sqlite_transaction_recovers_into_one_time_migration ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpba2JBs server=75665 test=schema_30_migrates_retained_sessions_with_empty_last_activity
+test held_sqlite_write_lock_rejects_mutation_boundedly_then_recovers ... ok
+test schema_30_migrates_retained_sessions_with_empty_last_activity ... ok
+
+test result: ok. 14 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.80s
+

@@ -1,0 +1,24 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+error[E0499]: cannot borrow `client` as mutable more than once at a time
+   --> tests/operator_e2e.rs:455:38
+    |
+455 |     let second = client.submit_turn(&client.current().unwrap(), "resume and lease");
+    |                  ------ -----------  ^^^^^^ second mutable borrow occurs here
+    |                  |      |
+    |                  |      first borrow later used by call
+    |                  first mutable borrow occurs here
+    |
+help: try adding a local storing this argument...
+   --> tests/operator_e2e.rs:455:38
+    |
+455 |     let second = client.submit_turn(&client.current().unwrap(), "resume and lease");
+    |                                      ^^^^^^^^^^^^^^^^
+help: ...and then using that local as the argument to this call
+   --> tests/operator_e2e.rs:455:18
+    |
+455 |     let second = client.submit_turn(&client.current().unwrap(), "resume and lease");
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `ovrcr` (test "operator_e2e") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
