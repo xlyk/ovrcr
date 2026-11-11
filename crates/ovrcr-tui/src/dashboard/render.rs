@@ -772,7 +772,9 @@ fn render_split_metadata(
     );
     if rect.metadata.height > 1 {
         frame.render_widget(
-            Paragraph::new(if split_hidden {
+            Paragraph::new(if dashboard.zoomed && focused {
+                Line::from("zoomed")
+            } else if split_hidden {
                 Line::from("split hidden")
             } else {
                 session

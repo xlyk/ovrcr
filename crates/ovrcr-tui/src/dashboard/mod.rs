@@ -158,6 +158,14 @@ pub(super) enum SplitDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SplitRatio {
     pub(super) first: u16,
     pub(super) available: u16,
@@ -281,6 +289,25 @@ impl PaneLayout {
             Self::Pane(index) => *index,
             Self::Split { first, .. } => first.first(),
         }
+    }
+
+    pub(super) fn swap_indices(&mut self, left: usize, right: usize) -> bool {
+        if left == right || !self.contains(left) || !self.contains(right) {
+            return false;
+        }
+        fn swap(layout: &mut PaneLayout, left: usize, right: usize) {
+            match layout {
+                PaneLayout::Pane(index) if *index == left => *index = right,
+                PaneLayout::Pane(index) if *index == right => *index = left,
+                PaneLayout::Pane(_) => {}
+                PaneLayout::Split { first, second, .. } => {
+                    swap(first, left, right);
+                    swap(second, left, right);
+                }
+            }
+        }
+        swap(self, left, right);
+        true
     }
 
     pub(super) fn set_ratio(&mut self, path: &[bool], ratio: SplitRatio) -> bool {
@@ -555,6 +582,7 @@ pub struct Dashboard {
     panes: Vec<PaneState>,
     focused_pane: usize,
     pane_layout: PaneLayout,
+    pub(super) zoomed: bool,
     /// The whole view state machine: the revision, the one in-flight `SetView`, the
     /// acknowledged view, and the marks pane readiness is derived from.
     handshake: view_handshake::ViewHandshake,

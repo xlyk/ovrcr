@@ -42,7 +42,12 @@ pub(super) enum Action {
     History,
     Split,
     SplitDown,
+    FocusPane(super::PaneDirection),
+    SwapPane(super::PaneDirection),
+    ZoomPane,
     ClosePane,
+    /// A disabled placeholder used for keys owned by a later ticket.
+    Unavailable,
     OtherPane,
     PreviousPane,
     NextSession,
@@ -202,7 +207,8 @@ impl KeyBinding {
     /// A group drops a row the current target cannot use, and dims one that is
     /// only waiting for the screen.
     pub(super) fn shown_in_group(&self) -> bool {
-        self.enabled()
+        self.group.is_some_and(|slot| slot.group == 's')
+            || self.enabled()
             || matches!(
                 self.reason,
                 Some(WAITING | LAUNCH_BLOCKED | ROOT_PROTECTED | SIDEBAR_JUMP_BLOCKED)
@@ -275,6 +281,15 @@ impl Dashboard {
         keymap(self)
             .into_iter()
             .flat_map(|group| group.keys)
+            // Pane-direction and placeholder rows only run inside the popup;
+            // direct Browse lookup must keep j/k and arrows on the sidebar.
+            .filter(|binding| {
+                !browse
+                    || !matches!(
+                        binding.action,
+                        Action::FocusPane(_) | Action::SwapPane(_) | Action::Unavailable
+                    )
+            })
             .find(|binding| {
                 binding.matches(
                     if browse && !binding.bare && !matches!(binding.action, Action::OperatorKey(..))
@@ -367,12 +382,24 @@ impl Dashboard {
             Action::History => self.begin_history_request(false),
             Action::Split => self.open_split_chooser(super::SplitDirection::Right),
             Action::SplitDown => self.open_split_chooser(super::SplitDirection::Down),
+            Action::FocusPane(direction) => {
+                if let Some(index) = self.pane_neighbor(direction) {
+                    self.focus_pane(index);
+                }
+                DashboardAction::Redraw
+            }
+            Action::SwapPane(direction) => {
+                self.swap_focused_pane(direction);
+                DashboardAction::Redraw
+            }
+            Action::ZoomPane => self.toggle_pane_zoom(),
             Action::ClosePane => {
                 if self.action_session().is_some() {
                     self.close_focused_pane();
                 }
                 DashboardAction::Redraw
             }
+            Action::Unavailable => DashboardAction::Redraw,
             // Dispatch runs a disabled binding's action so it can refuse in its
             // own words, so every action holds its own bound: this one keeps the
             // pane count the "only one pane" reason reports.
@@ -892,7 +919,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::Split,
         )
         .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Right)))
-        .group('v', "v"),
+        .group('s', "v"),
         key_binding(
             "V",
             "Split down",
@@ -901,7 +928,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::SplitDown,
         )
         .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Down)))
-        .group('v', "V"),
+        .group('s', "s"),
         key_binding(
             "Tab",
             "Next pane",
@@ -914,7 +941,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "Tab"),
+        .group('s', "Tab"),
         key_binding(
             "Shift-Tab",
             "Previous pane",
@@ -929,6 +956,24 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .group('v', "Shift-Tab"),
         key_binding(
+            "z",
+            if dashboard.zoomed { "Unzoom" } else { "Zoom" },
+            if dashboard.zoomed {
+                "Restore the pane layout; every session keeps running".into()
+            } else {
+                "Show the focused pane alone; other panes keep their place".into()
+            },
+            Char('z'),
+            Action::ZoomPane,
+        )
+        .once()
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
+        .group('s', "z"),
+        key_binding(
             "x",
             "Close pane",
             format!("Hide the focused pane for {target}; its session keeps running"),
@@ -940,7 +985,115 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "x"),
+        .group('s', "x"),
+        key_binding(
+            "h",
+            "Focus left",
+            "Focus the pane to the left".into(),
+            Char('h'),
+            Action::FocusPane(super::PaneDirection::Left),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Left))
+        .group('s', "h"),
+        key_binding(
+            "j",
+            "Focus down",
+            "Focus the pane below".into(),
+            Char('j'),
+            Action::FocusPane(super::PaneDirection::Down),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Down))
+        .group('s', "j"),
+        key_binding(
+            "k",
+            "Focus up",
+            "Focus the pane above".into(),
+            Char('k'),
+            Action::FocusPane(super::PaneDirection::Up),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Up))
+        .group('s', "k"),
+        key_binding(
+            "l",
+            "Focus right",
+            "Focus the pane to the right".into(),
+            Char('l'),
+            Action::FocusPane(super::PaneDirection::Right),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Right))
+        .group('s', "l"),
+        key_binding(
+            "H",
+            "Swap left",
+            "Swap with the pane to the left; focus follows the session".into(),
+            Char('H'),
+            Action::SwapPane(super::PaneDirection::Left),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Left))
+        .group('s', "H"),
+        key_binding(
+            "J",
+            "Swap down",
+            "Swap with the pane below; focus follows the session".into(),
+            Char('J'),
+            Action::SwapPane(super::PaneDirection::Down),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Down))
+        .group('s', "J"),
+        key_binding(
+            "K",
+            "Swap up",
+            "Swap with the pane above; focus follows the session".into(),
+            Char('K'),
+            Action::SwapPane(super::PaneDirection::Up),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Up))
+        .group('s', "K"),
+        key_binding(
+            "L",
+            "Swap right",
+            "Swap with the pane to the right; focus follows the session".into(),
+            Char('L'),
+            Action::SwapPane(super::PaneDirection::Right),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Right))
+        .group('s', "L"),
+        key_binding(
+            "<",
+            "Narrower",
+            "Shrink the focused pane by 2 columns".into(),
+            Char('<'),
+            Action::Unavailable,
+        )
+        .unless(Some("not available yet"))
+        .group('s', "<"),
+        key_binding(
+            ">",
+            "Wider",
+            "Grow the focused pane by 2 columns".into(),
+            Char('>'),
+            Action::Unavailable,
+        )
+        .unless(Some("not available yet"))
+        .group('s', ">"),
+        key_binding(
+            "-",
+            "Shorter",
+            "Shrink the focused pane by 1 row".into(),
+            Char('-'),
+            Action::Unavailable,
+        )
+        .unless(Some("not available yet"))
+        .group('s', "-"),
+        key_binding(
+            "+",
+            "Taller",
+            "Grow the focused pane by 1 row".into(),
+            Char('+'),
+            Action::Unavailable,
+        )
+        .unless(Some("not available yet"))
+        .group('s', "+"),
         key_binding(
             "j/Down",
             "Next row",
