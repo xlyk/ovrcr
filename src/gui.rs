@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,33 @@ pub fn demo_dashboard_document(quota_fragment: Option<&str>) -> String {
         document.push('\n');
     }
     document
+}
+
+struct DashboardImage {
+    source: PathBuf,
+    directory: tempfile::TempDir,
+}
+
+static DASHBOARD_IMAGE: Mutex<Weak<DashboardImage>> = Mutex::new(Weak::new());
+
+fn dashboard_image(source: &Path) -> Result<Arc<DashboardImage>> {
+    let mut cached = DASHBOARD_IMAGE.lock().unwrap();
+    if let Some(image) = cached.upgrade()
+        && image.source == source
+    {
+        return Ok(image);
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("ovrcr-gui-dashboard-")
+        .tempdir()?;
+    fs::create_dir(directory.path().join("bin"))?;
+    fs::copy(source, directory.path().join("bin/ovrcr"))?;
+    let image = Arc::new(DashboardImage {
+        source: source.to_owned(),
+        directory,
+    });
+    *cached = Arc::downgrade(&image);
+    Ok(image)
 }
 
 pub struct Demo {
@@ -330,15 +357,20 @@ impl Demo {
     }
 
     pub fn dashboard(&self, rows: u16, cols: u16, context: egui::Context) -> Result<Terminal> {
-        // A disposable demo must not discover installation assets from the
-        // caller's build directory. Keep its original Server image explicit.
-        let directory = self.root.join("dashboard-client");
-        fs::create_dir_all(&directory)?;
-        let executable = directory.join("ovrcr");
-        if !executable.exists() {
-            fs::copy(&self.executable, &executable)?;
-        }
-        let mut command = CommandBuilder::new(&executable);
+        self.dashboard_with(rows, cols, context, |_| {})
+    }
+
+    /// Start the same disposable Dashboard with fixture-specific command overrides.
+    pub fn dashboard_with(
+        &self,
+        rows: u16,
+        cols: u16,
+        context: egui::Context,
+        configure: impl FnOnce(&mut CommandBuilder),
+    ) -> Result<Terminal> {
+        // Concurrent fresh images stall macOS startup; share only the asset-free image.
+        let image = dashboard_image(&self.executable)?;
+        let mut command = CommandBuilder::new(image.directory.path().join("bin/ovrcr"));
         command.env("OVRCR_SERVER_EXECUTABLE", &self.executable);
         command.env("OVRCR_HOME", &self.root);
         command.env("OVRCR_SOCKET", self.root.join("server.sock"));
@@ -347,7 +379,10 @@ impl Demo {
         command.env("COLORTERM", "truecolor");
         command.env("PATH", self.path_with_agent_fixtures());
         command.env_remove("NO_COLOR");
-        Terminal::start(command, rows, cols, context)
+        configure(&mut command);
+        let mut terminal = Terminal::start(command, rows, cols, context)?;
+        terminal.image = Some(image);
+        Ok(terminal)
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
@@ -439,6 +474,7 @@ pub struct Terminal {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn PtyChild + Send + Sync>,
+    image: Option<Arc<DashboardImage>>,
     parser: Arc<Mutex<vt100::Parser>>,
     reader: Option<JoinHandle<()>>,
     stopping: Arc<AtomicBool>,
@@ -473,6 +509,7 @@ impl Terminal {
             master: pair.master,
             writer,
             child,
+            image: None,
             parser,
             reader: None,
             stopping,
@@ -615,6 +652,7 @@ impl Terminal {
                 .join()
                 .map_err(|_| anyhow::anyhow!("PTY reader panicked"))?;
         }
+        self.image = None;
         Ok(())
     }
 }
@@ -639,6 +677,37 @@ fn size(rows: u16, cols: u16) -> PtySize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_image_shares_only_the_same_source_and_cleans_up_after_last_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::write(&source, b"first executable").unwrap();
+        let first = dashboard_image(&source).unwrap();
+        let second = dashboard_image(&source).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        let directory = first.directory.path().to_owned();
+        assert_eq!(
+            fs::read(directory.join("bin/ovrcr")).unwrap(),
+            b"first executable"
+        );
+        assert!(!directory.join("lib/ovrcr").exists());
+        let other_source = root.path().join("other");
+        fs::write(&other_source, b"other executable").unwrap();
+        let other = dashboard_image(&other_source).unwrap();
+        assert!(!Arc::ptr_eq(&first, &other));
+        assert_eq!(
+            fs::read(other.directory.path().join("bin/ovrcr")).unwrap(),
+            b"other executable"
+        );
+        drop(first);
+        assert!(directory.exists());
+        drop(second);
+        assert!(!directory.exists());
+        let other_directory = other.directory.path().to_owned();
+        drop(other);
+        assert!(!other_directory.exists());
+    }
 
     #[test]
     fn keyboard_mode_observer_tracks_split_push_and_pop_sequences() {

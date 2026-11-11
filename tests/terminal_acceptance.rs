@@ -426,7 +426,19 @@ impl OuterDashboard {
                     let image = Arc::new(tempfile::tempdir()?);
                     let directory = image.path().join("bin");
                     std::fs::create_dir(&directory)?;
-                    std::fs::copy(&fixture.executable, directory.join("ovrcr"))?;
+                    let executable = directory.join("ovrcr");
+                    std::fs::copy(&fixture.executable, &executable)?;
+                    let mut admission = Command::new(&executable);
+                    for (key, value) in fixture.command().get_envs() {
+                        match value {
+                            Some(value) => admission.env(key, value),
+                            None => admission.env_remove(key),
+                        };
+                    }
+                    require_success(
+                        admission.arg("--version").output()?,
+                        "Dashboard image admission",
+                    )?;
                     *cached = Arc::downgrade(&image);
                     image
                 }

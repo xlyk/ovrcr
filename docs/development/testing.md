@@ -21,6 +21,8 @@ workspace ready", the process groups the fixture owns and the cleanup that runs
 from `Drop` all live there, so a suite writes none of it again.
 Each binary fixture uses its own root as HOME and clears inherited provider/XDG
 profile paths; explicit child overrides can point to task-owned provider fixtures.
+Binary Server startup stderr stays in the fixture's private `server.log` so a
+readiness failure can be separated from loader and initialization delays.
 The thread adapter shares the test process environment, so local regression runs
 also require a private process HOME and provider profiles.
 
@@ -29,6 +31,20 @@ their children are alive, avoiding startup delays from concurrent fresh images.
 Each client keeps its fixture HOME, settings, socket and selected Server image;
 custom executable fixtures retain their own copies. The last child owner removes
 the shared image after reaping, and startup assets remain outside the Cargo target.
+The GUI demo uses the same lifetime pattern, sharing a private image only between
+concurrent Dashboards of the same executable. `Demo::dashboard_with` customizes
+fixture commands through that same path; HOME, settings, socket and selected
+Server executable remain per fixture. Stopping a Terminal reaps its child before
+releasing its image, so no fresh-copy loader queue consumes the readiness budget.
+
+Startup fingerprint dependencies (`ahash` and `sha2`) are optimized in the dev
+profile, inherited by test builds: their byte scans must not dominate readiness
+for large debug executables. The private executable-replacement and spawn-refusal
+fixtures execute `--version` on their copied image during preparation, before
+starting the Server readiness clock. Those tests retain their distinct mutable
+inodes and all application deadlines; cold OS image admission is separate evidence.
+Terminal-input fixtures also admit a newly shared Dashboard image before their
+application-readiness wait. Their custom early-exit executable path stays untouched.
 
 `Live::request` blocks until the server answers; `Live::bounded` — which `Live::binary` applies
 to itself — gives every request a deadline instead, so a test fails rather than
