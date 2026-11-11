@@ -1010,6 +1010,9 @@ command = "/opt/grok"
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
 
+[usage]
+sidebar = true
+
 [operator]
 model = "openai/chat-model"
 thinking_level = "low"
@@ -1072,6 +1075,7 @@ login = "owner@example.com"
         assert!(settings.iterm_focus);
         assert_eq!(settings.theme, ThemeId::Light);
         assert_eq!(settings.sidebar_view, SidebarView::Recent);
+        assert!(settings.usage.sidebar);
         assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,

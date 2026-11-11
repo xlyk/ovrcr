@@ -160,6 +160,12 @@ mod tests {
         let binding = binding("conversation", "invocation");
         lifetime.record(1, &binding, &totals(Some(10), Some(3)));
         lifetime.record(1, &binding, &totals(None, Some(5)));
+        assert!(
+            lifetime
+                .record(1, &binding, &totals(Some(10), Some(5)))
+                .is_none(),
+            "an unknown input component must preserve its previous baseline"
+        );
         let mut invocation = totals(Some(2), Some(1));
         invocation.scope = UsageScope::Invocation;
         assert_eq!(
@@ -167,7 +173,7 @@ mod tests {
                 .record(1, &binding, &invocation)
                 .unwrap()
                 .total_tokens,
-            21
+            18
         );
     }
 }
