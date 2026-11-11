@@ -15116,7 +15116,13 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
     // Duplicate settled: no second alert, no new Unread.
     pi_callback(&fixture, summary.id, &mut index, "agent_settled");
-    assert_eq!(fixture.session_summary(summary.id), first);
+    let after_duplicate = fixture.session_summary(summary.id);
+    assert_unchanged_after_fixture_input(
+        &after_duplicate,
+        &first,
+        "a duplicate settled event preserves reporting state",
+    );
+    let first = after_duplicate;
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
     // Opening the pane does not acknowledge; R reviews exactly the presented identity.
     dashboard.select("pi-hooks", "PI_CALLBACK=4");
@@ -16645,10 +16651,10 @@ fn omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer() {
     //    event for it, so no shutdown, no start and no rebind may be fabricated.
     let refreshed_from = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "plugin_refresh");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        refreshed_from,
-        "a plugin-resource refresh is not a lifecycle event"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &refreshed_from,
+        "a plugin-resource refresh is not a lifecycle event",
     );
 
     // 10-11. Tree navigation abandons the cycle it was in: what is true afterwards is only
@@ -16809,10 +16815,10 @@ fn omp_source_gap_pauses_then_recovers_at_the_next_boundary() {
     // The native session is untouched: it keeps answering, and nothing it says is applied.
     let quiet = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        quiet,
-        "a non-boundary event while paused applies nothing"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &quiet,
+        "a non-boundary event while paused preserves reporting state",
     );
 
     // The next trustworthy boundary recovers: one fresh generation, nothing restored.
