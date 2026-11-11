@@ -1,6 +1,29 @@
 //! Sidebar, agent-hook metadata, and whole-dashboard layout rendering.
 
 use crate::*;
+use std::collections::VecDeque;
+use std::sync::{Arc, atomic::AtomicUsize};
+use std::time::{Duration, Instant};
+
+struct FixedResourceSource(VecDeque<ovrcr::tui::MachineReadings>);
+
+struct CountedResourceSource {
+    readings: VecDeque<ovrcr::tui::MachineReadings>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl ovrcr::tui::MachineResourceSource for FixedResourceSource {
+    fn read(&mut self) -> ovrcr::tui::MachineReadings {
+        self.0.pop_front().unwrap_or_default()
+    }
+}
+
+impl ovrcr::tui::MachineResourceSource for CountedResourceSource {
+    fn read(&mut self) -> ovrcr::tui::MachineReadings {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.readings.pop_front().unwrap_or_default()
+    }
+}
 
 fn review_session(hierarchy: &HierarchySnapshot) -> &ovrcr::session::SessionSummary {
     &hierarchy.projects[1].workspaces[1].sessions[0]
@@ -65,6 +88,216 @@ fn sidebar_rows_with(terminal: &Terminal<TestBackend>, text: &str) -> Vec<u16> {
             sidebar_row_at_width(terminal, *row, sidebar_text_width(terminal)).contains(text)
         })
         .collect()
+}
+
+#[test]
+fn resources_rows_show_cpu_delta_and_memory_used_of_total() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.replace_resource_source(FixedResourceSource(VecDeque::from([
+        ovrcr::tui::MachineReadings::new(
+            Some(ovrcr::tui::CpuCounters::Linux([100, 0, 50, 50, 0, 0, 0, 0])),
+            ovrcr::tui::MemoryCounters::new(19_542_101_197, 32 * 1024 * 1024 * 1024),
+        ),
+        ovrcr::tui::MachineReadings::new(
+            Some(ovrcr::tui::CpuCounters::Linux([140, 0, 70, 90, 0, 0, 0, 0])),
+            ovrcr::tui::MemoryCounters::new(19_542_101_197, 32 * 1024 * 1024 * 1024),
+        ),
+    ])));
+    let start = Instant::now();
+    assert!(dashboard.sample_resources_if_due(start));
+    assert!(dashboard.sample_resources_if_due(start + Duration::from_secs(2)));
+
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let header = rows
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("resources heading");
+    assert!(rows[header + 1].contains("cpu"));
+    assert!(rows[header + 1].contains("60%"));
+    assert!(rows[header + 2].contains("mem"));
+    assert!(rows[header + 2].contains("18.2/32G"));
+    let quota = rows
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("quota heading");
+    assert!(header < quota, "Resources must precede Quota");
+}
+
+#[test]
+fn resources_cpu_starts_unknown_with_an_empty_bar() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.replace_resource_source(FixedResourceSource(VecDeque::from([
+        ovrcr::tui::MachineReadings::new(
+            Some(ovrcr::tui::CpuCounters::Linux([10, 0, 0, 10, 0, 0, 0, 0])),
+            ovrcr::tui::MemoryCounters::new(400, 1000),
+        ),
+    ])));
+    assert!(dashboard.sample_resources_if_due(Instant::now()));
+
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let cpu = rows
+        .iter()
+        .find(|row| row.contains("cpu"))
+        .expect("CPU row");
+    assert!(cpu.contains("…"), "first CPU sample is unknown: {cpu:?}");
+    assert!(
+        cpu.contains('─'),
+        "unknown CPU uses an empty bar track: {cpu:?}"
+    );
+    assert!(
+        !cpu.contains('━'),
+        "unknown CPU must not look like zero use: {cpu:?}"
+    );
+}
+
+#[test]
+fn resources_before_first_tick_do_not_claim_a_failed_read() {
+    let dashboard = dashboard_fixture();
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let cpu = rows
+        .iter()
+        .find(|row| row.contains("cpu"))
+        .expect("CPU row");
+    let memory = rows
+        .iter()
+        .find(|row| row.contains("mem"))
+        .expect("memory row");
+    assert!(cpu.contains("…"), "CPU has no initial baseline: {cpu:?}");
+    assert!(
+        memory.contains("…"),
+        "memory has not been sampled yet: {memory:?}"
+    );
+    assert!(!cpu.contains("unavailable"));
+    assert!(!memory.contains("unavailable"));
+}
+
+#[test]
+fn failed_resource_readings_replace_the_last_values_with_unavailable() {
+    let known = ovrcr::tui::MachineReadings::new(
+        Some(ovrcr::tui::CpuCounters::Linux([100, 0, 0, 100, 0, 0, 0, 0])),
+        ovrcr::tui::MemoryCounters::new(400, 1000),
+    );
+    let mut dashboard = dashboard_fixture();
+    dashboard.replace_resource_source(FixedResourceSource(VecDeque::from([
+        known,
+        ovrcr::tui::MachineReadings::default(),
+    ])));
+    let start = Instant::now();
+    assert!(dashboard.sample_resources_if_due(start));
+    assert!(dashboard.sample_resources_if_due(start + Duration::from_secs(2)));
+
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let cpu = rows
+        .iter()
+        .find(|row| row.contains("cpu"))
+        .expect("CPU row");
+    let memory = rows
+        .iter()
+        .find(|row| row.contains("mem"))
+        .expect("memory row");
+    assert!(cpu.contains("unavailable"), "failed CPU read: {cpu:?}");
+    assert!(
+        memory.contains("unavailable"),
+        "failed memory read: {memory:?}"
+    );
+    assert!(
+        !cpu.contains('%'),
+        "a stale percentage must not remain: {cpu:?}"
+    );
+    assert!(
+        !memory.contains("400/1000B"),
+        "stale memory must not remain: {memory:?}"
+    );
+}
+
+#[test]
+fn resources_section_compacts_then_hides_before_quota() {
+    let first = ovrcr::tui::MachineReadings::new(
+        Some(ovrcr::tui::CpuCounters::Linux([100, 0, 0, 100, 0, 0, 0, 0])),
+        ovrcr::tui::MemoryCounters::new(400, 1000),
+    );
+    let second = ovrcr::tui::MachineReadings::new(
+        Some(ovrcr::tui::CpuCounters::Linux([100, 0, 0, 200, 0, 0, 0, 0])),
+        ovrcr::tui::MemoryCounters::new(400, 1000),
+    );
+    let mut dashboard = dashboard_fixture();
+    dashboard.replace_resource_source(FixedResourceSource(VecDeque::from([first, second])));
+    let start = Instant::now();
+    dashboard.sample_resources_if_due(start);
+    dashboard.sample_resources_if_due(start + Duration::from_secs(2));
+
+    let full = rendered_rows(&dashboard, 120, 40);
+    let full_resources = full
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("full Resources form at normal height");
+    let quota = full
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("Quota remains below Resources");
+    assert!(full_resources < quota);
+    assert!(full[full_resources + 1].contains("cpu"));
+    assert!(full[full_resources + 2].contains("mem"));
+
+    let compact_height = (8..40).find(|height| {
+        rendered_rows(&dashboard, 120, *height)
+            .iter()
+            .any(|row| row.contains("Resources · cpu 0%"))
+    });
+    let compact_height = compact_height.expect("Resources compacts to one row");
+    let compact = rendered_rows(&dashboard, 120, compact_height);
+    let compact_resources = compact
+        .iter()
+        .position(|row| row.contains("Resources · cpu 0%"))
+        .expect("compact Resources form");
+    let compact_quota = compact
+        .iter()
+        .position(|row| quota_section_row(row))
+        .expect("Quota remains below compact Resources");
+    assert!(compact_resources < compact_quota);
+
+    let hidden_with_quota = (8..compact_height).find(|height| {
+        let rows = rendered_rows(&dashboard, 120, *height);
+        !rows.iter().any(|row| row.contains("Resources ·"))
+            && rows.iter().any(|row| quota_section_row(row))
+    });
+    assert!(
+        hidden_with_quota.is_some(),
+        "Resources hides while Quota is still present"
+    );
+}
+
+fn quota_section_row(row: &str) -> bool {
+    [
+        "QUOTA LEFT",
+        "Quota: u",
+        "Claude",
+        "Codex",
+        "Grok",
+        "Cursor",
+    ]
+    .iter()
+    .any(|marker| row.contains(marker))
+}
+
+#[test]
+fn resources_setting_off_skips_reads_and_removes_the_section() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut dashboard = dashboard_fixture();
+    dashboard.replace_resource_source(CountedResourceSource {
+        readings: VecDeque::from([ovrcr::tui::MachineReadings::default()]),
+        calls: Arc::clone(&calls),
+    });
+    dashboard.install_settings(ovrcr::tui::Settings {
+        resources: ovrcr::protocol::ResourcesSettings { sidebar: false },
+        ..ovrcr::tui::Settings::default()
+    });
+
+    assert!(!dashboard.sample_resources_if_due(Instant::now()));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(!rows.iter().any(|row| row.contains("RESOURCES")));
+    assert!(!rows.iter().any(|row| row.contains("Resources ·")));
 }
 
 fn dashboard_sidebar_row(dashboard: &Dashboard, text: &str, width: u16, height: u16) -> u16 {
@@ -1898,9 +2131,11 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    let area = Rect::new(0, 0, 60, 24);
+    // One extra row keeps the full two-line selected session visible below the
+    // default-on Resources section while preserving the same narrow width.
+    let area = Rect::new(0, 0, 60, 25);
     dashboard.install_area(area);
-    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(60, 25)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -2013,11 +2248,11 @@ fn sidebar_stacks_every_agent_label_or_none() {
         implement_session_mut(&mut hierarchy).label = "claude".into();
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_focus(SessionId(5));
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(60, 25)).unwrap();
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let rows = (0..24)
+        let rows = (0..25)
             .map(|y| {
                 (0..29)
                     .map(|x| terminal.backend().buffer()[(x, y)].symbol())
@@ -2029,18 +2264,18 @@ fn sidebar_stacks_every_agent_label_or_none() {
         (rows, dashboard)
     };
     let (inline, inline_dashboard) = draw("claude");
-    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 24) as usize;
-    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 24) as usize;
-    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 24) as usize;
+    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 25) as usize;
+    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 25) as usize;
+    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 25) as usize;
     assert_eq!(inline[inline_review], "     - review         claude");
     assert_eq!(inline[inline_lifecycle], "  󰘬 lifecycle");
     assert_eq!(inline[inline_implement], "     · implement      claude");
     assert_eq!(inline[inline_implement + 1], "");
     let (stacked, stacked_dashboard) = draw("pi / grok-4.7");
-    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 24) as usize;
-    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 24) as usize;
-    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 24);
-    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 24) as usize;
+    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 25) as usize;
+    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 25) as usize;
+    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 25);
+    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 25) as usize;
     assert_eq!(stacked[stacked_review], "     - review");
     assert_eq!(stacked[stacked_review + 1], "       └ pi:grok-4.7");
     assert_eq!(stacked[stacked_lifecycle], "  󰘬 lifecycle");
@@ -2054,7 +2289,10 @@ fn sidebar_stacks_every_agent_label_or_none() {
         "       └ claude",
         "a label that fits still stacks"
     );
-    assert_eq!(stacked[stacked_implement + 2], "");
+    assert!(
+        stacked[stacked_implement + 2].starts_with(" RESOURCES"),
+        "Resources follows the last visible tree row"
+    );
 }
 
 #[test]

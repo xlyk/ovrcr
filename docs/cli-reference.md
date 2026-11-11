@@ -111,6 +111,10 @@ keys, unknown spellings, an unparseable document, and a `[quota]` table left in
 the instance identity file, each with its key and line when known. The command exits 0 even
 with findings.
 
+The Dashboard-owned `resources.sidebar` setting defaults to true. Set
+`sidebar = false` under `[resources]` in `dashboard.toml` to hide the local
+machine section and stop sampling.
+
 `--json` prints one object: `path`, `read_unix_ms`, `settings` (every effective
 value, typed), `rows` (`key`, `owner`, `value`, `source`, `off_state`) and
 `findings` (`key`, null for the whole document; `message`; `line`, nullable).

@@ -6,6 +6,8 @@ use crate::*;
 use ovrcr::protocol::{ErrorCode, Request, Response, SettingsReport};
 use ovrcr::tui::ConnectStatus;
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::sync::{Arc, atomic::AtomicUsize};
 
 #[cfg(target_os = "macos")]
 use crate::live;
@@ -82,6 +84,17 @@ fn count_label(entries: usize) -> String {
     match entries {
         1 => "1 entry".into(),
         n => format!("{n} entries"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct CountedResourceSource(Arc<AtomicUsize>);
+
+#[cfg(target_os = "macos")]
+impl ovrcr::tui::MachineResourceSource for CountedResourceSource {
+    fn read(&mut self) -> ovrcr::tui::MachineReadings {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ovrcr::tui::MachineReadings::default()
     }
 }
 
@@ -1499,6 +1512,88 @@ fn settings_frames(
             return Ok(frames);
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resources_setting_from_live_server_disables_dashboard_sampling() {
+    use ovrcr::protocol::exchange_preamble;
+    use std::os::unix::net::UnixStream;
+    use std::time::Instant;
+
+    let fixture = live::Live::idle().bounded();
+    let document = fixture.config.join("dashboard.toml");
+    std::fs::write(&document, "[resources]\nsidebar = true\n").unwrap();
+    fixture.start_binary();
+    let mut stream = UnixStream::connect(&fixture.socket).unwrap();
+    stream.set_read_timeout(fixture.timeout()).unwrap();
+    stream.set_write_timeout(fixture.timeout()).unwrap();
+    exchange_preamble(&mut stream).unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.replace_resource_source(CountedResourceSource(Arc::clone(&calls)));
+    let hello = ClientMessage {
+        request_id: u64::MAX,
+        request: Request::DashboardHello,
+    };
+    let mut initial_reading = false;
+    for frame in settings_frames(&mut stream, &hello, true).unwrap() {
+        if let ServerMessage::Event(ServerEvent::SettingsChanged(report)) = &frame {
+            initial_reading = true;
+            assert_eq!(report.path, document);
+            assert!(report.settings.resources.sidebar);
+        }
+        dashboard.handle_server_message(frame);
+    }
+    assert!(
+        initial_reading,
+        "DashboardHello publishes the loaded settings"
+    );
+
+    dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    for frame in settings_frames(&mut stream, &inspect, false).unwrap() {
+        dashboard.handle_server_message(frame);
+    }
+    dashboard.event_action(Event::Paste("settings".into()));
+    dashboard.key(KeyCode::Enter);
+    select(&mut dashboard, "resources.sidebar");
+    let setting_detail = screen(&dashboard);
+    assert!(setting_detail.contains("Machine resources sidebar section"));
+    assert!(setting_detail.contains("key: resources.sidebar"));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let update = only_request(dashboard.drain_outbox());
+    assert_eq!(
+        update.request,
+        Request::SetSetting {
+            path: "resources.sidebar".into(),
+            value: Some("false".into()),
+        }
+    );
+
+    let mut disabled_reading = false;
+    for frame in settings_frames(&mut stream, &update, true).unwrap() {
+        if let ServerMessage::Event(ServerEvent::SettingsChanged(report)) = &frame {
+            disabled_reading = true;
+            assert!(!report.settings.resources.sidebar);
+        }
+        dashboard.handle_server_message(frame);
+    }
+    assert!(disabled_reading, "Server publishes the applied setting");
+    assert!(
+        !dashboard.sample_resources_if_due(Instant::now()),
+        "off skips the machine source"
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        "[resources]\nsidebar = false\n"
+    );
 }
 
 #[cfg(target_os = "macos")]

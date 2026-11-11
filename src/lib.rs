@@ -35,10 +35,11 @@ pub mod task_tui {
 pub mod tui {
     pub use ovrcr_tui::{ConnectStatus, ConnectStatusFn};
     pub use ovrcr_tui::{
-        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding, PaneRects,
-        Settings, actual_drawn_inner_rect, dashboard_message_channel, detect_agents,
-        draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste, pane_rects,
-        render_terminal, write_clipboard,
+        CpuCounters, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, KeyEncoding,
+        MachineReadings, MachineResourceSource, MemoryCounters, PaneRects, Settings,
+        actual_drawn_inner_rect, dashboard_message_channel, detect_agents, draw_dashboard,
+        draw_dashboard_at, encode_key, encode_mouse, encode_paste, pane_rects, render_terminal,
+        write_clipboard,
     };
 
     /// `status_off` is the startup note while agent status is off; `connect_status`

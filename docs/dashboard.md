@@ -52,9 +52,9 @@ you are away waits for you. A notice that waited behind it shows next.
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
 shows attention first when needed, then a three-row **Operator** section before
-the project tree and quota. Click anywhere in the section or press `o` in Browse
-to open the conversation with the composer focused. There are no Operator
-controls in the title bar.
+the project tree, followed by Resources and quota. Click anywhere in the section
+or press `o` in Browse to open the conversation with the composer focused. There
+are no Operator controls in the title bar.
 
 Before the conversation is opened, the section says **Off** when the Pi
 executable is available and **Not set up** when it is missing. A known Pi setup
@@ -502,9 +502,17 @@ The **OPERATOR** section shows whether the conversation is working, unread,
 idle, not yet opened, or not set up, plus its current activity or latest reply.
 It omits the model and harness. Click anywhere in the section or press `o` in
 Browse to open the conversation. The `operator.sidebar` setting controls this
-section and is on by default. A short sidebar drops section gaps, compacts quota
-and Operator, and hides them as needed to preserve room for the tree; `o` still
-opens Operator when its section is hidden.
+section and is on by default. A short sidebar drops section gaps, compacts
+Resources, quota and Operator, and hides them as needed to preserve room for the
+tree; `o` still opens Operator when its section is hidden.
+
+**Resources** follows the project tree and shows whole-machine CPU use and
+memory in use over installed memory. It samples on the Dashboard's existing
+redraw tick, at most every two seconds. CPU stays `…` until two samples show
+advancing counters; a failed reading says `unavailable` instead of keeping an
+older value. The one-line form keeps both values. Set `resources.sidebar = false`
+to hide the section and stop machine reads; it is on by default and changes
+apply while the Dashboard is running.
 
 The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
 Short windows use compact provider summaries, then a `Quota: u` pointer. Press
@@ -1302,6 +1310,9 @@ picker_roots = ["~/Code", "~/src", "~"]
 # [[agents]]                         # optional; a row replaces a detected agent's argv
 # name = "claude"
 # argv = ["claude", "--verbose"]
+
+[resources]
+# sidebar = false                    # hide Resources and stop local machine reads; default true
 
 [quota]                              # account quota; see provider-quota.md
 # enabled = false                    # explicit off; omit to collect while a Dashboard is attached

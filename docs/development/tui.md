@@ -197,13 +197,18 @@ native picker keep the unavailable notice.
 
 
 The Operator occupies a three-row section below the attention line and above the
-project tree; quota stays at the bottom. `SidebarRects` supplies attention,
-Operator, project-tree and quota rectangles to rendering, mouse input and
-viewport calculations. A section can have a trailing blank row, and the shared
-height ladder removes gaps first, then compacts or hides Operator and quota to
-preserve tree space. Operator's full section shows state and one activity/reply
-detail row; the one-row form clips to its name and status. `operator.sidebar`
-controls visibility and defaults on. The section preserves the selected-row
+project tree; Resources follows the tree and quota stays at the bottom.
+`SidebarRects` supplies attention, Operator, project-tree, Resources and quota
+rectangles to rendering, mouse input and viewport calculations. A section can
+have a trailing blank row, and the shared height ladder removes gaps first, then
+compacts or hides sections to preserve tree space. Operator's full section shows
+state and one activity/reply detail row; the one-row form clips to its name and
+status. `operator.sidebar` controls visibility and defaults on. Resources uses
+the whole-machine CPU and memory source at the existing redraw tick, throttled
+to one read every two seconds; `resources.sidebar` defaults on and off prevents
+sampling. CPU remains unknown until two readings establish an advancing delta,
+and a failed read clears its baseline and displays unavailable. The section
+preserves the selected-row
 background when the conversation is open. Working shows the durable turn-start
 age; Idle and unread states show the durable last-reply age when known. Legacy
 turns without timestamps remain untimed. Setup detection checks for the Pi
