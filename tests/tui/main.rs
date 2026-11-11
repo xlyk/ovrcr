@@ -1,7 +1,3 @@
-#[cfg(not(target_os = "macos"))]
-#[path = "../support/deadline.rs"]
-mod deadline;
-
 #[cfg(unix)]
 #[path = "../support/live.rs"]
 mod live;

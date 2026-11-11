@@ -1,6 +1,6 @@
 # Verification for dashboard #448
 
-Behavior-reviewed source: `0ce4ca2c8f5b091eecb55eb4280925a26e8df6b7` (protocol 84, schema 32). Evidence commit `fb7cd309` adds only this directory. The current follow-up also includes a Linux cfg/visibility correction and a deterministic live-palette fixture correction after that evidence commit. Linux resource parsers are visible to their sibling tests, the mutable settings row binding is compiled only on macOS, and the typed-branch integration test now seeds its launcher in the private Server settings before startup and waits for the initial Server settings report. These changes do not alter production behavior or the native and review evidence below. All thirteen slices #449–#461 are integrated. The accepted decisions are Off before first Open / Idle afterward, an eighth Unknown usage counter, and the larger known conversation/invocation token total without duplicate cache/reasoning subsets.
+Behavior-reviewed source: `0ce4ca2c8f5b091eecb55eb4280925a26e8df6b7` (protocol 84, schema 32). Evidence commit `fb7cd309` adds only this directory. Follow-ups after that review fixed Linux cfg/visibility, a live-palette settings race, and view-only Dashboard navigation settling. The latest production correction clears the loading state for a ready assigned child while keeping the Dashboard in Browse until human ownership is explicitly granted; native captures remain evidence for their recorded revisions and do not cover this keyboard path. All thirteen slices #449–#461 are integrated. The accepted decisions are Off before first Open / Idle afterward, an eighth Unknown usage counter, and the larger known conversation/invocation token total without duplicate cache/reasoning subsets.
 
 ## Local checks
 
@@ -24,12 +24,18 @@ Rust runs used two build jobs and cleared inherited agent socket/token authority
 | Exact live typed-branch test, `/bin/sh` Pi-available-style environment | 1 passed, 531 filtered | Follow-up correction |
 | Palette integration filter, serial | 122 passed, 410 filtered | Follow-up correction |
 | Follow-up fmt/diff check, workspace all-target/all-feature check and clippy | Passed | Follow-up correction |
+| Assigned view-only switch regression, before behavior fix | 0 passed, 1 failed at the missing completion redraw assertion | Latest follow-up, red |
+| Assigned view-only switch regression, after behavior fix | 1 passed, 460 filtered | Latest follow-up |
+| TUI unit suite | 461 passed | Latest follow-up |
+| Dashboard integration suite with isolated missing-Pi parent | 532 passed | Latest follow-up |
+| Real PTY assigned-child takeover/return acceptance | 1 passed, 34 filtered | Latest follow-up |
+| Latest fmt, diff check, workspace all-target/all-feature check and clippy | Passed | Latest follow-up |
 
 The live Usage case accepts the same-conversation sequence 100 → rebind 90 → 110 and retains 100 then advances to 110. The terminal case covers actual application PTYs, four mixed panes, focus/input routing, header double-click zoom/unzoom, divider reset, repeated resize and nonce-tagged kernel dimensions.
 
 The first parallel resource test run passed 10 tests and missed a macOS CPU tick in the 30 ms live sampling test; a focused retry passed, and the complete resource tests passed serially (11 passed). The Linux resource parser tests are cfg-excluded on this host.
 
-An earlier full all-target workspace run failed twenty tests; it is not reported as green. The affected fixtures and regressions were corrected and the suites above rerun. An un-escalated TUI run failed three Bridge process-group tests; the unchanged escalated suite passed all 460. Prior hosted runs are historical evidence only.
+An earlier full all-target workspace run failed twenty tests; it is not reported as green. The affected fixtures and regressions were corrected and the suites above rerun. The latest un-escalated TUI unit run passed 458 and failed three Bridge process-group tests: one witness was killed and two Bridge workers did not complete. The same full suite with process permissions passed all 461; the three failures were fixture process restrictions, and no assertions changed. Prior hosted runs are historical evidence only.
 
 ## Hosted verification
 
@@ -43,11 +49,19 @@ The local machine does not have `nextest`, so the exact test was run with `cargo
 
 ## Linux TUI fixture follow-up
 
-The next manual Linux job (`879`; raw log `/tmp/ovrcr-448-context/ci-linux-879.log`) passed the earlier Linux fixes, then failed compiling the TUI integration target because `tests/tui/main.rs` exposed `tests/support/live.rs` only on macOS. Sidebar tests at lines 922 and 1084 already use the shared Unix Server fixture on Linux. The module gate is now `cfg(unix)`; the root `deadline` module remains enabled on non-macOS and the palette's Linux import still resolves there. No tests were disabled and no production code changed.
+The next manual Linux job (`879`; raw log `/tmp/ovrcr-448-context/ci-linux-879.log`) passed the earlier Linux fixes, then failed compiling the TUI integration target because `tests/tui/main.rs` exposed `tests/support/live.rs` only on macOS. Sidebar tests at lines 922 and 1084 already use the shared Unix Server fixture on Linux. The module gate is `cfg(unix)`. The following Linux job (`533`; raw log `/tmp/ovrcr-448-context/ci-linux-533.log`) then found `deadline.rs` compiled twice: once at the TUI root and once inside the now-shared live fixture. The root module was removed and palette tests import the fixture's existing `live::wait_deadline` export. This keeps one deadline implementation and adds no lint suppression or test exclusions.
 
-On the available macOS host, both affected real-Server sidebar tests passed (1 each), and workspace all-target/all-feature check and clippy passed after the gate change. These checks do not establish Linux compilation; the corrected hosted Linux job remains pending.
+On the available macOS host, both affected real-Server sidebar tests passed (1 each), and workspace all-target/all-feature check and clippy passed after the gate change. The latest macOS checks also pass after removing the duplicate module. These checks do not establish Linux compilation; the corrected hosted Linux job remains pending.
 
 The intentional red run's task-owned Server PID `35051` was absent afterward, and its private temporary root `.tmpfJ8j0a` had been removed. Green live runs use the same `Live` fixture shutdown and temporary-directory cleanup.
+
+## Assigned view-only navigation follow-up
+
+Hosted macOS job `879` failed this real takeover acceptance in all three attempts. The same case failed its first two retries and passed the third on the later `533` PR shard. The failure screen retained `Loading agent` after the assigned child was selected. The readiness path cleared `agent_typing` only when `input_is_allowed()` was true; controller-owned view-only sessions never satisfy that input check. The pending marker therefore survived a ready view and kept navigation in the loading state.
+
+The new Dashboard regression failed before the fix because a ready view did not report completion for redraw. It now passes while asserting Browse mode, denied input, unchanged Controller ownership, and no PTY bytes or input requests before or after readiness. The fix clears the pending navigation marker once the exact view is ready and the input boundary has completed. It enters Terminal mode only when the existing input permission check succeeds. Assignment ownership, input guards, view-revision checks, and pending-input drain order remain in place.
+
+The focused real PTY acceptance passed after the fix (1 passed, 34 filtered). That test verifies the child receives no bytes before explicit takeover, accepts nonce-marked human input after takeover, and rejects paste after the return fence. Its task-owned temporary root was absent after exit; an escalated process check found none of the recorded fixture PIDs or process groups. Hosted macOS and Linux checks on the corrected source remain pending.
 
 Follow-up commands (all Rust commands used `CARGO_BUILD_JOBS=2`, the private target directory, and cleared inherited agent socket/token authority). The first exact-test command also ran before adding the Server fixture settings; the regression assertion then failed with `agents: []` (0 passed, 531 filtered), and passed after the fixture was seeded as shown here.
 
@@ -59,6 +73,12 @@ env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_D
 env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target rtk cargo clippy --workspace --all-targets --all-features -- -D warnings
 rtk cargo fmt --all -- --check
 rtk git diff --check
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target rtk cargo test -p ovrcr-tui assigned_view_only_agent_switch_settles_without_flushing_input -- --nocapture
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target OVRCR_PI_EXECUTABLE=/private/tmp/ovrcr-ci-missing-pi rtk proxy cargo test -p ovrcr-tui --lib
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target OVRCR_PI_EXECUTABLE=/private/tmp/ovrcr-ci-missing-pi rtk cargo test -p ovrcr --test tui -- --test-threads=2
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CI=true CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target OVRCR_PI_EXECUTABLE=/private/tmp/ovrcr-ci-missing-pi rtk proxy cargo test --all-features -p ovrcr --test terminal_acceptance assignment_control::assigned_child_is_view_only_until_explicit_dashboard_takeover_and_return -- --nocapture --test-threads=1
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target rtk cargo check --workspace --all-targets --all-features
+env -u OVRCR_AGENT_SOCKET -u OVRCR_AGENT_TOKEN CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/private/tmp/ovrcr-448-461/target rtk cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 ## Native verification and remaining limits

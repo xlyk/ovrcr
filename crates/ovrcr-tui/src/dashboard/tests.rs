@@ -3443,6 +3443,98 @@ fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
 }
 
 #[test]
+fn assigned_view_only_agent_switch_settles_without_flushing_input() {
+    use crate::protocol::{ControlOwner, Request, Response, ServerMessage, SessionKind};
+    use crossterm::event::Event;
+
+    let mut dashboard = assigned_control_dashboard();
+    let mut destination = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    destination.id = SessionId(13);
+    destination.run = SessionRunId(2);
+    destination.name = "assigned-agent".into();
+    destination.kind = SessionKind::Agent { name: "pi".into() };
+    let assignment = destination.assignment_control.as_mut().unwrap();
+    assignment.evidence.as_mut().unwrap().identity.session = Some(destination.id);
+    assignment.evidence.as_mut().unwrap().identity.run = Some(destination.run);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(destination);
+    let action = dashboard.confirm_agent_switch(SessionId(13), SessionRunId(2));
+    assert_eq!(action, super::DashboardAction::Redraw);
+    let request = dashboard
+        .drain_one_request()
+        .expect("agent switch requests its view");
+    let Request::SetView { view } = request.request else {
+        panic!("agent switch must request a view, not input");
+    };
+    assert!(dashboard.agent_typing.is_some());
+
+    // Model the production event loop: already-ready input is drained before
+    // the acknowledged view can finish switching. Input remains withheld.
+    dashboard.defer_agent_typing_until_input_boundary();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_WHILE_VIEW_ONLY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.drain_outbox().is_empty());
+
+    let pane = &view.panes[0];
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Screen {
+            session: pane.session,
+            run: pane.run,
+            revision: view.revision,
+            size: pane.size,
+            bytes: b"CHILD_RESULT_PUBLISHED".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        dashboard.agent_typing.is_some(),
+        "input boundary still owns cutover"
+    );
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_AT_READY_BOUNDARY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        dashboard.finish_agent_input_boundary(),
+        "settling the spinner must redraw even when mode stays Browse"
+    );
+
+    assert!(
+        dashboard.agent_typing.is_none(),
+        "ready view settles navigation"
+    );
+    assert_eq!(dashboard.mode, InputMode::Browse);
+    assert!(!dashboard.input_is_allowed());
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[1]
+            .assignment_control
+            .as_ref()
+            .unwrap()
+            .control
+            .owner,
+        ControlOwner::Controller,
+        "view readiness does not change assignment ownership"
+    );
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_AFTER_READY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.input_request(b"FORBIDDEN".to_vec(), 99).is_none());
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "no input request was queued"
+    );
+}
+
+#[test]
 fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     use super::keymap::{Action, KeyBinding, keymap};
     // Global shortcuts carry their modifiers when checking unique bindings.

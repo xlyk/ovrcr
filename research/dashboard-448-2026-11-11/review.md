@@ -10,4 +10,8 @@ The repeated component-index mapping now reuses the existing helper. The later b
 
 All three original findings are resolved: available Pi shows Idle while first Open is pending; Usage retains component high-water marks across same-identity rebinds; Shift-Tab is in the Panes group. The shared hover blocker is also resolved in both update paths. The missing-Pi guard and existing geometry regression remain covered. No spec blocker remains.
 
+## View-only navigation follow-up
+
+After the reviewed tree, `finish_agent_switch` was corrected to clear loading when an exact assigned view is ready and the input boundary is complete. It enters Terminal only if the existing input permission check allows it. Root's source review confirmed the target identity, revision checks, defer boundary, and input guard remain intact. The Dashboard regression and real PTY takeover acceptance cover this path; the native captures above do not. Independent Standards and Spec rechecks of this follow-up are pending.
+
 Native and hosted verification limits are reported separately in the acceptance and verification reports; a clean code review is not a claim that those checks ran.
