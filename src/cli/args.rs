@@ -120,7 +120,7 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
-    /// Create, read, send text or keys to, and close terminals.
+    /// Create and inspect terminal sessions; generic controls target Workspace sessions.
     #[command(visible_alias = "terminals")]
     Terminal {
         #[command(subcommand)]
@@ -145,9 +145,9 @@ pub(super) enum Command {
     },
     /// Stop a session's process group and keep its final screen.
     Kill { id: u64 },
-    /// Stop a running session with SIGSTOP.
+    /// Pause a running Workspace session with SIGSTOP; Operator conversations are not terminal targets.
     Pause { id: u64 },
-    /// Resume a paused session with SIGCONT.
+    /// Resume a paused Workspace session with SIGCONT; Operator conversations are not terminal targets.
     Resume { id: u64 },
     /// Inspect or remove a session record.
     Session {
@@ -369,6 +369,7 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         identity: Option<String>,
     },
+    /// Paste text into a Workspace session. Operator conversations reject generic input.
     Send {
         id: u64,
         #[arg(long)]
@@ -376,7 +377,7 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         no_submit: bool,
     },
-    /// Deliver one named key to the program, as a keyboard would. Refused while the Dashboard is focused on the session.
+    /// Deliver one named key to a Workspace session. Refused for Operator conversations and while the Dashboard is focused.
     #[command(
         after_help = "KEY is one character or a lowercase key name between colons, after optional ctrl-, alt-, shift- prefixes in that order: :j: :enter: :escape: :tab: :backspace: :space: :colon: :up: :down: :left: :right: :home: :end: :pageup: :pagedown: :insert: :delete: :f1:-:f12: :ctrl-c: :alt-down: :ctrl-shift-enter:. Shift applies only to named keys. Use `terminal send` to paste text."
     )]

@@ -739,7 +739,7 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
 }
 
 #[test]
-fn operator_capacity_refuses_without_consuming_prompt_or_run() {
+fn operator_uses_dedicated_capacity_at_fifty_workspace_sessions() {
     let mut live = LiveOperator::new();
     let c = live.open();
     for index in 0..50 {
@@ -773,25 +773,26 @@ fn operator_capacity_refuses_without_consuming_prompt_or_run() {
             )
             .unwrap();
     }
-    assert!(matches!(
-        live.request(Request::Operator(OperatorRequest::Submit {
-            conversation: c.id,
-            expected_run: SessionRunId(0),
-            text: "keep this draft".into(),
-            context: OperatorContext::default()
-        })),
-        Response::Error {
-            code: ErrorCode::Conflict,
-            ..
-        }
-    ));
+    let turn = live.submit(&c);
+    assert_eq!(turn.identity.run, SessionRunId(1));
+    live.ready(&c);
+
     let h = live.history(&c);
-    assert!(h.messages.is_empty());
-    assert!(h.conversation.worker_stopped);
-    assert!(h.conversation.current_turn.is_none());
+    assert!(h.messages.iter().any(|message| matches!(
+        &message.content,
+        OperatorMessageContent::User { text, .. } if text == "fixture prompt"
+    )));
+    assert_eq!(h.conversation.run, SessionRunId(1));
+    let current_turn = h.conversation.current_turn.unwrap();
+    assert_eq!(current_turn.identity, turn.identity);
+    assert_eq!(current_turn.state, OperatorTurnState::Running);
+    assert!(!h.conversation.worker_stopped);
+
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
     assert_eq!(
-        live.state.retained.lock().get(c.session).unwrap().run,
-        SessionRunId(0)
+        live.history(&c).conversation.current_turn.unwrap().state,
+        OperatorTurnState::Complete
     );
 }
 
