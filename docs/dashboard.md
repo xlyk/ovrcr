@@ -855,33 +855,34 @@ sessions by title.
 
 ### New agent session (`n`)
 
-Choose a registered checkout by its current branch in **Branch**, then choose an
-**Agent harness**, **Model**, and optional **Initial prompt**. Workspaces are
-grouped by project; the picker searches the displayed project and branch labels
-and excludes retained sessions without a registered checkout. It follows the
-same registered checkout when its branch label changes. Unavailable checkouts
-remain visible with their state; root and detached destinations are labeled.
-An eligible current feature checkout is preselected. If the current target is
-missing or cannot launch, the form keeps its identity when registered and asks
-you to choose deliberately; it never substitutes the first listed checkout.
-Start checks the selected checkout again, including its registration, path,
-Git identity and root protection. Register a project with `a` when no project
-is available.
+**Project** starts on the project from the selected row, or the first registered
+project when there is no row context. Change it to narrow **Branch** to that
+project's registered workspaces; switching projects clears the branch text.
+Unavailable checkouts remain visible with their state; root and detached
+destinations are labeled. Start checks an existing checkout's registration,
+path, Git identity and root protection. Register a project with `a` when no
+project is available.
 
-**Create new branch…** opens the branch-only child form. The parent session
-form stays suspended with its prompt, destination, focus, and explicit harness
-or model choices. `Esc` from the unsubmitted child returns to that exact form.
-After a successful, identity-matched branch readback, the new checkout becomes
-the selected destination; the Agent still starts only when you submit the
-parent form.
+Type into **Branch** to filter existing branches. When the text is not an exact
+existing branch, the picker offers **Create branch "<name>"** after any matching
+branches, or first when there are no matches. It is omitted for empty text and
+an exact existing branch. Choosing it creates a workspace under the project's
+workspace root, using the detected default branch as its base. **Advanced
+options** contains **Base** to choose another local branch. **Destination**
+shows the workspace folder and branch base before you start. The form creates
+the workspace first and starts the Agent only after that succeeds.
+For an explicit model, the form keeps the selection and draft, then verifies
+that model against the newly registered workspace. Submit again after the lookup
+confirms the choice; if it is unavailable, choose an available model or
+**Harness default**.
 
 The picker opens even when the current workspace cannot launch. This does not
 change the separate **Create terminal** form or its existing root-workspace
 guard. The form shows a compact destination line and, when another agent is
 already using that checkout, a compact shared-files notice. Harness and model
 defaults can follow the selected project; explicit choices, the prompt and
-advanced name stay intact when changing destinations. **Advanced options** is
-collapsed and contains the optional session name.
+advanced values stay intact when changing destinations. **Advanced options** is
+collapsed and contains the optional Base and session name.
 
 Choice lists stay collapsed while you move through the form. Press `Enter` or
 click a choice field to open its list; while it is open, `Enter` accepts the
@@ -990,19 +991,15 @@ valid and resolved.
 The worktree folder under the project root is derived from the branch name:
 `feature/auth-refresh` becomes `feature-auth-refresh`. Workspace creation uses
 the Server's automatic local-terminal setting. It never starts an Agent from
-this form. From New agent session, the child hides the parent form while keeping
-its prompt, branch choice, focus, and explicit harness/model choices; after a
-correlated successful receipt and matching fresh registry/hierarchy readback,
-the new branch is selected and the parent form returns. `Esc` before Submit
-restores that parent form. While creation or readback is pending, the child
-stays visible and cannot be dismissed or submitted again.
+this form. New agent session has its own Project and Branch fields for creating
+a branch and then starting an Agent.
 
 When `w` is used on its own, a verified branch returns to Browse with its
 workspace selected, even if the Server also created a local terminal. A normal
-`n` start submits the Agent only after the parent form is confirmed. `Create
-terminal` remains a separate command for an already registered workspace.
+`n` start submits the Agent only after the selected choices are confirmed.
+`Create terminal` remains a separate command for an already registered workspace.
 
-If creation fails before a workspace exists, the child keeps its branch and
+If creation fails before a workspace exists, this form keeps its branch and
 Base values for correction and retry with the same workspace identity. After a
 partial failure, the Dashboard performs a fresh Inspect and List before it
 allows another attempt; an uncertain or already-registered identity blocks
