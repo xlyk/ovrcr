@@ -33,6 +33,13 @@ Keystroke, Pause and Resume refusals for idle and running Operator rows. The
 existing delegation test preserves its capacity refusal at 50 Workspace sessions.
 Tests cleared `OVRCR_AGENT_SOCKET` and `OVRCR_AGENT_TOKEN`.
 
+Draft CI at `3083aac1` found an existing expectation that still requires Operator
+to be refused at 50 Workspace sessions:
+`operator_capacity_refuses_without_consuming_prompt_or_run`. Its intentional
+behavior update is pending. [Failed macOS shard](https://github.com/xlyk/ovrcr/actions/runs/43102686631/job/130797927456).
+The other three macOS shards, offline Cursor preflight and selection audit passed;
+Linux gates were skipped. These results apply only to that draft revision.
+
 ## Remaining acceptance
 
 - [ ] Leased and unleased worker lifecycle, same-run user turns, model updates,
