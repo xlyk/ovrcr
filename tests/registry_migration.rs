@@ -670,13 +670,13 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     let connection = Connection::open(&database).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut version: i64 = 0;
-    while version != 31 && std::time::Instant::now() < deadline {
+    while version != 32 && std::time::Instant::now() < deadline {
         version = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(version, 31, "the application upgrades schema 28 to 31");
+    assert_eq!(version, 32, "the application upgrades schema 28 to 32");
     let columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
         .unwrap()
@@ -696,6 +696,20 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
         .unwrap();
     assert!(turn_columns.contains(&"model_override".to_string()));
     assert!(turn_columns.contains(&"thinking_level".to_string()));
+    assert!(turn_columns.contains(&"started_unix_ms".to_string()));
+    assert!(turn_columns.contains(&"completed_unix_ms".to_string()));
+    let legacy_timing: Vec<(i64, Option<i64>, Option<i64>)> = connection
+        .prepare("SELECT id,started_unix_ms,completed_unix_ms FROM operator_turns ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        legacy_timing,
+        vec![(first_turn, None, None), (second_turn, None, None)],
+        "legacy turns stay explicitly untimed instead of inventing timestamps"
+    );
 
     let after: Vec<String> = connection
         .prepare("SELECT content FROM operator_messages ORDER BY ordinal")

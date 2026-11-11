@@ -56,21 +56,22 @@ The setting is shared by full chat and Quick message and survives model changes.
 
 ## One conversation in the Dashboard
 
-The sidebar starts with the first project. One fixed **Operator** dock sits below
-attention and quota, immediately above the Dashboard footer. Click anywhere on
-the row or press `o` in Browse to open the conversation with the composer focused.
-The title bar has no Operator controls.
+The sidebar shows attention first when needed, then a three-row **Operator**
+section before the project tree and quota. Click anywhere in the section or
+press `o` in Browse to open the conversation with the composer focused. The title
+bar has no Operator controls.
 
-The name stays on the left and one state appears on the right. A closed idle
-conversation says **Open chat**; an open idle conversation shows its selection
-marker without that prompt. **1 unread** takes priority until the loaded tail
-has been seen. Next come current activity or an exceptional outcome, then
-**Draft**, then the idle action. Sending, Responding, Waiting for a tool result,
-Stopping, Stop unconfirmed, failed and interrupted turns remain distinguishable.
-A reviewed successful turn returns to idle. Drawing only the dock never reviews
-a reply or starts a worker. Opening and unavailable states have their own labels.
-The dock hides with the sidebar and yields its row to preserve three tree lines
-in a very short window; `o` still works.
+Before the conversation has been opened, the section says **Off** when the Pi
+executable is available and **Not set up** when it is missing. Known Pi setup
+errors after opening also show **Not set up**. The section shows **Working** with elapsed time and current activity, **Reply ready · 1
+unread** with a reply preview, or **Idle** with the latest reply. The last reply
+and turn start times come from the Server's retained turn records; older turns
+without recorded times remain untimed. Drawing the section never reviews a reply
+or starts a worker. The `operator.sidebar` setting controls it and is on by
+default.
+
+Short sidebars drop section gaps, compact and then hide quota and Operator to
+preserve room for the tree. The section hides with the sidebar; `o` still works.
 
 **Quick message** is available in Commands and on `Ctrl-o` from Dashboard views.
 In Terminal mode `Ctrl-o` goes to the program (Oh My Pi expands tool output, Claude

@@ -1596,6 +1596,8 @@ mod tests {
             model: None,
             title: "Operator".into(),
             current_turn: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
         }
     }
     fn with_model(mut value: Summary) -> Summary {
