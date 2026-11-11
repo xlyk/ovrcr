@@ -229,7 +229,6 @@ impl ServerState {
             } => {
                 let _mutation = self.mutation_lock.lock().unwrap();
                 self.reject_if_stopping()?;
-                self.check_live_capacity()?;
                 self.validate_operator_context(&context)?;
                 // The accepted turn captures the current model and reasoning settings, so a
                 // later settings edit cannot change what this turn asked the worker to use.

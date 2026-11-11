@@ -659,8 +659,8 @@ impl ServerState {
     }
 
     pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
+        let session = self.session_for_terminal_control(id)?;
         self.reject_assigned_input(id)?;
-        let session = self.session_for_control(id)?;
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
         }
@@ -676,10 +676,10 @@ impl ServerState {
     /// Write one named key to `expected_run`. Focus is read here, at write
     /// time: the Dashboard owns the keyboard of the session it is focused on.
     pub fn keystroke(&self, id: SessionId, expected_run: SessionRunId, key: &str) -> Result<()> {
-        self.reject_assigned_input(id)?;
         let (key, modifiers) = ovrcr_terminal::key::parse_keystroke(key)
             .map_err(|message| lifecycle_error(ErrorCode::InvalidRequest, message))?;
-        let session = self.session_for_control(id)?;
+        let session = self.session_for_terminal_control(id)?;
+        self.reject_assigned_input(id)?;
         if session.run() != expected_run {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
@@ -949,7 +949,7 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.reject_archive_lifecycle(id)?;
-        let session = self.session_for_control(id)?;
+        let session = self.session_for_terminal_control(id)?;
         let control = session.set_paused(paused).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, control, refresh)
@@ -1215,7 +1215,10 @@ impl ServerState {
             .lock()
             .unwrap()
             .values()
-            .filter(|session| session.is_live())
+            .filter(|session| {
+                session.is_live()
+                    && session.summary().scope == ovrcr_protocol::SessionScope::Workspace
+            })
             .count()
             >= MAX_LIVE_SESSIONS
         {
@@ -1249,7 +1252,17 @@ impl ServerState {
         // Every failure in this preparation is provably before native spawn.
         // Keep that proof across allocation; later row/process absence proves nothing.
         let (record, socket, capability, events, assigned_input) = (|| -> Result<_> {
-            self.check_live_capacity()?;
+            let scope = self
+                .retained
+                .lock()
+                .get(id)
+                .map(|record| record.metadata.scope);
+            if !matches!(
+                scope,
+                Some(ovrcr_protocol::SessionScope::OperatorConversation { .. })
+            ) {
+                self.check_live_capacity()?;
+            }
             let cwd = self
                 .retained
                 .lock()
@@ -2249,6 +2262,24 @@ impl ServerState {
             ErrorCode::NotFound,
             format!("session {} not found", id.0),
         ))
+    }
+
+    fn session_for_terminal_control(&self, id: SessionId) -> Result<Arc<Session>> {
+        let scope = self
+            .retained
+            .lock()
+            .get(id)
+            .map(|record| record.metadata.scope);
+        if matches!(
+            scope,
+            Some(ovrcr_protocol::SessionScope::OperatorConversation { .. })
+        ) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "Operator conversations use native Stop (Ctrl-x); generic terminal control is unavailable",
+            ));
+        }
+        self.session_for_control(id)
     }
 
     fn refresh_session_locked(&self, id: SessionId) -> Result<()> {
