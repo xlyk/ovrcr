@@ -669,6 +669,7 @@ impl Dashboard {
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
             pane_layout: super::PaneLayout::Pane(0),
+            zoomed: false,
             handshake: Default::default(),
             navigation: Default::default(),
             agent_typing: None,
@@ -1392,6 +1393,7 @@ impl Dashboard {
             self.set_error("No other visible session to split");
             return false;
         };
+        self.zoomed = false;
         self.retarget(PaneChange::Split);
         let size = self.focused_size();
         let mut pane = super::PaneState::new(size);
@@ -1490,6 +1492,35 @@ impl Dashboard {
             .find(|session| *session != current && !already_shown.contains(session))
     }
 
+    pub(super) fn toggle_pane_zoom(&mut self) -> DashboardAction {
+        if self.action_session().is_none() || self.panes.len() < 2 {
+            return DashboardAction::Redraw;
+        }
+        self.zoomed = !self.zoomed;
+        self.apply_pane_sizes(self.outer_area);
+        DashboardAction::Redraw
+    }
+
+    pub(super) fn swap_focused_pane(&mut self, direction: super::PaneDirection) -> bool {
+        let Some(other) = self.pane_neighbor(direction) else {
+            return false;
+        };
+        if !self.pane_layout.swap_indices(self.focused_pane, other) {
+            return false;
+        }
+        for rect in self.pane_rects(self.outer_area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+            }
+        }
+        self.selected_container = None;
+        self.retarget(PaneChange::Focus);
+        true
+    }
+
     pub(crate) fn focus_pane(&mut self, index: usize) -> bool {
         if index >= self.panes.len() || index == self.focused_pane {
             return false;
@@ -1506,6 +1537,7 @@ impl Dashboard {
         }
         let removed = self.focused_pane;
         let sibling = self.pane_layout.sibling_first(removed).unwrap_or(removed);
+        self.zoomed = false;
         self.retarget(PaneChange::Close);
         let layout = std::mem::replace(&mut self.pane_layout, super::PaneLayout::Pane(0));
         self.pane_layout = layout.remove(removed).unwrap_or(super::PaneLayout::Pane(0));
@@ -3075,6 +3107,19 @@ impl Dashboard {
     }
 
     pub(super) fn pane_layout_rects(&self, area: Rect) -> super::PaneLayoutRects {
+        if self.zoomed {
+            return super::pane_layout_rects(
+                area,
+                &super::PaneLayout::Pane(self.focused_pane),
+                self.panes.len(),
+                self.focused_pane,
+                self.sidebar_preference(),
+            );
+        }
+        self.pane_layout_rects_unzoomed(area)
+    }
+
+    fn pane_layout_rects_unzoomed(&self, area: Rect) -> super::PaneLayoutRects {
         super::pane_layout_rects(
             area,
             &self.pane_layout,
@@ -3082,6 +3127,83 @@ impl Dashboard {
             self.focused_pane,
             self.sidebar_preference(),
         )
+    }
+
+    pub(super) fn pane_direction_refusal(
+        &self,
+        direction: super::PaneDirection,
+    ) -> Option<&'static str> {
+        if self.action_session().is_none() {
+            return Some("no session selected");
+        }
+        self.pane_neighbor(direction)
+            .is_none()
+            .then_some(match direction {
+                super::PaneDirection::Left => "no pane to the left",
+                super::PaneDirection::Down => "no pane below",
+                super::PaneDirection::Up => "no pane above",
+                super::PaneDirection::Right => "no pane to the right",
+            })
+    }
+
+    pub(super) fn pane_neighbor(&self, direction: super::PaneDirection) -> Option<usize> {
+        let layout = self.pane_layout_rects_unzoomed(self.outer_area);
+        let source = layout
+            .panes
+            .iter()
+            .find(|pane| pane.pane_index == self.focused_pane)
+            .copied()?;
+        let source = pane_bounds(source);
+        let mut candidates = layout
+            .panes
+            .into_iter()
+            .filter(|pane| pane.pane_index != self.focused_pane)
+            .filter_map(|pane| {
+                let rect = pane_bounds(pane);
+                let (overlap, distance) = match direction {
+                    super::PaneDirection::Left if rect.right() <= source.x => (
+                        source
+                            .bottom()
+                            .min(rect.bottom())
+                            .saturating_sub(source.y.max(rect.y)),
+                        source.x.saturating_sub(rect.right()),
+                    ),
+                    super::PaneDirection::Right if rect.x >= source.right() => (
+                        source
+                            .bottom()
+                            .min(rect.bottom())
+                            .saturating_sub(source.y.max(rect.y)),
+                        rect.x.saturating_sub(source.right()),
+                    ),
+                    super::PaneDirection::Up if rect.bottom() <= source.y => (
+                        source
+                            .right()
+                            .min(rect.right())
+                            .saturating_sub(source.x.max(rect.x)),
+                        source.y.saturating_sub(rect.bottom()),
+                    ),
+                    super::PaneDirection::Down if rect.y >= source.bottom() => (
+                        source
+                            .right()
+                            .min(rect.right())
+                            .saturating_sub(source.x.max(rect.x)),
+                        rect.y.saturating_sub(source.bottom()),
+                    ),
+                    _ => return None,
+                };
+                (overlap > 0).then_some((pane.pane_index, overlap, distance))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(
+            |(left_index, left_overlap, left_distance),
+             (right_index, right_overlap, right_distance)| {
+                right_overlap
+                    .cmp(left_overlap)
+                    .then_with(|| left_distance.cmp(right_distance))
+                    .then_with(|| left_index.cmp(right_index))
+            },
+        );
+        candidates.first().map(|(index, _, _)| *index)
     }
 
     pub(super) fn row_shows_close_mark(&self, row: &TreeRow) -> bool {
