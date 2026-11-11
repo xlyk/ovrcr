@@ -11413,6 +11413,24 @@ fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, 
     *index += 1;
 }
 
+fn assert_unchanged_after_fixture_input(
+    actual: &ovrcr::session::SessionSummary,
+    before: &ovrcr::session::SessionSummary,
+    message: &str,
+) {
+    // The callback driver sends real terminal input, which advances Last activity.
+    let activity = actual
+        .last_activity_unix_ms
+        .expect("input records activity");
+    assert!(
+        activity >= before.last_activity_unix_ms.unwrap_or(0),
+        "{message}"
+    );
+    let mut expected = before.clone();
+    expected.last_activity_unix_ms = Some(activity);
+    assert_eq!(actual, &expected, "{message}");
+}
+
 // Native completion closes the watch, but the shell marker does not acknowledge
 // Server-side lease release. Observe both within the marker's existing bound.
 fn pi_exit_and_wait_for_lease_release(fixture: &ControlFixture, session: SessionId) {
@@ -14566,7 +14584,11 @@ fn codex_supported_conversation_switches_rebind_ready_and_input_without_unread_a
         &mut index,
         &format!("SessionStart:{CONV_A}:boot:compact-source"),
     );
-    assert_eq!(fixture.session_summary(summary.id), before_compact);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before_compact,
+        "same-conversation compaction preserves reporting state",
+    );
 
     desktop_codex_callback(
         &fixture,
@@ -14817,10 +14839,10 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         "actual dashboard input changes unread only"
     );
     desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:a");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        reviewed,
-        "native duplicate does not reopen reviewed response"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &reviewed,
+        "native duplicate does not reopen reviewed response",
     );
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
@@ -16580,10 +16602,10 @@ fn omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer() {
     //    subscribe to it at all, so nothing about the binding or the generation moves.
     let compacted_from = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "session_compact");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        compacted_from,
-        "same-conversation compaction preserves the binding"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &compacted_from,
+        "same-conversation compaction preserves the binding",
     );
 
     // 7. A -> B -> A is a third generation, never the reuse of the first.
@@ -16757,10 +16779,10 @@ fn omp_source_gap_pauses_then_recovers_at_the_next_boundary() {
         &mut index,
         "tool_approval_resolved:c1:true",
     );
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        unmoved,
-        "a frame that never arrived changes nothing"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &unmoved,
+        "a frame that never arrived preserves reporting state",
     );
 
     // 5: the hole is visible, and what this reporter says is no longer certain.
@@ -17715,7 +17737,11 @@ fn claude_supported_conversation_switches_rebind_ready_and_input_without_unread_
     // Same-conversation compact invents no replacement.
     let before_compact = fixture.session_summary(summary.id);
     claude_activity_callback(&fixture, summary.id, &mut index, "compact");
-    assert_eq!(fixture.session_summary(summary.id), before_compact);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before_compact,
+        "same-conversation compaction preserves reporting state",
+    );
 
     // Unsupported bare fork → persistent unavailable warning; Claude keeps running.
     claude_activity_callback(&fixture, summary.id, &mut index, "branch");
@@ -17851,7 +17877,11 @@ fn omp_ready_alerts_once_and_creates_unread() {
     assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
     // The cycle is closed: a repeated end reaches no open cycle, so nothing is republished.
     pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
-    assert_eq!(fixture.session_summary(summary.id), first);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &first,
+        "a duplicate end changes only the fixture input activity",
+    );
     dashboard.wait_named_calls(1, summary.id, "omp-hooks");
     dashboard.detach();
 }
