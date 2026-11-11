@@ -1,0 +1,21 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ CONSIGINT ────────────────────────────│Operator · pi · fixture/gpt-5-mini · running                                           [Reasoning low ▾ Ctrl-t]  [Stop Ctrl-x]
+  󰘬 main                          root │❯ You                                                                                                                         
+     $ lo
+~		11 text (settable)  CONSIGINT ────────────────────────────│Operator · pi · fixture/gpt-5-mini · running                                           [Reasoning low ▾ Ctrl-t]  [Stop Ctrl-x]
+~		12 text (settable)   󰘬 main                          root │❯ You                                                                                                                         
+~		13 text (settable)      $ local                           │  ▸ Context · consigint / main / #1 run 1                                                                                     
+~		14 text (settable)   󰘬 gui-consigint-auth-handoff         │  Verify reasoning controls                                                                                                   
+~		16 text (settable)      - review auth handoff    grok:4.6 ││ Operator                                                                                                                    
+~		17 text (settable)   󰘬 gui-consigint-worktree-lifecycle   ││ REASONING_FIXTURE_READY                                                                                                     
+~		18 text (settable)      $ local                           │  ⠧ Responding                                                                                                                
+~		65 text (settable) Codex · checking                       │ Managing consigint / main / #1 run 1                                                                                         
+~		66 text (settable)  Grok   wk 0% exhausted                │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+~		67 text (settable) Cursor · usage off                     │ > ▏                                                                                                                          
+~		69 text (settable) ▌ Operator                ⠧ Responding │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+~		70 text (settable) OPERATOR  Shift-Enter Newline  Ctrl-g Browse  Ctrl-x Stop selected turn                                                                                               
+The focused UI element is 9 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ CONSIGINT ────────────────────────────│Operator · pi · fixture/gpt-5-mini · running                                           [Reasoning low ▾ Ctrl-t]  [Stop Ctrl-x]
+  󰘬 main                          root │❯ You                                                                                                                         
+     $ lo
