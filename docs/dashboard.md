@@ -422,7 +422,9 @@ with a branch glyph and the current branch name in bold. The repository-root
 workspace also shows a `root` marker. A warning marker appears when that
 checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
-stay on that workspace. A session row starts with a status
+stay on that workspace. Folded project and workspace rows show counts before
+their fold marker: `?N` sessions needing input and `✓N` ready Unread responses.
+A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a

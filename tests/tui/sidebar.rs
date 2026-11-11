@@ -20,6 +20,56 @@ fn sidebar_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
+fn set_attention(session: &mut SessionSummary, state: AgentActivity, input: bool, unread: bool) {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputKind,
+        InputRequest, ReadyObservation, ReporterHealth, SampleQuality,
+    };
+
+    let binding = AgentBinding {
+        provider: AgentProvider::Codex,
+        invocation: format!("fixture-{}", session.id.0),
+        conversation: format!("conversation-{}", session.id.0),
+        generation: 1,
+    };
+    session.phase = SessionPhase::Running;
+    session.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "codex".into(),
+    };
+    session.agent = Some(AgentSnapshot {
+        binding: binding.clone(),
+        activity: Some(ActivitySample {
+            state,
+            quality: SampleQuality::Observed,
+            turn: Some("fixture-turn".into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 0,
+        health_revision: 1,
+        input_requests: if input {
+            vec![InputRequest {
+                id: "question:fixture".into(),
+                kind: InputKind::Confirm,
+            }]
+        } else {
+            Vec::new()
+        },
+        input_revision: u64::from(input),
+        native_control: None,
+        native_control_revision: 0,
+    });
+    session.unread = unread.then_some(ReadyObservation {
+        binding,
+        turn: Some("fixture-turn".into()),
+        activity_revision: 1,
+    });
+}
+
 fn enter_terminal(dashboard: &mut Dashboard) {
     let _ = dashboard.key(KeyCode::Enter);
 }
@@ -1975,6 +2025,342 @@ fn enter_on_an_unready_session_refuses_and_stays_in_browse() {
     assert_ne!(
         dashboard.key(KeyCode::Char('z')),
         DashboardAction::PtyBytes(b"z".to_vec())
+    );
+}
+
+#[test]
+fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts() {
+    let mut hierarchy = fixture_hierarchy();
+    let project = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap();
+    let auth = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "auth")
+        .unwrap();
+    set_attention(
+        &mut auth.sessions[0],
+        AgentActivity::ResponseReady,
+        false,
+        true,
+    );
+    set_attention(&mut auth.sessions[1], AgentActivity::Busy, true, false);
+    let mut ready = auth.sessions[0].clone();
+    let mut input = auth.sessions[1].clone();
+    let lifecycle = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "lifecycle")
+        .unwrap();
+    set_attention(&mut lifecycle.sessions[0], AgentActivity::Busy, false, true);
+
+    let mut workspace_dashboard = dashboard_fixture();
+    workspace_dashboard.install_hierarchy(hierarchy.clone());
+    let area = Rect::new(0, 0, 120, 40);
+    let click = |dashboard: &mut Dashboard, column, row| {
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        )
+    };
+    assert_eq!(
+        click(&mut workspace_dashboard, 2, 2),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 2).contains("?1 ✓1 ▸ 2"),
+        "folded workspace shows each active kind once: {}",
+        sidebar_row(&terminal, 2)
+    );
+    let buffer = terminal.backend().buffer();
+    let input_glyph = (0..39)
+        .find(|x| buffer[(*x, 2)].symbol() == "?")
+        .expect("Input count glyph");
+    let ready_glyph = (0..39)
+        .find(|x| buffer[(*x, 2)].symbol() == "✓")
+        .expect("Ready count glyph");
+    assert_eq!(buffer[(input_glyph, 2)].fg, Color::Rgb(249, 226, 175));
+    assert_eq!(buffer[(ready_glyph, 2)].fg, Color::Rgb(148, 226, 213));
+
+    let mut project_dashboard = dashboard_fixture();
+    project_dashboard.install_hierarchy(hierarchy);
+    assert_eq!(
+        click(&mut project_dashboard, 0, 1),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project_dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 1).contains("?1 ✓1 ▸ 2 ws"),
+        "folded project counts all descendant sessions: {}",
+        sidebar_row(&terminal, 1)
+    );
+
+    ready.unread = None;
+    workspace_dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+        Box::new(ready),
+    )));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
+        .unwrap();
+    let row = sidebar_row(&terminal, 2);
+    assert!(row.contains("?1"), "open Input remains counted: {row}");
+    assert!(!row.contains("✓1"), "reviewed Ready disappears: {row}");
+
+    input.agent.as_mut().unwrap().input_requests.clear();
+    input
+        .agent
+        .as_mut()
+        .unwrap()
+        .activity
+        .as_mut()
+        .unwrap()
+        .state = AgentActivity::Idle;
+    workspace_dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+        Box::new(input),
+    )));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
+        .unwrap();
+    let row = sidebar_row(&terminal, 2);
+    assert!(
+        !row.contains("?1") && !row.contains("✓1"),
+        "closing the last request removes folded counts: {row}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_server_dashboard_renders_reported_unread_input_and_folded_counts() {
+    use crate::live::{self, Live};
+    use ovrcr::protocol as p;
+    use std::time::{Duration, Instant};
+
+    fn create_agent(live: &Live, name: &str) -> SessionSummary {
+        let Response::CreatedSession(session) = live.request(Request::CreateSession(
+            p::CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: name.into(),
+                label: None,
+                argv: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!(
+                        "umask 077; printf '%s' \"$OVRCR_HOOK_TOKEN\" > '{}'; while :; do sleep 1; done",
+                        live.root.path().join(format!("{name}.capability")).display()
+                    )
+                    .into(),
+                ],
+                kind: p::SessionKind::Agent {
+                    name: "fixture-agent".into(),
+                },
+            },
+        ))
+        else {
+            panic!("live fixture Agent session was not created");
+        };
+        *session
+    }
+
+    fn report(
+        live: &Live,
+        session: &SessionSummary,
+        input: bool,
+    ) -> std::os::unix::net::UnixStream {
+        let path = live
+            .root
+            .path()
+            .join(format!("{}.capability", session.name));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "Agent child did not write its capability"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let token = std::fs::read_to_string(path).unwrap();
+        assert_eq!(token.len(), 64, "fixture capability shape");
+        let capability_bytes = std::array::from_fn(|index| {
+            u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).unwrap()
+        });
+        let capability = p::AgentSecret(capability_bytes);
+        let mut admission = p::connect_server(&live.socket).unwrap();
+        admission
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let Response::AgentOperation(p::AgentOperationResult::Reserved(reservation)) =
+            p::client::request(
+                &mut admission,
+                1,
+                Request::ReserveAgent(p::ReserveAgent {
+                    pi_resume: None,
+                    session: session.id,
+                    capability: capability.clone(),
+                    operation: "sidebar-fixture-reserve".into(),
+                    expected_epoch: session.agent_epoch,
+                    invocation: format!("fixture-{}", session.id.0),
+                    provider: p::AgentProvider::Codex,
+                }),
+            )
+            .unwrap()
+        else {
+            panic!("live fixture reporter was not reserved");
+        };
+        let auth = p::SupervisorAuth {
+            session: session.id,
+            lease: reservation.lease,
+        };
+        let mut supervisor = p::connect_server(&live.socket).unwrap();
+        supervisor
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        assert_eq!(
+            p::client::request(&mut supervisor, 1, Request::SupervisorHello(auth.clone())).unwrap(),
+            Response::Ok
+        );
+        drop(admission);
+        let Response::AgentOperation(p::AgentOperationResult::Bound(binding)) = p::client::request(
+            &mut supervisor,
+            2,
+            Request::Supervisor(p::SupervisorRequest {
+                auth,
+                operation: "sidebar-fixture-bind".into(),
+                command: p::AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("conversation-{}", session.id.0),
+                },
+            }),
+        )
+        .unwrap() else {
+            panic!("live fixture reporter was not bound");
+        };
+        let observation = if input {
+            p::AgentObservation::Input(vec![p::InputRequest {
+                id: "question:sidebar-fixture".into(),
+                kind: p::InputKind::Confirm,
+            }])
+        } else {
+            p::AgentObservation::Activity(p::ActivitySample {
+                state: p::AgentActivity::ResponseReady,
+                quality: p::SampleQuality::Observed,
+                turn: Some("fixture-turn".into()),
+            })
+        };
+        assert_eq!(
+            live.request(Request::AgentReport(p::AgentReport {
+                session: session.id,
+                capability: capability_bytes,
+                sequence: None,
+                update: p::AgentUpdate::Provider(p::ProviderReport {
+                    binding,
+                    revision: 1,
+                    observation,
+                }),
+            })),
+            Response::Ok
+        );
+        supervisor
+    }
+
+    let live = Live::binary();
+    live.ready("feature/sidebar-unread");
+    let unread = create_agent(&live, "live-unread");
+    let input = create_agent(&live, "live-input");
+    let _leases = [report(&live, &unread, false), report(&live, &input, true)];
+
+    let Response::Hierarchy(current) = live.request(Request::List) else {
+        panic!("live session list did not return hierarchy");
+    };
+    let published_input = current
+        .projects
+        .iter()
+        .flat_map(|project| &project.workspaces)
+        .flat_map(|workspace| &workspace.sessions)
+        .find(|session| session.id == input.id)
+        .expect("live input session");
+    assert_eq!(
+        published_input
+            .agent
+            .as_ref()
+            .expect("live reporter snapshot")
+            .input_requests
+            .len(),
+        1,
+        "Server published the open Input request"
+    );
+
+    let mut stream = p::connect_server(&live.socket).unwrap();
+    let Response::Hierarchy(hierarchy) =
+        p::client::request(&mut stream, 900_000, Request::DashboardHello).unwrap()
+    else {
+        panic!("live Dashboard handshake did not return hierarchy");
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(unread.id);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    for name in ["live-unread", "live-input"] {
+        let row = (0..20)
+            .find(|y| {
+                (0..39)
+                    .map(|x| terminal.backend().buffer()[(x, *y)].symbol())
+                    .collect::<String>()
+                    .contains(name)
+            })
+            .unwrap_or_else(|| panic!("live session row {name} was not drawn"));
+        let title = &terminal.backend().buffer()[(7, row)];
+        assert_eq!(title.fg, Color::Rgb(205, 214, 244), "{name}");
+        assert!(
+            title.modifier.contains(Modifier::BOLD),
+            "{name}: row={} title={title:?}",
+            sidebar_row(&terminal, row)
+        );
+    }
+    let workspace_row = (0..20)
+        .find(|y| sidebar_row(&terminal, *y).contains("feature/sidebar-unread"))
+        .expect("live fixture workspace row");
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: workspace_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        DashboardAction::Redraw
+    );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, workspace_row).contains("?1 ✓1 ▸ 3"),
+        "live folded workspace includes Server-reported states: {}",
+        sidebar_row(&terminal, workspace_row)
     );
 }
 

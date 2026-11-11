@@ -1,3 +1,4 @@
+use super::attention::Attention;
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{
     find_session, find_workspace, history_page_covers, workspace_disambiguator, workspace_heading,
@@ -1046,17 +1047,30 @@ fn tree_line_text(
             let title = clip_text(&full_title, width);
             // A clipped title has no room for a rule; a wide glyph can leave one stray cell.
             let rule = if title == full_title { "─" } else { " " };
-            let right = if dashboard.collapsed_projects.contains(name) {
-                let count = dashboard
+            let mut right = Vec::new();
+            if dashboard.collapsed_projects.contains(name)
+                && let Some(project) = dashboard
                     .hierarchy
                     .projects
                     .iter()
                     .find(|project| project.name == *name)
-                    .map_or(0, |project| project.workspaces.len());
-                vec![Span::styled(format!(" ▸ {count} ws "), muted)]
-            } else {
-                Vec::new()
-            };
+            {
+                let counts = folded_attention_counts(
+                    project
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| &workspace.sessions),
+                );
+                let marker = if counts.is_empty() { " ▸" } else { "▸" };
+                if !counts.is_empty() {
+                    right.push(Span::raw(" "));
+                }
+                right.extend(counts);
+                right.push(Span::styled(
+                    format!("{marker} {} ws ", project.workspaces.len()),
+                    muted,
+                ));
+            }
             (
                 vec![Span::styled(
                     title,
@@ -1104,6 +1118,9 @@ fn tree_line_text(
             }
             if collapsed {
                 let count = workspace.map_or(0, |workspace| workspace.sessions.len());
+                if let Some(workspace) = workspace {
+                    right.extend(folded_attention_counts(&workspace.sessions));
+                }
                 right.push(Span::styled(format!("▸ {count} "), muted));
             }
             if close_mark {
@@ -1241,7 +1258,11 @@ fn tree_line_text(
                 && matches!(session.kind, crate::protocol::SessionKind::Terminal)
             {
                 let (glyph, glyph_color) = shell_glyph(&status);
-                let subtext = Style::default().fg(SUBTEXT());
+                let subtext = if status.unread.is_some() || status.has_open_input_request {
+                    Style::default().fg(TEXT()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(SUBTEXT())
+                };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
@@ -1261,7 +1282,9 @@ fn tree_line_text(
             } else {
                 let (exited, glyph, glyph_color) = (status.exited, status.glyph, status.color);
                 let mut name_style = Style::default().fg(TEXT());
-                if exited {
+                if status.unread.is_some() || status.has_open_input_request {
+                    name_style = name_style.add_modifier(Modifier::BOLD);
+                } else if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
                 // With the column stacked, every label is on its own line, even one that fits.
@@ -1329,6 +1352,27 @@ fn tree_line_text(
         }
     };
     (compose_row(left, fill, right, width, selected), style)
+}
+
+fn folded_attention_counts<'a>(
+    sessions: impl IntoIterator<Item = &'a SessionSummary>,
+) -> Vec<Span<'static>> {
+    let (input, ready) = sessions
+        .into_iter()
+        .filter_map(SessionStatus::attention)
+        .fold((0, 0), |(input, ready), attention| match attention {
+            Attention::Input => (input + 1, ready),
+            Attention::Ready => (input, ready + 1),
+        });
+    let mut spans = Vec::new();
+    for (count, glyph, color) in [(input, "?", YELLOW()), (ready, "✓", TEAL())] {
+        if count > 0 {
+            spans.push(Span::styled(glyph, Style::default().fg(color)));
+            spans.push(Span::styled(count.to_string(), Style::default().fg(TEXT())));
+            spans.push(Span::raw(" "));
+        }
+    }
+    spans
 }
 
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,
