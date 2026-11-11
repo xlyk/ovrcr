@@ -1790,13 +1790,24 @@ mod tests {
     }
 
     #[test]
-    fn operator_is_one_navigation_row_and_opens_the_singleton_directly() {
+    fn operator_section_opens_the_singleton_directly() {
         let mut d = dashboard();
         let rects = d.sidebar_rects(d.outer_area);
         let row = rects.operator;
-        assert_eq!(row.height, 1, "exactly one fixed navigation row");
-        assert_eq!(row.bottom(), 23, "the dock is the sidebar's last line");
-        assert_eq!(rects.tree.y, 1, "the first project starts under the title");
+        assert_eq!(
+            rects.attention.height, 0,
+            "no counts means no attention row"
+        );
+        assert_eq!(
+            row.height, 3,
+            "the section has title, status and detail rows"
+        );
+        assert_eq!(row.y, 1, "the section starts below the title");
+        assert_eq!(
+            rects.tree.y,
+            row.bottom() + 1,
+            "one blank row follows Operator"
+        );
         let screen = draw(&mut d, 140, 24);
         assert!(screen.contains("Operator"), "{screen}");
         for removed in ["[+]", "▸", "[x]", "Chats", "New Conversation"] {
@@ -2571,28 +2582,38 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_geometry_reserves_one_row_and_has_no_close_target() {
+    fn sidebar_geometry_shrinks_the_operator_section_without_a_close_target() {
         let mut d = dashboard();
         opened(&mut d, busy());
-        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 16), (40, 12)] {
+        for (cols, rows, operator_height) in [
+            (140, 40, 3),
+            (100, 24, 3),
+            (80, 24, 0),
+            (60, 16, 0),
+            (40, 12, 0),
+        ] {
             d.install_area(Rect::new(0, 0, cols, rows));
             let rects = d.sidebar_rects(d.outer_area);
-            assert!(rects.operator.height <= 1, "one row at {cols}x{rows}");
-            if rects.operator.height == 1 {
-                assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
+            assert_eq!(
+                rects.operator.height, operator_height,
+                "Operator follows the section shrink order at {cols}x{rows}"
+            );
+            if operator_height == 0 {
+                assert!(
+                    rects.operator.is_empty(),
+                    "the on-demand sidebar hides at {cols}x{rows}"
+                );
+                continue;
             }
             assert_eq!(
-                rects.operator.bottom(),
-                rows - 1,
-                "Operator stays just above the footer at {cols}x{rows}"
+                rects.operator.y,
+                rects.attention.bottom() + u16::from(rects.attention.height > 0),
+                "Operator follows attention and its optional blank row at {cols}x{rows}"
             );
-            assert_eq!(
-                rects.tree.y, 1,
-                "the tree starts under the title at {cols}x{rows}"
-            );
-            assert_eq!(rects.tree.bottom(), rects.attention.y);
-            assert_eq!(rects.attention.bottom(), rects.quota.y);
-            assert_eq!(rects.quota.bottom(), rects.operator.y);
+            assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
+            assert!(rects.operator.bottom() <= rects.tree.y);
+            assert!(rects.tree.bottom() <= rects.quota.y);
+            assert_eq!(rects.quota.bottom(), rows - 1);
         }
         d.install_area(Rect::new(0, 0, 140, 24));
         let row = d.sidebar_rects(d.outer_area).operator;

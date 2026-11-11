@@ -1087,7 +1087,7 @@ mod layout_tests {
         let area = Rect::new(0, 0, 120, 30);
         dashboard.install_area(area);
         let line = dashboard.sidebar_rects(area).quota;
-        assert_eq!((line.y, line.height), (22, 6));
+        assert_eq!((line.y, line.height), (23, 6));
         let click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: line.x + 2,
@@ -1102,7 +1102,7 @@ mod layout_tests {
     }
 
     #[test]
-    fn the_strip_then_the_quota_section_yield_to_the_operator_row_and_three_tree_lines() {
+    fn the_attention_strip_and_operator_yield_to_quota_while_preserving_three_tree_lines() {
         let mut dashboard = Dashboard::new(TerminalSize {
             rows: 30,
             cols: 120,
@@ -1166,20 +1166,24 @@ mod layout_tests {
             (1, 0, 3),
             "the strip outranks the quota section"
         );
-        assert_eq!(rects(&dashboard, 4), (0, 0, 3));
+        assert_eq!(
+            rects(&dashboard, 4),
+            (1, 0, 3),
+            "attention counts remain visible at the minimum sidebar height"
+        );
         let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
         assert_eq!(
-            full.tree.y, 1,
-            "the strip never moves the tree off the title"
+            full.attention.y, 1,
+            "the attention strip starts below the title"
         );
-        assert_eq!(full.tree.bottom(), full.attention.y);
         assert_eq!(
-            full.attention.bottom(),
-            full.quota.y,
-            "directly above the quota section"
+            full.operator.y,
+            full.attention.bottom() + 1,
+            "one blank row follows the attention strip"
         );
-        assert_eq!(full.quota.bottom(), full.operator.y);
-        assert_eq!(full.operator.bottom(), 29);
+        assert_eq!(full.tree.y, full.operator.bottom() + 1);
+        assert_eq!(full.tree.bottom(), full.quota.y);
+        assert_eq!(full.quota.bottom(), 29);
         dashboard.toggle_sidebar();
         assert!(
             dashboard

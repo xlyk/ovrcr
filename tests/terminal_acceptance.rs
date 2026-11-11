@@ -1943,6 +1943,8 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
             }
         }
     };
+    let browse_screen =
+        |screen: &str| screen.contains("BROWSE") || screen.contains("No visible Agents");
     dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"v\r")?;
@@ -1985,6 +1987,49 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         "expected four pane headers before size probes: {}",
         dashboard.rendered()
     );
+
+    // Resize one side with the keyboard and ask the real child PTYs for their
+    // kernel dimensions. The focused pane grows by two columns while its
+    // sibling side shrinks; resizing from the opposite side restores both.
+    dashboard.send(b"\x1b[<0;43;2M")?;
+    wait_focused_ready(&mut dashboard, "waiting")
+        .context("focusing waiting for keyboard resize")?;
+    dashboard.send(b"\x07")?;
+    dashboard
+        .wait_until(browse_screen, wait_deadline())
+        .context("returning to Browse before keyboard resize")?;
+    dashboard.send(b">")?;
+    enter_focused_terminal(&mut dashboard)?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard
+        .wait_for(b"SIZE_ACK_16 41", wait_deadline())
+        .context("waiting for the widened waiting PTY")?;
+    dashboard.send(b"\x07")?;
+    dashboard
+        .wait_until(browse_screen, wait_deadline())
+        .context("returning to Browse before focusing mouse")?;
+
+    dashboard.send(b" sl")?;
+    wait_focused_ready(&mut dashboard, "mouse").context("focusing mouse after divider resize")?;
+    enter_focused_terminal(&mut dashboard)?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard
+        .wait_for(b"SIZE_ACK_16 38", wait_deadline())
+        .context("waiting for the narrowed mouse PTY")?;
+    dashboard.send(b"\x07")?;
+    dashboard
+        .wait_until(browse_screen, wait_deadline())
+        .context("returning to Browse before restoring divider")?;
+
+    dashboard.send(b">")?;
+    enter_focused_terminal(&mut dashboard)?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard
+        .wait_for(b"SIZE_ACK_16 40", wait_deadline())
+        .context("waiting for the restored mouse PTY")?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_until(browse_screen, wait_deadline())?;
+    dashboard.wait_until(restored, wait_deadline())?;
 
     // The tree is [waiting/fourth] on the left and [mouse/third] on the right.
     // Query each actual child PTY; the view labels alone do not prove a resize.
