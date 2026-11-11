@@ -21,6 +21,7 @@ pub(crate) mod picker;
 mod quota;
 mod ready;
 mod render;
+mod resources;
 mod row_menu;
 mod settings;
 mod settings_editor;
@@ -41,6 +42,7 @@ pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
+pub use resources::{CpuCounters, MachineReadings, MachineResourceSource, MemoryCounters};
 pub use settings::{LaunchChoice, Settings};
 pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
@@ -137,6 +139,7 @@ pub(super) struct SidebarRects {
     pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
+    pub resources: Rect,
     pub quota: Rect,
 }
 
@@ -569,6 +572,7 @@ pub struct Dashboard {
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
+    resources: resources::Sampler,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
     transcript: transcript::View,

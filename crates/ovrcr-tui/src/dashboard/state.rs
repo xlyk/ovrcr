@@ -657,6 +657,7 @@ impl Dashboard {
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
             quotas: Some(QuotaSnapshot::default()),
+            resources: super::resources::Sampler::system(),
             details: None,
             transcript: Default::default(),
             settings_report: None,
@@ -747,8 +748,10 @@ impl Dashboard {
 
     pub fn install_settings(&mut self, settings: Settings) {
         let sidebar_view_changed = self.settings.sidebar_view != settings.sidebar_view;
+        let resource_sampling_enabled = settings.resources.sidebar;
         self.theme = crate::theme::ThemeTokens::for_id(settings.theme);
         self.settings = settings;
+        self.set_resource_sampling_enabled(resource_sampling_enabled);
         if sidebar_view_changed {
             self.ensure_selection_visible(&self.visible_rows());
         }
@@ -778,6 +781,7 @@ impl Dashboard {
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
         self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
+        self.set_resource_sampling_enabled(self.settings.resources.sidebar);
         if before.sidebar_view != self.settings.sidebar_view {
             self.ensure_selection_visible(&self.visible_rows());
         }

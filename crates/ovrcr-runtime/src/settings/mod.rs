@@ -504,6 +504,12 @@ impl Loader<'_> {
             }
             self.unknown(operator, "operator.");
         }
+        if let Some(mut resources) = self.take::<toml::Table>(table, "resources") {
+            if let Some(value) = self.take::<bool>(&mut resources, "resources.sidebar") {
+                self.accept("resources.sidebar", &mut settings.resources.sidebar, value);
+            }
+            self.unknown(resources, "resources.");
+        }
         self.unknown(std::mem::take(table), "");
     }
 

@@ -212,6 +212,7 @@ fn dashboard_loop<W: Write>(
         first_frame = false;
         if pending_redraw && Instant::now() >= next_frame_redraw {
             update_mouse_capture(terminal, dashboard, mouse_enabled)?;
+            dashboard.sample_resources_if_due(Instant::now());
             dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -318,6 +319,7 @@ fn dashboard_loop<W: Write>(
                 }
                 DashboardBoundary::Work | DashboardBoundary::Idle => {}
             }
+            dashboard.sample_resources_if_due(Instant::now());
             dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
