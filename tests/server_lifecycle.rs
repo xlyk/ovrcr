@@ -924,6 +924,347 @@ fn last_activity_tracks_agent_state_and_input_but_not_output_or_repeated_state()
 }
 
 #[test]
+fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    fixture.ready("agent-hooks");
+    let local = fixture.only_session_id();
+    let first = fixture.create_hook_child("usage-first", "usage-first");
+    let second = fixture.create_hook_child("usage-second", "usage-second");
+
+    let bind = |identity: HookIdentity, label: &str| {
+        let session = identity.session;
+        let mut stream = connect_server(&fixture.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let response = client::request(
+            &mut stream,
+            1,
+            Request::ReserveAgent(ovrcr::protocol::ReserveAgent {
+                session,
+                capability: ovrcr::protocol::AgentSecret(identity.capability),
+                operation: format!("usage-reserve-{label}"),
+                expected_epoch: 0,
+                pi_resume: None,
+                invocation: format!("usage-invocation-{}", session.0),
+                provider: ovrcr::protocol::AgentProvider::Codex,
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Reserved(reservation)) =
+            response
+        else {
+            panic!("agent reservation failed: {response:?}");
+        };
+        let response = client::request(
+            &mut stream,
+            2,
+            Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                auth: ovrcr::protocol::SupervisorAuth {
+                    session,
+                    lease: reservation.lease,
+                },
+                operation: format!("usage-bind-{label}"),
+                command: ovrcr::protocol::AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("usage-conversation-{}", session.0),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Bound(binding)) =
+            response
+        else {
+            panic!("agent binding failed: {response:?}");
+        };
+        (binding, stream)
+    };
+    let (first_binding, _first_supervisor) = bind(first, "first");
+    let (second_binding, _second_supervisor) = bind(second, "second");
+
+    let mut dashboard_stream = connect_server(&fixture.socket).unwrap();
+    dashboard_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut dashboard_stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let hello = read_frame::<ServerMessage>(&mut dashboard_stream).unwrap();
+    let ServerMessage::Response {
+        response: Response::Hierarchy(snapshot),
+        ..
+    } = hello
+    else {
+        panic!("Dashboard hello did not include hierarchy: {hello:?}");
+    };
+    assert_eq!(snapshot.usage.total_tokens, 0);
+    let server_started = snapshot.usage.server_started_unix_ms;
+    assert!(server_started > 0);
+
+    let mut dashboard = ovrcr::tui::Dashboard::new(ovrcr::protocol::TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(snapshot);
+
+    let metrics = |scope: ovrcr::protocol::UsageScope, input: Option<u64>, output: Option<u64>| {
+        ovrcr::protocol::MetricsSample {
+            model: Some("usage-fixture".into()),
+            context: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: ovrcr::protocol::SampleQuality::Observed,
+                },
+                source: "usage fixture".into(),
+            },
+            usage: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::UsageTotals {
+                    scope,
+                    coverage: ovrcr::protocol::UsageCoverage::Complete,
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_read_tokens: input.map(|tokens| tokens / 2),
+                    cache_write_tokens: Some(0),
+                    reasoning_output_tokens: output.map(|tokens| tokens / 2),
+                },
+                source: "usage fixture".into(),
+            },
+            cost: ovrcr::protocol::Measurement {
+                value: None,
+                source: "usage fixture".into(),
+            },
+        }
+    };
+    let report = |identity: HookIdentity,
+                  binding: &ovrcr::protocol::AgentBinding,
+                  revision: u64,
+                  scope: ovrcr::protocol::UsageScope,
+                  input: Option<u64>,
+                  output: Option<u64>| {
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: None,
+            update: AgentUpdate::Provider(ovrcr::protocol::ProviderReport {
+                binding: binding.clone(),
+                revision,
+                observation: ovrcr::protocol::AgentObservation::Metrics(Box::new(metrics(
+                    scope, input, output,
+                ))),
+            }),
+        }))
+    };
+    let wait_usage_event =
+        |stream: &mut UnixStream, dashboard: &mut ovrcr::tui::Dashboard, expected: u64| {
+            loop {
+                let message = read_frame::<ServerMessage>(stream).unwrap();
+                let snapshot = match &message {
+                    ServerMessage::Event(ServerEvent::UsageChanged(snapshot)) => Some(*snapshot),
+                    _ => None,
+                };
+                dashboard.handle_server_message(message);
+                if let Some(snapshot) = snapshot
+                    && snapshot.total_tokens == expected
+                {
+                    return snapshot;
+                }
+            }
+        };
+
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(100),
+            None,
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 100).total_tokens,
+        100
+    );
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            2,
+            ovrcr::protocol::UsageScope::Invocation,
+            Some(10),
+            None,
+        ),
+        Response::Ok,
+        "invocation totals covered by the conversation snapshot add nothing"
+    );
+    let Response::Hierarchy(invocation_overlap) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after overlapping invocation report");
+    };
+    assert_eq!(invocation_overlap.usage.total_tokens, 100);
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            3,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(110),
+            None,
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 110).total_tokens,
+        110
+    );
+    // A session with no reported input or output contributes zero and stays an ordinary
+    // Unknown session; cache and reasoning fields are subsets and are not added twice.
+    assert_eq!(
+        report(
+            second,
+            &second_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            None,
+            None,
+        ),
+        Response::Ok
+    );
+    let Response::Hierarchy(no_tokens) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after no-token report");
+    };
+    assert_eq!(no_tokens.usage.total_tokens, 110);
+    assert_eq!(
+        report(
+            second,
+            &second_binding,
+            2,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(2),
+            Some(3),
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 115).total_tokens,
+        115
+    );
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            4,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(150),
+            Some(25),
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 180).total_tokens,
+        180
+    );
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, server_started))
+        .unwrap();
+    let sidebar = (0..40)
+        .map(|row| {
+            (0..39)
+                .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        sidebar.contains("USAGE"),
+        "Usage section missing: {sidebar}"
+    );
+    assert!(
+        sidebar.contains("180 tokens"),
+        "live total missing: {sidebar}"
+    );
+
+    drop(_first_supervisor);
+    drop(_second_supervisor);
+    for session in [first.session, second.session, local] {
+        assert_eq!(
+            fixture.request(Request::KillSession { session }),
+            Response::Ok
+        );
+        fixture.wait_exited(session);
+    }
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: PROJECT.into(),
+            name: WORKSPACE.into(),
+            force: false,
+        }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("expected retained-session inventory");
+    };
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.id == first.session && session.archived),
+        "usage source was not archived"
+    );
+    let Response::Hierarchy(archived) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after archive");
+    };
+    assert_eq!(archived.usage.total_tokens, 180);
+
+    drop(dashboard_stream);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+    fixture.start();
+    let Response::Hierarchy(restarted) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after restart");
+    };
+    assert_eq!(restarted.usage.total_tokens, 0);
+    assert!(restarted.usage.server_started_unix_ms > server_started);
+
+    let mut fresh_dashboard = connect_server(&fixture.socket).unwrap();
+    write_frame(
+        &mut fresh_dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let fresh_hello = read_frame::<ServerMessage>(&mut fresh_dashboard).unwrap();
+    assert!(matches!(
+        fresh_hello,
+        ServerMessage::Response {
+            response: Response::Hierarchy(snapshot),
+            ..
+        } if snapshot.usage.total_tokens == 0
+            && snapshot.usage.server_started_unix_ms == restarted.usage.server_started_unix_ms
+    ));
+    drop(fresh_dashboard);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
 fn agent_hook_capability_and_exit_are_enforced() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();

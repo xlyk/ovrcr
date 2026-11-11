@@ -92,6 +92,17 @@ Dashboard or the Archived palette.
 
 See [Operator setup and controls](operator.md).
 
+## Usage summary
+
+The sidebar's **Usage** section sits below the session tree and before Quota. It
+counts Working, needs input, Ready, Idle, Error, Paused, Exited and Unknown
+sessions using the same status as their rows; Stopped counts as Exited and
+Interrupted counts as Error. Its token total adds agent-reported input and
+output tokens, including sessions later archived or removed, from the current
+Server start. It resets when the Server restarts and does not estimate cost.
+The `usage.sidebar` setting controls the section and is on by default. The
+summary compacts to one line and then hides when the sidebar is short.
+
 ## Browse keys
 
 The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok and Cursor account

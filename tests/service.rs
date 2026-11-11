@@ -367,6 +367,7 @@ fn service_install_refuses_when_sessions_exist() {
                     message: "sessions remain".into(),
                 },
                 Request::List => Response::Hierarchy(HierarchySnapshot {
+                    usage: ovrcr_protocol::UsageSnapshot::default(),
                     projects: vec![ProjectSummary {
                         name: "demo".into(),
                         workspaces: vec![WorkspaceSummary {

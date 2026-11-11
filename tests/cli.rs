@@ -1545,6 +1545,7 @@ fn quota_filter_preserves_other_events_and_responses() {
             bytes: b"SESSION_OUTPUT".to_vec(),
         }),
         ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: Vec::new(),
         })),
         ServerMessage::Response {

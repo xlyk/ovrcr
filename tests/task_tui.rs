@@ -45,6 +45,7 @@ fn fixture() -> TasksView {
 
 fn task_hierarchy() -> HierarchySnapshot {
     HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {
@@ -152,6 +153,7 @@ fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
 fn create_and_edit_every_field_and_multiline_prompt_in_terminal() {
     let mut v = TasksView::with_projects(
         &HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "ovrcr".into(),
                 workspaces: vec![],
@@ -1009,6 +1011,7 @@ fn task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once() {
 #[test]
 fn task_mouse_project_picker_and_transcript_wheel_use_visible_rows() {
     let hierarchy = HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: (0..14)
             .map(|i| ProjectSummary {
                 name: format!("project-{i:02}"),

@@ -3233,7 +3233,10 @@ fn ux_browse_footer_is_stable_across_widths_and_state() {
     // Selection and an empty hierarchy change the menu, not the footer.
     dashboard.install_focus(SessionId(3));
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
-    dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
+    dashboard.install_hierarchy(HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
+        projects: vec![],
+    });
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
 }
 
@@ -3614,7 +3617,10 @@ fn removal_picker_rejects_no_match_and_excludes_root() {
 fn removal_pickers_with_empty_hierarchy_never_confirm() {
     for query in ["remove project", "remove workspace"] {
         let mut dashboard = dashboard_fixture();
-        dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
+        dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
+            projects: vec![],
+        });
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         for key in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {

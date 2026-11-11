@@ -10196,6 +10196,7 @@ mod launch_tests {
         (
             registry(workspaces),
             crate::protocol::HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: vec![ProjectSummary {
                     name: "demo".into(),
                     workspaces: hierarchy_workspaces,
@@ -15230,6 +15231,7 @@ mod launch_tests {
         let readback = d.handle_server_message(ServerMessage::Response {
             request_id: first.request_id,
             response: Response::Hierarchy(crate::protocol::HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new(),
             }),
         });
@@ -15274,6 +15276,7 @@ mod launch_tests {
         d.handle_server_message(ServerMessage::Response {
             request_id: list.request_id,
             response: Response::Hierarchy(crate::protocol::HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new(),
             }),
         });

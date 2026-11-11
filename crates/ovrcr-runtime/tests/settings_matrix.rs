@@ -100,6 +100,7 @@ const SAMPLES: &[(&str, &str)] = &[
     ),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
     ("launch_choices", "{ p = { kind = \"Terminal\" } }"),
+    ("usage.sidebar", "false"),
     ("remote.login", "\"owner@example.com\""),
 ];
 
@@ -400,6 +401,7 @@ fn matrix_covers_every_declared_setting() {
             "quota.grok.home",
             "quota.cursor.dashboard",
             "quota.cursor.state_db",
+            "usage.sidebar",
             "resources.sidebar",
             "agents",
             "cursor_cloud_accounts",
@@ -426,8 +428,8 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str,
-            Str, Bool, Str, Bool, Array, Array, Table, Str, Str, Bool, Integer, Bool, Array, Array,
-            Str, Str, Integer, Integer, Bool, Integer, Str,
+            Str, Bool, Str, Bool, Bool, Array, Array, Table, Str, Str, Bool, Integer, Bool, Array,
+            Array, Str, Str, Integer, Integer, Bool, Integer, Str,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

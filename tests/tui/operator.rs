@@ -1241,7 +1241,10 @@ fn header_names_pi_and_only_a_really_selected_model() {
     open_and_settle(&mut dashboard, placeholder);
     let screen = draw_text(&mut dashboard, 120, 40);
     assert!(screen.contains("Operator · pi · ready"), "{screen}");
-    assert!(!screen.contains("unknown"), "{screen}");
+    assert!(
+        !screen.contains("Operator · pi · unknown"),
+        "an unknown model placeholder must stay out of the Operator header: {screen}"
+    );
 
     // The fixed setup failure is shown verbatim, routing to `ovrcr operator setup`.
     let mut dashboard = dashboard_fixture();

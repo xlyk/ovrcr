@@ -1763,6 +1763,9 @@ impl Default for ResourcesSettings {
 pub struct Settings {
     #[serde(default)]
     pub operator: crate::OperatorSettings,
+    /// Dashboard Usage summary visibility.
+    #[serde(default)]
+    pub usage: UsageSettings,
     pub desktop_notifications: bool,
     pub ready_sound: bool,
     /// Absent document choice is `Some(Default)`; an explicit invalid value is
@@ -1800,6 +1803,19 @@ pub struct Settings {
     pub resources: ResourcesSettings,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UsageSettings {
+    /// Whether the Dashboard shows the Usage section in its sidebar.
+    pub sidebar: bool,
+}
+
+impl Default for UsageSettings {
+    fn default() -> Self {
+        Self { sidebar: true }
+    }
+}
+
 /// Shown while `save_uncommitted_work` is off.
 pub const SAVE_UNCOMMITTED_WORK_OFF: &str = "Uncommitted workspace work is not pushed. Set `save_uncommitted_work = true` to save it to origin/wip/<branch> when a workspace is removed or the server shuts down.";
 
@@ -1819,6 +1835,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             operator: crate::OperatorSettings::default(),
+            usage: UsageSettings::default(),
             desktop_notifications: false,
             ready_sound: false,
             ready_sound_choice: Some(ReadySoundChoice::Default),

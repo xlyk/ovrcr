@@ -1235,6 +1235,7 @@ mod unread_review_tests {
             cols: 120,
         });
         dashboard.hierarchy = HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "project".into(),
                 workspaces: vec![WorkspaceSummary {
@@ -1361,6 +1362,7 @@ mod unread_review_tests {
                         &ServerMessage::Response {
                             request_id: 1,
                             response: Response::Hierarchy(crate::protocol::HierarchySnapshot {
+                                usage: ovrcr_protocol::UsageSnapshot::default(),
                                 projects: vec![],
                             }),
                         },

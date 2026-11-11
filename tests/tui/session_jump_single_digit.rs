@@ -255,6 +255,7 @@ fn first_nine_labels_follow_drawn_title_rows_in_wide_and_narrow_frames() {
 
 #[test]
 fn recent_activity_jump_labels_follow_visible_activity_order() {
+    let height = 44;
     let mut hierarchy = jump_hierarchy(10);
     for session in &mut hierarchy.projects[0].workspaces[0].sessions {
         session.last_activity_unix_ms = Some(match session.id.0 {
@@ -265,10 +266,10 @@ fn recent_activity_jump_labels_follow_visible_activity_order() {
         });
     }
     let mut dashboard = Dashboard::new(TerminalSize {
-        rows: 40,
+        rows: height,
         cols: 120,
     });
-    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_area(Rect::new(0, 0, 120, height));
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
     let settings = ovrcr::tui::Settings {
@@ -278,7 +279,7 @@ fn recent_activity_jump_labels_follow_visible_activity_order() {
     dashboard.install_settings(settings);
 
     ctrl_g(&mut dashboard);
-    let rows = rendered(&dashboard, 120, 40);
+    let rows = rendered(&dashboard, 120, height);
     let newest = rows
         .iter()
         .map(|row| sidebar(row))

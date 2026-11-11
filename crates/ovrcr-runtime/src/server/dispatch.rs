@@ -454,6 +454,15 @@ fn dispatch_agent_report(
                         state.persist_last_activity(session.id(), session.run(), timestamp);
                     }
                     if changed {
+                        if let Some(agent) = session.summary().agent
+                            && let Some(metrics) = agent.metrics
+                        {
+                            state.publish_usage(
+                                report.session,
+                                &agent.binding,
+                                &metrics.sample.usage.value,
+                            );
+                        }
                         publish_session_changed(state, report.session);
                     }
                     Response::Ok

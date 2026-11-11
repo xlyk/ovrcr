@@ -85,6 +85,7 @@ fn session_summary(
 
 fn fixture_hierarchy() -> HierarchySnapshot {
     let mut hierarchy = HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![
             ProjectSummary {
                 name: "spacelift-agent".into(),

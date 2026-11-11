@@ -255,6 +255,7 @@ mod tests {
         });
         dashboard.install_area(Rect::new(0, 0, 120, 30));
         dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![

@@ -676,6 +676,15 @@ pub enum ErrorCode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HierarchySnapshot {
     pub projects: Vec<ProjectSummary>,
+    /// The current Server lifetime's accepted agent-reported token total.
+    pub usage: UsageSnapshot,
+}
+
+/// Server-lifetime usage visible to a newly attached Dashboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub total_tokens: u64,
+    pub server_started_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -828,6 +837,8 @@ pub enum ServerEvent {
         capabilities: AgentModelCapabilities,
     },
     InitialPromptIntentChanged(Box<InitialPromptIntentSnapshot>),
+    /// Accepted agent usage increased the Server-lifetime total.
+    UsageChanged(UsageSnapshot),
 }
 
 #[cfg(test)]
@@ -1520,6 +1531,7 @@ mod wire_snapshot {
             (
                 "Hierarchy",
                 Response::Hierarchy(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),
@@ -1711,6 +1723,7 @@ mod wire_snapshot {
             (
                 "HierarchyChanged",
                 ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),
@@ -3971,13 +3984,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0453017301630168016c0104",
+            "2a0454017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0453017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0454017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4004,7 +4017,7 @@ mod wire_snapshot {
             "1e010103696e7604636f6e760101047475726e02",
         ),
         ("Response::Ok", "00"),
-        ("Response::Hierarchy", "0100"),
+        ("Response::Hierarchy", "01000000"),
         (
             "Response::CreatedSession",
             "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
@@ -4027,18 +4040,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04530000"),
+        ("Response::NotificationNavigation", "0d04540000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0453017301630168016c0104",
+            "0e01016e0454017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010453017301630168016c0164",
+            "0f0107080901016901010454017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004530107080901016901010453017301630168016c0164",
+            "1004540107080901016901010454017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4056,7 +4069,7 @@ mod wire_snapshot {
             "Response::ScreenWindow",
             "1f01041850051d050001030700010201026869010104000000",
         ),
-        ("ServerEvent::HierarchyChanged", "0000"),
+        ("ServerEvent::HierarchyChanged", "00000000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
@@ -4069,7 +4082,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c0500000100000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb532200000001010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c050000010100000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb532200000001010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -4078,7 +4091,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0453017301630168016c0104",
+            "08016e0454017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

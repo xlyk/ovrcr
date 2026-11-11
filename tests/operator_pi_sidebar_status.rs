@@ -53,6 +53,7 @@ fn new_dashboard() -> Dashboard {
     });
     dashboard.install_area(AREA);
     dashboard.install_hierarchy(HierarchySnapshot {
+        usage: Default::default(),
         projects: Vec::new(),
     });
     let mut settings = ovrcr::tui::Settings::default();

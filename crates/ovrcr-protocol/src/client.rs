@@ -123,6 +123,7 @@ mod tests {
                 ServerMessage::Response {
                     request_id: 7,
                     response: Response::Hierarchy(HierarchySnapshot {
+                        usage: crate::UsageSnapshot::default(),
                         projects: Vec::new(),
                     }),
                 },
@@ -132,6 +133,7 @@ mod tests {
         assert_eq!(
             response,
             Response::Hierarchy(HierarchySnapshot {
+                usage: crate::UsageSnapshot::default(),
                 projects: Vec::new()
             })
         );

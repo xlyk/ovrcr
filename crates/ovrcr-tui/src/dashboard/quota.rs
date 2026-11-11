@@ -28,6 +28,7 @@ enum SidebarSection {
     Attention,
     Operator,
     Tree,
+    Usage,
     Resources,
     Quota,
 }
@@ -60,12 +61,14 @@ impl SidebarEntry {
     }
 }
 
-const SIDEBAR_SHRINK_ORDER: [(SidebarSection, usize); 10] = [
+const SIDEBAR_SHRINK_ORDER: [(SidebarSection, usize); 12] = [
     (SidebarSection::Attention, 1),
     (SidebarSection::Operator, 1),
+    (SidebarSection::Usage, 1),
     (SidebarSection::Resources, 1),
     (SidebarSection::Resources, 2),
     (SidebarSection::Quota, 1),
+    (SidebarSection::Usage, 2),
     (SidebarSection::Resources, 3),
     (SidebarSection::Operator, 2),
     (SidebarSection::Quota, 2),
@@ -300,8 +303,14 @@ impl Dashboard {
             vec![(0, 0)]
         };
         let operator_enabled = sidebar.width > 0 && self.settings.operator.sidebar;
+        let usage_enabled = sidebar.width > 0 && self.settings.usage.sidebar;
         let operator_heights = if operator_enabled {
             vec![(3, 1), (3, 0), (1, 0), (0, 0)]
+        } else {
+            vec![(0, 0)]
+        };
+        let usage_heights = if usage_enabled {
+            vec![(4, 1), (1, 0), (0, 0)]
         } else {
             vec![(0, 0)]
         };
@@ -329,6 +338,7 @@ impl Dashboard {
             ),
             entry(SidebarSection::Operator, &operator_heights),
             entry(SidebarSection::Tree, &[(tree_floor, 0)]),
+            entry(SidebarSection::Usage, &usage_heights),
             entry(SidebarSection::Resources, &resources_heights),
             entry(SidebarSection::Quota, &quota_heights),
         ];
@@ -357,12 +367,14 @@ impl Dashboard {
         };
         let attention_height = section_height(SidebarSection::Attention);
         let operator_height = section_height(SidebarSection::Operator);
+        let usage_height = section_height(SidebarSection::Usage);
         let resources_height = section_height(SidebarSection::Resources);
         let quota_height = section_height(SidebarSection::Quota);
         let operator_y = sidebar.y + attention_height.total();
         let tree_y = operator_y + operator_height.total();
         let quota_y = sidebar.bottom().saturating_sub(quota_height.content);
         let resources_y = quota_y.saturating_sub(resources_height.total());
+        let usage_y = resources_y.saturating_sub(usage_height.total());
         super::SidebarRects {
             attention: Rect::new(
                 sidebar.x,
@@ -380,7 +392,7 @@ impl Dashboard {
                 sidebar.x,
                 tree_y,
                 sidebar.width,
-                resources_y.saturating_sub(tree_y),
+                usage_y.saturating_sub(tree_y),
             ),
             resources: Rect::new(
                 sidebar.x,
@@ -388,8 +400,82 @@ impl Dashboard {
                 sidebar.width,
                 resources_height.content,
             ),
+            usage: Rect::new(sidebar.x, usage_y, sidebar.width, usage_height.content),
             quota: Rect::new(sidebar.x, quota_y, sidebar.width, quota_height.content),
         }
+    }
+
+    pub(super) fn draw_usage(&self, frame: &mut Frame<'_>, now: u64) {
+        let area = self.sidebar_rects(frame.area()).usage;
+        if area.is_empty() {
+            return;
+        }
+        let counts = self.usage_counts();
+        let sessions = counts.iter().sum::<usize>();
+        let total = format_usage_tokens(self.usage.total_tokens);
+        if area.height == 1 {
+            return frame.render_widget(
+                Paragraph::new(format!("Usage · {sessions} sessions · {total} tokens"))
+                    .style(Style::default().fg(TEXT())),
+                area,
+            );
+        }
+
+        let elapsed = usage_elapsed(self.usage.server_started_unix_ms, now);
+        let lines = vec![
+            Line::from(vec![Span::styled(
+                format!("USAGE · {total} tokens · {elapsed}"),
+                Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
+            )]),
+            usage_counter_line(
+                &[
+                    (super::status::UsageState::Working, "⠹", "working"),
+                    (super::status::UsageState::NeedsInput, "?", "input"),
+                    (super::status::UsageState::Ready, "✓", "ready"),
+                ],
+                &counts,
+            ),
+            usage_counter_line(
+                &[
+                    (super::status::UsageState::Idle, "·", "idle"),
+                    (super::status::UsageState::Error, "!", "error"),
+                    (super::status::UsageState::Paused, "P", "paused"),
+                ],
+                &counts,
+            ),
+            usage_counter_line(
+                &[
+                    (super::status::UsageState::Exited, "·", "exited"),
+                    (super::status::UsageState::Unknown, "-", "unknown"),
+                ],
+                &counts,
+            ),
+        ];
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn usage_counts(&self) -> [usize; 8] {
+        let mut counts = [0usize; 8];
+        for session in self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+        {
+            let index = match super::status::SessionStatus::usage_state(session) {
+                super::status::UsageState::Working => 0,
+                super::status::UsageState::NeedsInput => 1,
+                super::status::UsageState::Ready => 2,
+                super::status::UsageState::Idle => 3,
+                super::status::UsageState::Error => 4,
+                super::status::UsageState::Paused => 5,
+                super::status::UsageState::Exited => 6,
+                super::status::UsageState::Unknown => 7,
+            };
+            counts[index] = counts[index].saturating_add(1);
+        }
+        counts
     }
 
     pub(super) fn draw_quota(&self, frame: &mut Frame<'_>, now: u64) {
@@ -452,6 +538,81 @@ impl Dashboard {
                 Rect::new(area.x, area.y + offset as u16, area.width, 1),
             );
         }
+    }
+}
+
+fn usage_counter_line(
+    items: &[(super::status::UsageState, &str, &str)],
+    counts: &[usize; 8],
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(items.len() * 2);
+    for (index, (state, glyph, label)) in items.iter().enumerate() {
+        let count = counts[usage_state_index(*state)];
+        let style = usage_state_style(*state, count);
+        if index > 0 {
+            spans.push(Span::styled("  ", Style::default().fg(SUBTEXT())));
+        }
+        spans.push(Span::styled(format!("{glyph} {count} {label}"), style));
+    }
+    Line::from(spans)
+}
+
+fn usage_state_index(state: super::status::UsageState) -> usize {
+    match state {
+        super::status::UsageState::Working => 0,
+        super::status::UsageState::NeedsInput => 1,
+        super::status::UsageState::Ready => 2,
+        super::status::UsageState::Idle => 3,
+        super::status::UsageState::Error => 4,
+        super::status::UsageState::Paused => 5,
+        super::status::UsageState::Exited => 6,
+        super::status::UsageState::Unknown => 7,
+    }
+}
+
+fn usage_state_style(state: super::status::UsageState, count: usize) -> Style {
+    if count == 0 {
+        return Style::default().fg(super::render::MUTED());
+    }
+    Style::default().fg(match state {
+        super::status::UsageState::Working => super::render::GREEN(),
+        super::status::UsageState::NeedsInput => YELLOW(),
+        super::status::UsageState::Ready => super::render::TEAL(),
+        super::status::UsageState::Idle => TEXT(),
+        super::status::UsageState::Error => RED(),
+        super::status::UsageState::Paused => SUBTEXT(),
+        super::status::UsageState::Exited => super::render::MUTED(),
+        super::status::UsageState::Unknown => SUBTEXT(),
+    })
+}
+
+fn format_usage_tokens(tokens: u64) -> String {
+    let (scale, suffix) = if tokens >= 1_000_000_000 {
+        (1_000_000_000_u128, "B")
+    } else if tokens >= 1_000_000 {
+        (1_000_000_u128, "M")
+    } else if tokens >= 1_000 {
+        (1_000_u128, "K")
+    } else {
+        return tokens.to_string();
+    };
+    let tenths = u128::from(tokens) * 10 / scale;
+    format!("{}.{:01}{suffix}", tenths / 10, tenths % 10)
+}
+
+fn usage_elapsed(started_unix_ms: u64, now_unix_ms: u64) -> String {
+    let minutes = now_unix_ms.saturating_sub(started_unix_ms) / 60_000;
+    let days = minutes / (24 * 60);
+    let hours = minutes / 60 % 24;
+    let minutes = minutes % 60;
+    if days > 0 {
+        format!("{days}d{hours}h")
+    } else if hours > 0 {
+        format!("{hours}h{minutes:02}m")
+    } else if minutes == 0 {
+        "<1m".into()
+    } else {
+        format!("{minutes}m")
     }
 }
 
@@ -1331,6 +1492,7 @@ mod layout_tests {
             agent: None,
         };
         dashboard.install_hierarchy(crate::protocol::HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![crate::protocol::ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![crate::protocol::WorkspaceSummary {
@@ -1375,6 +1537,35 @@ mod layout_tests {
                 .sidebar_rects(Rect::new(0, 0, 120, 30))
                 .attention
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn usage_compacts_before_quota_and_hides_before_operator_becomes_one_row() {
+        let dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        let mut usage_compacts_while_quota_is_full = false;
+        let mut usage_hides_while_operator_is_expanded = false;
+        for height in 8..=40 {
+            let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, height));
+            assert!(rects.tree.bottom() <= rects.usage.y);
+            assert!(rects.usage.bottom() <= rects.quota.y);
+            if rects.usage.height == 1 && rects.quota.height >= 4 {
+                usage_compacts_while_quota_is_full = true;
+            }
+            if rects.usage.height == 0 && rects.operator.height >= 3 {
+                usage_hides_while_operator_is_expanded = true;
+            }
+        }
+        assert!(
+            usage_compacts_while_quota_is_full,
+            "Usage should compact before Quota drops to one provider row"
+        );
+        assert!(
+            usage_hides_while_operator_is_expanded,
+            "Usage should hide before Operator becomes a one-row section"
         );
     }
 }
