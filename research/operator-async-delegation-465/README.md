@@ -155,3 +155,11 @@ Watch delivery reserves its asynchronous turn through the existing extension UI
 handshake before calling `sendUserMessage`. That lets the Server serialize the
 reservation against Submit; a losing wakeup keeps its reports and starts no model
 work. Stock Pi extension APIs remain unmodified.
+
+## Watch CI follow-up
+
+At `13cbab82`, run [43121584362](https://github.com/xlyk/ovrcr/actions/runs/43121584362) exposed a Clippy manual-character comparison in the new heading test and the same test’s implicit dependence on an installed Pi. `b63bab60` uses the established isolated Pi-availability fixture and a character-array pattern; its assertions are unchanged. The unavailable-Pi reproduction fails before and passes 1/1 after. Owning TUI Clippy, fmt and diff checks pass. See [follow-up attempts](468-ci-followup.md).
+
+The earlier four-pane terminal failure was not reproduced in one isolated offline run (1/1); [diagnosis](terminal-ci-diagnosis.md) distinguishes the observed picker/COPY screens from the inferred synchronization issue. No terminal-test source or assertion changed. This local pass does not clear required hosted checks.
+
+At `13cbab82`, hosted shard4 passed all738 selected tests; the four-pane test passed on its first attempt (5.935s). Shard2, offline Cursor and selection audit also passed. Required aggregate was red only for the two watch-test issues corrected in `b63bab60`. Final current-head CI remains required.
