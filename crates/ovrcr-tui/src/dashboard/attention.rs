@@ -4,7 +4,7 @@
 use super::render::{MUTED, TEAL, TEXT, YELLOW};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, TreeRow};
-use ovrcr_protocol::{AgentActivity, SessionId, SessionPhase, SessionSummary};
+use ovrcr_protocol::{SessionId, SessionSummary};
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -23,12 +23,7 @@ pub(super) enum Attention {
 /// Paused sessions never need input (they cannot take an answer until resumed), and Operator
 /// conversations stay out: the one Operator navigation row shows its own Unread.
 pub(super) fn attention(session: &SessionSummary) -> Option<Attention> {
-    let activity = super::ready::activity(session);
-    if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
-        Some(Attention::Input)
-    } else {
-        (session.unread.is_some() && activity != AgentActivity::Busy).then_some(Attention::Ready)
-    }
+    super::status::SessionStatus::attention(session)
 }
 
 impl Dashboard {
@@ -159,10 +154,10 @@ pub(super) fn attention_line(input: usize, ready: usize, width: usize) -> Line<'
 mod tests {
     use super::*;
     use crate::protocol::{
-        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, ClientMessage, HealthSample,
-        HierarchySnapshot, InputKind, InputRequest, ProjectSummary, ReadyObservation,
-        ReporterHealth, Request, SampleQuality, SessionKind, SessionRunId, TerminalSize,
-        WorkspaceSummary,
+        ActivitySample, AgentActivity, AgentBinding, AgentProvider, AgentSnapshot, ClientMessage,
+        HealthSample, HierarchySnapshot, InputKind, InputRequest, ProjectSummary, ReadyObservation,
+        ReporterHealth, Request, SampleQuality, SessionKind, SessionPhase, SessionRunId,
+        TerminalSize, WorkspaceSummary,
     };
     use ratatui::layout::Rect;
 
