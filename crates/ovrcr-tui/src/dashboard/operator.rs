@@ -2247,6 +2247,11 @@ mod tests {
 
     #[test]
     fn async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread",
+        ) {
+            return;
+        }
         for outcome in ["complete", "failed", "interrupted"] {
             let mut d = dashboard();
             let out = opened(&mut d, summary());
@@ -2318,10 +2323,7 @@ mod tests {
             assert_eq!(
                 transcript
                     .iter()
-                    .filter(|line| {
-                        line.trim_start_matches(|character| character == '│' || character == ' ')
-                            == "Operator"
-                    })
+                    .filter(|line| { line.trim_start_matches(['│', ' ']) == "Operator" })
                     .count(),
                 1,
                 "the async request and answer share one clean Operator heading"
