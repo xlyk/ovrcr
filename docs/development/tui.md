@@ -79,8 +79,10 @@ retry hint, with no prefix state or Backspace editor. Esc or Ctrl-g closes the
 picker without selecting. Every other key closes it and continues through its
 ordinary Dashboard, Operator, or program handling. Command/Super never opens
 the picker. Hide labels on selection. A selected running destination remains in
-Browse until the existing view and input boundary is drained; queued loading
-input must never become child bytes. Opening an overlay, losing focus,
+Browse until the existing view and input boundary is drained; it enters
+Terminal only when the existing input permission check succeeds. A ready
+view-only destination settles in Browse, and queued loading input never becomes
+child bytes. Opening an overlay, losing focus,
 scrolling, or resizing closes the picker.
 
 Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.

@@ -1249,14 +1249,14 @@ impl Dashboard {
         action
     }
 
-    fn finish_agent_switch(&mut self) {
+    fn finish_agent_switch(&mut self) -> bool {
         let Some(intent) = &self.agent_typing else {
-            return;
+            return false;
         };
         if self.handshake.revision() > intent.revision {
             self.agent_typing = None;
             self.set_error("Agent switch cancelled: view changed");
-            return;
+            return true;
         }
         if self.mode != InputMode::Browse
             || self.palette.is_some()
@@ -1271,7 +1271,7 @@ impl Dashboard {
             || self.deferred_history_at_tail.is_some()
         {
             self.agent_typing = None;
-            return;
+            return true;
         }
         if self.focused_session() != Some(intent.session)
             || !find_session(self, intent.session).is_some_and(|s| {
@@ -1283,7 +1283,7 @@ impl Dashboard {
         {
             self.agent_typing = None;
             self.set_error("Agent switch cancelled: destination changed or is no longer running");
-            return;
+            return true;
         }
         let ready = self.handshake.acknowledged().is_some_and(|view| {
             view.revision == intent.revision
@@ -1293,10 +1293,14 @@ impl Dashboard {
                     .iter()
                     .all(|(id, _, _)| self.handshake.is_ready(*id))
         });
-        if ready && !intent.defer_until_input_boundary && self.input_is_allowed() {
+        if ready && !intent.defer_until_input_boundary {
             self.agent_typing = None;
-            self.mode = InputMode::Terminal;
+            if self.input_is_allowed() {
+                self.mode = InputMode::Terminal;
+            }
+            return true;
         }
+        false
     }
 
     pub(super) fn defer_agent_typing_until_input_boundary(&mut self) {
@@ -1310,8 +1314,8 @@ impl Dashboard {
         if let Some(intent) = &mut self.agent_typing {
             intent.defer_until_input_boundary = false;
         }
-        self.finish_agent_switch();
-        self.mode != previous_mode
+        let typing_changed = self.finish_agent_switch();
+        typing_changed || self.mode != previous_mode
     }
 
     /// How many panes the in-flight view expects snapshots for.

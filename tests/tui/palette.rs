@@ -1,8 +1,5 @@
 //! Command palette, which-key popup, and the creation forms.
 
-#[cfg(not(target_os = "macos"))]
-use crate::deadline::wait_deadline;
-#[cfg(target_os = "macos")]
 use crate::live::wait_deadline;
 use crate::*;
 use ratatui::layout::Position;

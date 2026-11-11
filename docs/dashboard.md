@@ -204,9 +204,10 @@ Running agent or implies Ready.
 Search uses case-insensitive, every-word substring matching against the full
 session title, Agent name, session ID, project and workspace identity. Opening or changing the query
 highlights the first match; arrows move the highlight. One Enter selects the
-highlighted destination and enables Terminal mode only after every matching
-visible screen, the final view acknowledgement and the drain of already-pending
-loading input. Enter used to choose never
+highlighted destination. It enters Terminal mode after every matching visible
+screen is ready, the final view is acknowledged, and already-pending loading
+input is drained, when input is allowed. A ready view-only destination settles
+in Browse. Enter used to choose never
 reaches either PTY. During loading, keyboard input and paste are discarded,
 never queued; the footer shows **Loading agent**. `Ctrl-g` or Escape cancels
 pending typing and stays in Browse. Pane/window focus, selection or geometry
@@ -686,7 +687,8 @@ unlabelled; scroll and press `Ctrl-g` again to label the new first nine, or use
 `s` Agents search. Pressing `Ctrl-g` again without choosing closes the picker;
 the key keeps its ordinary Browse meaning elsewhere. After choosing a running
 Agent, it stays in Browse until the exact view is acknowledged and the input
-boundary is drained; queued loading input is discarded. Any other key closes the
+boundary is drained; it enters Terminal only if the existing input permission
+check succeeds, and queued loading input is discarded. Any other key closes the
 picker and keeps its ordinary Dashboard, Operator, or program handling. A
 retained Agent stays in Browse for inspection and is never resumed or reopened
 by navigation; use its explicit Resume/Reopen action when needed. Command/Super
