@@ -1075,7 +1075,10 @@ fn operator_section_click_opens_the_singleton_from_its_right_edge() {
     // Browse help/menu describes the singleton and never a chat list.
     dashboard.key(KeyCode::Char(' '));
     let menu = rendered_rows(&dashboard, 120, 40).join("\n");
-    assert!(menu.contains("Operator"), "{menu}");
+    assert!(
+        menu.contains("Panes"),
+        "the Space menu lists the Panes group: {menu}"
+    );
     for removed in [
         "concurrent",
         "Ctrl-n",
@@ -2525,8 +2528,11 @@ fn operator_navigation_is_never_a_jump_target() {
     );
     let operator_row = held
         .iter()
-        .find(|row| row.contains("Operator") && !row.contains("operator-agent"))
-        .expect("the fixed Operator navigation row");
+        .find(|row| {
+            (row.contains("OPERATOR") || row.contains("Operator ·"))
+                && !row.contains("operator-agent")
+        })
+        .unwrap_or_else(|| panic!("the fixed Operator navigation row: {held:?}"));
     assert!(
         !operator_row.contains("[1]"),
         "the singleton row is not a session target: {operator_row}"
@@ -2879,6 +2885,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
 
             // A refreshed singleton summary, not a conversation list, updates authority.
             let mut complete = running;
+            complete.worker_stopped = true;
             complete.current_turn = Some(OperatorTurn {
                 state: OperatorTurnState::Complete,
                 sequence: 2,
@@ -3049,10 +3056,21 @@ fn operator_projects_viewport_keeps_the_last_selection_at_the_bottom() {
         let selected: Vec<_> = (0..24)
             .filter(|y| terminal.backend().buffer()[(0, *y)].symbol() == "▌")
             .collect();
-        // The quota section sits below the tree from row 16.
+        let rows = rendered_rows(dashboard, 120, 24);
+        let last_session_row = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.contains("viewport-session-"))
+            .map(|(row, _)| row)
+            .max()
+            .expect("the filled tree viewport shows a session row");
+        assert!(
+            rows[last_session_row].contains("viewport-session-30"),
+            "the last selected session remains visible at the bottom of the tree: {rows:?}"
+        );
         assert_eq!(
             selected,
-            vec![15],
+            vec![u16::try_from(last_session_row).unwrap()],
             "the selected terminal must remain at the filled tree viewport's bottom"
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(30)));
@@ -3775,9 +3793,16 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
         ),
     );
     assert!(out.is_empty(), "{out:?}");
-    let screen = draw_text(&mut dashboard, 120, 40);
-    assert!(screen.contains("Compacting context…"), "{screen}");
-    assert!(!screen.contains("Responding"), "{screen}");
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let screen = rows.join("\n");
+    let transcript = rows
+        .iter()
+        .map(|row| row.split_once('│').map_or("", |(_, right)| right))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dock_row(&rows).contains("Responding"), "{screen}");
+    assert!(transcript.contains("Compacting context…"), "{transcript}");
+    assert!(!transcript.contains("Responding"), "{transcript}");
     assert!(!screen.contains("Compaction"), "no permanent row: {screen}");
 
     // Catch-up after the native finish returns the ordinary derived activity.

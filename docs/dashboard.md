@@ -57,10 +57,11 @@ or press `o` in Browse to open the conversation with the composer focused. There
 are no Operator controls in the title bar.
 
 Before the conversation is opened, the section says **Off** when the Pi
-executable is available and **Not set up** when it is missing. A known Pi setup
-error after opening also shows **Not set up**. After opening, it shows **Working** with
-elapsed time and current activity, **Reply ready · 1 unread** with a reply
-preview, or **Idle** with the latest reply. The section omits the model and
+executable is available and **Not set up** when it is missing. If Pi is missing
+when opening begins, that status remains while opening the singleton. A
+known Pi setup error after opening also shows **Not set up**. After opening, it
+shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**
+with a reply preview, or **Idle** with the latest reply. The section omits the model and
 harness. Drawing it never reviews a reply or starts a worker. The
 `operator.sidebar` setting controls the section and is on by default.
 

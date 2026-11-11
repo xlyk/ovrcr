@@ -4867,9 +4867,12 @@ impl Dashboard {
                             break;
                         }
                     }
-                    if recent_rows.is_some_and(|rows| rows != self.visible_rows()) {
+                    let tree_changed = tree != self.sidebar_rects(self.outer_area).tree;
+                    let rows_changed = recent_rows.is_some_and(|rows| rows != self.visible_rows());
+                    if tree_changed || rows_changed {
                         // The mouse location belongs to a screen row, so an activity re-sort
-                        // must not carry its old row identity to a different screen location.
+                        // or sidebar geometry shift must not carry its old row identity to a
+                        // different screen location.
                         self.mouse.hovered = None;
                     }
                     if self.transcript.session == Some(summary.id)
@@ -4878,7 +4881,7 @@ impl Dashboard {
                         self.close_transcript();
                     }
                     // The attention strip comes and goes with sessions; keep the selection shown.
-                    if tree != self.sidebar_rects(self.outer_area).tree
+                    if tree_changed
                         || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
                     {
                         self.ensure_selection_visible(&self.visible_rows());

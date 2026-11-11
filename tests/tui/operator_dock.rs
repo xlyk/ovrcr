@@ -265,15 +265,21 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         full[7].contains("CONSIGINT"),
         "tree follows Operator: {full:?}"
     );
-    assert!(
-        full[15].trim_start().starts_with("USAGE ·"),
-        "Usage follows the tree: {full:?}"
-    );
-    assert!(
-        full[24].contains("QUOTA LEFT"),
-        "full Quota includes its heading: {full:?}"
-    );
-
+    let full_usage = full
+        .iter()
+        .position(|row| row.contains("USAGE ·"))
+        .expect("Usage follows the tree");
+    let full_resources = full
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources follows Usage");
+    let full_quota = full
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("full Quota includes its heading");
+    assert!(full_usage > 7, "{full:?}");
+    assert_eq!(full_usage + 5, full_resources, "{full:?}");
+    assert_eq!(full_resources + 4, full_quota, "{full:?}");
     let no_attention_gap = rows_at(&mut dashboard, 34);
     assert!(
         no_attention_gap[1].contains("needs input"),
@@ -312,6 +318,20 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     assert!(
         compact_usage.iter().any(|row| row.contains("QUOTA LEFT")),
         "Quota stays full while Usage compacts: {compact_usage:?}"
+    );
+
+    let quota_with_resources = rows_at(&mut dashboard, 26);
+    assert!(
+        quota_with_resources
+            .iter()
+            .any(|row| row.contains("Resources ·")),
+        "Resources compacts to one row before Quota: {quota_with_resources:?}"
+    );
+    assert!(
+        quota_with_resources
+            .iter()
+            .any(|row| row.contains("QUOTA LEFT")),
+        "the quota heading remains before its compact form: {quota_with_resources:?}"
     );
 
     let compact_quota = rows_at(&mut dashboard, 24);

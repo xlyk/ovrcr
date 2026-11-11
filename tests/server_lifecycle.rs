@@ -12673,11 +12673,31 @@ printf '%s\n' "$reply"
         // Aim at a whole frame, not part of one.
         self.settle();
         let screen = self.parser.screen().contents();
-        let row = screen
+        // Operator's missing-Pi guidance can contain a session name (for
+        // example, "setup") before that session's tree row. The rendered
+        // session row is the later match; click inside its actual label
+        // instead of relying on a fixed sidebar column.
+        let (row, column) = screen
             .lines()
-            .position(|line| line.chars().take(32).collect::<String>().contains(name))
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let sidebar = line.split_once('│').map_or(line, |(sidebar, _)| sidebar);
+                let start = sidebar.find(name)?;
+                let column = sidebar[..start].chars().count() + name.chars().count() / 2;
+                Some((row, column))
+            })
+            .last()
             .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
-        self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
+        self.send(
+            format!(
+                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+                column + 1,
+                row + 1,
+                column + 1,
+                row + 1
+            )
+            .as_bytes(),
+        );
         self.wait_screen(|screen| screen.contains(terminal_marker));
     }
 

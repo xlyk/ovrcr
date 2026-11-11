@@ -41,8 +41,9 @@ Agent row is two lines there: status/title/age and branch/harness. Both lines us
 the same `TreeRow` for selection, hover, click, and close behavior.
 `SessionChanged` makes the new order visible immediately; selection remains
 attached to its session ID and `ensure_selection_visible` follows it. When the
-new row order changes, stale hover clears so an action mark stays tied to its
-screen row; a fresh pointer motion reacquires hover for the row now under it.
+row order changes or the tree viewport moves, stale hover clears so an action
+mark stays tied to its screen row; a fresh pointer motion reacquires hover for
+the row now under it.
 `tree_row_heights`, `tree_line_at`, `tree_line_count` and `tree_row_start` remain
 the shared basis for rendering, scrolling, jump labels and mouse hit-testing.
 
