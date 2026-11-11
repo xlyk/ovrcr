@@ -52,9 +52,9 @@ you are away waits for you. A notice that waited behind it shows next.
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
 shows attention first when needed, then a three-row **Operator** section before
-the project tree and quota. Click anywhere in the section or press `o` in Browse
-to open the conversation with the composer focused. There are no Operator
-controls in the title bar.
+the project tree, followed by Resources and quota. Click anywhere in the section
+or press `o` in Browse to open the conversation with the composer focused. There
+are no Operator controls in the title bar.
 
 Before the conversation is opened, the section says **Off** when the Pi
 executable is available and **Not set up** when it is missing. A known Pi setup
@@ -133,6 +133,8 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `m` | Switch between the project tree and recent Agent activity; the Dashboard saves the choice through the Server |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `<` / `>` | Make the focused pane two columns narrower / wider; the neighboring pane changes by the same amount |
+| `-` / `+` / `=` | Make the focused pane one row shorter / taller; `+` and `=` are aliases |
 | `z` | Zoom the focused pane to fill the pane area, or restore the layout |
 | `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
@@ -423,6 +425,14 @@ already assigned to another pane. A layout can contain up to four panes, each
 at least 20 columns wide and 8 rows tall including its header. The footer gives
 the reason when another split cannot fit or the four-pane limit is reached.
 Drag any divider to resize its neighboring panes; click a pane to focus it.
+In Browse, `<` and `>` move the nearest left-right divider around the focused
+pane by two columns, and `-`, `+`, or `=` move its nearest top-bottom divider
+by one row. Repeated key events repeat that step. A pane stays at least 20
+columns wide and 8 rows tall including its header; the key does nothing at the
+minimum, and the Panes group explains when no matching divider exists. These
+keys are also available in `Space s`. Double-click a pane header to zoom or
+restore the layout, double-click a divider to make that split even, or
+right-click a pane to focus it and open the Panes group.
 `Tab` and `Shift-Tab` cycle through panes. Sidebar navigation replaces the
 focused pane's session; selecting a session already shown elsewhere moves focus
 to that pane instead. `x` closes the focused pane and gives its space to its
@@ -441,8 +451,7 @@ same session. These directional keys work in the group; in Browse, arrows and
 shows only the focused pane and marks its header `zoomed`; the tree and other
 assignments stay in place. Press `z` again to restore the tree. `Tab` and
 `Shift-Tab` change the focused pane without ending zoom, while splitting or
-closing a pane restores the tree. The group also lists the resize keys, dimmed
-with `not available yet` until pane resizing is implemented.
+closing a pane restores the tree.
 
 ## Sidebar and status
 
@@ -504,9 +513,17 @@ The **OPERATOR** section shows whether the conversation is working, unread,
 idle, not yet opened, or not set up, plus its current activity or latest reply.
 It omits the model and harness. Click anywhere in the section or press `o` in
 Browse to open the conversation. The `operator.sidebar` setting controls this
-section and is on by default. A short sidebar drops section gaps, compacts quota
-and Operator, and hides them as needed to preserve room for the tree; `o` still
-opens Operator when its section is hidden.
+section and is on by default. A short sidebar drops section gaps, compacts
+Resources, quota and Operator, and hides them as needed to preserve room for the
+tree; `o` still opens Operator when its section is hidden.
+
+**Resources** follows the project tree and shows whole-machine CPU use and
+memory in use over installed memory. It samples on the Dashboard's existing
+redraw tick, at most every two seconds. CPU stays `…` until two samples show
+advancing counters; a failed reading says `unavailable` instead of keeping an
+older value. The one-line form keeps both values. Set `resources.sidebar = false`
+to hide the section and stop machine reads; it is on by default and changes
+apply while the Dashboard is running.
 
 The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
 Short windows use compact provider summaries, then a `Quota: u` pointer. Press
@@ -609,6 +626,10 @@ In Browse and Terminal modes:
   clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
+- Double-clicking a pane header zooms or restores that pane; double-clicking a
+  divider sets its split to an even ratio. Right-clicking a pane focuses it and
+  opens the Panes group in Browse. Terminal mouse input remains forwarded to
+  programs that request it.
 - Dragging the divider between two panes changes their widths. Each visible pane
   keeps at least 20 columns. The split proportion survives window resizing and
   the temporary single-pane layout used in narrow windows.
@@ -687,9 +708,9 @@ the hook-owned activity state.
 
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
 `v` View, and `s` Panes. Only groups relevant to the selected row appear. The
-Panes group lists split, directional focus, swap, next pane, zoom and close;
-resize entries remain visible with `not available yet` until that action is
-implemented. Terminal rows
+Panes group lists split, directional focus, swap, resize, next pane, zoom and
+close. A resize action explains when the focused pane has no divider in that
+direction. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
 `q` detaches from the top level, including when the hierarchy is empty. Nothing
 else sits beside the groups: desktop notifications and the ready sound are
@@ -845,33 +866,34 @@ sessions by title.
 
 ### New agent session (`n`)
 
-Choose a registered checkout by its current branch in **Branch**, then choose an
-**Agent harness**, **Model**, and optional **Initial prompt**. Workspaces are
-grouped by project; the picker searches the displayed project and branch labels
-and excludes retained sessions without a registered checkout. It follows the
-same registered checkout when its branch label changes. Unavailable checkouts
-remain visible with their state; root and detached destinations are labeled.
-An eligible current feature checkout is preselected. If the current target is
-missing or cannot launch, the form keeps its identity when registered and asks
-you to choose deliberately; it never substitutes the first listed checkout.
-Start checks the selected checkout again, including its registration, path,
-Git identity and root protection. Register a project with `a` when no project
-is available.
+**Project** starts on the project from the selected row, or the first registered
+project when there is no row context. Change it to narrow **Branch** to that
+project's registered workspaces; switching projects clears the branch text.
+Unavailable checkouts remain visible with their state; root and detached
+destinations are labeled. Start checks an existing checkout's registration,
+path, Git identity and root protection. Register a project with `a` when no
+project is available.
 
-**Create new branch…** opens the branch-only child form. The parent session
-form stays suspended with its prompt, destination, focus, and explicit harness
-or model choices. `Esc` from the unsubmitted child returns to that exact form.
-After a successful, identity-matched branch readback, the new checkout becomes
-the selected destination; the Agent still starts only when you submit the
-parent form.
+Type into **Branch** to filter existing branches. When the text is not an exact
+existing branch, the picker offers **Create branch "<name>"** after any matching
+branches, or first when there are no matches. It is omitted for empty text and
+an exact existing branch. Choosing it creates a workspace under the project's
+workspace root, using the detected default branch as its base. **Advanced
+options** contains **Base** to choose another local branch. **Destination**
+shows the workspace folder and branch base before you start. The form creates
+the workspace first and starts the Agent only after that succeeds.
+For an explicit model, the form keeps the selection and draft, then verifies
+that model against the newly registered workspace. Submit again after the lookup
+confirms the choice; if it is unavailable, choose an available model or
+**Harness default**.
 
 The picker opens even when the current workspace cannot launch. This does not
 change the separate **Create terminal** form or its existing root-workspace
 guard. The form shows a compact destination line and, when another agent is
 already using that checkout, a compact shared-files notice. Harness and model
 defaults can follow the selected project; explicit choices, the prompt and
-advanced name stay intact when changing destinations. **Advanced options** is
-collapsed and contains the optional session name.
+advanced values stay intact when changing destinations. **Advanced options** is
+collapsed and contains the optional Base and session name.
 
 Choice lists stay collapsed while you move through the form. Press `Enter` or
 click a choice field to open its list; while it is open, `Enter` accepts the
@@ -980,19 +1002,15 @@ valid and resolved.
 The worktree folder under the project root is derived from the branch name:
 `feature/auth-refresh` becomes `feature-auth-refresh`. Workspace creation uses
 the Server's automatic local-terminal setting. It never starts an Agent from
-this form. From New agent session, the child hides the parent form while keeping
-its prompt, branch choice, focus, and explicit harness/model choices; after a
-correlated successful receipt and matching fresh registry/hierarchy readback,
-the new branch is selected and the parent form returns. `Esc` before Submit
-restores that parent form. While creation or readback is pending, the child
-stays visible and cannot be dismissed or submitted again.
+this form. New agent session has its own Project and Branch fields for creating
+a branch and then starting an Agent.
 
 When `w` is used on its own, a verified branch returns to Browse with its
 workspace selected, even if the Server also created a local terminal. A normal
-`n` start submits the Agent only after the parent form is confirmed. `Create
-terminal` remains a separate command for an already registered workspace.
+`n` start submits the Agent only after the selected choices are confirmed.
+`Create terminal` remains a separate command for an already registered workspace.
 
-If creation fails before a workspace exists, the child keeps its branch and
+If creation fails before a workspace exists, this form keeps its branch and
 Base values for correction and retry with the same workspace identity. After a
 partial failure, the Dashboard performs a fresh Inspect and List before it
 allows another attempt; an uncertain or already-registered identity blocks
@@ -1300,6 +1318,9 @@ picker_roots = ["~/Code", "~/src", "~"]
 # [[agents]]                         # optional; a row replaces a detected agent's argv
 # name = "claude"
 # argv = ["claude", "--verbose"]
+
+[resources]
+# sidebar = false                    # hide Resources and stop local machine reads; default true
 
 [quota]                              # account quota; see provider-quota.md
 # enabled = false                    # explicit off; omit to collect while a Dashboard is attached

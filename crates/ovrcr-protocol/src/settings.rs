@@ -1745,6 +1745,19 @@ impl Default for RemoteSettings {
 pub const REMOTE_OFF: &str =
     "Remote web server off: set `[remote] enabled = true` to serve the phone UI on loopback";
 
+/// Dashboard-owned visibility for local whole-machine readings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResourcesSettings {
+    pub sidebar: bool,
+}
+
+impl Default for ResourcesSettings {
+    fn default() -> Self {
+        Self { sidebar: true }
+    }
+}
+
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -1785,6 +1798,9 @@ pub struct Settings {
     /// Dashboard-owned sidebar presentation, remembered by the Server.
     #[serde(default)]
     pub sidebar_view: SidebarView,
+    /// Dashboard-owned visibility and sampling for the Resources section.
+    #[serde(default)]
+    pub resources: ResourcesSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1837,6 +1853,7 @@ impl Default for Settings {
             remote: RemoteSettings::default(),
             save_uncommitted_work: false,
             sidebar_view: SidebarView::default(),
+            resources: ResourcesSettings::default(),
         }
     }
 }

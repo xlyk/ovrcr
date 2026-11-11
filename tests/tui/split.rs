@@ -534,6 +534,153 @@ fn nested_dividers_drag_independently_and_pane_headers_focus_the_clicked_pane() 
 }
 
 #[test]
+fn keyboard_resize_sends_one_complete_view_and_revokes_input_until_acknowledged() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let initial = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, initial);
+
+    let before = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(before.len(), 2);
+    assert_eq!(dashboard.key(KeyCode::Char('>')), DashboardAction::Redraw);
+
+    let after = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(after, [before[0] - 2, before[1] + 2]);
+
+    dashboard.install_terminal_input();
+    assert!(
+        dashboard
+            .input_request(b"resize must wait".to_vec(), 9200)
+            .is_none(),
+        "input permission must be revoked while resized panes are unacknowledged"
+    );
+
+    let request = dashboard
+        .request_view_at(area)
+        .expect("resize queues a complete SetView");
+    let outgoing = dashboard.drain_outbox();
+    assert_eq!(outgoing.len(), 1, "one resize produces one SetView");
+    assert!(matches!(outgoing[0].request, Request::SetView { .. }));
+    let view = set_view(&request);
+    assert_eq!(view.panes.len(), 2);
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        after
+    );
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn resize_keys_repeat_and_clamp_the_nearest_horizontal_divider() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let before = pane_widths(&dashboard, area);
+
+    for _ in 0..5 {
+        dashboard.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('>'),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+    }
+    let repeated = pane_widths(&dashboard, area);
+    assert_eq!(repeated, [before[0] - 10, before[1] + 10]);
+
+    for _ in 0..15 {
+        dashboard.key(KeyCode::Char('<'));
+    }
+    let at_minimum = pane_widths(&dashboard, area);
+    assert_eq!(at_minimum[1], 20);
+    dashboard.key(KeyCode::Char('<'));
+    assert_eq!(pane_widths(&dashboard, area), at_minimum);
+}
+
+#[test]
+fn height_resize_aliases_work_in_browse_and_panes_group_and_clamp_at_minimum() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split_down(&mut dashboard);
+    let heights = |dashboard: &Dashboard| {
+        dashboard
+            .pane_rects(area)
+            .into_iter()
+            .map(|pane| pane.metadata.height + pane.terminal.height)
+            .collect::<Vec<_>>()
+    };
+    let before = heights(&dashboard);
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+    dashboard.key(KeyCode::Char('='));
+    dashboard.key(KeyCode::Char('+'));
+    assert_eq!(heights(&dashboard), [before[0] - 2, before[1] + 2]);
+    dashboard.key(KeyCode::Char('-'));
+    dashboard.key(KeyCode::Char('-'));
+    assert_eq!(heights(&dashboard), before);
+
+    for _ in 0..usize::from(before[1] - 8) {
+        dashboard.key(KeyCode::Char('-'));
+    }
+    let at_minimum = heights(&dashboard);
+    assert_eq!(at_minimum[1], 8);
+    dashboard.key(KeyCode::Char('-'));
+    assert_eq!(heights(&dashboard), at_minimum);
+}
+
+#[test]
+fn resize_without_a_matching_divider_reports_why() {
+    let mut horizontal = dashboard_fixture();
+    horizontal.install_area(wide_area());
+    horizontal.key(KeyCode::Char('>'));
+    assert!(
+        banner(&horizontal).contains("no left-right divider to resize"),
+        "{}",
+        banner(&horizontal)
+    );
+
+    let mut vertical = dashboard_fixture();
+    vertical.install_area(wide_area());
+    vertical.key(KeyCode::Char('-'));
+    assert!(
+        banner(&vertical).contains("no top-bottom divider to resize"),
+        "{}",
+        banner(&vertical)
+    );
+}
+
+#[test]
+fn keyboard_resize_uses_the_nearest_nested_divider() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split(&mut dashboard);
+    let before = pane_widths(&dashboard, area);
+    assert_eq!(before.len(), 3);
+
+    dashboard.key(KeyCode::Char('<'));
+
+    let after = pane_widths(&dashboard, area);
+    assert_eq!(after, [before[0], before[1] + 2, before[2] - 2]);
+}
+
+#[test]
 fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     let mut dashboard = dashboard_fixture();
     let area = wide_area();
@@ -3474,7 +3621,7 @@ fn space_s_lists_every_pane_action_and_unavailable_reason() {
         "<  Narrower",
         ">  Wider",
         "-  Shorter",
-        "+  Taller",
+        "+/=  Taller",
     ] {
         assert!(screen.contains(entry), "missing {entry:?}: {screen}");
     }
@@ -3488,12 +3635,15 @@ fn space_s_lists_every_pane_action_and_unavailable_reason() {
         "{screen}"
     );
 
-    // Resize keys are listed now, but belong to the next ticket.
+    // Resize keys now explain that this focused pane has no divider.
     for _ in 0..10 {
         dashboard.key(KeyCode::Down);
     }
     let screen = rendered_rows(&dashboard, 120, 40).join("\n");
-    assert!(screen.contains("Narrower: not available yet"), "{screen}");
+    assert!(
+        screen.contains("Narrower: no left-right divider to") && screen.contains("resize"),
+        "{screen}"
+    );
 }
 
 #[test]

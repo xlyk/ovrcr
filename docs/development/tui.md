@@ -55,6 +55,16 @@ focus on the same session. Zoom draws and sizes one focused leaf while keeping
 the tree unchanged; zoom, focus, swap, split, and close still use `retarget` so
 input permission follows the acknowledged visible view.
 
+Browse and `Space s` share the `<`, `>`, `-`, `+`, and `=` resize bindings.
+Width keys move the nearest left-right divider around the focused pane by two
+columns; height keys move its nearest top-bottom divider by one row. Each key
+repeat is one step, and split ratios clamp to the 20-column and 8-row pane
+minimums. A missing divider reports a reason. Each real resize retargets once
+with all changed pane sizes; a clamp no-op keeps input readiness. Header
+double-click toggles zoom, divider double-click makes its ratio even, and a
+Browse right-click focuses the pane and opens the Panes group. Right-clicks in
+Terminal mode continue through normal PTY mouse forwarding.
+
 Sidebar session-jump labels are derived from the currently drawn sidebar order
 (tree order or recent-activity order), viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
@@ -187,13 +197,18 @@ native picker keep the unavailable notice.
 
 
 The Operator occupies a three-row section below the attention line and above the
-project tree; quota stays at the bottom. `SidebarRects` supplies attention,
-Operator, project-tree and quota rectangles to rendering, mouse input and
-viewport calculations. A section can have a trailing blank row, and the shared
-height ladder removes gaps first, then compacts or hides Operator and quota to
-preserve tree space. Operator's full section shows state and one activity/reply
-detail row; the one-row form clips to its name and status. `operator.sidebar`
-controls visibility and defaults on. The section preserves the selected-row
+project tree; Resources follows the tree and quota stays at the bottom.
+`SidebarRects` supplies attention, Operator, project-tree, Resources and quota
+rectangles to rendering, mouse input and viewport calculations. A section can
+have a trailing blank row, and the shared height ladder removes gaps first, then
+compacts or hides sections to preserve tree space. Operator's full section shows
+state and one activity/reply detail row; the one-row form clips to its name and
+status. `operator.sidebar` controls visibility and defaults on. Resources uses
+the whole-machine CPU and memory source at the existing redraw tick, throttled
+to one read every two seconds; `resources.sidebar` defaults on and off prevents
+sampling. CPU remains unknown until two readings establish an advancing delta,
+and a failed read clears its baseline and displays unavailable. The section
+preserves the selected-row
 background when the conversation is open. Working shows the durable turn-start
 age; Idle and unread states show the durable last-reply age when known. Legacy
 turns without timestamps remain untimed. Setup detection checks for the Pi

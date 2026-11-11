@@ -510,6 +510,12 @@ impl Loader<'_> {
             }
             self.unknown(usage, "usage.");
         }
+        if let Some(mut resources) = self.take::<toml::Table>(table, "resources") {
+            if let Some(value) = self.take::<bool>(&mut resources, "resources.sidebar") {
+                self.accept("resources.sidebar", &mut settings.resources.sidebar, value);
+            }
+            self.unknown(resources, "resources.");
+        }
         self.unknown(std::mem::take(table), "");
     }
 
@@ -1010,6 +1016,9 @@ command = "/opt/grok"
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
 
+[resources]
+sidebar = true
+
 [usage]
 sidebar = true
 
@@ -1102,6 +1111,7 @@ login = "owner@example.com"
         assert_eq!(settings.launch_choices["notes"], LaunchChoice::Terminal);
         assert!(settings.quota.enabled);
         assert!(settings.quota.claude_probe);
+        assert!(settings.resources.sidebar);
         assert_eq!(settings.quota.codex.command, PathBuf::from("/opt/codex"));
         assert_eq!(
             settings.quota.codex.home,
@@ -1244,6 +1254,7 @@ login = "owner@example.com"
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "usage.sidebar",
+                "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",

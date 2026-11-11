@@ -21,6 +21,7 @@ pub(crate) mod picker;
 mod quota;
 mod ready;
 mod render;
+mod resources;
 mod row_menu;
 mod settings;
 mod settings_editor;
@@ -41,6 +42,7 @@ pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
+pub use resources::{CpuCounters, MachineReadings, MachineResourceSource, MemoryCounters};
 pub use settings::{LaunchChoice, Settings};
 pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
@@ -138,6 +140,7 @@ pub(super) struct SidebarRects {
     pub operator: Rect,
     pub tree: Rect,
     pub usage: Rect,
+    pub resources: Rect,
     pub quota: Rect,
 }
 
@@ -164,6 +167,14 @@ pub(super) enum PaneDirection {
     Down,
     Up,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneResize {
+    Narrower,
+    Wider,
+    Shorter,
+    Taller,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,6 +294,45 @@ impl PaneLayout {
             Self::Pane(existing) => *existing == index,
             Self::Split { first, second, .. } => first.contains(index) || second.contains(index),
         }
+    }
+
+    pub(super) fn nearest_split(
+        &self,
+        index: usize,
+        direction: SplitDirection,
+    ) -> Option<(Vec<bool>, bool)> {
+        fn find(
+            layout: &PaneLayout,
+            index: usize,
+            direction: SplitDirection,
+            path: &mut Vec<bool>,
+        ) -> Option<(Vec<bool>, bool)> {
+            match layout {
+                PaneLayout::Pane(_) => None,
+                PaneLayout::Split {
+                    direction: split_direction,
+                    first,
+                    second,
+                    ..
+                } => {
+                    let (child, first_side) = if first.contains(index) {
+                        (first.as_ref(), true)
+                    } else if second.contains(index) {
+                        (second.as_ref(), false)
+                    } else {
+                        return None;
+                    };
+                    path.push(!first_side);
+                    let nested = find(child, index, direction, path);
+                    path.pop();
+                    nested.or_else(|| {
+                        (*split_direction == direction).then(|| (path.clone(), first_side))
+                    })
+                }
+            }
+        }
+
+        find(self, index, direction, &mut Vec::new())
     }
 
     fn first(&self) -> usize {
@@ -553,8 +603,23 @@ pub(super) struct MouseForwarding {
     pub(super) last_motion: Option<MouseEvent>,
     pub(super) split_dragging: Option<Vec<bool>>,
     pub(super) sidebar_dragging: bool,
+    pub(super) last_pane_click: Option<PaneClick>,
     /// Row under the pointer. Drawing reads it; motion that stays on the same row does not redraw.
     pub(super) hovered: Option<HoveredRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PaneClickTarget {
+    Header(usize),
+    Divider(Vec<bool>),
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PaneClick {
+    pub(super) target: PaneClickTarget,
+    pub(super) column: u16,
+    pub(super) row: u16,
+    pub(super) at: std::time::Instant,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -571,6 +636,7 @@ pub struct Dashboard {
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
     usage: crate::protocol::UsageSnapshot,
+    resources: resources::Sampler,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
     transcript: transcript::View,

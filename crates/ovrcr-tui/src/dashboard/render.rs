@@ -494,6 +494,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
 
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
     dashboard.draw_usage(frame, now_unix_ms);
+    dashboard.draw_resources(frame);
     dashboard.draw_quota(frame, now_unix_ms);
     dashboard.draw_attention(frame);
 
@@ -2025,26 +2026,26 @@ mod harness_agent_label_tests {
                 .trim_end()
                 .to_owned()
         };
-        // Title row 0, project 1, workspace 2, then the sessions.
+        // The three-row Operator section and its blank row precede the tree.
         assert!(
-            row(3).contains("review") && row(3).ends_with("claude:sonnet-4"),
+            row(7).contains("review") && row(7).ends_with("claude:sonnet-4"),
             "{}",
-            row(3)
+            row(7)
         );
         assert!(
-            row(4).contains("implement lifecycle") && row(4).ends_with(" claude"),
+            row(8).contains("implement lifecycle") && row(8).ends_with(" claude"),
             "model first: {}",
-            row(4)
+            row(8)
         );
         assert!(
-            row(5).ends_with("implement the lifecycle overhaul"),
+            row(9).ends_with("implement the lifecycle overhaul"),
             "then the agent: {}",
-            row(5)
+            row(9)
         );
         assert!(
-            row(6).ends_with("implement the whole lifecycle o…"),
+            row(10).ends_with("implement the whole lifecycle o…"),
             "only then the title: {}",
-            row(6)
+            row(10)
         );
     }
 

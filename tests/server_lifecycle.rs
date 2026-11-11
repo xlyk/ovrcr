@@ -1014,36 +1014,39 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
     dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 40));
     dashboard.install_hierarchy(snapshot);
 
-    let metrics = |input: Option<u64>, output: Option<u64>| ovrcr::protocol::MetricsSample {
-        model: Some("usage-fixture".into()),
-        context: ovrcr::protocol::Measurement {
-            value: ovrcr::protocol::ContextSample {
-                used_tokens: None,
-                capacity_tokens: None,
-                quality: ovrcr::protocol::SampleQuality::Observed,
+    let metrics = |scope: ovrcr::protocol::UsageScope, input: Option<u64>, output: Option<u64>| {
+        ovrcr::protocol::MetricsSample {
+            model: Some("usage-fixture".into()),
+            context: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: ovrcr::protocol::SampleQuality::Observed,
+                },
+                source: "usage fixture".into(),
             },
-            source: "usage fixture".into(),
-        },
-        usage: ovrcr::protocol::Measurement {
-            value: ovrcr::protocol::UsageTotals {
-                scope: ovrcr::protocol::UsageScope::Conversation,
-                coverage: ovrcr::protocol::UsageCoverage::Complete,
-                input_tokens: input,
-                output_tokens: output,
-                cache_read_tokens: input.map(|tokens| tokens / 2),
-                cache_write_tokens: Some(0),
-                reasoning_output_tokens: output.map(|tokens| tokens / 2),
+            usage: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::UsageTotals {
+                    scope,
+                    coverage: ovrcr::protocol::UsageCoverage::Complete,
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_read_tokens: input.map(|tokens| tokens / 2),
+                    cache_write_tokens: Some(0),
+                    reasoning_output_tokens: output.map(|tokens| tokens / 2),
+                },
+                source: "usage fixture".into(),
             },
-            source: "usage fixture".into(),
-        },
-        cost: ovrcr::protocol::Measurement {
-            value: None,
-            source: "usage fixture".into(),
-        },
+            cost: ovrcr::protocol::Measurement {
+                value: None,
+                source: "usage fixture".into(),
+            },
+        }
     };
     let report = |identity: HookIdentity,
                   binding: &ovrcr::protocol::AgentBinding,
                   revision: u64,
+                  scope: ovrcr::protocol::UsageScope,
                   input: Option<u64>,
                   output: Option<u64>| {
         fixture.request(Request::AgentReport(AgentReport {
@@ -1054,7 +1057,7 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
                 binding: binding.clone(),
                 revision,
                 observation: ovrcr::protocol::AgentObservation::Metrics(Box::new(metrics(
-                    input, output,
+                    scope, input, output,
                 ))),
             }),
         }))
@@ -1077,30 +1080,92 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         };
 
     assert_eq!(
-        report(first, &first_binding, 1, Some(100), Some(20)),
+        report(
+            first,
+            &first_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(100),
+            None,
+        ),
         Response::Ok
     );
     assert_eq!(
-        wait_usage_event(&mut dashboard_stream, &mut dashboard, 120).total_tokens,
-        120
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 100).total_tokens,
+        100
+    );
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            2,
+            ovrcr::protocol::UsageScope::Invocation,
+            Some(10),
+            None,
+        ),
+        Response::Ok,
+        "invocation totals covered by the conversation snapshot add nothing"
+    );
+    let Response::Hierarchy(invocation_overlap) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after overlapping invocation report");
+    };
+    assert_eq!(invocation_overlap.usage.total_tokens, 100);
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            3,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(110),
+            None,
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 110).total_tokens,
+        110
     );
     // A session with no reported input or output contributes zero and stays an ordinary
     // Unknown session; cache and reasoning fields are subsets and are not added twice.
-    assert_eq!(report(second, &second_binding, 1, None, None), Response::Ok);
+    assert_eq!(
+        report(
+            second,
+            &second_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            None,
+            None,
+        ),
+        Response::Ok
+    );
     let Response::Hierarchy(no_tokens) = fixture.request(Request::List) else {
         panic!("expected hierarchy after no-token report");
     };
-    assert_eq!(no_tokens.usage.total_tokens, 120);
+    assert_eq!(no_tokens.usage.total_tokens, 110);
     assert_eq!(
-        report(second, &second_binding, 2, Some(2), Some(3)),
+        report(
+            second,
+            &second_binding,
+            2,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(2),
+            Some(3),
+        ),
         Response::Ok
     );
     assert_eq!(
-        wait_usage_event(&mut dashboard_stream, &mut dashboard, 125).total_tokens,
-        125
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 115).total_tokens,
+        115
     );
     assert_eq!(
-        report(first, &first_binding, 2, Some(150), Some(25)),
+        report(
+            first,
+            &first_binding,
+            4,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(150),
+            Some(25),
+        ),
         Response::Ok
     );
     assert_eq!(

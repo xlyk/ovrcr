@@ -209,10 +209,19 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         .position(|row| row.contains("USAGE") || row.contains("Usage ·"))
         .expect("Usage follows the tree");
     assert_eq!(last_tree_row + 1, usage_row, "{current:?}");
+    let resources_row = current
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources follows Usage");
     assert_eq!(
         usage_row + 5,
+        resources_row,
+        "Resources follows Usage's four content rows and blank"
+    );
+    assert_eq!(
+        resources_row + 4,
         quota_row,
-        "Usage keeps its rows before Quota"
+        "Quota follows Resources' three content rows and blank"
     );
     dashboard.install_focus(SessionId(49));
     let action = dashboard.mouse_action(

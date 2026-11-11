@@ -91,6 +91,8 @@ const OPERATOR_SIDEBAR_ABOUT: &[&str] =
 
 const USAGE_SIDEBAR_ABOUT: &[&str] =
     &["Shows the Usage section in the Dashboard sidebar; on by default."];
+const RESOURCES_SIDEBAR_ABOUT: &[&str] =
+    &["Shows machine CPU and memory in the Dashboard sidebar; turning it off also stops sampling."];
 
 const SAVE_UNCOMMITTED_WORK_ABOUT: &[&str] = &[
     "Pushes uncommitted workspace work to origin/wip/<branch> when a workspace is removed or the server shuts down.",
@@ -281,7 +283,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 37] = [
+const CATALOG: [Entry; 38] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -523,6 +525,17 @@ const CATALOG: [Entry; 37] = [
         off_state: None,
         about: USAGE_SIDEBAR_ABOUT,
         value: |settings| display(&settings.usage.sidebar),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "resources.sidebar",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Usage",
+        label: "Machine resources sidebar section",
+        off_state: None,
+        about: RESOURCES_SIDEBAR_ABOUT,
+        value: |settings| display(&settings.resources.sidebar),
         show_off: |_| false,
     },
     Entry {
@@ -773,6 +786,7 @@ mod tests {
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "usage.sidebar",
+                "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",
@@ -831,7 +845,7 @@ mod tests {
                 .owner,
             SettingOwner::Server
         );
-        for path in [ReadySoundChoice::KEY, "iterm_focus"] {
+        for path in [ReadySoundChoice::KEY, "iterm_focus", "resources.sidebar"] {
             assert_eq!(
                 entries()
                     .iter()
