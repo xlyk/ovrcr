@@ -26,8 +26,10 @@ fn recent_sidebar_dashboard() -> Dashboard {
     dashboard.install_area(area);
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(2));
-    let mut settings = ovrcr::tui::Settings::default();
-    settings.sidebar_view = ovrcr::protocol::SidebarView::Recent;
+    let settings = ovrcr::tui::Settings {
+        sidebar_view: ovrcr::protocol::SidebarView::Recent,
+        ..Default::default()
+    };
     dashboard.install_settings(settings);
     dashboard
 }
@@ -227,10 +229,20 @@ fn recent_sidebar_project_menu_fold_and_agent_rows_use_rendered_hitboxes() {
         .expect("implement row moved after review");
     assert!(review_row < implement_row, "rows re-sort by activity");
     assert!(
-        reordered[implement_row].contains("[x]"),
-        "the hovered SessionId(2) close mark follows that session after it moves"
+        reordered.iter().all(|line| !line.contains("[x]")),
+        "the old hover identity must not leave a close mark on a row after re-sort"
     );
-    let close = sidebar_cell(&reordered[implement_row], "[x]");
+    hover_sidebar(&mut dashboard, 5, implement_row as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(
+        hovered[implement_row].contains("[x]"),
+        "a fresh hover marks the currently drawn SessionId(2) row"
+    );
+    assert!(
+        !hovered[review_row].contains("[x]"),
+        "the other row remains unmarked"
+    );
+    let close = sidebar_cell(&hovered[implement_row], "[x]");
     assert_eq!(
         dashboard.mouse_action(
             mouse_event(

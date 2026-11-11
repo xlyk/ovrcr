@@ -4522,6 +4522,9 @@ impl Dashboard {
                     let summary = *summary;
                     let previous_live =
                         find_session(self, summary.id).map(|session| session.phase.is_live());
+                    let recent_rows = (self.settings.sidebar_view
+                        == crate::protocol::SidebarView::Recent)
+                        .then(|| self.visible_rows());
                     let tree = self.sidebar_rects(self.outer_area).tree;
                     for session in self
                         .hierarchy
@@ -4534,6 +4537,11 @@ impl Dashboard {
                             *session = summary.clone();
                             break;
                         }
+                    }
+                    if recent_rows.is_some_and(|rows| rows != self.visible_rows()) {
+                        // The mouse location belongs to a screen row, so an activity re-sort
+                        // must not carry its old row identity to a different screen location.
+                        self.mouse.hovered = None;
                     }
                     if self.transcript.session == Some(summary.id)
                         && self.transcript.run != Some(summary.run)

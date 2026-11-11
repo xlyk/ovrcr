@@ -271,8 +271,10 @@ fn recent_activity_jump_labels_follow_visible_activity_order() {
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    let mut settings = ovrcr::tui::Settings::default();
-    settings.sidebar_view = ovrcr::protocol::SidebarView::Recent;
+    let settings = ovrcr::tui::Settings {
+        sidebar_view: ovrcr::protocol::SidebarView::Recent,
+        ..Default::default()
+    };
     dashboard.install_settings(settings);
 
     ctrl_g(&mut dashboard);

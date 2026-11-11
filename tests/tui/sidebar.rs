@@ -187,8 +187,10 @@ fn m_switches_to_recent_activity_with_newest_agents_grouped_by_project() {
         Request::SetSetting { ref path, ref value }
             if path == "sidebar_view" && value.as_deref() == Some("\"recent\"")
     ));
-    let mut settings = Settings::default();
-    settings.sidebar_view = SidebarView::Recent;
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
     dashboard.install_settings(settings);
 
     let rows = rendered_rows_at(&dashboard, 120, 40, now)
@@ -270,8 +272,10 @@ fn recent_rows_render_two_lines_and_clip_long_titles_and_branches() {
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    let mut settings = Settings::default();
-    settings.sidebar_view = SidebarView::Recent;
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
     dashboard.install_settings(settings);
 
     let rows = rendered_sidebar_rows_at(&dashboard, 120, 40, 2 * 24 * 60 * 60_000);
@@ -293,6 +297,97 @@ fn recent_rows_render_two_lines_and_clip_long_titles_and_branches() {
         rows[title + 1].contains("└") && rows[title + 1].contains('…'),
         "long branch clips on the second line: {}",
         rows[title + 1]
+    );
+}
+
+#[test]
+fn recent_view_preserves_unread_input_highlights_and_folded_counts() {
+    use ovrcr::protocol::{Settings, SidebarView};
+
+    let mut hierarchy = fixture_hierarchy();
+    let project = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .expect("fixture project");
+    let auth = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "auth")
+        .expect("auth workspace");
+    let input = auth
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(1))
+        .expect("Input Agent");
+    set_attention(input, AgentActivity::Busy, true, false);
+    input.title = Some("input-urgent".into());
+    input.last_activity_unix_ms = Some(20);
+
+    let lifecycle = project
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "lifecycle")
+        .expect("lifecycle workspace");
+    let unread = lifecycle
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == SessionId(2))
+        .expect("Unread Agent");
+    set_attention(unread, AgentActivity::ResponseReady, false, true);
+    unread.title = Some("ready-unread".into());
+    unread.last_activity_unix_ms = Some(10);
+
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    dashboard.install_settings(Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    });
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 20))
+        .unwrap();
+    for title in ["input-urgent", "ready-unread"] {
+        let row = (0..40)
+            .find(|row| sidebar_row(&terminal, *row).contains(title))
+            .unwrap_or_else(|| panic!("recent Agent sidebar title was not rendered: {title}"));
+        let column = sidebar_row(&terminal, row).find(title).unwrap() as u16;
+        let cell = &terminal.backend().buffer()[(column, row)];
+        assert_eq!(cell.fg, Color::Rgb(205, 214, 244), "{title}");
+        assert!(
+            cell.modifier.contains(Modifier::BOLD),
+            "{title} keeps the shared Unread/Input title emphasis"
+        );
+    }
+
+    let project_row = rendered_rows(&dashboard, 120, 40)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("recent project row") as u16;
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: project_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let folded = rendered_rows(&dashboard, 120, 40);
+    let folded_project = &folded[project_row as usize];
+    assert!(
+        folded_project.contains("?1 ✓1 ▸ 2 ws"),
+        "recent project fold counts its Agent Input and Unread rows, excluding Terminals: {folded_project}"
     );
 }
 
@@ -327,8 +422,10 @@ fn recent_activity_reorders_on_session_update_without_changing_selection() {
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.install_hierarchy(hierarchy.clone());
     dashboard.install_focus(SessionId(1));
-    let mut settings = Settings::default();
-    settings.sidebar_view = SidebarView::Recent;
+    let settings = Settings {
+        sidebar_view: SidebarView::Recent,
+        ..Settings::default()
+    };
     dashboard.install_settings(settings);
     let ordered = rendered_sidebar_rows_at(&dashboard, 120, 40, 0);
     assert!(
