@@ -541,11 +541,12 @@ fn resource_bar(width: u16, label_width: usize) -> Option<usize> {
 }
 
 fn resource_bar_spans(used: u128, total: u128, width: usize) -> Vec<Span<'static>> {
-    let filled = if total == 0 {
-        0
-    } else {
-        ((used.saturating_mul(width as u128) + total / 2) / total).min(width as u128) as usize
-    };
+    let filled = used
+        .saturating_mul(width as u128)
+        .saturating_add(total / 2)
+        .checked_div(total)
+        .unwrap_or_default()
+        .min(width as u128) as usize;
     vec![
         Span::styled(FILL_GLYPH.repeat(filled), Style::default().fg(GREEN())),
         Span::styled(
@@ -585,7 +586,7 @@ fn format_memory(memory: super::resources::MemoryCounters) -> String {
         .unwrap_or(("B", 1));
     let tenths = |bytes: u64| (u128::from(bytes) * 10 + divisor / 2) / divisor;
     let format = |value: u128| {
-        if value % 10 == 0 {
+        if value.is_multiple_of(10) {
             (value / 10).to_string()
         } else {
             format!("{}.{:01}", value / 10, value % 10)
@@ -1365,7 +1366,8 @@ mod layout_tests {
             "one blank row follows the attention strip"
         );
         assert_eq!(full.tree.y, full.operator.bottom() + 1);
-        assert_eq!(full.tree.bottom(), full.quota.y);
+        assert_eq!(full.tree.bottom(), full.resources.y);
+        assert_eq!(full.resources.bottom() + 1, full.quota.y);
         assert_eq!(full.quota.bottom(), 29);
         dashboard.toggle_sidebar();
         assert!(

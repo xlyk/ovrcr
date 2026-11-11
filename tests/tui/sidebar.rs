@@ -2131,9 +2131,11 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(1));
-    let area = Rect::new(0, 0, 60, 24);
+    // One extra row keeps the full two-line selected session visible below the
+    // default-on Resources section while preserving the same narrow width.
+    let area = Rect::new(0, 0, 60, 25);
     dashboard.install_area(area);
-    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(60, 25)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -2246,11 +2248,11 @@ fn sidebar_stacks_every_agent_label_or_none() {
         implement_session_mut(&mut hierarchy).label = "claude".into();
         dashboard.install_hierarchy(hierarchy);
         dashboard.install_focus(SessionId(5));
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(60, 25)).unwrap();
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let rows = (0..24)
+        let rows = (0..25)
             .map(|y| {
                 (0..29)
                     .map(|x| terminal.backend().buffer()[(x, y)].symbol())
@@ -2262,18 +2264,18 @@ fn sidebar_stacks_every_agent_label_or_none() {
         (rows, dashboard)
     };
     let (inline, inline_dashboard) = draw("claude");
-    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 24) as usize;
-    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 24) as usize;
-    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 24) as usize;
+    let inline_review = dashboard_sidebar_row(&inline_dashboard, "review", 60, 25) as usize;
+    let inline_lifecycle = dashboard_sidebar_row(&inline_dashboard, "lifecycle", 60, 25) as usize;
+    let inline_implement = dashboard_sidebar_row(&inline_dashboard, "implement", 60, 25) as usize;
     assert_eq!(inline[inline_review], "     - review         claude");
     assert_eq!(inline[inline_lifecycle], "  󰘬 lifecycle");
     assert_eq!(inline[inline_implement], "     · implement      claude");
     assert_eq!(inline[inline_implement + 1], "");
     let (stacked, stacked_dashboard) = draw("pi / grok-4.7");
-    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 24) as usize;
-    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 24) as usize;
-    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 24);
-    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 24) as usize;
+    let stacked_review = dashboard_sidebar_row(&stacked_dashboard, "review", 60, 25) as usize;
+    let stacked_lifecycle = dashboard_sidebar_row(&stacked_dashboard, "lifecycle", 60, 25) as usize;
+    let stacked_local_rows = dashboard_sidebar_rows(&stacked_dashboard, "$ local", 60, 25);
+    let stacked_implement = dashboard_sidebar_row(&stacked_dashboard, "implement", 60, 25) as usize;
     assert_eq!(stacked[stacked_review], "     - review");
     assert_eq!(stacked[stacked_review + 1], "       └ pi:grok-4.7");
     assert_eq!(stacked[stacked_lifecycle], "  󰘬 lifecycle");
@@ -2287,7 +2289,10 @@ fn sidebar_stacks_every_agent_label_or_none() {
         "       └ claude",
         "a label that fits still stacks"
     );
-    assert_eq!(stacked[stacked_implement + 2], "");
+    assert!(
+        stacked[stacked_implement + 2].starts_with(" RESOURCES"),
+        "Resources follows the last visible tree row"
+    );
 }
 
 #[test]

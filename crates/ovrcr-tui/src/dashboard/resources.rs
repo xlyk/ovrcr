@@ -354,10 +354,8 @@ mod macos {
                 )
             };
             let required_count = (offset_of!(libc::vm_statistics64, internal_page_count)
-                + size_of::<libc::natural_t>()
-                + size_of::<libc::integer_t>()
-                - 1)
-                / size_of::<libc::integer_t>();
+                + size_of::<libc::natural_t>())
+            .div_ceil(size_of::<libc::integer_t>());
             if result != libc::KERN_SUCCESS || usize::try_from(count).unwrap_or(0) < required_count
             {
                 return None;

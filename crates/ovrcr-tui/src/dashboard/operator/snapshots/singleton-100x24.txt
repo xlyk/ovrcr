@@ -11,9 +11,9 @@
                                        │
                                        │
                                        │
-                                       │
-                                       │
-                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ──────────────────────    … │
+ mem       …                           │
                                        │
  QUOTA LEFT ───────────────────────────│
 Claude · checking                      │ Managing global
