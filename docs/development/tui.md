@@ -24,6 +24,16 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
+Pane arrangement is Dashboard-owned: `PaneLayout` stores a tree of right or
+down splits, while `DashboardView` sends only the visible sessions and their
+terminal sizes. The Server does not retain the tree, and a new attachment starts
+with one pane. Geometry keeps each pane at least 20 columns wide and 8 rows
+high including its header. If the full tree no longer fits, render only the
+focused pane while preserving every assignment and split ratio; render the tree
+again when it fits. Focus and visible-geometry changes go through
+`retarget(PaneChange)` and revoke input until the one in-flight view request is
+acknowledged for all of its pane snapshots.
+
 Sidebar session-jump labels are derived from the drawn tree order, viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
