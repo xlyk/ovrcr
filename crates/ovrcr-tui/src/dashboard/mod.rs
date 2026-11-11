@@ -17,6 +17,9 @@ mod navigation;
 mod operator;
 mod outbox;
 mod palette;
+#[cfg(test)]
+#[path = "../../../../tests/support/pi_available_test.rs"]
+mod pi_available_test;
 pub(crate) mod picker;
 mod quota;
 mod ready;

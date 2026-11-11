@@ -194,6 +194,11 @@ fn quota_with_windows() -> QuotaSnapshot {
 
 #[test]
 fn attention_and_operator_sections_lead_the_tree_and_leave_blank_rows() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::attention_and_operator_sections_lead_the_tree_and_leave_blank_rows",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
@@ -478,6 +483,11 @@ fn the_dashboard_setting_hides_the_operator_section_without_disabling_its_key() 
 
 #[test]
 fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::the_five_sidebar_states_show_timing_activity_and_the_last_reply",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
 
     let mut off = operator_dashboard_fixture();
@@ -594,6 +604,11 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
 #[cfg(target_os = "macos")]
 #[test]
 fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section",
+    ) {
+        return;
+    }
     use ovrcr::protocol::{ClientMessage, exchange_preamble, read_frame, write_frame};
     use std::collections::BTreeSet;
     use std::os::unix::net::UnixStream;
@@ -802,6 +817,11 @@ fn retired_title_controls_open_neither_surface() {
 
 #[test]
 fn both_ends_of_the_operator_section_open_the_same_conversation() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::both_ends_of_the_operator_section_open_the_same_conversation",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);

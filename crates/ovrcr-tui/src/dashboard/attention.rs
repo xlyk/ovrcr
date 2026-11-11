@@ -443,12 +443,16 @@ mod tests {
     }
 
     fn screen(dashboard: &Dashboard) -> Vec<String> {
+        screen_at(dashboard, 30)
+    }
+
+    fn screen_at(dashboard: &Dashboard, height: u16) -> Vec<String> {
         let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, height)).unwrap();
         terminal
             .draw(|frame| super::super::draw_dashboard_at(frame, dashboard, 0))
             .unwrap();
-        (0..30)
+        (0..height)
             .map(|y| {
                 (0..39)
                     .map(|x| terminal.backend().buffer()[(x, y)].symbol())
@@ -461,6 +465,15 @@ mod tests {
         crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
             column: 8,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    fn move_to(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Moved,
+            column,
             row,
             modifiers: crossterm::event::KeyModifiers::NONE,
         }
@@ -510,11 +523,9 @@ mod tests {
                 session.agent.as_mut().unwrap().input_requests.clear();
             }
         }
-        let before = screen(&dashboard);
-        assert!(
-            !before.iter().any(|row| row.contains(" ready")),
-            "no strip yet"
-        );
+        let before = screen_at(&dashboard, 40);
+        let before_rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
+        assert!(before_rects.attention.is_empty(), "no strip yet");
         let y = before
             .iter()
             .position(|row| row.contains("agent-6"))
@@ -525,8 +536,13 @@ mod tests {
         dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
             crate::protocol::ServerEvent::SessionChanged(Box::new(ready)),
         ));
-        let after = screen(&dashboard);
-        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
+        let after = screen_at(&dashboard, 40);
+        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a new attention count preserves the current selection"
+        );
         assert!(
             after[usize::from(rects.attention.y)].trim_end() == " ✓ 1 ready",
             "{after:?}"
@@ -551,8 +567,61 @@ mod tests {
             "the target keeps its line: {}",
             after[new_y]
         );
-        dashboard.mouse_action(click(new_y as u16), Rect::new(0, 0, 120, 30));
+        dashboard.mouse_action(click(new_y as u16), Rect::new(0, 0, 120, 40));
         assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
+    }
+
+    #[test]
+    fn hierarchy_attention_geometry_shift_clears_stale_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
+            for session in &mut workspace.sessions {
+                session.unread = None;
+                session.agent.as_mut().unwrap().input_requests.clear();
+            }
+        }
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        let hovered = screen_at(&dashboard, area.height);
+        assert!(
+            hovered[hovered_row].contains("[x]"),
+            "the rendered pointer row has its close mark: {hovered:?}"
+        );
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let mut ready = session(6, "c", false, true);
+        ready.project = "p".into();
+        let target = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.sessions.iter_mut())
+            .find(|session| session.id == SessionId(6))
+            .expect("existing session keeps its identity");
+        *target = ready;
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "attention geometry preserves the selected session"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old screen coordinate cannot keep a mark on a different row: {after:?}"
+        );
+        let rects = dashboard.sidebar_rects(area);
+        assert_eq!(
+            after[usize::from(rects.attention.y)].trim_end(),
+            " ✓ 1 ready"
+        );
     }
 
     #[test]

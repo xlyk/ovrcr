@@ -63,7 +63,9 @@ bar has no Operator controls.
 
 Before the conversation has been opened, the section says **Off** when the Pi
 executable is available and **Not set up** when it is missing. If Pi is missing
-when opening begins, that status remains while opening the singleton.
+when opening begins, the singleton remains **Not set up**, including when its
+journal already has replies. A queued Open with Pi available shows **Idle** until
+the first response.
 Known Pi setup errors after opening also show **Not set up**. The section shows
 **Working** with elapsed time and current activity, **Reply ready · 1 unread**
 with a reply preview, or **Idle** with the latest reply. The last reply

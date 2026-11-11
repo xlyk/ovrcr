@@ -5072,17 +5072,24 @@ impl Dashboard {
             self.assignment_control_changed(&summary);
         }
         self.observe_desktop_responses(&hierarchy);
+        let recent_rows = (self.settings.sidebar_view == crate::protocol::SidebarView::Recent)
+            .then(|| self.visible_rows());
         let tree = self.sidebar_rects(self.outer_area).tree;
         self.install_usage_snapshot(hierarchy.usage);
         self.hierarchy = hierarchy;
+        let tree_changed = tree != self.sidebar_rects(self.outer_area).tree;
+        let rows_changed = recent_rows.is_some_and(|rows| rows != self.visible_rows());
+        if tree_changed || rows_changed {
+            // A pointer identifies a screen row. Do not carry that identity to
+            // another row after a snapshot moves or reorders the tree.
+            self.mouse.hovered = None;
+        }
         if self.transcript.session.is_some_and(|id| {
             !find_session(self, id).is_some_and(|summary| Some(summary.run) == self.transcript.run)
         }) {
             self.close_transcript();
         }
-        if tree != self.sidebar_rects(self.outer_area).tree
-            || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
-        {
+        if tree_changed || self.settings.sidebar_view == crate::protocol::SidebarView::Recent {
             self.ensure_selection_visible(&self.visible_rows());
         }
         self.sync_palette_workspace_identity();

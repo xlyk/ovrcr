@@ -957,14 +957,15 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         else {
             panic!("agent reservation failed: {response:?}");
         };
+        let supervisor_auth = ovrcr::protocol::SupervisorAuth {
+            session,
+            lease: reservation.lease,
+        };
         let response = client::request(
             &mut stream,
             2,
             Request::Supervisor(ovrcr::protocol::SupervisorRequest {
-                auth: ovrcr::protocol::SupervisorAuth {
-                    session,
-                    lease: reservation.lease,
-                },
+                auth: supervisor_auth.clone(),
                 operation: format!("usage-bind-{label}"),
                 command: ovrcr::protocol::AgentCommand::Bind {
                     expected_binding: None,
@@ -978,10 +979,10 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         else {
             panic!("agent binding failed: {response:?}");
         };
-        (binding, stream)
+        (binding, stream, supervisor_auth)
     };
-    let (first_binding, _first_supervisor) = bind(first, "first");
-    let (second_binding, _second_supervisor) = bind(second, "second");
+    let (first_binding, mut first_supervisor, first_supervisor_auth) = bind(first, "first");
+    let (second_binding, _second_supervisor, _second_supervisor_auth) = bind(second, "second");
 
     let mut dashboard_stream = connect_server(&fixture.socket).unwrap();
     dashboard_stream
@@ -1094,27 +1095,51 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         wait_usage_event(&mut dashboard_stream, &mut dashboard, 100).total_tokens,
         100
     );
+    let rebound = client::request(
+        &mut first_supervisor,
+        3,
+        Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+            auth: first_supervisor_auth,
+            operation: "usage-rebind-first".into(),
+            command: ovrcr::protocol::AgentCommand::Bind {
+                expected_binding: Some(first_binding.clone()),
+                conversation: first_binding.conversation.clone(),
+            },
+        }),
+    )
+    .unwrap();
+    let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Bound(rebound_binding)) =
+        rebound
+    else {
+        panic!("same-conversation rebind failed: {rebound:?}");
+    };
+    assert_eq!(rebound_binding.generation, first_binding.generation + 1);
+    assert_eq!(rebound_binding.conversation, first_binding.conversation);
+    assert_eq!(rebound_binding.invocation, first_binding.invocation);
     assert_eq!(
         report(
             first,
-            &first_binding,
-            2,
-            ovrcr::protocol::UsageScope::Invocation,
-            Some(10),
+            &rebound_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(90),
             None,
         ),
         Response::Ok,
-        "invocation totals covered by the conversation snapshot add nothing"
+        "the first lower report after rebind is accepted"
     );
-    let Response::Hierarchy(invocation_overlap) = fixture.request(Request::List) else {
-        panic!("expected hierarchy after overlapping invocation report");
+    let Response::Hierarchy(after_lower_rebind) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after lower rebind report");
     };
-    assert_eq!(invocation_overlap.usage.total_tokens, 100);
+    assert_eq!(
+        after_lower_rebind.usage.total_tokens, 100,
+        "a same-conversation rebind cannot count the prior total twice"
+    );
     assert_eq!(
         report(
             first,
-            &first_binding,
-            3,
+            &rebound_binding,
+            2,
             ovrcr::protocol::UsageScope::Conversation,
             Some(110),
             None,
@@ -1125,6 +1150,22 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         wait_usage_event(&mut dashboard_stream, &mut dashboard, 110).total_tokens,
         110
     );
+    assert_eq!(
+        report(
+            first,
+            &rebound_binding,
+            3,
+            ovrcr::protocol::UsageScope::Invocation,
+            Some(10),
+            None,
+        ),
+        Response::Ok,
+        "invocation totals covered by the conversation snapshot add nothing"
+    );
+    let Response::Hierarchy(invocation_overlap) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after overlapping invocation report");
+    };
+    assert_eq!(invocation_overlap.usage.total_tokens, 110);
     // A session with no reported input or output contributes zero and stays an ordinary
     // Unknown session; cache and reasoning fields are subsets and are not added twice.
     assert_eq!(
@@ -1160,7 +1201,7 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
     assert_eq!(
         report(
             first,
-            &first_binding,
+            &rebound_binding,
             4,
             ovrcr::protocol::UsageScope::Conversation,
             Some(150),
@@ -1194,7 +1235,7 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         "live total missing: {sidebar}"
     );
 
-    drop(_first_supervisor);
+    drop(first_supervisor);
     drop(_second_supervisor);
     for session in [first.session, second.session, local] {
         assert_eq!(

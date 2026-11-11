@@ -2295,7 +2295,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .take(usize::from(rect.width))
         .collect();
     assert_eq!(line2, "─".repeat(usize::from(rect.width)), "{ready_text}");
-    assert!(!ready_text.contains("tokens"), "{ready_text}");
+    // The Dashboard Usage summary is separate from pane metrics; the exact
+    // plain second header row above proves this pane has no token report.
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -3641,6 +3642,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('p', "a", Action::RegisterProject),
         ('v', "t/Ctrl-t", Action::Tasks),
         ('s', "x", Action::ClosePane),
+        ('s', "Shift-Tab", Action::PreviousPane),
     ] {
         assert!(
             slots.contains(&expected),

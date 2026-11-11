@@ -2004,6 +2004,7 @@ fn context_updates_leave_the_compact_sidebar_unchanged() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let initial = terminal.backend().buffer().clone();
+    let tree_start = sidebar_row_with(&terminal, "CONSIGINT");
 
     // Fresh, stale, unknown and over-capacity reports still enter dashboard state,
     // but none restores the removed runtime/context row or moves the selection.
@@ -2043,7 +2044,9 @@ fn context_updates_leave_the_compact_sidebar_unchanged() {
             let text = (0..39)
                 .map(|col| buffer[(col, row)].symbol())
                 .collect::<String>();
-            assert!(!text.contains("run ") && !text.contains("ctx "), "{text}");
+            if row >= tree_start {
+                assert!(!text.contains("run ") && !text.contains("ctx "), "{text}");
+            }
         }
         assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     }

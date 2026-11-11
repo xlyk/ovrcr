@@ -157,6 +157,7 @@ fn activity(chat: &Chat) -> AgentActivity {
         None => AgentActivity::Idle,
     }
 }
+
 impl Dashboard {
     pub(in crate::dashboard) fn draw_operator_quick_message(&self, frame: &mut Frame<'_>) {
         let Some(quick) = self.operator.quick.as_ref().filter(|quick| quick.visible) else {
@@ -312,6 +313,16 @@ impl Dashboard {
             };
         }
         let Some(chat) = &self.operator.chat else {
+            if self.operator.visible || self.operator.loading {
+                return SidebarStatus {
+                    glyph: '·',
+                    color: MUTED(),
+                    label: "Idle".into(),
+                    right: String::new(),
+                    detail: "↳ No replies yet".into(),
+                    detail_color: SUBTEXT(),
+                };
+            }
             return SidebarStatus {
                 glyph: '·',
                 color: MUTED(),

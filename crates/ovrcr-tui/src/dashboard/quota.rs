@@ -463,16 +463,7 @@ impl Dashboard {
             .flat_map(|project| &project.workspaces)
             .flat_map(|workspace| &workspace.sessions)
         {
-            let index = match super::status::SessionStatus::usage_state(session) {
-                super::status::UsageState::Working => 0,
-                super::status::UsageState::NeedsInput => 1,
-                super::status::UsageState::Ready => 2,
-                super::status::UsageState::Idle => 3,
-                super::status::UsageState::Error => 4,
-                super::status::UsageState::Paused => 5,
-                super::status::UsageState::Exited => 6,
-                super::status::UsageState::Unknown => 7,
-            };
+            let index = usage_state_index(super::status::SessionStatus::usage_state(session));
             counts[index] = counts[index].saturating_add(1);
         }
         counts
@@ -1517,7 +1508,9 @@ mod layout_tests {
             (1, 0, 3),
             "attention counts remain visible at the minimum sidebar height"
         );
-        let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
+        // At this roomier height, the optional blank rows fit without shrinking
+        // the tree or the default Usage, Resources, and Quota sections.
+        let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
         assert_eq!(
             full.attention.y, 1,
             "the attention strip starts below the title"
@@ -1528,9 +1521,10 @@ mod layout_tests {
             "one blank row follows the attention strip"
         );
         assert_eq!(full.tree.y, full.operator.bottom() + 1);
-        assert_eq!(full.tree.bottom(), full.resources.y);
+        assert_eq!(full.tree.bottom(), full.usage.y);
+        assert_eq!(full.usage.bottom() + 1, full.resources.y);
         assert_eq!(full.resources.bottom() + 1, full.quota.y);
-        assert_eq!(full.quota.bottom(), 29);
+        assert_eq!(full.quota.bottom(), 39);
         dashboard.toggle_sidebar();
         assert!(
             dashboard

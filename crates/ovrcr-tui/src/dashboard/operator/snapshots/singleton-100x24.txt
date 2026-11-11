@@ -10,7 +10,7 @@
                                        ││ ▸ succeeded · (no output) · Output
                                        │
                                        │
-                                       │
+Usage · 0 sessions · 0 tokens          │
  RESOURCES ────────────────────────────│
  cpu       ──────────────────────    … │
  mem       …                           │

@@ -47,6 +47,9 @@ mod sidebar;
 mod split;
 mod unread;
 
+#[path = "../support/pi_available_test.rs"]
+mod pi_available_test;
+
 fn session_summary(
     id: u64,
     project: &str,
