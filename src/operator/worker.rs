@@ -192,13 +192,16 @@ fn attempt(
 
     // Step 4: exact model resolution, then the accepted reasoning choice.
     let model = resolve_model(&mut connection, journal, &mut state, start.model.as_deref())?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
     let reasoning = resolve_reasoning(&mut connection, journal, &mut state, start.thinking_level)?;
 
     // Step 5: one prompt carrying the captured context ahead of the user text.
     if termination.requested() {
         return Err(Failure::Terminated);
     }
-    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
     journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
     let prompt = prompt_text(start)?;
     state.prompted = true;

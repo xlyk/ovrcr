@@ -325,6 +325,20 @@ fn operator_reasoning_substitution_and_next_turn_are_distinct_at_narrow_sizes() 
     );
 }
 
+#[test]
+fn operator_reasoning_pending_default_is_distinct_from_applied_default() {
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, reasoning_summary(false));
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("Reasoning high (set: default)"), "{screen}");
+    let mut value = reasoning_summary(false);
+    value.reasoning.as_mut().unwrap().requested = ovrcr_protocol::OperatorThinkingLevel::Default;
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, value);
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("[Reasoning high ▾ Ctrl-t]"), "{screen}");
+}
+
 /// The production draw path, retained as cells for real hit coordinates.
 fn drawn_buffer(dashboard: &mut Dashboard, cols: u16, rows: u16) -> ratatui::buffer::Buffer {
     dashboard.install_area(Rect::new(0, 0, cols, rows));

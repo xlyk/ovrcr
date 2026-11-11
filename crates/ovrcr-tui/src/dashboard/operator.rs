@@ -794,8 +794,9 @@ impl Dashboard {
             && reasoning.is_some_and(|state| state.requested != saved)
         {
             format!("Reasoning {level} → {} next turn", saved.as_str())
-        } else if saved != ThinkingLevel::Default
-            && reasoning.is_none_or(|state| state.level != saved)
+        } else if reasoning.is_some_and(|state| state.requested != saved)
+            || (saved != ThinkingLevel::Default
+                && reasoning.is_none_or(|state| state.level != saved))
         {
             format!("Reasoning {level} (set: {})", saved.as_str())
         } else {

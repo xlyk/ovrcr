@@ -108,13 +108,15 @@ Server.
 4. Resolve the model: split the captured override at the first `/`, otherwise use
    the fresh profile default (never the resumed session's old model). The exact
    provider/id must appear in `get_available_models`; `set_model` must return the
-   same identity; the turn's captured `operator.thinking_level` is applied unless it is
-   `default`, which leaves Pi's choice alone. Read `get_state.thinkingLevel`
+   same identity. Set `set_auto_retry` off and `set_auto_compaction` on, then
+   commit `ModelSelected`, clearing the previous model's reasoning readback.
+   Apply the turn's captured `operator.thinking_level` unless it is `default`,
+   which leaves Pi's choice alone. Read `get_state.thinkingLevel`
    and `get_available_thinking_levels` (`{levels: [...]}`) back and commit
    `ReasoningSelected` with the effective level, supported list and captured
-   request. Then `set_auto_retry` off and `set_auto_compaction` on.
+   request.
    A missing or unavailable model fails the turn; there is no fallback.
-5. Commit `ModelSelected`, then send exactly one `prompt` whose message is the
+5. Send exactly one `prompt` whose message is the
    captured context JSON followed by the user text, so input such as `/new` is
    never a native command.
 6. Stream until `agent_settled`. `prompt.success` is acceptance only. Success

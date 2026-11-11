@@ -146,6 +146,28 @@ fn reasoning_setting_is_applied_read_back_and_kept_after_model_change() {
             .iter()
             .any(|line| line["command"] == "get_state")
     );
+    client.wait_stopped(opened.id);
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.model".into(),
+            value: Some("'fixture/default'".into()),
+        }),
+        Response::Ok
+    );
+    scenario.set("available_thinking_levels", json!(["bogus"]));
+    fake.script(&scenario);
+    let summary = client.current().unwrap();
+    client.submit_turn(&summary, "invalid capabilities after model change");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Error
+    );
+    assert_eq!(history.conversation.model.as_ref().unwrap().id, "default");
+    assert!(
+        history.conversation.reasoning.is_none(),
+        "the new model must not retain old capabilities"
+    );
 }
 
 #[test]
