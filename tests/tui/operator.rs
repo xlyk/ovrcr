@@ -22,6 +22,8 @@ fn summary() -> OperatorConversationSummary {
         model: None,
         title: "Operator".into(),
         current_turn: None,
+        current_turn_started_unix_ms: None,
+        last_reply_unix_ms: None,
     }
 }
 
@@ -353,6 +355,12 @@ fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
         .collect()
 }
 
+fn operator_pane_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
+    buffer_row(buffer, row)
+        .split_once('│')
+        .map_or_else(String::new, |(_, pane)| pane.to_owned())
+}
+
 fn buffer_contains(buffer: &ratatui::buffer::Buffer, needle: &str) -> bool {
     (0..buffer.area.height).any(|row| buffer_row(buffer, row).contains(needle))
 }
@@ -380,45 +388,68 @@ fn buffer_column_of(buffer: &ratatui::buffer::Buffer, row: u16, needle: &str) ->
         .unwrap_or_else(|| panic!("missing {needle:?} in row {row}"))
 }
 
-/// The sidebar side of the screen row that names the singleton. The open
-/// conversation shares that row on the right of the drawn divider.
+/// Sidebar rows belonging to the Operator section, excluding the shared pane.
+fn dock_rows(rows: &[String]) -> Vec<String> {
+    let left: Vec<_> = rows
+        .iter()
+        .map(|row| row.split('│').next().unwrap_or(row).to_string())
+        .collect();
+    let start = left
+        .iter()
+        .position(|row| row.contains("OPERATOR") || row.contains("Operator ·"))
+        .expect("the Operator section is drawn");
+    let height = if left[start].contains("OPERATOR") {
+        3
+    } else {
+        1
+    };
+    left.into_iter().skip(start).take(height).collect()
+}
+
 fn dock_row(rows: &[String]) -> String {
-    rows.iter()
-        .map(|row| row.split('│').next().unwrap_or(row))
-        .find(|left| {
-            left.contains("Operator") && !left.contains("Operator ·") && !left.contains("[o]")
-        })
-        .expect("the Operator dock is drawn")
-        .to_string()
+    dock_rows(rows).join("\n")
+}
+
+fn dock_status_row(rows: &[String]) -> String {
+    let rows = dock_rows(rows);
+    rows[usize::from(rows[0].contains("OPERATOR"))].clone()
 }
 
 #[test]
 fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::closed_idle_dock_offers_open_chat_and_open_idle_omits_it",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     let rows = rendered_rows(&dashboard, 120, 40);
     let dock = dock_row(&rows);
     assert!(
-        dock.contains("Open chat"),
-        "a closed, unopened dock names the action: {dock:?}"
+        dock.contains("OPERATOR") && dock.contains("Off"),
+        "an unopened conversation has a section and Off state: {dock:?}"
     );
-    assert!(!dock.contains("not opened"), "{dock:?}");
+    assert!(
+        dock.contains("o opens Operator"),
+        "Off explains how to start: {dock:?}"
+    );
     assert!(
         dashboard.drain_outbox().is_empty(),
         "drawing an unopened dock starts no worker or request"
     );
 
-    // Opening focuses the full conversation; the selected row replaces the prompt.
+    // Opening focuses the full conversation and selects its status/detail rows.
     open_and_settle(&mut dashboard, summary());
     let rows = rendered_rows(&dashboard, 120, 40);
-    let dock = dock_row(&rows);
+    let dock = dock_status_row(&rows);
     assert!(
         dock.starts_with('▌'),
-        "an open conversation keeps the selected-row marker: {dock:?}"
+        "an open conversation keeps the selected section row: {dock:?}"
     );
     assert!(
-        !dock.contains("Open chat"),
-        "an open, idle row omits the redundant action prompt: {dock:?}"
+        dock.contains("Idle"),
+        "an open conversation is idle: {dock:?}"
     );
     assert!(!dock.contains("ready"), "{dock:?}");
     assert!(
@@ -476,13 +507,21 @@ fn drag_sidebar_to(dashboard: &mut Dashboard, area: Rect, column: u16) {
 }
 
 #[test]
-fn dock_distinguishes_opening_and_unavailable() {
+fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::sidebar_stays_off_while_opening_and_recognizes_known_setup_failures",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     let open = open_request(&mut dashboard);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Opening…"), "{dock:?}");
-    assert!(!dock.contains("Unavailable"), "{dock:?}");
+    assert!(
+        dock.contains("Idle"),
+        "a queued Open is visible as Idle before there is a worker: {dock:?}"
+    );
+    assert!(!dock.contains("Responding"), "{dock:?}");
     assert!(
         dashboard.drain_outbox().is_empty(),
         "drawing an opening dock starts no retry"
@@ -492,12 +531,12 @@ fn dock_distinguishes_opening_and_unavailable() {
         request_id: open.request_id,
         response: Response::Error {
             code: ErrorCode::InvalidRequest,
-            message: "pi is not installed".into(),
+            message: "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.".into(),
         },
     });
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Unavailable"), "{dock:?}");
-    assert!(!dock.contains("Opening"), "{dock:?}");
+    assert!(dock.contains("Not set up"), "{dock:?}");
+    assert!(dock.contains("run ovrcr operator setup"), "{dock:?}");
 
     // Reopening leaves the failed view first, then retries and returns to the
     // actionable idle row.
@@ -513,16 +552,21 @@ fn dock_distinguishes_opening_and_unavailable() {
         read_request(&out).request_id,
         history_of(summary(), Vec::new(), None),
     );
-    let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
+    let dock = dock_status_row(&rendered_rows(&dashboard, 120, 40));
     assert!(dock.starts_with('▌'), "{dock:?}");
     assert!(
-        !dock.contains("Unavailable") && !dock.contains("Opening"),
-        "{dock:?}"
+        dock.contains("Idle"),
+        "successful open returns to Idle: {dock:?}"
     );
 }
 
 #[test]
 fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::dock_distinguishes_sending_tools_stopping_and_turn_outcomes",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
@@ -581,7 +625,8 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         "drawing an active conversation starts no request"
     );
 
-    // A pending tool names its wait; its output returns the turn to Responding.
+    // The three-row section keeps the compact state and shows the current
+    // activity as detail instead of adding another state label.
     let out = changed(
         &mut dashboard,
         running.clone(),
@@ -597,7 +642,8 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     );
     assert!(out.is_empty(), "{out:?}");
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Waiting for bash result"), "{dock:?}");
+    assert!(dock.contains("Responding"), "{dock:?}");
+    assert!(dock.contains("running bash"), "{dock:?}");
     let out = changed(
         &mut dashboard,
         running.clone(),
@@ -633,7 +679,8 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     assert!(dock.contains("Stopping"), "{dock:?}");
     assert!(!dock.contains("Sending"), "{dock:?}");
 
-    // The stop response retires authority; a live worker stays unconfirmed.
+    // The section returns to its compact Idle state after the turn ends; the
+    // full conversation retains exceptional turn details.
     let mut unconfirmed = summary();
     unconfirmed.run = SessionRunId(2);
     unconfirmed.worker_stopped = false;
@@ -649,10 +696,12 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         read.request_id,
         history_of(unconfirmed, Vec::new(), None),
     );
-    // The completed tail is unread first; a visible review exposes the outcome.
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Stop unconfirmed"), "{dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
 
     // A failure stays identifiable while the worker's stop is unconfirmed.
     let mut failed = summary();
@@ -669,7 +718,11 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Failed · stop unconfirmed"), "{dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
+    assert!(draw_text(&mut dashboard, 120, 40).contains("provider refused"));
 
     // An interruption remains identifiable as well.
     let mut interrupted = summary();
@@ -682,7 +735,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         vec![turn_message(2, 5, OperatorMessageContent::Interrupted)],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Interrupted"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
 
     // With the worker confirmed stopped, a failure names the failed turn.
     let mut stopped_failure = summary();
@@ -691,7 +744,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     stopped_failure.current_turn = Some(turn(2, OperatorTurnState::Error));
     changed(&mut dashboard, stopped_failure, Vec::new());
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Turn failed"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
 
     // A reviewed, successful turn returns to the idle action.
     let mut complete = summary();
@@ -710,12 +763,17 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     dashboard.key(KeyCode::Esc);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Open chat"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
     assert!(!dock.contains("complete"), "{dock:?}");
 }
 
 #[test]
 fn a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal",
+    ) {
+        return;
+    }
     let target = captured_context(&fixture_hierarchy(), SessionId(1));
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
@@ -728,12 +786,13 @@ fn a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal() {
     );
     dashboard.event_action(Event::Paste("unsent draft".into()));
 
-    // Leaving keeps the text and the dock names it before the idle action.
+    // Leaving keeps the draft in the conversation; the section stays focused
+    // on the latest reply/status instead of exposing composer contents.
     dashboard.key(KeyCode::Esc);
     let rows = rendered_rows(&dashboard, 120, 40);
     let dock = dock_row(&rows);
-    assert!(dock.contains("Draft"), "{dock:?}");
-    assert!(!dock.contains("Open chat"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
+    assert!(!dock.contains("unsent draft"), "{dock:?}");
     assert!(!dock.contains("ready"), "{dock:?}");
 
     // Selecting another session by clicking its drawn row updates the target.
@@ -765,6 +824,11 @@ fn a_retained_draft_reopens_with_the_new_target_and_keeps_the_journal() {
 
 #[test]
 fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::dock_draws_unread_until_the_loaded_tail_is_reviewed",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
@@ -809,21 +873,26 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
     assert!(!dock.contains("1 unread"), "{dock:?}");
 
-    // Closing leaves the reviewed, successful turn at the idle action.
+    // Closing leaves the reviewed, successful turn idle.
     dashboard.key(KeyCode::Esc);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Open chat"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
 }
 
 #[test]
-fn unread_outranks_a_retained_draft_in_the_dock() {
+fn unread_outranks_a_retained_draft_in_the_operator_section() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::unread_outranks_a_retained_draft_in_the_operator_section",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     open_and_settle(&mut dashboard, summary());
     dashboard.event_action(Event::Paste("pending draft".into()));
     dashboard.key(KeyCode::Esc);
 
-    // A reply arriving behind a draft is still the first thing the dock says.
+    // A reply arriving behind a draft is still the first thing the section says.
     let mut complete = summary();
     complete.run = SessionRunId(2);
     complete.worker_stopped = true;
@@ -838,37 +907,45 @@ fn unread_outranks_a_retained_draft_in_the_dock() {
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("1 unread"), "{dock:?}");
+    assert!(dock.contains("Reply ready · 1 unread"), "{dock:?}");
     assert!(!dock.contains("Draft"), "{dock:?}");
-    assert!(!dock.contains("Open chat"), "{dock:?}");
 
-    // The loaded-tail review clears unread and the retained draft takes the space.
+    // The loaded-tail review clears unread; the section continues to summarize
+    // the turn and does not expose composer text.
     dashboard.key(KeyCode::Char('o'));
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Draft"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
     assert!(!dock.contains("1 unread"), "{dock:?}");
-    assert!(!dock.contains("Open chat"), "{dock:?}");
+    assert!(!dock.contains("pending draft"), "{dock:?}");
     dashboard.key(KeyCode::Esc);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Draft"), "{dock:?}");
-    assert!(!dock.contains("Open chat"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
+    assert!(!dock.contains("pending draft"), "{dock:?}");
 }
 
 #[test]
-fn minimum_sidebar_keeps_the_name_and_clipped_states_on_one_row() {
+fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.install_area(area);
     // The real minimum draggable width leaves 19 content cells.
     drag_sidebar_to(&mut dashboard, area, 19);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Operator"), "the name survives: {dock:?}");
     assert!(
-        dock.trim_end().ends_with("Open chat"),
-        "the idle action survives in words: {dock:?}"
+        dock.contains("OPERATOR"),
+        "the section heading survives: {dock:?}"
     );
-    assert_eq!(dock.chars().count(), 19, "one clipped cell row: {dock:?}");
+    assert!(dock_status_row(&rendered_rows(&dashboard, 120, 40)).contains("Off"));
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
+    );
 
     open_and_settle(&mut dashboard, busy());
     let out = changed(
@@ -886,14 +963,17 @@ fn minimum_sidebar_keeps_the_name_and_clipped_states_on_one_row() {
     );
     assert!(out.is_empty(), "{out:?}");
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Operator"), "{dock:?}");
-    assert!(dock.contains("Waiting"), "{dock:?}");
-    assert_eq!(dock.chars().count(), 19, "clipped by cells: {dock:?}");
     assert!(
-        !dock
-            .chars()
-            .any(|glyph| ('\u{2800}'..='\u{28FF}').contains(&glyph)),
-        "the optional spinner yields to the words: {dock:?}"
+        dock.contains("OPERATOR") && dock.contains("Responding"),
+        "{dock:?}"
+    );
+    assert!(
+        dock.contains("running mcp__too…"),
+        "detail clips within the narrow section: {dock:?}"
+    );
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
     );
 
     // A long unconfirmed-stop clause keeps a distinct cell-readable prefix.
@@ -924,26 +1004,38 @@ fn minimum_sidebar_keeps_the_name_and_clipped_states_on_one_row() {
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Stop unc"), "{dock:?}");
-    assert_eq!(dock.chars().count(), 19, "clipped by cells: {dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
+    );
 
-    // Error and interruption remain distinct from the unconfirmed stop.
+    // An unconfirmed error still reads as Working; a confirmed interruption
+    // returns the sidebar to the compact Idle state.
     let mut failed = busy();
     failed.current_turn = Some(turn(2, OperatorTurnState::Error));
     changed(&mut dashboard, failed, Vec::new());
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Failed"), "{dock:?}");
+    assert!(dock.contains("Responding"), "{dock:?}");
     let mut interrupted = summary();
     interrupted.run = SessionRunId(2);
     interrupted.worker_stopped = true;
     interrupted.current_turn = Some(turn(2, OperatorTurnState::Interrupted));
     changed(&mut dashboard, interrupted, Vec::new());
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Interrup"), "{dock:?}");
+    assert!(dock.contains("Idle"), "{dock:?}");
 }
 
 #[test]
-fn operator_is_one_navigation_row_that_opens_the_singleton() {
+fn operator_section_click_opens_the_singleton_from_its_right_edge() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::operator_section_click_opens_the_singleton_from_its_right_edge",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
@@ -954,10 +1046,10 @@ fn operator_is_one_navigation_row_that_opens_the_singleton() {
     dashboard.install_focus(SessionId(1));
 
     let rows = rendered_rows(&dashboard, 120, 40);
-    // The first project starts below the title; the dock is the last body row.
-    assert!(rows[1].contains("CONSIGINT"), "{rows:?}");
-    assert!(rows[38].contains("Operator"), "{rows:?}");
-    assert!(rows[38].contains("Open chat"), "{rows:?}");
+    // Attention is empty, so Operator leads the sidebar before the tree.
+    assert!(rows[1].contains("OPERATOR"), "{rows:?}");
+    assert!(rows[2].contains("Off"), "{rows:?}");
+    assert!(rows[5].contains("CONSIGINT"), "{rows:?}");
     let screen = rows.join("\n");
     for removed in [
         "New Conversation",
@@ -972,12 +1064,12 @@ fn operator_is_one_navigation_row_that_opens_the_singleton() {
         );
     }
 
-    // The row is navigation, including its right edge; there is no close target.
-    dashboard.mouse_action(mouse(38, 38), area);
+    // Any section row is navigation, including its right edge; there is no close target.
+    dashboard.mouse_action(mouse(38, 3), area);
     let requests = dashboard.drain_outbox();
     assert_eq!(operator_requests(&requests), [&OperatorRequest::Open]);
     // A second Manual Open is coalesced while the first is pending.
-    dashboard.mouse_action(mouse(38, 38), area);
+    dashboard.mouse_action(mouse(38, 3), area);
     assert!(dashboard.drain_outbox().is_empty());
 
     let open = requests.into_iter().next().unwrap();
@@ -1023,7 +1115,10 @@ fn operator_is_one_navigation_row_that_opens_the_singleton() {
     // Browse help/menu describes the singleton and never a chat list.
     dashboard.key(KeyCode::Char(' '));
     let menu = rendered_rows(&dashboard, 120, 40).join("\n");
-    assert!(menu.contains("Operator"), "{menu}");
+    assert!(
+        menu.contains("Panes"),
+        "the Space menu lists the Panes group: {menu}"
+    );
     for removed in [
         "concurrent",
         "Ctrl-n",
@@ -1186,7 +1281,10 @@ fn header_names_pi_and_only_a_really_selected_model() {
     open_and_settle(&mut dashboard, placeholder);
     let screen = draw_text(&mut dashboard, 120, 40);
     assert!(screen.contains("Operator · pi · ready"), "{screen}");
-    assert!(!screen.contains("unknown"), "{screen}");
+    assert!(
+        !screen.contains("Operator · pi · unknown"),
+        "an unknown model placeholder must stay out of the Operator header: {screen}"
+    );
 
     // The fixed setup failure is shown verbatim, routing to `ovrcr operator setup`.
     let mut dashboard = dashboard_fixture();
@@ -1738,6 +1836,11 @@ fn stop_uses_the_exact_identity_and_only_a_refresh_certifies_it() {
 
 #[test]
 fn paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail",
+    ) {
+        return;
+    }
     let mut dashboard = dashboard_fixture();
     dashboard.install_config_dir(std::path::PathBuf::from("/instance"));
     let out = opened(&mut dashboard, with_model(summary()));
@@ -2473,8 +2576,11 @@ fn operator_navigation_is_never_a_jump_target() {
     );
     let operator_row = held
         .iter()
-        .find(|row| row.contains("Operator") && !row.contains("operator-agent"))
-        .expect("the fixed Operator navigation row");
+        .find(|row| {
+            (row.contains("OPERATOR") || row.contains("Operator ·"))
+                && !row.contains("operator-agent")
+        })
+        .unwrap_or_else(|| panic!("the fixed Operator navigation row: {held:?}"));
     assert!(
         !operator_row.contains("[1]"),
         "the singleton row is not a session target: {operator_row}"
@@ -2827,6 +2933,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
 
             // A refreshed singleton summary, not a conversation list, updates authority.
             let mut complete = running;
+            complete.worker_stopped = true;
             complete.current_turn = Some(OperatorTurn {
                 state: OperatorTurnState::Complete,
                 sequence: 2,
@@ -2915,7 +3022,12 @@ fn narrow_and_wide_layouts_and_the_floor_guidance_keep_the_draft() {
 }
 
 #[test]
-fn sidebar_reserves_one_row_only_when_four_lines_remain() {
+fn short_sidebar_compacts_then_hides_the_operator_section_to_preserve_tree() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::short_sidebar_compacts_then_hides_the_operator_section_to_preserve_tree",
+    ) {
+        return;
+    }
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
         cols: 120,
@@ -2924,18 +3036,20 @@ fn sidebar_reserves_one_row_only_when_four_lines_remain() {
     dashboard.install_hierarchy(fixture_hierarchy());
     dashboard.install_focus(SessionId(1));
 
-    // 6 rows leave 4 sidebar lines: three tree lines above the fixed dock.
+    // 6 rows leave 4 body lines: the section compacts to one row above the tree.
     let roomy = rendered_rows(&dashboard, 120, 6);
-    assert!(roomy[1].contains("CONSIGINT"), "{roomy:?}");
-    assert!(roomy[4].contains("Operator"), "{roomy:?}");
-    assert!(roomy[4].contains("Open chat"), "{roomy:?}");
-    // 5 rows leave 3: the dock is not drawn, and the tree takes the space.
+    assert!(
+        roomy[1].contains("Operator") && roomy[1].contains("Off"),
+        "{roomy:?}"
+    );
+    assert!(roomy[2].contains("CONSIGINT"), "{roomy:?}");
+    // 5 rows leave 3: the section is hidden and the tree takes the space.
     let tight = rendered_rows(&dashboard, 120, 5);
     assert!(
         !tight
             .iter()
             .skip(1)
-            .any(|row| row.contains("Operator") && !row.contains("Operator ·")),
+            .any(|row| row.contains("Operator") || row.contains("OPERATOR")),
         "{tight:?}"
     );
     assert!(tight[1].contains("CONSIGINT"), "{tight:?}");
@@ -2952,8 +3066,8 @@ fn sidebar_reserves_one_row_only_when_four_lines_remain() {
         !busy_dock.contains('▾') && !busy_dock.contains('▸'),
         "no collapse arrow: {busy_rows:?}"
     );
-    // The right edge is navigation, never a close hit target.
-    dashboard.mouse_action(mouse(38, 38), area);
+    // The right edge of the status row is navigation, never a close target.
+    dashboard.mouse_action(mouse(38, 2), area);
     assert!(
         dashboard
             .drain_outbox()
@@ -2995,10 +3109,21 @@ fn operator_projects_viewport_keeps_the_last_selection_at_the_bottom() {
         let selected: Vec<_> = (0..24)
             .filter(|y| terminal.backend().buffer()[(0, *y)].symbol() == "▌")
             .collect();
-        // The quota section sits below the tree from row 16.
+        let rows = rendered_rows(dashboard, 120, 24);
+        let last_session_row = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.contains("viewport-session-"))
+            .map(|(row, _)| row)
+            .max()
+            .expect("the filled tree viewport shows a session row");
+        assert!(
+            rows[last_session_row].contains("viewport-session-30"),
+            "the last selected session remains visible at the bottom of the tree: {rows:?}"
+        );
         assert_eq!(
             selected,
-            vec![15],
+            vec![u16::try_from(last_session_row).unwrap()],
             "the selected terminal must remain at the filled tree viewport's bottom"
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(30)));
@@ -3470,7 +3595,7 @@ fn thinking_blocks_toggle_independently_by_mouse() {
     assert!(!buffer_contains(&initial, "beta line 02"));
     assert!(!buffer_contains(&initial, "older one"));
     let alpha_header_row = buffer_row_of(&initial, "showing last 6 of 40");
-    let beta_header = buffer_row(&initial, buffer_row_of(&initial, "showing last 6 of 8"));
+    let beta_header = operator_pane_row(&initial, buffer_row_of(&initial, "showing last 6 of 8"));
 
     // The capped body row belongs to a later alpha delta, but toggles this block.
     let alpha_body_row = buffer_row_of(&initial, "alpha line 40");
@@ -3490,7 +3615,7 @@ fn thinking_blocks_toggle_independently_by_mouse() {
     assert!(buffer_contains(&expanded, "alpha line 40"));
     assert!(buffer_contains(&expanded, "beta line 08"));
     assert_eq!(
-        buffer_row(&expanded, buffer_row_of(&expanded, "showing last 6 of 8")),
+        operator_pane_row(&expanded, buffer_row_of(&expanded, "showing last 6 of 8")),
         beta_header,
         "the second block keeps its capped display"
     );
@@ -3513,7 +3638,7 @@ fn thinking_blocks_toggle_independently_by_mouse() {
     );
     assert!(!buffer_contains(&collapsed, "alpha line"));
     assert_eq!(
-        buffer_row(&collapsed, buffer_row_of(&collapsed, "showing last 6 of 8")),
+        operator_pane_row(&collapsed, buffer_row_of(&collapsed, "showing last 6 of 8")),
         beta_header,
         "the second block is untouched by the first block's collapse"
     );
@@ -3686,6 +3811,11 @@ fn thinking_capped_header_clips_with_its_count_at_a_narrow_sidebar_view() {
 
 #[test]
 fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator::compaction_activity_is_transient_and_scoped_to_the_running_turn",
+    ) {
+        return;
+    }
     let context = OperatorContext::default();
     let mut running = summary();
     running.run = SessionRunId(2);
@@ -3721,9 +3851,16 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
         ),
     );
     assert!(out.is_empty(), "{out:?}");
-    let screen = draw_text(&mut dashboard, 120, 40);
-    assert!(screen.contains("Compacting context…"), "{screen}");
-    assert!(!screen.contains("Responding"), "{screen}");
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let screen = rows.join("\n");
+    let transcript = rows
+        .iter()
+        .map(|row| row.split_once('│').map_or("", |(_, right)| right))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dock_row(&rows).contains("Responding"), "{screen}");
+    assert!(transcript.contains("Compacting context…"), "{transcript}");
+    assert!(!transcript.contains("Responding"), "{transcript}");
     assert!(!screen.contains("Compaction"), "no permanent row: {screen}");
 
     // Catch-up after the native finish returns the ordinary derived activity.

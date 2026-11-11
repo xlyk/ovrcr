@@ -60,7 +60,7 @@ impl Dashboard {
         }
         // Every drawn pane without a session gets a card: the one a selected project or
         // workspace emptied, and in a split also a pane whose session opened elsewhere.
-        let titled = self.panes.len() == 2;
+        let titled = self.panes.len() > 1;
         for rect in self.pane_rects(frame.area()) {
             if !self
                 .panes
@@ -709,6 +709,7 @@ mod tests {
             name: name.into(),
             pid: Some(100 + id as u32),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             agent: None,
@@ -776,6 +777,7 @@ mod tests {
         });
         dashboard.install_area(Rect::new(0, 0, 160, 50));
         dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "demo".into(),
                 workspaces,

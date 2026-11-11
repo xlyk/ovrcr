@@ -1,3 +1,4 @@
+use super::attention::Attention;
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{
     find_session, find_workspace, history_page_covers, workspace_disambiguator, workspace_heading,
@@ -6,7 +7,7 @@ use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
-use ovrcr_protocol::{CostKind, HistoryColor, SessionKind, SessionSummary};
+use ovrcr_protocol::{CostKind, HistoryColor, SessionKind, SessionSummary, SidebarView};
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -492,26 +493,31 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
+    dashboard.draw_usage(frame, now_unix_ms);
+    dashboard.draw_resources(frame);
     dashboard.draw_quota(frame, now_unix_ms);
     dashboard.draw_attention(frame);
 
-    let rects = dashboard.pane_rects(frame.area());
-    let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
-    let split_separator = dashboard.panes.len() == 2 && rects.len() == 2;
-    if split_separator {
-        let separator_x = rects[0].terminal.right();
-        for row in 0..layout.sidebar.height {
-            let cell = frame
-                .buffer_mut()
-                .cell_mut((separator_x, layout.sidebar.y + row))
-                .expect("split separator is in frame");
-            cell.reset();
-            cell.set_symbol("│").set_fg(SURFACE2()).set_bg(BASE());
+    let pane_layout = dashboard.pane_layout_rects(frame.area());
+    let rects = &pane_layout.panes;
+    let split_hidden = pane_layout.hidden;
+    for boundary in &pane_layout.boundaries {
+        let (symbol, area) = match boundary.direction {
+            super::SplitDirection::Right => ("│", boundary.divider),
+            super::SplitDirection::Down => ("─", boundary.divider),
+        };
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(symbol).set_fg(SURFACE2()).set_bg(BASE());
+                }
+            }
         }
     }
 
-    if dashboard.panes.len() == 2 {
-        for rect in &rects {
+    if dashboard.panes.len() > 1 {
+        for rect in rects {
             let Some(pane) = dashboard.panes.get(rect.pane_index) else {
                 continue;
             };
@@ -521,6 +527,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 pane,
                 dashboard,
                 rect.pane_index == dashboard.focused_pane,
+                split_hidden,
                 now_unix_ms,
             );
             render_terminal(
@@ -697,6 +704,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);
     dashboard.draw_operator_quick_message(frame);
+    dashboard.draw_sidebar_create_menu(frame);
 }
 
 pub(super) fn clipped_session_title(
@@ -727,6 +735,7 @@ fn render_split_metadata(
     pane: &PaneState,
     dashboard: &Dashboard,
     focused: bool,
+    split_hidden: bool,
     now_unix_ms: u64,
 ) {
     if rect.metadata.is_empty() {
@@ -765,11 +774,15 @@ fn render_split_metadata(
     );
     if rect.metadata.height > 1 {
         frame.render_widget(
-            Paragraph::new(
+            Paragraph::new(if dashboard.zoomed && focused {
+                Line::from("zoomed")
+            } else if split_hidden {
+                Line::from("split hidden")
+            } else {
                 session
                     .and_then(|session| provider_metrics(session, now_unix_ms, width))
-                    .unwrap_or_else(|| Line::from("─".repeat(width))),
-            )
+                    .unwrap_or_else(|| Line::from("─".repeat(width)))
+            })
             .style(Style::default().fg(MUTED()).bg(BASE())),
             Rect::new(
                 rect.metadata.x,
@@ -942,6 +955,21 @@ pub(super) fn tree_row_heights(
     rows: &[TreeRow],
     width: usize,
 ) -> Vec<usize> {
+    if dashboard.settings.sidebar_view == SidebarView::Recent {
+        return rows
+            .iter()
+            .map(|row| match row {
+                TreeRow::Session { id } => {
+                    usize::from(
+                        find_session(dashboard, *id).is_some_and(|session| {
+                            matches!(session.kind, SessionKind::Agent { .. })
+                        }),
+                    ) + 1
+                }
+                _ => 1,
+            })
+            .collect();
+    }
     let session = |row: &TreeRow| match row {
         TreeRow::Session { id } => find_session(dashboard, *id),
         TreeRow::Project { .. }
@@ -1039,6 +1067,13 @@ fn tree_line_text(
     let close_mark = dashboard.row_shows_close_mark(row)
         && width >= 3
         && !matches!(dashboard.mode, InputMode::History | InputMode::Copy);
+    let create_mark = dashboard.row_shows_create_mark(row)
+        && match row {
+            TreeRow::Workspace { .. } => width >= 6,
+            TreeRow::Project { .. } => width >= 3,
+            _ => false,
+        };
+    let create = Span::styled("[+]", Style::default().fg(MAUVE()));
     let mark = Span::styled("[x]", Style::default().fg(MAUVE()));
     let (left, fill, right) = match row {
         TreeRow::Project { name } => {
@@ -1046,17 +1081,50 @@ fn tree_line_text(
             let title = clip_text(&full_title, width);
             // A clipped title has no room for a rule; a wide glyph can leave one stray cell.
             let rule = if title == full_title { "─" } else { " " };
-            let right = if dashboard.collapsed_projects.contains(name) {
-                let count = dashboard
+            let mut right = Vec::new();
+            if dashboard.collapsed_projects.contains(name)
+                && let Some(project) = dashboard
                     .hierarchy
                     .projects
                     .iter()
                     .find(|project| project.name == *name)
-                    .map_or(0, |project| project.workspaces.len());
-                vec![Span::styled(format!(" ▸ {count} ws "), muted)]
-            } else {
-                Vec::new()
-            };
+            {
+                let recent = dashboard.settings.sidebar_view == SidebarView::Recent;
+                let workspaces = project
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| {
+                        !recent
+                            || workspace
+                                .sessions
+                                .iter()
+                                .any(|session| matches!(session.kind, SessionKind::Agent { .. }))
+                    })
+                    .collect::<Vec<_>>();
+                let counts = folded_attention_counts(
+                    workspaces
+                        .iter()
+                        .flat_map(|workspace| &workspace.sessions)
+                        .filter(|session| {
+                            !recent || matches!(session.kind, SessionKind::Agent { .. })
+                        }),
+                );
+                let marker = if counts.is_empty() { " ▸" } else { "▸" };
+                if !counts.is_empty() {
+                    right.push(Span::raw(" "));
+                }
+                right.extend(counts);
+                right.push(Span::styled(
+                    format!("{marker} {} ws ", workspaces.len()),
+                    muted,
+                ));
+            }
+            if create_mark {
+                right.push(create.clone());
+            }
+            let right_width = right.iter().map(Span::width).sum::<usize>();
+            let title_width = width.saturating_sub(right_width);
+            let title = clip_text(&full_title, title_width);
             (
                 vec![Span::styled(
                     title,
@@ -1104,13 +1172,26 @@ fn tree_line_text(
             }
             if collapsed {
                 let count = workspace.map_or(0, |workspace| workspace.sessions.len());
+                if let Some(workspace) = workspace {
+                    right.extend(folded_attention_counts(&workspace.sessions));
+                }
                 right.push(Span::styled(format!("▸ {count} "), muted));
             }
             if close_mark {
-                right = vec![mark.clone()];
+                right.clear();
             }
-            let available =
-                width.saturating_sub(WORKSPACE_INDENT.len() + 1 + usize::from(close_mark) * 3);
+            if create_mark {
+                right.push(create.clone());
+            }
+            if close_mark {
+                right.push(mark.clone());
+            }
+            let available = width.saturating_sub(
+                WORKSPACE_INDENT.len()
+                    + 1
+                    + usize::from(create_mark) * 3
+                    + usize::from(close_mark) * 3,
+            );
             let label = match workspace {
                 Some(workspace) => fit_workspace_sidebar_label(
                     &workspace.name,
@@ -1198,6 +1279,72 @@ fn tree_line_text(
                 );
             };
             let status = SessionStatus::of(session, now_unix_ms);
+            if dashboard.settings.sidebar_view == SidebarView::Recent {
+                if row_line == 1 {
+                    let branch = find_workspace(dashboard, &session.project, &session.workspace)
+                        .map(|workspace| workspace.name.as_str())
+                        .unwrap_or(session.workspace.as_str());
+                    let agent = harness_agent_name(session).unwrap_or(session.label.as_str());
+                    let label = clip_text(
+                        &format!("{branch} · {agent}"),
+                        width.saturating_sub(LABEL_LINE_COLUMN + 3),
+                    );
+                    return (
+                        compose_row(
+                            vec![
+                                Span::raw(LABEL_LINE_INDENT),
+                                Span::styled("└ ", muted),
+                                Span::styled("󰘬 ", muted),
+                                Span::styled(label, muted),
+                            ],
+                            Span::raw(" "),
+                            Vec::new(),
+                            width,
+                            selected,
+                        ),
+                        style,
+                    );
+                }
+                let mut name_style = Style::default().fg(TEXT());
+                if status.unread.is_some() || status.has_open_input_request {
+                    name_style = name_style.add_modifier(Modifier::BOLD);
+                } else if status.exited {
+                    name_style = name_style.add_modifier(Modifier::DIM);
+                }
+                let right = if close_mark {
+                    vec![mark.clone()]
+                } else {
+                    vec![Span::styled(
+                        recent_activity_age(session, now_unix_ms),
+                        muted,
+                    )]
+                };
+                let right_width = right.iter().map(Span::width).sum::<usize>();
+                let name_width = width.saturating_sub(SESSION_NAME_COLUMN + right_width + 1);
+                let indent = dashboard.sidebar_jump_label(*id).map_or_else(
+                    || vec![Span::raw(SESSION_INDENT)],
+                    |label| {
+                        vec![
+                            Span::raw(" "),
+                            Span::styled(format!("[{label}]"), Style::default().fg(MAUVE())),
+                            Span::raw(" "),
+                        ]
+                    },
+                );
+                let mut left = indent;
+                left.extend([
+                    Span::styled(status.glyph.to_string(), Style::default().fg(status.color)),
+                    Span::raw(" "),
+                    Span::styled(
+                        clipped_session_title(dashboard, session, name_width),
+                        name_style,
+                    ),
+                ]);
+                return (
+                    compose_row(left, Span::raw(" "), right, width, selected),
+                    style,
+                );
+            }
             if row_line == 1 {
                 // The agent and model under a name they could not share a line with,
                 // hung from the name by a corner connector two cells in from the glyph.
@@ -1241,7 +1388,11 @@ fn tree_line_text(
                 && matches!(session.kind, crate::protocol::SessionKind::Terminal)
             {
                 let (glyph, glyph_color) = shell_glyph(&status);
-                let subtext = Style::default().fg(SUBTEXT());
+                let subtext = if status.unread.is_some() || status.has_open_input_request {
+                    Style::default().fg(TEXT()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(SUBTEXT())
+                };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
@@ -1261,7 +1412,9 @@ fn tree_line_text(
             } else {
                 let (exited, glyph, glyph_color) = (status.exited, status.glyph, status.color);
                 let mut name_style = Style::default().fg(TEXT());
-                if exited {
+                if status.unread.is_some() || status.has_open_input_request {
+                    name_style = name_style.add_modifier(Modifier::BOLD);
+                } else if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
                 // With the column stacked, every label is on its own line, even one that fits.
@@ -1329,6 +1482,44 @@ fn tree_line_text(
         }
     };
     (compose_row(left, fill, right, width, selected), style)
+}
+
+fn folded_attention_counts<'a>(
+    sessions: impl IntoIterator<Item = &'a SessionSummary>,
+) -> Vec<Span<'static>> {
+    let (input, ready) = sessions
+        .into_iter()
+        .filter_map(SessionStatus::attention)
+        .fold((0, 0), |(input, ready), attention| match attention {
+            Attention::Input => (input + 1, ready),
+            Attention::Ready => (input, ready + 1),
+        });
+    let mut spans = Vec::new();
+    for (count, glyph, color) in [(input, "?", YELLOW()), (ready, "✓", TEAL())] {
+        if count > 0 {
+            spans.push(Span::styled(glyph, Style::default().fg(color)));
+            spans.push(Span::styled(count.to_string(), Style::default().fg(TEXT())));
+            spans.push(Span::raw(" "));
+        }
+    }
+    spans
+}
+
+fn recent_activity_age(session: &SessionSummary, now_unix_ms: u64) -> String {
+    let activity = session
+        .last_activity_unix_ms
+        .or(session.started_unix_ms)
+        .unwrap_or(now_unix_ms);
+    let elapsed = now_unix_ms.saturating_sub(activity);
+    if elapsed < 60_000 {
+        "now".into()
+    } else if elapsed < 60 * 60_000 {
+        format!("{}m", elapsed / 60_000)
+    } else if elapsed < 24 * 60 * 60_000 {
+        format!("{}h", elapsed / (60 * 60_000))
+    } else {
+        format!("{}d", elapsed / (24 * 60 * 60_000))
+    }
 }
 
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,
@@ -1647,6 +1838,7 @@ mod harness_agent_label_tests {
             label: label.into(),
             pid: Some(1),
             started_unix_ms: Some(1),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Idle,
             agent: None,
@@ -1805,6 +1997,7 @@ mod harness_agent_label_tests {
         });
         dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 30));
         dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![WorkspaceSummary {
@@ -1833,26 +2026,26 @@ mod harness_agent_label_tests {
                 .trim_end()
                 .to_owned()
         };
-        // Title row 0, project 1, workspace 2, then the sessions.
+        // The three-row Operator section and its blank row precede the tree.
         assert!(
-            row(3).contains("review") && row(3).ends_with("claude:sonnet-4"),
+            row(7).contains("review") && row(7).ends_with("claude:sonnet-4"),
             "{}",
-            row(3)
+            row(7)
         );
         assert!(
-            row(4).contains("implement lifecycle") && row(4).ends_with(" claude"),
+            row(8).contains("implement lifecycle") && row(8).ends_with(" claude"),
             "model first: {}",
-            row(4)
+            row(8)
         );
         assert!(
-            row(5).ends_with("implement the lifecycle overhaul"),
+            row(9).ends_with("implement the lifecycle overhaul"),
             "then the agent: {}",
-            row(5)
+            row(9)
         );
         assert!(
-            row(6).ends_with("implement the whole lifecycle o…"),
+            row(10).ends_with("implement the whole lifecycle o…"),
             "only then the title: {}",
-            row(6)
+            row(10)
         );
     }
 

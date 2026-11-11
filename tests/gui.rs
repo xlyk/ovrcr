@@ -277,7 +277,9 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
-    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    // Leave enough tree viewport for this later fixture session beneath the
+    // default Operator, Resources, and quota sections.
+    let mut terminal = demo.dashboard(60, 120, Default::default())?;
     wait_dashboard(&mut terminal)?;
     // The sidebar keeps room for long session names and can omit the model.
     // Check the known agent identities there, then each model in its pane header.
@@ -477,7 +479,9 @@ fn gui_command_shortcuts_do_not_open_or_select_the_jump() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
-    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    // Leave enough tree viewport for this later fixture session beneath the
+    // default Operator, Resources, and quota sections.
+    let mut terminal = demo.dashboard(60, 120, Default::default())?;
     let result = (|| -> Result<()> {
         wait_dashboard(&mut terminal)?;
         wait_keyboard_enhancement(&terminal)?;

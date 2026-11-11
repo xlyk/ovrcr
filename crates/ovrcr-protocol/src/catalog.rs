@@ -5,7 +5,7 @@
 use crate::{
     AgentModelPolicy, DESKTOP_NOTIFICATIONS_OFF, ITERM_FOCUS_OFF, LaunchChoice, QUOTA_OFF,
     REMOTE_OFF, ReadySoundChoice, SAVE_UNCOMMITTED_WORK_OFF, SettingOwner, SettingRow,
-    SettingSource, Settings, TITLES_OFF, ThemeId,
+    SettingSource, Settings, SidebarView, TITLES_OFF, ThemeId,
 };
 use crate::{CLAUDE_PROBE_DESCRIPTION, CURSOR_QUOTA_DESCRIPTION};
 use serde::Serialize;
@@ -86,6 +86,14 @@ const QUOTA_ABOUT: &[&str] = &[
     "Off also stops the opt-in Cursor reader.",
 ];
 
+const OPERATOR_SIDEBAR_ABOUT: &[&str] =
+    &["Shows the Operator section in the Dashboard sidebar; on by default."];
+
+const USAGE_SIDEBAR_ABOUT: &[&str] =
+    &["Shows the Usage section in the Dashboard sidebar; on by default."];
+const RESOURCES_SIDEBAR_ABOUT: &[&str] =
+    &["Shows machine CPU and memory in the Dashboard sidebar; turning it off also stops sampling."];
+
 const SAVE_UNCOMMITTED_WORK_ABOUT: &[&str] = &[
     "Pushes uncommitted workspace work to origin/wip/<branch> when a workspace is removed or the server shuts down.",
 ];
@@ -95,6 +103,11 @@ const TITLE_ABOUT: &[&str] = &["Setting a model makes paid calls to title sessio
 const THEME_ABOUT: &[&str] = &[
     "80 built-in palettes across 27 families: 54 Dark and 26 Light. Catppuccin Mocha is the default (alias dark); Catppuccin Latte also accepts light.",
     "Changing theme updates the Dashboard immediately; the choice persists in dashboard.toml.",
+];
+
+const SIDEBAR_VIEW_ABOUT: &[&str] = &[
+    "Chooses the Dashboard sidebar's tree or recent-activity view.",
+    "The Dashboard saves this choice through the Server and restores it on the next attachment.",
 ];
 
 const REMOTE_ABOUT: &[&str] = &[
@@ -270,7 +283,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 34] = [
+const CATALOG: [Entry; 38] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -334,6 +347,20 @@ const CATALOG: [Entry; 34] = [
         off_state: None,
         about: THEME_ABOUT,
         value: |settings| Some(settings.theme.as_str().into()),
+        show_off: |_| false,
+    },
+    Entry {
+        path: SidebarView::KEY,
+        shape: Shape::Pick {
+            options: &["tree", "recent"],
+            expected: "\"tree\" or \"recent\"",
+        },
+        owner: SettingOwner::Dashboard,
+        group: "Appearance",
+        label: "Sidebar view",
+        off_state: None,
+        about: SIDEBAR_VIEW_ABOUT,
+        value: |settings| Some(settings.sidebar_view.as_str().into()),
         show_off: |_| false,
     },
     Entry {
@@ -490,6 +517,28 @@ const CATALOG: [Entry; 34] = [
         show_off: |_| false,
     },
     Entry {
+        path: "usage.sidebar",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Usage",
+        label: "Sidebar section",
+        off_state: None,
+        about: USAGE_SIDEBAR_ABOUT,
+        value: |settings| display(&settings.usage.sidebar),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "resources.sidebar",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Usage",
+        label: "Machine resources sidebar section",
+        off_state: None,
+        about: RESOURCES_SIDEBAR_ABOUT,
+        value: |settings| display(&settings.resources.sidebar),
+        show_off: |_| false,
+    },
+    Entry {
         path: "agents",
         shape: Shape::Agents,
         owner: SettingOwner::Dashboard,
@@ -551,6 +600,17 @@ const CATALOG: [Entry; 34] = [
             "Default leaves Pi's choice. Changes apply from the next accepted turn; Pi may substitute an unsupported level.",
         ],
         value: |settings| Some(settings.operator.thinking_level.as_str().into()),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "operator.sidebar",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Operator",
+        label: "Sidebar section",
+        off_state: None,
+        about: OPERATOR_SIDEBAR_ABOUT,
+        value: |settings| display(&settings.operator.sidebar),
         show_off: |_| false,
     },
     Entry {
@@ -711,6 +771,7 @@ mod tests {
                 "ready_sound_choice",
                 "iterm_focus",
                 "theme",
+                "sidebar_view",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -724,11 +785,14 @@ mod tests {
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
+                "usage.sidebar",
+                "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",
                 "operator.model",
                 "operator.thinking_level",
+                "operator.sidebar",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -781,7 +845,7 @@ mod tests {
                 .owner,
             SettingOwner::Server
         );
-        for path in [ReadySoundChoice::KEY, "iterm_focus"] {
+        for path in [ReadySoundChoice::KEY, "iterm_focus", "resources.sidebar"] {
             assert_eq!(
                 entries()
                     .iter()
@@ -791,6 +855,14 @@ mod tests {
                 SettingOwner::Dashboard
             );
         }
+        assert_eq!(
+            entries()
+                .iter()
+                .find(|entry| entry.path == "operator.sidebar")
+                .unwrap()
+                .owner,
+            SettingOwner::Dashboard
+        );
     }
 
     #[test]

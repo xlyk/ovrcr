@@ -803,6 +803,509 @@ fn agent_hook_sequence_does_not_regress_state() {
 }
 
 #[test]
+fn last_activity_tracks_agent_state_and_input_but_not_output_or_repeated_state() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("last-activity", "last-activity");
+    let timestamp = |fixture: &ControlFixture, id| {
+        let summary = serde_json::to_value(fixture.session_summary(id)).unwrap();
+        assert!(
+            summary
+                .as_object()
+                .is_some_and(|summary| summary.contains_key("last_activity_unix_ms")),
+            "session summary omitted Last activity: {summary}"
+        );
+        summary["last_activity_unix_ms"].as_u64().unwrap()
+    };
+    let initial = fixture.session_summary(identity.session);
+    assert_eq!(
+        timestamp(&fixture, identity.session),
+        initial.started_unix_ms.unwrap()
+    );
+    let report = |state| {
+        Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(state),
+        })
+    };
+
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::Busy)),
+        Response::Ok
+    );
+    let busy = timestamp(&fixture, identity.session);
+    assert!(busy > initial.started_unix_ms.unwrap());
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::Busy)),
+        Response::Ok
+    );
+    assert_eq!(timestamp(&fixture, identity.session), busy);
+
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(report(ovrcr::session::AgentActivity::WaitingInput)),
+        Response::Ok
+    );
+    let waiting = timestamp(&fixture, identity.session);
+    assert!(waiting > busy);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: identity.session,
+            text: "pasted input".into(),
+            submit: false,
+        }),
+        Response::Ok
+    );
+    let pasted = timestamp(&fixture, identity.session);
+    assert!(pasted > waiting);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        fixture.request(Request::Keystroke {
+            session: identity.session,
+            expected_run: initial.run,
+            key: ":enter:".into(),
+        }),
+        Response::Ok
+    );
+    let keystroke = timestamp(&fixture, identity.session);
+    assert!(keystroke > pasted);
+
+    let mut dashboard = dashboard_socket(&fixture);
+    let view = DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: identity.session,
+            run: initial.run,
+            size: ovrcr::protocol::TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(identity.session),
+    };
+    split_view_messages(&mut dashboard, 2, &view);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            3,
+            Request::Input {
+                session: identity.session,
+                run: initial.run,
+                bytes: b"dashboard input".to_vec(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let input = timestamp(&fixture, identity.session);
+    assert!(input > keystroke);
+
+    let output_only = fixture.create_session_summary(
+        "output-only",
+        [
+            "sh",
+            "-c",
+            "printf OUTPUT_ONLY_START; sleep 0.1; printf OUTPUT_ONLY_END; sleep 10",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect(),
+    );
+    fixture.record_process_group(&output_only);
+    let output_timestamp = timestamp(&fixture, output_only.id);
+    assert_eq!(output_timestamp, output_only.started_unix_ms.unwrap());
+    fixture.wait_terminal_contains(output_only.id, "OUTPUT_ONLY_END");
+    assert_eq!(timestamp(&fixture, output_only.id), output_timestamp);
+
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    fixture.ready("agent-hooks");
+    let local = fixture.only_session_id();
+    let first = fixture.create_hook_child("usage-first", "usage-first");
+    let second = fixture.create_hook_child("usage-second", "usage-second");
+
+    let bind = |identity: HookIdentity, label: &str| {
+        let session = identity.session;
+        let mut stream = connect_server(&fixture.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let response = client::request(
+            &mut stream,
+            1,
+            Request::ReserveAgent(ovrcr::protocol::ReserveAgent {
+                session,
+                capability: ovrcr::protocol::AgentSecret(identity.capability),
+                operation: format!("usage-reserve-{label}"),
+                expected_epoch: 0,
+                pi_resume: None,
+                invocation: format!("usage-invocation-{}", session.0),
+                provider: ovrcr::protocol::AgentProvider::Codex,
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Reserved(reservation)) =
+            response
+        else {
+            panic!("agent reservation failed: {response:?}");
+        };
+        let supervisor_auth = ovrcr::protocol::SupervisorAuth {
+            session,
+            lease: reservation.lease,
+        };
+        let response = client::request(
+            &mut stream,
+            2,
+            Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                auth: supervisor_auth.clone(),
+                operation: format!("usage-bind-{label}"),
+                command: ovrcr::protocol::AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("usage-conversation-{}", session.0),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Bound(binding)) =
+            response
+        else {
+            panic!("agent binding failed: {response:?}");
+        };
+        (binding, stream, supervisor_auth)
+    };
+    let (first_binding, mut first_supervisor, first_supervisor_auth) = bind(first, "first");
+    let (second_binding, _second_supervisor, _second_supervisor_auth) = bind(second, "second");
+
+    let mut dashboard_stream = connect_server(&fixture.socket).unwrap();
+    dashboard_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut dashboard_stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let hello = read_frame::<ServerMessage>(&mut dashboard_stream).unwrap();
+    let ServerMessage::Response {
+        response: Response::Hierarchy(snapshot),
+        ..
+    } = hello
+    else {
+        panic!("Dashboard hello did not include hierarchy: {hello:?}");
+    };
+    assert_eq!(snapshot.usage.total_tokens, 0);
+    let server_started = snapshot.usage.server_started_unix_ms;
+    assert!(server_started > 0);
+
+    let mut dashboard = ovrcr::tui::Dashboard::new(ovrcr::protocol::TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(snapshot);
+
+    let metrics = |scope: ovrcr::protocol::UsageScope, input: Option<u64>, output: Option<u64>| {
+        ovrcr::protocol::MetricsSample {
+            model: Some("usage-fixture".into()),
+            context: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: ovrcr::protocol::SampleQuality::Observed,
+                },
+                source: "usage fixture".into(),
+            },
+            usage: ovrcr::protocol::Measurement {
+                value: ovrcr::protocol::UsageTotals {
+                    scope,
+                    coverage: ovrcr::protocol::UsageCoverage::Complete,
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_read_tokens: input.map(|tokens| tokens / 2),
+                    cache_write_tokens: Some(0),
+                    reasoning_output_tokens: output.map(|tokens| tokens / 2),
+                },
+                source: "usage fixture".into(),
+            },
+            cost: ovrcr::protocol::Measurement {
+                value: None,
+                source: "usage fixture".into(),
+            },
+        }
+    };
+    let report = |identity: HookIdentity,
+                  binding: &ovrcr::protocol::AgentBinding,
+                  revision: u64,
+                  scope: ovrcr::protocol::UsageScope,
+                  input: Option<u64>,
+                  output: Option<u64>| {
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: None,
+            update: AgentUpdate::Provider(ovrcr::protocol::ProviderReport {
+                binding: binding.clone(),
+                revision,
+                observation: ovrcr::protocol::AgentObservation::Metrics(Box::new(metrics(
+                    scope, input, output,
+                ))),
+            }),
+        }))
+    };
+    let wait_usage_event =
+        |stream: &mut UnixStream, dashboard: &mut ovrcr::tui::Dashboard, expected: u64| {
+            loop {
+                let message = read_frame::<ServerMessage>(stream).unwrap();
+                let snapshot = match &message {
+                    ServerMessage::Event(ServerEvent::UsageChanged(snapshot)) => Some(*snapshot),
+                    _ => None,
+                };
+                dashboard.handle_server_message(message);
+                if let Some(snapshot) = snapshot
+                    && snapshot.total_tokens == expected
+                {
+                    return snapshot;
+                }
+            }
+        };
+
+    assert_eq!(
+        report(
+            first,
+            &first_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(100),
+            None,
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 100).total_tokens,
+        100
+    );
+    let rebound = client::request(
+        &mut first_supervisor,
+        3,
+        Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+            auth: first_supervisor_auth,
+            operation: "usage-rebind-first".into(),
+            command: ovrcr::protocol::AgentCommand::Bind {
+                expected_binding: Some(first_binding.clone()),
+                conversation: first_binding.conversation.clone(),
+            },
+        }),
+    )
+    .unwrap();
+    let Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Bound(rebound_binding)) =
+        rebound
+    else {
+        panic!("same-conversation rebind failed: {rebound:?}");
+    };
+    assert_eq!(rebound_binding.generation, first_binding.generation + 1);
+    assert_eq!(rebound_binding.conversation, first_binding.conversation);
+    assert_eq!(rebound_binding.invocation, first_binding.invocation);
+    assert_eq!(
+        report(
+            first,
+            &rebound_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(90),
+            None,
+        ),
+        Response::Ok,
+        "the first lower report after rebind is accepted"
+    );
+    let Response::Hierarchy(after_lower_rebind) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after lower rebind report");
+    };
+    assert_eq!(
+        after_lower_rebind.usage.total_tokens, 100,
+        "a same-conversation rebind cannot count the prior total twice"
+    );
+    assert_eq!(
+        report(
+            first,
+            &rebound_binding,
+            2,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(110),
+            None,
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 110).total_tokens,
+        110
+    );
+    assert_eq!(
+        report(
+            first,
+            &rebound_binding,
+            3,
+            ovrcr::protocol::UsageScope::Invocation,
+            Some(10),
+            None,
+        ),
+        Response::Ok,
+        "invocation totals covered by the conversation snapshot add nothing"
+    );
+    let Response::Hierarchy(invocation_overlap) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after overlapping invocation report");
+    };
+    assert_eq!(invocation_overlap.usage.total_tokens, 110);
+    // A session with no reported input or output contributes zero and stays an ordinary
+    // Unknown session; cache and reasoning fields are subsets and are not added twice.
+    assert_eq!(
+        report(
+            second,
+            &second_binding,
+            1,
+            ovrcr::protocol::UsageScope::Conversation,
+            None,
+            None,
+        ),
+        Response::Ok
+    );
+    let Response::Hierarchy(no_tokens) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after no-token report");
+    };
+    assert_eq!(no_tokens.usage.total_tokens, 110);
+    assert_eq!(
+        report(
+            second,
+            &second_binding,
+            2,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(2),
+            Some(3),
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 115).total_tokens,
+        115
+    );
+    assert_eq!(
+        report(
+            first,
+            &rebound_binding,
+            4,
+            ovrcr::protocol::UsageScope::Conversation,
+            Some(150),
+            Some(25),
+        ),
+        Response::Ok
+    );
+    assert_eq!(
+        wait_usage_event(&mut dashboard_stream, &mut dashboard, 180).total_tokens,
+        180
+    );
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, server_started))
+        .unwrap();
+    let sidebar = (0..40)
+        .map(|row| {
+            (0..39)
+                .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        sidebar.contains("USAGE"),
+        "Usage section missing: {sidebar}"
+    );
+    assert!(
+        sidebar.contains("180 tokens"),
+        "live total missing: {sidebar}"
+    );
+
+    drop(first_supervisor);
+    drop(_second_supervisor);
+    for session in [first.session, second.session, local] {
+        assert_eq!(
+            fixture.request(Request::KillSession { session }),
+            Response::Ok
+        );
+        fixture.wait_exited(session);
+    }
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: PROJECT.into(),
+            name: WORKSPACE.into(),
+            force: false,
+        }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("expected retained-session inventory");
+    };
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.id == first.session && session.archived),
+        "usage source was not archived"
+    );
+    let Response::Hierarchy(archived) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after archive");
+    };
+    assert_eq!(archived.usage.total_tokens, 180);
+
+    drop(dashboard_stream);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+    fixture.start();
+    let Response::Hierarchy(restarted) = fixture.request(Request::List) else {
+        panic!("expected hierarchy after restart");
+    };
+    assert_eq!(restarted.usage.total_tokens, 0);
+    assert!(restarted.usage.server_started_unix_ms > server_started);
+
+    let mut fresh_dashboard = connect_server(&fixture.socket).unwrap();
+    write_frame(
+        &mut fresh_dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let fresh_hello = read_frame::<ServerMessage>(&mut fresh_dashboard).unwrap();
+    assert!(matches!(
+        fresh_hello,
+        ServerMessage::Response {
+            response: Response::Hierarchy(snapshot),
+            ..
+        } if snapshot.usage.total_tokens == 0
+            && snapshot.usage.server_started_unix_ms == restarted.usage.server_started_unix_ms
+    ));
+    drop(fresh_dashboard);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
 fn agent_hook_capability_and_exit_are_enforced() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
@@ -11292,6 +11795,24 @@ fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, 
     *index += 1;
 }
 
+fn assert_unchanged_after_fixture_input(
+    actual: &ovrcr::session::SessionSummary,
+    before: &ovrcr::session::SessionSummary,
+    message: &str,
+) {
+    // The callback driver sends real terminal input, which advances Last activity.
+    let activity = actual
+        .last_activity_unix_ms
+        .expect("input records activity");
+    assert!(
+        activity >= before.last_activity_unix_ms.unwrap_or(0),
+        "{message}"
+    );
+    let mut expected = before.clone();
+    expected.last_activity_unix_ms = Some(activity);
+    assert_eq!(actual, &expected, "{message}");
+}
+
 // Native completion closes the watch, but the shell marker does not acknowledge
 // Server-side lease release. Observe both within the marker's existing bound.
 fn pi_exit_and_wait_for_lease_release(fixture: &ControlFixture, session: SessionId) {
@@ -12193,11 +12714,31 @@ printf '%s\n' "$reply"
         // Aim at a whole frame, not part of one.
         self.settle();
         let screen = self.parser.screen().contents();
-        let row = screen
+        // Operator's missing-Pi guidance can contain a session name (for
+        // example, "setup") before that session's tree row. The rendered
+        // session row is the later match; click inside its actual label
+        // instead of relying on a fixed sidebar column.
+        let (row, column) = screen
             .lines()
-            .position(|line| line.chars().take(32).collect::<String>().contains(name))
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let sidebar = line.split_once('│').map_or(line, |(sidebar, _)| sidebar);
+                let start = sidebar.find(name)?;
+                let column = sidebar[..start].chars().count() + name.chars().count() / 2;
+                Some((row, column))
+            })
+            .last()
             .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
-        self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
+        self.send(
+            format!(
+                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+                column + 1,
+                row + 1,
+                column + 1,
+                row + 1
+            )
+            .as_bytes(),
+        );
         self.wait_screen(|screen| screen.contains(terminal_marker));
     }
 
@@ -14445,7 +14986,11 @@ fn codex_supported_conversation_switches_rebind_ready_and_input_without_unread_a
         &mut index,
         &format!("SessionStart:{CONV_A}:boot:compact-source"),
     );
-    assert_eq!(fixture.session_summary(summary.id), before_compact);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before_compact,
+        "same-conversation compaction preserves reporting state",
+    );
 
     desktop_codex_callback(
         &fixture,
@@ -14696,10 +15241,10 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
         "actual dashboard input changes unread only"
     );
     desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:a");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        reviewed,
-        "native duplicate does not reopen reviewed response"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &reviewed,
+        "native duplicate does not reopen reviewed response",
     );
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
@@ -14973,7 +15518,13 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
     // Duplicate settled: no second alert, no new Unread.
     pi_callback(&fixture, summary.id, &mut index, "agent_settled");
-    assert_eq!(fixture.session_summary(summary.id), first);
+    let after_duplicate = fixture.session_summary(summary.id);
+    assert_unchanged_after_fixture_input(
+        &after_duplicate,
+        &first,
+        "a duplicate settled event preserves reporting state",
+    );
+    let first = after_duplicate;
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
     // Opening the pane does not acknowledge; R reviews exactly the presented identity.
     dashboard.select("pi-hooks", "PI_CALLBACK=4");
@@ -15381,10 +15932,10 @@ fn pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_prod
     // to it at all, so nothing about the binding or the generation moves.
     let before = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "session_compact");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        before,
-        "same-conversation compaction preserves the binding"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before,
+        "same-conversation compaction preserves the binding",
     );
 
     // A -> B -> A: returning to the first conversation is a third generation, never the
@@ -15515,10 +16066,10 @@ fn pi_source_gap_pauses_then_recovers_at_the_next_boundary() {
     let quiet = fixture.session_summary(summary.id);
     for command in ["agent_settled", "agent_end:ok"] {
         pi_callback(&fixture, summary.id, &mut index, command);
-        assert_eq!(
-            fixture.session_summary(summary.id),
-            quiet,
-            "{command} while paused changes nothing"
+        assert_unchanged_after_fixture_input(
+            &fixture.session_summary(summary.id),
+            &quiet,
+            &format!("{command} while paused preserves reporting state"),
         );
     }
     // The next trustworthy boundary recovers: one fresh generation, nothing restored.
@@ -16459,10 +17010,10 @@ fn omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer() {
     //    subscribe to it at all, so nothing about the binding or the generation moves.
     let compacted_from = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "session_compact");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        compacted_from,
-        "same-conversation compaction preserves the binding"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &compacted_from,
+        "same-conversation compaction preserves the binding",
     );
 
     // 7. A -> B -> A is a third generation, never the reuse of the first.
@@ -16502,10 +17053,10 @@ fn omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer() {
     //    event for it, so no shutdown, no start and no rebind may be fabricated.
     let refreshed_from = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "plugin_refresh");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        refreshed_from,
-        "a plugin-resource refresh is not a lifecycle event"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &refreshed_from,
+        "a plugin-resource refresh is not a lifecycle event",
     );
 
     // 10-11. Tree navigation abandons the cycle it was in: what is true afterwards is only
@@ -16636,10 +17187,10 @@ fn omp_source_gap_pauses_then_recovers_at_the_next_boundary() {
         &mut index,
         "tool_approval_resolved:c1:true",
     );
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        unmoved,
-        "a frame that never arrived changes nothing"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &unmoved,
+        "a frame that never arrived preserves reporting state",
     );
 
     // 5: the hole is visible, and what this reporter says is no longer certain.
@@ -16666,10 +17217,10 @@ fn omp_source_gap_pauses_then_recovers_at_the_next_boundary() {
     // The native session is untouched: it keeps answering, and nothing it says is applied.
     let quiet = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        quiet,
-        "a non-boundary event while paused applies nothing"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &quiet,
+        "a non-boundary event while paused preserves reporting state",
     );
 
     // The next trustworthy boundary recovers: one fresh generation, nothing restored.
@@ -17594,7 +18145,11 @@ fn claude_supported_conversation_switches_rebind_ready_and_input_without_unread_
     // Same-conversation compact invents no replacement.
     let before_compact = fixture.session_summary(summary.id);
     claude_activity_callback(&fixture, summary.id, &mut index, "compact");
-    assert_eq!(fixture.session_summary(summary.id), before_compact);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before_compact,
+        "same-conversation compaction preserves reporting state",
+    );
 
     // Unsupported bare fork → persistent unavailable warning; Claude keeps running.
     claude_activity_callback(&fixture, summary.id, &mut index, "branch");
@@ -17730,7 +18285,11 @@ fn omp_ready_alerts_once_and_creates_unread() {
     assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
     // The cycle is closed: a repeated end reaches no open cycle, so nothing is republished.
     pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
-    assert_eq!(fixture.session_summary(summary.id), first);
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &first,
+        "a duplicate end changes only the fixture input activity",
+    );
     dashboard.wait_named_calls(1, summary.id, "omp-hooks");
     dashboard.detach();
 }

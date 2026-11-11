@@ -367,6 +367,7 @@ fn service_install_refuses_when_sessions_exist() {
                     message: "sessions remain".into(),
                 },
                 Request::List => Response::Hierarchy(HierarchySnapshot {
+                    usage: ovrcr_protocol::UsageSnapshot::default(),
                     projects: vec![ProjectSummary {
                         name: "demo".into(),
                         workspaces: vec![WorkspaceSummary {
@@ -393,6 +394,7 @@ fn service_install_refuses_when_sessions_exist() {
                                 label: "shell".into(),
                                 pid: Some(1),
                                 started_unix_ms: Some(0),
+                                last_activity_unix_ms: None,
                                 phase: SessionPhase::Running,
                                 activity: AgentActivity::Idle,
                                 context_usage: None,

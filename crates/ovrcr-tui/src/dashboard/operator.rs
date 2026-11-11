@@ -32,6 +32,10 @@ pub(super) struct Hub {
     editing: bool,
     transcript_focus: bool,
     sidebar_open: bool,
+    /// Preserve an unavailable-Pi status that was actually displayed before
+    /// opening the singleton; logical loaded-chat state alone is not evidence
+    /// that this host can launch Pi.
+    sidebar_setup_unavailable: bool,
     chat: Option<Chat>,
     /// One Open or history read is in flight for the singleton.
     loading: bool,
@@ -676,6 +680,7 @@ impl Dashboard {
         {
             return;
         }
+        self.capture_operator_setup_for_open();
         self.operator.loading = true;
         self.operator_request(Pending::Open { origin }, OperatorRequest::Open);
     }
@@ -1596,6 +1601,8 @@ mod tests {
             model: None,
             title: "Operator".into(),
             current_turn: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
         }
     }
     fn with_model(mut value: Summary) -> Summary {
@@ -1727,9 +1734,18 @@ mod tests {
             .collect()
     }
     fn frame_lines(d: &mut Dashboard, cols: u16, rows: u16) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        frame_lines_at(d, cols, rows, now)
+    }
+    fn frame_lines_at(d: &mut Dashboard, cols: u16, rows: u16, now: u64) -> String {
         d.install_area(Rect::new(0, 0, cols, rows));
         let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-        d.draw(&mut terminal).unwrap();
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, d, now))
+            .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..rows)
             .map(|row| {
@@ -1788,13 +1804,30 @@ mod tests {
     }
 
     #[test]
-    fn operator_is_one_navigation_row_and_opens_the_singleton_directly() {
+    fn operator_section_opens_the_singleton_directly() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::operator_section_opens_the_singleton_directly",
+        ) {
+            return;
+        }
         let mut d = dashboard();
+        d.install_area(Rect::new(0, 0, 140, 40));
         let rects = d.sidebar_rects(d.outer_area);
         let row = rects.operator;
-        assert_eq!(row.height, 1, "exactly one fixed navigation row");
-        assert_eq!(row.bottom(), 23, "the dock is the sidebar's last line");
-        assert_eq!(rects.tree.y, 1, "the first project starts under the title");
+        assert_eq!(
+            rects.attention.height, 0,
+            "no counts means no attention row"
+        );
+        assert_eq!(
+            row.height, 3,
+            "the section has title, status and detail rows"
+        );
+        assert_eq!(row.y, 1, "the section starts below the title");
+        assert_eq!(
+            rects.tree.y,
+            row.bottom() + 1,
+            "one blank row follows Operator"
+        );
         let screen = draw(&mut d, 140, 24);
         assert!(screen.contains("Operator"), "{screen}");
         for removed in ["[+]", "▸", "[x]", "Chats", "New Conversation"] {
@@ -2273,6 +2306,34 @@ mod tests {
     }
 
     #[test]
+    fn a_pending_submission_keeps_sidebar_busy_without_claiming_a_server_turn() {
+        let mut d = dashboard();
+        d.settings.operator.sidebar = true;
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        assert!(!d.operator_sidebar_busy());
+
+        d.event_action(Event::Paste("pending message".into()));
+        d.key(KeyCode::Enter);
+        assert!(d.operator.chat.as_ref().unwrap().submitting);
+        assert!(d.operator_sidebar_busy());
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+        assert!(
+            !d.operator_stop_available(),
+            "a pending submission has no Server-owned turn to stop"
+        );
+        assert!(
+            !d.operator_submit_available(),
+            "a pending submission remains single-flight"
+        );
+    }
+
+    #[test]
     fn ctrl_x_stops_the_exact_turn_from_composer_and_transcript() {
         let mut d = dashboard();
         opened(&mut d, busy());
@@ -2422,6 +2483,11 @@ mod tests {
 
     #[test]
     fn unread_clears_only_after_the_loaded_tail_is_drawn() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::unread_clears_only_after_the_loaded_tail_is_drawn",
+        ) {
+            return;
+        }
         let mut d = dashboard();
         let out = opened(&mut d, summary());
         let read = read_request(&out);
@@ -2498,6 +2564,11 @@ mod tests {
 
     #[test]
     fn frames_at_floor_and_wide_sizes_match_the_singleton_layout() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::frames_at_floor_and_wide_sizes_match_the_singleton_layout",
+        ) {
+            return;
+        }
         let mut d = dashboard();
         let out = opened(&mut d, with_model(summary()));
         let read = read_request(&out);
@@ -2529,7 +2600,7 @@ mod tests {
             ),
         );
         for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
-            let frame = frame_lines(&mut d, cols, rows);
+            let frame = frame_lines_at(&mut d, cols, rows, 0);
             let mut first = frame.lines();
             let header = first.next().unwrap();
             assert!(
@@ -2569,28 +2640,38 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_geometry_reserves_one_row_and_has_no_close_target() {
+    fn sidebar_geometry_shrinks_the_operator_section_without_a_close_target() {
         let mut d = dashboard();
         opened(&mut d, busy());
-        for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 16), (40, 12)] {
+        for (cols, rows, operator_height) in [
+            (140, 40, 3),
+            (100, 24, 3),
+            (80, 24, 0),
+            (60, 16, 0),
+            (40, 12, 0),
+        ] {
             d.install_area(Rect::new(0, 0, cols, rows));
             let rects = d.sidebar_rects(d.outer_area);
-            assert!(rects.operator.height <= 1, "one row at {cols}x{rows}");
-            if rects.operator.height == 1 {
-                assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
+            assert_eq!(
+                rects.operator.height, operator_height,
+                "Operator follows the section shrink order at {cols}x{rows}"
+            );
+            if operator_height == 0 {
+                assert!(
+                    rects.operator.is_empty(),
+                    "the on-demand sidebar hides at {cols}x{rows}"
+                );
+                continue;
             }
             assert_eq!(
-                rects.operator.bottom(),
-                rows - 1,
-                "Operator stays just above the footer at {cols}x{rows}"
+                rects.operator.y,
+                rects.attention.bottom() + u16::from(rects.attention.height > 0),
+                "Operator follows attention and its optional blank row at {cols}x{rows}"
             );
-            assert_eq!(
-                rects.tree.y, 1,
-                "the tree starts under the title at {cols}x{rows}"
-            );
-            assert_eq!(rects.tree.bottom(), rects.attention.y);
-            assert_eq!(rects.attention.bottom(), rects.quota.y);
-            assert_eq!(rects.quota.bottom(), rects.operator.y);
+            assert!(rects.tree.height >= 3, "three tree lines at {cols}x{rows}");
+            assert!(rects.operator.bottom() <= rects.tree.y);
+            assert!(rects.tree.bottom() <= rects.quota.y);
+            assert_eq!(rects.quota.bottom(), rows - 1);
         }
         d.install_area(Rect::new(0, 0, 140, 24));
         let row = d.sidebar_rects(d.outer_area).operator;

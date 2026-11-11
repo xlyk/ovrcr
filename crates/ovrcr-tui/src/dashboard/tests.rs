@@ -132,6 +132,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
                 label: "shell".into(),
                 pid: None,
                 started_unix_ms: Some(0),
+                last_activity_unix_ms: None,
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
@@ -260,6 +261,9 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 1;
     let request = dashboard
@@ -1095,6 +1099,9 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     let mut other = super::PaneState::new(TerminalSize { rows: 4, cols: 20 });
     other.session = Some(SessionId(2));
     other.run = Some(crate::protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(other);
     let summary = |id| SessionSummary {
         scope: ovrcr_protocol::SessionScope::Workspace,
@@ -1113,6 +1120,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
         label: "zsh".into(),
         pid: Some(1),
         started_unix_ms: Some(0),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: crate::session::AgentActivity::Unknown,
         agent: None,
@@ -1123,6 +1131,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 99,
         response: Response::Hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![WorkspaceSummary {
@@ -1274,6 +1283,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
         started_unix_ms: Some(0),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -1282,6 +1292,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
         unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {
@@ -1307,6 +1318,9 @@ fn mouse_release_precedes_the_replacement_view_request() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
 
@@ -1418,6 +1432,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
         started_unix_ms: Some(0),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -1426,6 +1441,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {
@@ -1451,6 +1467,9 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
     second.run = Some(ovrcr_protocol::SessionRunId(1));
+    dashboard
+        .pane_layout
+        .insert_after(0, super::SplitDirection::Right, 1);
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
     let request = dashboard
@@ -1671,6 +1690,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
                 cwd: "/work".into(),
                 // Ten minutes of session, one second since the latest sample.
                 started_unix_ms: Some(now - 600_000),
+                last_activity_unix_ms: None,
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Busy,
                 context_usage: None,
@@ -1863,6 +1883,7 @@ fn header_session(
         label: label.into(),
         pid: Some(4242),
         started_unix_ms: Some(started),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -2163,6 +2184,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 pid: Some(1),
                 cwd: "/work".into(),
                 started_unix_ms: Some(now),
+                last_activity_unix_ms: None,
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Busy,
                 context_usage: Some(ContextUsageSnapshot {
@@ -2273,7 +2295,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .take(usize::from(rect.width))
         .collect();
     assert_eq!(line2, "─".repeat(usize::from(rect.width)), "{ready_text}");
-    assert!(!ready_text.contains("tokens"), "{ready_text}");
+    // The Dashboard Usage summary is separate from pane metrics; the exact
+    // plain second header row above proves this pane has no token report.
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -2305,14 +2328,17 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         });
     }
     for width in [80, 100, 120] {
+        let area = Rect::new(0, 0, width, 24);
+        let sidebar = dashboard.sidebar_rects(area);
+        let background_session_y = sidebar.tree.y + 2;
         let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
         terminal
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
         // the literal state and health text live on the metadata line. The attention
-        // strip above the quota section counts it without moving the tree.
-        let cell = &terminal.backend().buffer()[(5, 3)];
+        // strip leads the Operator section and tree when it has counts.
+        let cell = &terminal.backend().buffer()[(5, background_session_y)];
         assert_eq!(
             cell.symbol(),
             "✓",
@@ -2324,17 +2350,21 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect()
         };
-        assert_eq!(row(15).trim_end(), " ✓ 1 ready", "width {width}");
+        assert_eq!(
+            row(sidebar.attention.y).trim_end(),
+            " ✓ 1 ready",
+            "width {width}"
+        );
         // A label too long to share the name's line is kept on the line under it.
         assert!(
-            row(4).contains("long Codex label"),
+            row(background_session_y + 1).contains("long Codex label"),
             "the background label follows its name: {}",
-            row(4)
+            row(background_session_y + 1)
         );
         assert!(
-            row(5).contains(&original.name),
+            row(background_session_y + 2).contains(&original.name),
             "the next session follows the background row: {}",
-            row(5)
+            row(background_session_y + 2)
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
@@ -2523,20 +2553,20 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         metrics.cost_received_unix_ms = 1;
     }
     let pane_widths: Vec<_> = super::pane_rects(
-        Rect::new(0, 0, 166, 24),
+        Rect::new(0, 0, 240, 24),
         dashboard.panes.len(),
         dashboard.focused_pane,
     )
     .into_iter()
     .map(|pane| pane.metadata.width)
     .collect();
-    assert_eq!(pane_widths, [62, 63]);
-    let text = drawn(&dashboard, now, 166);
+    assert_eq!(pane_widths, [99, 100]);
+    let text = drawn(&dashboard, now, 240);
     assert_eq!(
         text.matches("ctx 50% · 712k tokens (6m ago) · ~$0.47 (6m ago)")
             .count(),
         2,
-        "split metrics must preserve both ages: {text}"
+        "split metrics preserve both ages when the pane can fit them: {text}"
     );
     for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
         let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
@@ -3070,6 +3100,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
         WorkspaceSummary,
     };
     HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![ProjectSummary {
             name: "consigint".into(),
             workspaces: vec![WorkspaceSummary {
@@ -3098,6 +3129,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                         label: "zsh".into(),
                         pid: Some(100 + u32::try_from(*id).unwrap()),
                         started_unix_ms: Some(0),
+                        last_activity_unix_ms: None,
                         phase: SessionPhase::Running,
                         activity: AgentActivity::Unknown,
                         context_usage: None,
@@ -3117,6 +3149,7 @@ fn history_end_survives_split_and_leave_history() {
     // never drained and leave_history overwrote.
     let mut dashboard = staged_history_copy_dashboard();
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
     assert!(dashboard.split_pane());
     // Deliberately undrained: re-open history on the new pane and leave it, so the split's
     // release and `leave_history`'s end compete for the one slot the old code parked in.
@@ -3305,6 +3338,7 @@ fn keymap_session(
         label: "shell".into(),
         pid: None,
         started_unix_ms: Some(0),
+        last_activity_unix_ms: None,
         phase,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -3409,6 +3443,98 @@ fn agent_confirmation_enters_terminal_only_after_complete_acknowledgement() {
 }
 
 #[test]
+fn assigned_view_only_agent_switch_settles_without_flushing_input() {
+    use crate::protocol::{ControlOwner, Request, Response, ServerMessage, SessionKind};
+    use crossterm::event::Event;
+
+    let mut dashboard = assigned_control_dashboard();
+    let mut destination = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    destination.id = SessionId(13);
+    destination.run = SessionRunId(2);
+    destination.name = "assigned-agent".into();
+    destination.kind = SessionKind::Agent { name: "pi".into() };
+    let assignment = destination.assignment_control.as_mut().unwrap();
+    assignment.evidence.as_mut().unwrap().identity.session = Some(destination.id);
+    assignment.evidence.as_mut().unwrap().identity.run = Some(destination.run);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(destination);
+    let action = dashboard.confirm_agent_switch(SessionId(13), SessionRunId(2));
+    assert_eq!(action, super::DashboardAction::Redraw);
+    let request = dashboard
+        .drain_one_request()
+        .expect("agent switch requests its view");
+    let Request::SetView { view } = request.request else {
+        panic!("agent switch must request a view, not input");
+    };
+    assert!(dashboard.agent_typing.is_some());
+
+    // Model the production event loop: already-ready input is drained before
+    // the acknowledged view can finish switching. Input remains withheld.
+    dashboard.defer_agent_typing_until_input_boundary();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_WHILE_VIEW_ONLY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.drain_outbox().is_empty());
+
+    let pane = &view.panes[0];
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Screen {
+            session: pane.session,
+            run: pane.run,
+            revision: view.revision,
+            size: pane.size,
+            bytes: b"CHILD_RESULT_PUBLISHED".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        dashboard.agent_typing.is_some(),
+        "input boundary still owns cutover"
+    );
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_AT_READY_BOUNDARY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        dashboard.finish_agent_input_boundary(),
+        "settling the spinner must redraw even when mode stays Browse"
+    );
+
+    assert!(
+        dashboard.agent_typing.is_none(),
+        "ready view settles navigation"
+    );
+    assert_eq!(dashboard.mode, InputMode::Browse);
+    assert!(!dashboard.input_is_allowed());
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[1]
+            .assignment_control
+            .as_ref()
+            .unwrap()
+            .control
+            .owner,
+        ControlOwner::Controller,
+        "view readiness does not change assignment ownership"
+    );
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("FORBIDDEN_AFTER_READY".into())),
+        super::DashboardAction::PtyBytes(_)
+    ));
+    assert!(dashboard.input_request(b"FORBIDDEN".to_vec(), 99).is_none());
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "no input request was queued"
+    );
+}
+
+#[test]
 fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     use super::keymap::{Action, KeyBinding, keymap};
     // Global shortcuts carry their modifiers when checking unique bindings.
@@ -3423,7 +3549,16 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     for mode in [InputMode::Browse, InputMode::Copy, InputMode::History] {
         dashboard.mode = mode;
         let groups = keymap(&dashboard);
-        let bindings: Vec<&KeyBinding> = groups.iter().flat_map(|group| &group.keys).collect();
+        let bindings: Vec<&KeyBinding> = groups
+            .iter()
+            .flat_map(|group| &group.keys)
+            // Match the production dispatch scope: pane direction and swap
+            // rows run only after opening the Panes group.
+            .filter(|binding| {
+                mode != InputMode::Browse
+                    || !matches!(binding.action, Action::FocusPane(_) | Action::SwapPane(_))
+            })
+            .collect();
         assert!(!bindings.is_empty(), "{mode:?} lists no keys");
         for binding in &bindings {
             let matched: Vec<_> = bindings
@@ -3456,7 +3591,7 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
         ),
         (
             KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
-            Action::OtherPane,
+            Action::PreviousPane,
         ),
         (
             KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
@@ -3525,7 +3660,8 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
     assert_eq!(reason(&dashboard, "r"), Some("not paused"));
     assert_eq!(reason(&dashboard, "R"), Some("no unread response"));
     assert_eq!(reason(&dashboard, "x"), Some("only one pane"));
-    assert_eq!(reason(&dashboard, "Tab/Shift-Tab"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "Tab"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "Shift-Tab"), Some("only one pane"));
     assert_eq!(reason(&dashboard, "v"), Some("no other visible session"));
 
     dashboard.install_unready(SessionId(12));
@@ -3556,7 +3692,8 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
     split.key(KeyCode::Char('k'));
     assert!(split.action_session().is_none());
     assert_eq!(reason(&split, "x"), Some("no session selected"));
-    assert_eq!(reason(&split, "Tab/Shift-Tab"), Some("no session selected"));
+    assert_eq!(reason(&split, "Tab"), Some("no session selected"));
+    assert_eq!(reason(&split, "Shift-Tab"), Some("no session selected"));
     assert_eq!(reason(&split, "Enter"), None);
 
     let empty = Dashboard::new(TerminalSize {
@@ -3596,7 +3733,8 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('p', "n", Action::CreateWorkspace),
         ('p', "a", Action::RegisterProject),
         ('v', "t/Ctrl-t", Action::Tasks),
-        ('v', "x", Action::ClosePane),
+        ('s', "x", Action::ClosePane),
+        ('s', "Shift-Tab", Action::PreviousPane),
     ] {
         assert!(
             slots.contains(&expected),
@@ -4145,6 +4283,7 @@ fn old_run_packets_are_ignored_after_same_row_replacement() {
 #[test]
 fn inactive_to_live_clears_prior_view_state_and_keeps_the_row() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].title = Some("Pinned".into());
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Stopped;
@@ -4259,22 +4398,30 @@ fn root_workspace_sorts_first_regardless_of_name() {
 fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     use crate::protocol::SessionPhase;
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    // Repeatedly splitting the rightmost pane needs 164 content columns so
+    // each nested child can still fit two 20-column panes and a divider.
+    dashboard.install_area(Rect::new(0, 0, 240, 40));
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Commands  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity"
     );
     // Hints drop from the right when the footer is narrow.
     assert_eq!(super::hints::footer(&dashboard, 20), "BROWSE  Space Menu");
     // The per-action state the footer used to show still lives in the table.
     dashboard.hierarchy.projects[0].workspaces[0]
         .sessions
-        .push(keymap_session(13, SessionPhase::Running));
+        .extend((13..=15).map(|id| keymap_session(id, SessionPhase::Running)));
     assert!(binding_named(&dashboard, "v").enabled());
     assert!(dashboard.split_pane());
-    assert_eq!(binding_named(&dashboard, "v").reason, Some("already split"));
+    assert!(dashboard.split_pane());
+    assert!(dashboard.split_pane());
+    assert_eq!(
+        binding_named(&dashboard, "v").reason,
+        Some("four panes is the most")
+    );
     assert_eq!(
         super::hints::footer(&dashboard, 120),
-        "BROWSE  Space Menu  : Commands  ? Help"
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity"
     );
     dashboard.mode = InputMode::Terminal;
     assert_eq!(

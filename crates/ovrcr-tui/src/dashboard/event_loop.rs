@@ -212,6 +212,7 @@ fn dashboard_loop<W: Write>(
         first_frame = false;
         if pending_redraw && Instant::now() >= next_frame_redraw {
             update_mouse_capture(terminal, dashboard, mouse_enabled)?;
+            dashboard.sample_resources_if_due(Instant::now());
             dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -318,6 +319,7 @@ fn dashboard_loop<W: Write>(
                 }
                 DashboardBoundary::Work | DashboardBoundary::Idle => {}
             }
+            dashboard.sample_resources_if_due(Instant::now());
             dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -1211,6 +1213,7 @@ mod unread_review_tests {
             label: "codex".into(),
             pid: Some(1),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::ResponseReady,
             agent: None,
@@ -1232,6 +1235,7 @@ mod unread_review_tests {
             cols: 120,
         });
         dashboard.hierarchy = HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "project".into(),
                 workspaces: vec![WorkspaceSummary {
@@ -1358,6 +1362,7 @@ mod unread_review_tests {
                         &ServerMessage::Response {
                             request_id: 1,
                             response: Response::Hierarchy(crate::protocol::HierarchySnapshot {
+                                usage: ovrcr_protocol::UsageSnapshot::default(),
                                 projects: vec![],
                             }),
                         },
@@ -1856,6 +1861,8 @@ mod operator_loop_tests {
             model: None,
             title: "Operator".into(),
             current_turn: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
         }
     }
     fn inbound(

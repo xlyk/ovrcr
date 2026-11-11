@@ -23,6 +23,18 @@ pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAM
 /// reporting (hooks not set up, or a provider without it) and reads `status off`.
 const STARTING_GRACE_MS: u64 = 60_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UsageState {
+    Working,
+    NeedsInput,
+    Ready,
+    Idle,
+    Error,
+    Paused,
+    Exited,
+    Unknown,
+}
+
 /// The glyph and colour a session holds still at, or `None` when its glyph is a moving
 /// spinner frame — the one state that needs the clock. [`busy`] and [`SessionStatus::of`]
 /// both read this, so the redraw cadence and the drawn glyph are a single decision.
@@ -83,6 +95,8 @@ pub(super) struct SessionStatus {
     /// The headers' reporting health, only when it matters: `starting…` before an agent's
     /// first report, `status off` when its reporting is off or lost.
     pub reporting: Option<&'static str>,
+    /// An Input request is open, even when the session cannot currently answer it.
+    pub has_open_input_request: bool,
     /// The Agents picker's activity clause, leading space included: ` busy observed`,
     /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
     pub activity: String,
@@ -119,6 +133,10 @@ impl SessionStatus {
             state,
             narrow_state,
             reporting: reporting_words(session, now_unix_ms),
+            has_open_input_request: session
+                .agent
+                .as_ref()
+                .is_some_and(|agent| !agent.input_requests.is_empty()),
             activity: {
                 let mut clause = activity_clause(session);
                 if let Some(control) = super::assignment_control::control_clause(
@@ -162,6 +180,35 @@ impl SessionStatus {
                     None => unread,
                 }
             }),
+        }
+    }
+
+    /// The one session-state classification shared by the sidebar row and Usage counts.
+    pub(super) fn usage_state(session: &SessionSummary) -> UsageState {
+        match session.phase {
+            SessionPhase::Exited { .. } | SessionPhase::Stopped => UsageState::Exited,
+            SessionPhase::Interrupted => UsageState::Error,
+            SessionPhase::Paused => UsageState::Paused,
+            SessionPhase::Running => match super::ready::activity(session) {
+                AgentActivity::Busy => UsageState::Working,
+                AgentActivity::WaitingInput => UsageState::NeedsInput,
+                AgentActivity::ResponseReady => UsageState::Ready,
+                AgentActivity::Idle => UsageState::Idle,
+                AgentActivity::Error => UsageState::Error,
+                AgentActivity::Unknown => UsageState::Unknown,
+            },
+        }
+    }
+
+    /// The shared sidebar attention classification used by the strip, its jump, and folded
+    /// counts.
+    pub(super) fn attention(session: &SessionSummary) -> Option<super::attention::Attention> {
+        let activity = super::ready::activity(session);
+        if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
+            Some(super::attention::Attention::Input)
+        } else {
+            (session.unread.is_some() && activity != AgentActivity::Busy)
+                .then_some(super::attention::Attention::Ready)
         }
     }
 }
@@ -599,6 +646,7 @@ mod tests {
             label: "claude/sonnet".into(),
             pid: Some(42),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase,
             activity: AgentActivity::Unknown,
             context_usage: None,

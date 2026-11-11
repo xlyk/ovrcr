@@ -4,7 +4,7 @@
 use super::render::{MUTED, TEAL, TEXT, YELLOW};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, TreeRow};
-use ovrcr_protocol::{AgentActivity, SessionId, SessionPhase, SessionSummary};
+use ovrcr_protocol::{SessionId, SessionSummary};
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -23,12 +23,7 @@ pub(super) enum Attention {
 /// Paused sessions never need input (they cannot take an answer until resumed), and Operator
 /// conversations stay out: the one Operator navigation row shows its own Unread.
 pub(super) fn attention(session: &SessionSummary) -> Option<Attention> {
-    let activity = super::ready::activity(session);
-    if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
-        Some(Attention::Input)
-    } else {
-        (session.unread.is_some() && activity != AgentActivity::Busy).then_some(Attention::Ready)
-    }
+    super::status::SessionStatus::attention(session)
 }
 
 impl Dashboard {
@@ -159,10 +154,10 @@ pub(super) fn attention_line(input: usize, ready: usize, width: usize) -> Line<'
 mod tests {
     use super::*;
     use crate::protocol::{
-        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, ClientMessage, HealthSample,
-        HierarchySnapshot, InputKind, InputRequest, ProjectSummary, ReadyObservation,
-        ReporterHealth, Request, SampleQuality, SessionKind, SessionRunId, TerminalSize,
-        WorkspaceSummary,
+        ActivitySample, AgentActivity, AgentBinding, AgentProvider, AgentSnapshot, ClientMessage,
+        HealthSample, HierarchySnapshot, InputKind, InputRequest, ProjectSummary, ReadyObservation,
+        ReporterHealth, Request, SampleQuality, SessionKind, SessionPhase, SessionRunId,
+        TerminalSize, WorkspaceSummary,
     };
     use ratatui::layout::Rect;
 
@@ -199,6 +194,7 @@ mod tests {
             label: "codex".into(),
             pid: Some(1),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Idle,
             context_usage: None,
@@ -259,6 +255,7 @@ mod tests {
         });
         dashboard.install_area(Rect::new(0, 0, 120, 30));
         dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
             projects: vec![ProjectSummary {
                 name: "p".into(),
                 workspaces: vec![
@@ -283,6 +280,15 @@ mod tests {
         });
         dashboard.install_focus(SessionId(1));
         dashboard
+    }
+
+    fn clear_attention(dashboard: &mut Dashboard) {
+        for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
+            for session in &mut workspace.sessions {
+                session.unread = None;
+                session.agent.as_mut().unwrap().input_requests.clear();
+            }
+        }
     }
 
     #[test]
@@ -446,12 +452,16 @@ mod tests {
     }
 
     fn screen(dashboard: &Dashboard) -> Vec<String> {
+        screen_at(dashboard, 30)
+    }
+
+    fn screen_at(dashboard: &Dashboard, height: u16) -> Vec<String> {
         let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, height)).unwrap();
         terminal
             .draw(|frame| super::super::draw_dashboard_at(frame, dashboard, 0))
             .unwrap();
-        (0..30)
+        (0..height)
             .map(|y| {
                 (0..39)
                     .map(|x| terminal.backend().buffer()[(x, y)].symbol())
@@ -469,26 +479,52 @@ mod tests {
         }
     }
 
+    fn move_to(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Moved,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
     #[test]
     fn strip_sits_above_the_quota_section_and_a_click_jumps_like_the_key() {
         let mut dashboard = dashboard();
         let rows = screen(&dashboard);
-        // The tree leads; the strip sits directly above the six-row quota
-        // section, and the Operator dock keeps the sidebar's last row.
-        assert!(rows[1].trim_end().starts_with(" P"), "{}", rows[1]);
-        assert_eq!(rows[21].trim_end(), " ? 2 need input · ✓ 2 ready");
-        assert!(rows[22].contains("QUOTA LEFT"), "{}", rows[22]);
-        assert!(rows[28].contains("Operator"), "{}", rows[28]);
-        assert!(!rows[28].contains("[+]") && !rows[28].contains("▸"));
+        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
+        assert_eq!(rects.attention.height, 1);
         assert_eq!(
-            dashboard.mouse_action(click(21), Rect::new(0, 0, 120, 30)),
+            rows[usize::from(rects.attention.y)].trim_end(),
+            " ? 2 need input · ✓ 2 ready"
+        );
+        assert!(
+            rows[usize::from(rects.operator.y)].contains("OPERATOR"),
+            "{}",
+            rows[rects.operator.y as usize]
+        );
+        assert!(
+            rows[usize::from(rects.tree.y)].trim_end().starts_with(" P"),
+            "{}",
+            rows[rects.tree.y as usize]
+        );
+        assert!(
+            rows[usize::from(rects.quota.y)].contains("QUOTA LEFT"),
+            "{}",
+            rows[rects.quota.y as usize]
+        );
+        let operator_rows =
+            rows[usize::from(rects.operator.y)..usize::from(rects.operator.bottom())].join("\n");
+        assert!(!operator_rows.contains("[+]") && !operator_rows.contains("▸"));
+        assert_eq!(
+            dashboard.mouse_action(click(rects.attention.y), Rect::new(0, 0, 120, 30)),
             DashboardAction::Redraw
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
     }
 
     #[test]
-    fn a_new_unread_moves_no_row_under_the_pointer() {
+    fn a_new_attention_strip_precedes_the_tree_and_click_uses_the_rendered_target_row() {
         let mut dashboard = dashboard();
         for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
             for session in &mut workspace.sessions {
@@ -496,11 +532,9 @@ mod tests {
                 session.agent.as_mut().unwrap().input_requests.clear();
             }
         }
-        let before = screen(&dashboard);
-        assert!(
-            !before.iter().any(|row| row.contains(" ready")),
-            "no strip yet"
-        );
+        let before = screen_at(&dashboard, 40);
+        let before_rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
+        assert!(before_rects.attention.is_empty(), "no strip yet");
         let y = before
             .iter()
             .position(|row| row.contains("agent-6"))
@@ -511,23 +545,237 @@ mod tests {
         dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
             crate::protocol::ServerEvent::SessionChanged(Box::new(ready)),
         ));
-        let after = screen(&dashboard);
+        let after = screen_at(&dashboard, 40);
+        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a new attention count preserves the current selection"
+        );
         assert!(
-            after.iter().any(|row| row.trim_end() == " ✓ 1 ready"),
+            after[usize::from(rects.attention.y)].trim_end() == " ✓ 1 ready",
             "{after:?}"
         );
+        assert_eq!(rects.attention.height, 1, "the first count shows the strip");
         assert_eq!(
-            after[..y],
-            before[..y],
-            "the rows above the target stay put"
+            rects.attention.y + rects.attention.height + 1,
+            rects.operator.y,
+            "the strip's blank row precedes Operator"
+        );
+        let new_y = after
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 stays visible");
+        assert_eq!(
+            new_y,
+            y + 2,
+            "the attention line and its blank row shift the tree down"
         );
         assert!(
-            after[y].contains("✓ agent-6"),
+            after[new_y].contains("✓ agent-6"),
             "the target keeps its line: {}",
-            after[y]
+            after[new_y]
         );
-        dashboard.mouse_action(click(y as u16), Rect::new(0, 0, 120, 30));
+        dashboard.mouse_action(click(new_y as u16), Rect::new(0, 0, 120, 40));
         assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
+    }
+
+    #[test]
+    fn hierarchy_attention_geometry_shift_clears_stale_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        let hovered = screen_at(&dashboard, area.height);
+        assert!(
+            hovered[hovered_row].contains("[x]"),
+            "the rendered pointer row has its close mark: {hovered:?}"
+        );
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let mut ready = session(6, "c", false, true);
+        ready.project = "p".into();
+        let target = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.sessions.iter_mut())
+            .find(|session| session.id == SessionId(6))
+            .expect("existing session keeps its identity");
+        *target = ready;
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "attention geometry preserves the selected session"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old screen coordinate cannot keep a mark on a different row: {after:?}"
+        );
+        let rects = dashboard.sidebar_rects(area);
+        assert_eq!(
+            after[usize::from(rects.attention.y)].trim_end(),
+            " ✓ 1 ready"
+        );
+    }
+
+    #[test]
+    fn hierarchy_tree_row_reorder_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let workspace = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == "c")
+            .expect("workspace c");
+        workspace.sessions.swap(0, 1);
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        assert_eq!(dashboard.sidebar_rects(area).tree, tree_before);
+        assert_ne!(dashboard.visible_rows(), rows_before);
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row reorder preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            after[hovered_row].contains("agent-7"),
+            "the stationary pointer now sits on agent-7: {after:?}"
+        );
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row reorder: {after:?}"
+        );
+    }
+
+    #[test]
+    fn hierarchy_tree_row_height_change_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+        let heights_before = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_before,
+            usize::from(tree_before.width),
+        );
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let target = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.sessions.iter_mut())
+            .find(|session| session.id == SessionId(1))
+            .expect("session 1");
+        target.kind = ovrcr_protocol::SessionKind::Agent {
+            name: "an agent label too long to fit beside session names".into(),
+        };
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        let tree_after = dashboard.sidebar_rects(area).tree;
+        let rows_after = dashboard.visible_rows();
+        let heights_after = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_after,
+            usize::from(tree_after.width),
+        );
+        assert_eq!(tree_after, tree_before);
+        assert_eq!(rows_after, rows_before, "row identities stay the same");
+        assert_ne!(heights_after, heights_before, "the tree rows grow taller");
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row-height change preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row heights change: {after:?}"
+        );
+    }
+
+    #[test]
+    fn session_change_tree_row_height_change_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+        let heights_before = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_before,
+            usize::from(tree_before.width),
+        );
+
+        let mut updated = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+        updated.kind = ovrcr_protocol::SessionKind::Agent {
+            name: "an agent label too long to fit beside session names".into(),
+        };
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::SessionChanged(Box::new(updated)),
+        ));
+
+        let tree_after = dashboard.sidebar_rects(area).tree;
+        let rows_after = dashboard.visible_rows();
+        let heights_after = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_after,
+            usize::from(tree_after.width),
+        );
+        assert_eq!(tree_after, tree_before);
+        assert_eq!(rows_after, rows_before, "row identities stay the same");
+        assert_ne!(heights_after, heights_before, "the tree rows grow taller");
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row-height change preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row heights change: {after:?}"
+        );
     }
 
     #[test]
@@ -535,7 +783,7 @@ mod tests {
         let mut dashboard = dashboard();
         let footer = |dashboard: &Dashboard| super::super::hints::footer(dashboard, 120);
         assert!(
-            footer(&dashboard).ends_with("? Help  i Next input needed"),
+            footer(&dashboard).contains("? Help  i Next input needed"),
             "{}",
             footer(&dashboard)
         );
@@ -544,14 +792,14 @@ mod tests {
                 session.agent.as_mut().unwrap().input_requests.clear();
             }
         }
-        assert!(footer(&dashboard).ends_with("? Help  i Next ready"));
+        assert!(footer(&dashboard).contains("? Help  i Next ready"));
         for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
             for session in &mut workspace.sessions {
                 session.unread = None;
             }
         }
         assert!(
-            footer(&dashboard).ends_with("? Help"),
+            !footer(&dashboard).contains("i Next"),
             "{}",
             footer(&dashboard)
         );

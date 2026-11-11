@@ -142,8 +142,8 @@ impl DashboardView {
         if self.revision == 0 {
             return Err("view revision must be greater than zero".into());
         }
-        if self.panes.len() > 2 {
-            return Err("view cannot contain more than two panes".into());
+        if self.panes.len() > 4 {
+            return Err("view cannot contain more than four panes".into());
         }
         for (index, pane) in self.panes.iter().enumerate() {
             if pane.size.rows == 0 || pane.size.cols == 0 {
@@ -676,6 +676,15 @@ pub enum ErrorCode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HierarchySnapshot {
     pub projects: Vec<ProjectSummary>,
+    /// The current Server lifetime's accepted agent-reported token total.
+    pub usage: UsageSnapshot,
+}
+
+/// Server-lifetime usage visible to a newly attached Dashboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub total_tokens: u64,
+    pub server_started_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -828,6 +837,8 @@ pub enum ServerEvent {
         capabilities: AgentModelCapabilities,
     },
     InitialPromptIntentChanged(Box<InitialPromptIntentSnapshot>),
+    /// Accepted agent usage increased the Server-lifetime total.
+    UsageChanged(UsageSnapshot),
 }
 
 #[cfg(test)]
@@ -950,6 +961,7 @@ mod wire_snapshot {
             label: "l".into(),
             pid: Some(2),
             started_unix_ms: Some(3),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             agent: Some(crate::AgentSnapshot {
@@ -1519,6 +1531,7 @@ mod wire_snapshot {
             (
                 "Hierarchy",
                 Response::Hierarchy(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),
@@ -1710,6 +1723,7 @@ mod wire_snapshot {
             (
                 "HierarchyChanged",
                 ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: crate::UsageSnapshot::default(),
                     projects: Vec::new(),
                 }),
             ),
@@ -2697,6 +2711,8 @@ mod wire_snapshot {
             }),
             title: "hello".into(),
             current_turn: Some(turn.clone()),
+            current_turn_started_unix_ms: Some(1),
+            last_reply_unix_ms: Some(2),
         };
         let auth = crate::SupervisorAuth {
             session: identity.session,
@@ -3968,13 +3984,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a044e017301630168016c0104",
+            "2a0454017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f044e017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0454017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4001,16 +4017,16 @@ mod wire_snapshot {
             "1e010103696e7604636f6e760101047475726e02",
         ),
         ("Response::Ok", "00"),
-        ("Response::Hierarchy", "0100"),
+        ("Response::Hierarchy", "01000000"),
         (
             "Response::CreatedSession",
-            "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "02000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "050001000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "050001000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -4024,18 +4040,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d044e0000"),
+        ("Response::NotificationNavigation", "0d04540000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e044e017301630168016c0104",
+            "0e01016e0454017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101044e017301630168016c0164",
+            "0f0107080901016901010454017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10044e010708090101690101044e017301630168016c0164",
+            "1004540107080901016901010454017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4053,12 +4069,12 @@ mod wire_snapshot {
             "Response::ScreenWindow",
             "1f01041850051d050001030700010201026869010104000000",
         ),
-        ("ServerEvent::HierarchyChanged", "0000"),
+        ("ServerEvent::HierarchyChanged", "00000000"),
         ("ServerEvent::Output", "010104030107"),
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "03000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e02010000000104010506000000",
+            "03000100052f776f726b04000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a7265710503000000010103696e7604636f6e760101047475726e0201000000010401050600000000",
         ),
         (
             "ServerEvent::QuotaChanged",
@@ -4066,7 +4082,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c05000000000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb53220000010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c050000010100000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb532200000001010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -4075,7 +4091,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e044e017301630168016c0104",
+            "08016e0454017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4595,15 +4611,15 @@ mod wire_snapshot {
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
-            "1900010400010301066f70656e6169056d6f64656c0568656c6c6f0101020304000000",
+            "1900010400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::Opened",
-            "19010400010301066f70656e6169056d6f64656c0568656c6c6f0101020304000000",
+            "19010400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::History",
-            "19020400010301066f70656e6169056d6f64656c0568656c6c6f0101020304000000010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "19020400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
@@ -4699,5 +4715,35 @@ mod tests {
             cols: 1000,
         });
         assert!(at_limit.validate().is_ok(), "1000 by 1000 must pass");
+    }
+
+    #[test]
+    fn view_limit_accepts_four_panes_and_rejects_five_and_duplicates() {
+        let target = |session| PaneTarget {
+            session: SessionId(session),
+            run: SessionRunId(1),
+            size: TerminalSize { rows: 8, cols: 20 },
+        };
+        let mut view = DashboardView {
+            revision: 1,
+            panes: (1..=4).map(target).collect(),
+            focused: Some(SessionId(4)),
+        };
+        assert!(view.validate().is_ok(), "four distinct panes must pass");
+
+        view.panes.push(target(5));
+        view.focused = Some(SessionId(5));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain more than four panes"
+        );
+
+        view.panes.pop();
+        view.panes[3].session = SessionId(3);
+        view.focused = Some(SessionId(3));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain duplicate sessions"
+        );
     }
 }

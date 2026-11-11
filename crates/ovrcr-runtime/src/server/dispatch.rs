@@ -443,15 +443,33 @@ fn dispatch_agent_report(
 ) {
     let session = state.sessions.lock().unwrap().get(&report.session).cloned();
     let response = match session {
-        Some(session) => match session.apply_agent_report(&report) {
-            Ok(changed) => {
-                if changed {
-                    publish_session_changed(state, report.session);
+        Some(session) => {
+            let previous_activity = session.last_activity_unix_ms();
+            match session.apply_agent_report(&report) {
+                Ok(changed) => {
+                    let last_activity = session.last_activity_unix_ms();
+                    if last_activity != previous_activity
+                        && let Some(timestamp) = last_activity
+                    {
+                        state.persist_last_activity(session.id(), session.run(), timestamp);
+                    }
+                    if changed {
+                        if let Some(agent) = session.summary().agent
+                            && let Some(metrics) = agent.metrics
+                        {
+                            state.publish_usage(
+                                report.session,
+                                &agent.binding,
+                                &metrics.sample.usage.value,
+                            );
+                        }
+                        publish_session_changed(state, report.session);
+                    }
+                    Response::Ok
                 }
-                Response::Ok
+                Err(error) => error_for_lifecycle(error),
             }
-            Err(error) => error_for_lifecycle(error),
-        },
+        }
         None => error_response(ErrorCode::NotFound, "session not found"),
     };
     let _ = completion.send(response);

@@ -79,6 +79,10 @@ Workspace lines use the current branch name. Terminal
 lists include running sessions and retained exited records. A `--workspace` filter
 requires `--project` and matches that current branch. Terminal JSON includes `cwd`, the original working directory;
 the text table includes it as the last column, including for archived records.
+Both the table and JSON include Last activity. It advances when an agent changes
+state or a user sends terminal input; terminal output, focus, and selection do
+not count. If no activity has been recorded, it uses the session start time when
+available.
 
 `workspace get` and `workspace remove` take `--project` with `--branch` (the
 current checkout branch; slashes such as `feature/cleanup` are valid) or `--path`
@@ -107,6 +111,10 @@ keys, unknown spellings, an unparseable document, and a `[quota]` table left in
 the instance identity file, each with its key and line when known. The command exits 0 even
 with findings.
 
+The Dashboard-owned `resources.sidebar` setting defaults to true. Set
+`sidebar = false` under `[resources]` in `dashboard.toml` to hide the local
+machine section and stop sampling.
+
 `--json` prints one object: `path`, `read_unix_ms`, `settings` (every effective
 value, typed), `rows` (`key`, `owner`, `value`, `source`, `off_state`) and
 `findings` (`key`, null for the whole document; `message`; `line`, nullable).
@@ -129,10 +137,14 @@ text: `true`, `"kh/"`, `["claude", "--verbose"]`, or an inline table such as
 `{ kind = "Agent", preset = "claude", model_policy = "HarnessDefault" }` for a
 launch choice. An explicit model policy uses
 `model_policy = { Explicit = "opus" }`; it is revalidated before launch. A bare
-word that is not TOML is taken as is only for a string or path setting (`branch_prefix`,
-`title_model`, `automatic_local_terminals`, `ready_sound_choice`, `picker_roots[N]`, `quota.*.command`
-and `home`, a launch choice's `kind` and `preset`), so
+word that is not TOML is taken as is only for a string, path or pick setting (`branch_prefix`,
+`title_model`, `automatic_local_terminals`, `ready_sound_choice`, `picker_roots[N]`,
+`quota.*.command`, `sidebar_view`, `home`, a launch choice's `kind` and `preset`), so
 `ovrcr settings set title_model pi/gpt-5-mini` needs no quotes.
+
+`sidebar_view` is Dashboard-owned and accepts `tree` (the default) or `recent`.
+Pressing `m` in Browse switches the view and saves the choice through the Server;
+`ovrcr settings set sidebar_view recent` selects the same view explicitly.
 
 On macOS `ovrcr settings set ready_sound_choice chime` saves one of `default`,
 `tap`, `chime` or `rise`; `ovrcr settings reset ready_sound_choice` restores
@@ -523,7 +535,7 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 | --- | --- |
 | Project | `name`, `repo`, `workspace_root`, `workspace_count` |
 | Workspace | `project`, `name`, `path`, `branch`, `terminal_count` |
-| Terminal | `id`, `run`, `kind`, `scope`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
+| Terminal | `id`, `run`, `kind`, `scope`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `last_activity_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
 | Screen read | `id`, `rows`, `cols`, `text` |
 
 `name` is the stable session name. `title` is its nullable effective title;
@@ -535,7 +547,10 @@ activity or reporting support.
 executable; it is not proof of resume support. `phase` is `running`, `paused`,
 `exited`, `stopped`, or `interrupted`; `exit_code` and `exit_signal` are nullable
 and set only for `exited`. Dormant rows have a null `started_unix_ms` rather than
-inventing elapsed time from epoch. `recovery` describes ownership and resume state.
+inventing elapsed time from epoch. `last_activity_unix_ms` is the most recent
+accepted agent-state change or user terminal input, falling back to
+`started_unix_ms` when no activity has been recorded. Terminal output, focus, and
+selection do not advance it. `recovery` describes ownership and resume state.
 `activity` is one of `unknown`, `idle`, `busy`,
 `waiting_input`, `response_ready`, or `error`, and is the latest accepted provider
 observation — `waiting_input` while the terminal's `agent.input_requests` set is non-empty,

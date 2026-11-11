@@ -44,6 +44,7 @@ mod dispatch;
 mod event_log;
 mod lifecycle;
 mod navigation;
+mod usage;
 pub use navigation::bridge_executable_sha256;
 pub mod operator;
 #[cfg(test)]
@@ -294,6 +295,7 @@ struct WipTarget {
 
 pub struct ServerState {
     server_lifetime: String,
+    usage: Mutex<usage::Lifetime>,
     delegation_observations: delegation_observation::Observations,
     callback_executable_sha256: Option<String>,
     pub tasks: Option<Arc<TaskManager>>,
@@ -332,6 +334,19 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    pub(super) fn publish_usage(
+        &self,
+        session: SessionId,
+        binding: &ovrcr_protocol::AgentBinding,
+        usage: &ovrcr_protocol::UsageTotals,
+    ) {
+        let snapshot = self.usage.lock().unwrap().record(session.0, binding, usage);
+        if let Some(snapshot) = snapshot {
+            self.dashboard
+                .try_send(ServerMessage::Event(ServerEvent::UsageChanged(snapshot)));
+        }
+    }
+
     /// Only the selected native Claude invocation can replace the retained source.
     fn refresh_claude_quota(&self) {
         let old = self.quotas.lock().unwrap().claude.clone();
@@ -568,6 +583,22 @@ impl ServerState {
         Ok(())
     }
 
+    pub(crate) fn persist_last_activity(&self, id: SessionId, run: SessionRunId, timestamp: u64) {
+        if let Err(error) = self
+            .retained
+            .lock()
+            .record_last_activity(id, run, timestamp)
+        {
+            eprintln!("persist session {} Last activity: {error:#}", id.0);
+        }
+    }
+
+    pub(crate) fn record_user_activity(&self, session: &Session) {
+        let timestamp = session.record_user_activity();
+        self.persist_last_activity(session.id(), session.run(), timestamp);
+        dispatch::publish_session_changed(self, session.id());
+    }
+
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
         let mut registry = self.registry.lock().unwrap().clone();
         git::observe_registry(&mut registry);
@@ -633,9 +664,13 @@ impl ServerState {
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
         }
-        session
-            .send_text(text, submit)
-            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
+        session.send_text(text, submit).map_err(|error| {
+            lifecycle_error(input_error_code(&error), error_chain_string(&error))
+        })?;
+        if !text.is_empty() || submit {
+            self.record_user_activity(&session);
+        }
+        Ok(())
     }
 
     /// Write one named key to `expected_run`. Focus is read here, at write
@@ -657,9 +692,11 @@ impl ServerState {
                 "the Dashboard is focused on this session; focus another session or detach first",
             ));
         }
-        session
-            .send_key(key, modifiers)
-            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
+        session.send_key(key, modifiers).map_err(|error| {
+            lifecycle_error(input_error_code(&error), error_chain_string(&error))
+        })?;
+        self.record_user_activity(&session);
+        Ok(())
     }
 
     fn reject_archive_lifecycle(&self, id: SessionId) -> Result<()> {
@@ -1861,6 +1898,7 @@ impl ServerState {
         let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             server_lifetime: navigation::new_identity().unwrap(),
+            usage: Mutex::new(usage::Lifetime::new(0)),
             delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: Some(tasks),
@@ -2164,6 +2202,12 @@ impl ServerState {
             if !failures.is_empty() {
                 return error_response(ErrorCode::PartialFailure, failures.join("; "));
             }
+        }
+        if let Err(error) = self.retained.lock().flush_last_activity() {
+            return error_response(
+                ErrorCode::PartialFailure,
+                format!("persist Last activity: {error:#}"),
+            );
         }
         self.stopping.store(true, Ordering::Release);
         catalog_shutdown.close();
@@ -3426,7 +3470,10 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
         }
     }
     projects.sort_by(|left, right| left.name.cmp(&right.name));
-    HierarchySnapshot { projects }
+    HierarchySnapshot {
+        projects,
+        usage: state.usage.lock().unwrap().snapshot(),
+    }
 }
 
 fn is_root_workspace(project: &ProjectRecord, workspace: &WorkspaceRecord) -> bool {

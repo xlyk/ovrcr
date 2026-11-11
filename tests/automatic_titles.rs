@@ -566,7 +566,7 @@ fn changed(stream: &mut UnixStream, id: SessionId, expected: &str) {
 
 // SetView is acknowledged by the same dispatcher that publishes output-driven
 // events. After emit() observes parsed output, this fences its publication too.
-fn no_title_changes(stream: &mut UnixStream, id: SessionId, revision: u64) {
+fn no_title_changes(stream: &mut UnixStream, expected: &SessionSummary, revision: u64) {
     write_frame(
         stream,
         &ClientMessage {
@@ -590,8 +590,18 @@ fn no_title_changes(stream: &mut UnixStream, id: SessionId, revision: u64) {
                 assert_eq!(response, Response::Ok);
                 return;
             }
-            ServerMessage::Event(ServerEvent::SessionChanged(summary)) if summary.id == id => {
-                panic!("application title must not publish a session change: {summary:?}");
+            ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                if summary.id == expected.id =>
+            {
+                // Accepted input may publish Last activity. Keep the rest of
+                // the full session snapshot stable, including effective and
+                // manual titles, run identity, process, and lifecycle state.
+                let mut actual = summary.as_ref().clone();
+                actual.last_activity_unix_ms = expected.last_activity_unix_ms;
+                assert_eq!(
+                    actual, *expected,
+                    "application output changed session state beyond Last activity"
+                );
             }
             ServerMessage::Event(ServerEvent::Output { .. }) => {
                 panic!("hidden session must not deliver screen output");
@@ -1563,9 +1573,10 @@ fn stable_workspace_launch_titles_rename_reset_and_reopen_keep_identity_and_rese
     );
     wait_for(&live, original.id, "TITLE-READY");
     let mut dashboard = dashboard(&live); // no pane selected: output remains hidden
+    let before_input = sessions(&live)[0].clone();
     emit(&live, original.id, "first title 🦀");
     assert_eq!(sessions(&live)[0].display_name(), "title-work");
-    no_title_changes(&mut dashboard, original.id, 1);
+    no_title_changes(&mut dashboard, &before_input, 1);
     assert_eq!(
         live.request(Request::SetSessionTitle {
             session: original.id,
@@ -1574,9 +1585,10 @@ fn stable_workspace_launch_titles_rename_reset_and_reopen_keep_identity_and_rese
         Response::Ok
     );
     changed(&mut dashboard, original.id, "pinned");
+    let before_input = sessions(&live)[0].clone();
     emit(&live, original.id, "latest application");
     assert_eq!(sessions(&live)[0].display_name(), "pinned");
-    no_title_changes(&mut dashboard, original.id, 2);
+    no_title_changes(&mut dashboard, &before_input, 2);
     assert_eq!(
         live.request(Request::SetSessionTitle {
             session: original.id,
@@ -1777,6 +1789,10 @@ fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
             wait_for(&live, session.id, "TITLE-READY");
             let mut stream = dashboard(&live);
             for (revision, title) in [(1, "Thinking…"), (2, "Done;界")] {
+                let before_input = sessions(&live)
+                    .into_iter()
+                    .find(|s| s.id == session.id)
+                    .unwrap();
                 emit(&live, session.id, title);
                 let current = sessions(&live)
                     .into_iter()
@@ -1784,7 +1800,7 @@ fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
                     .unwrap();
                 assert_eq!(current.display_name(), session.name);
                 assert_eq!(current.run, session.run);
-                no_title_changes(&mut stream, session.id, revision);
+                no_title_changes(&mut stream, &before_input, revision);
             }
             let id = session.id.0.to_string();
             for args in [
@@ -1806,6 +1822,10 @@ fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
                 changed(&mut stream, session.id, expected);
                 drop(stream);
                 stream = dashboard(&live);
+                let before_input = sessions(&live)
+                    .into_iter()
+                    .find(|s| s.id == session.id)
+                    .unwrap();
                 emit(&live, session.id, &format!("After reconnect: {expected}"));
                 let current = sessions(&live)
                     .into_iter()
@@ -1816,7 +1836,7 @@ fn agent_and_terminal_titles_stay_user_controlled_across_dashboard_reconnect() {
                     (current.id, current.run, current.pid),
                     (session.id, session.run, session.pid)
                 );
-                no_title_changes(&mut stream, session.id, 1);
+                no_title_changes(&mut stream, &before_input, 1);
             }
         }
     }

@@ -2,6 +2,112 @@
 
 use crate::*;
 
+fn recent_sidebar_dashboard() -> Dashboard {
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .flat_map(|workspace| &mut workspace.sessions)
+        .filter(|session| matches!(session.id.0, 1 | 2))
+    {
+        session.kind = ovrcr::protocol::SessionKind::Agent {
+            name: "codex".into(),
+        };
+        session.label = "codex".into();
+        session.phase = SessionPhase::Running;
+        session.last_activity_unix_ms = Some(if session.id == SessionId(1) { 10 } else { 20 });
+    }
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let settings = ovrcr::tui::Settings {
+        sidebar_view: ovrcr::protocol::SidebarView::Recent,
+        ..Default::default()
+    };
+    dashboard.install_settings(settings);
+    dashboard
+}
+
+fn sidebar_lines(dashboard: &Dashboard) -> Vec<String> {
+    rendered_rows(dashboard, 120, 40)
+        .into_iter()
+        .map(|line| line.split('│').next().unwrap_or(&line).to_owned())
+        .collect()
+}
+
+fn sidebar_cell(line: &str, needle: &str) -> u16 {
+    let byte = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} is missing from sidebar row {line:?}"));
+    line[..byte].chars().count() as u16
+}
+
+fn hover_sidebar(dashboard: &mut Dashboard, column: u16, row: u16) {
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::Moved, column, row, KeyModifiers::NONE),
+        Rect::new(0, 0, 120, 40),
+    );
+}
+
+fn ready_agent_summary(id: SessionId) -> SessionSummary {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReadyObservation,
+        ReporterHealth, SampleQuality,
+    };
+
+    let mut summary = fixture_hierarchy()
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == id)
+        .expect("fixture session exists");
+    let binding = AgentBinding {
+        provider: AgentProvider::Codex,
+        invocation: format!("fixture-{}", id.0),
+        conversation: format!("conversation-{}", id.0),
+        generation: 1,
+    };
+    summary.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "codex".into(),
+    };
+    summary.label = "codex".into();
+    summary.phase = SessionPhase::Running;
+    summary.activity = AgentActivity::Idle;
+    summary.agent = Some(AgentSnapshot {
+        binding: binding.clone(),
+        activity: Some(ActivitySample {
+            state: AgentActivity::Idle,
+            quality: SampleQuality::Observed,
+            turn: Some("fixture-turn".into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 0,
+        health_revision: 1,
+        input_requests: Vec::new(),
+        input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
+    });
+    summary.unread = Some(ReadyObservation {
+        binding,
+        turn: Some("fixture-turn".into()),
+        activity_revision: 1,
+    });
+    summary
+}
+
 #[test]
 fn mouse_encode_sgr_events() {
     let event = mouse_event(
@@ -131,6 +237,302 @@ fn mouse_encode_sgr_events() {
         ),
         Some(b"\x1b[<92;3;4M".to_vec())
     );
+}
+
+#[test]
+fn recent_sidebar_project_menu_fold_and_agent_rows_use_rendered_hitboxes() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = recent_sidebar_dashboard();
+    let before = sidebar_lines(&dashboard);
+    let implement_row = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("initially newest Agent title row") as u16;
+    hover_sidebar(&mut dashboard, 5, implement_row);
+
+    let mut updated = fixture_hierarchy()
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == SessionId(1))
+        .expect("review Agent summary");
+    updated.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "codex".into(),
+    };
+    updated.label = "codex".into();
+    updated.phase = SessionPhase::Running;
+    updated.last_activity_unix_ms = Some(30);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        updated,
+    ))));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(2)),
+        "activity re-sort preserves selection by session identity"
+    );
+    let reordered = sidebar_lines(&dashboard);
+    let review_row = reordered
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("review moved to newest position");
+    let implement_row = reordered
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("implement row moved after review");
+    assert!(review_row < implement_row, "rows re-sort by activity");
+    assert!(
+        reordered.iter().all(|line| !line.contains("[x]")),
+        "the old hover identity must not leave a close mark on a row after re-sort"
+    );
+    hover_sidebar(&mut dashboard, 5, implement_row as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(
+        hovered[implement_row].contains("[x]"),
+        "a fresh hover marks the currently drawn SessionId(2) row"
+    );
+    assert!(
+        !hovered[review_row].contains("[x]"),
+        "the other row remains unmarked"
+    );
+    let close = sidebar_cell(&hovered[implement_row], "[x]");
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                close + 1,
+                implement_row as u16,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        palette_text(&dashboard).contains("(#2)"),
+        "clicking the currently drawn close mark targets the moved session"
+    );
+    dashboard.key(KeyCode::Esc);
+
+    let project_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("rendered project row") as u16;
+
+    hover_sidebar(&mut dashboard, 5, project_row);
+    let project = sidebar_lines(&dashboard);
+    let plus = sidebar_cell(&project[project_row as usize], "[+]");
+    let action = dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            plus + 1,
+            project_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert_eq!(
+        action,
+        DashboardAction::Redraw,
+        "project row={project_row}, plus cell={plus}, rendered={:?}",
+        project[project_row as usize]
+    );
+    assert!(palette_text(&dashboard).contains("New agent session"));
+    dashboard.key(KeyCode::Esc);
+
+    let project_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("rendered project row after activity re-sort") as u16;
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                project_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        !sidebar_lines(&dashboard)
+            .iter()
+            .any(|line| line.contains("review")),
+        "folding the project hides its Agent rows"
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            0,
+            project_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+
+    let review_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("unfolded Agent title row") as u16;
+    hover_sidebar(&mut dashboard, 5, review_row + 1);
+    let rows = sidebar_lines(&dashboard);
+    assert!(rows[review_row as usize].contains("[x]"));
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                15,
+                review_row + 1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+
+    hover_sidebar(&mut dashboard, 5, review_row);
+    let close = sidebar_cell(&sidebar_lines(&dashboard)[review_row as usize], "[x]");
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            close + 1,
+            review_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&dashboard).contains("Close terminal?"));
+}
+
+#[test]
+fn attention_geometry_change_clears_hover_and_fresh_mouse_targets_the_drawn_row() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(fixture_hierarchy());
+    dashboard.install_focus(SessionId(2));
+    dashboard.install_settings(ovrcr::tui::Settings {
+        sidebar_view: ovrcr::protocol::SidebarView::Tree,
+        ..Default::default()
+    });
+
+    let before = sidebar_lines(&dashboard);
+    let target_before = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("selected session is drawn in the tree");
+    hover_sidebar(&mut dashboard, 5, target_before as u16);
+    assert!(
+        sidebar_lines(&dashboard)[target_before].contains("[x]"),
+        "hover draws the close mark on the session under the pointer"
+    );
+
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        ready_agent_summary(SessionId(1)),
+    ))));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(2)),
+        "the attention update preserves the selected session"
+    );
+    let shifted = sidebar_lines(&dashboard);
+    let target_after = shifted
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("selected session remains drawn");
+    assert_eq!(
+        target_after,
+        target_before + 2,
+        "attention adds its strip and gap"
+    );
+    assert!(
+        !shifted[target_after].contains("[x]"),
+        "a hover from before the tree moved must not follow its old session identity"
+    );
+
+    hover_sidebar(&mut dashboard, 5, target_after as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(
+        hovered[target_after].contains("[x]"),
+        "fresh motion marks the currently drawn session"
+    );
+    let close = sidebar_cell(&hovered[target_after], "[x]");
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                close + 1,
+                target_after as u16,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        palette_text(&dashboard).contains("(#2)"),
+        "the drawn close mark still targets the selected session"
+    );
+}
+
+#[test]
+fn attention_geometry_change_clears_recent_hover_when_row_order_is_stable() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = recent_sidebar_dashboard();
+    let before = sidebar_lines(&dashboard);
+    let implement_before = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("the selected Agent is drawn in Recent");
+    hover_sidebar(&mut dashboard, 5, implement_before as u16);
+    assert!(sidebar_lines(&dashboard)[implement_before].contains("[x]"));
+
+    let mut updated = ready_agent_summary(SessionId(1));
+    updated.last_activity_unix_ms = Some(10);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        updated,
+    ))));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+
+    let shifted = sidebar_lines(&dashboard);
+    let review_after = shifted
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("the existing Agent stays visible");
+    let implement_after = shifted
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("the selected Agent stays visible");
+    assert!(
+        review_after > implement_after,
+        "Recent order stays unchanged"
+    );
+    assert_eq!(implement_after, implement_before + 2);
+    assert!(
+        !shifted[implement_after].contains("[x]"),
+        "tree geometry changes invalidate hover even when Recent row order is stable"
+    );
+
+    hover_sidebar(&mut dashboard, 5, implement_after as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(hovered[implement_after].contains("[x]"));
+    let close = sidebar_cell(&hovered[implement_after], "[x]");
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            close + 1,
+            implement_after as u16,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&dashboard).contains("(#2)"));
 }
 
 #[test]
@@ -343,6 +745,189 @@ fn split_ready(area: Rect) -> Dashboard {
     dashboard.install_screen(left, &[]);
     dashboard.install_screen(right, &[]);
     dashboard
+}
+
+#[test]
+fn pane_header_double_click_zooms_and_a_third_click_does_not_toggle() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let target = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index != 1)
+        .expect("other pane header");
+    let column = target.metadata.x + 1;
+    let row = target.metadata.y;
+    let click = || {
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+    };
+
+    assert_eq!(
+        dashboard.mouse_action(click(), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(click(), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+
+    dashboard.mouse_action(click(), area);
+    assert_eq!(
+        dashboard.pane_rects(area).len(),
+        1,
+        "third click is the start of a new pair"
+    );
+
+    dashboard.mouse_action(click(), area);
+    assert_eq!(
+        dashboard.pane_rects(area).len(),
+        2,
+        "the next double-click unzooms"
+    );
+}
+
+#[test]
+fn divider_double_click_sets_an_even_ratio_in_one_view_request() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let divider = dashboard.pane_rects(area)[0].metadata.right();
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            divider,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            divider - 9,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            divider - 9,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    pump_view(&mut dashboard, ovrcr::tui::DashboardAction::Redraw);
+
+    let moved_divider = dashboard.pane_rects(area)[0].metadata.right();
+    let click = || {
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            moved_divider,
+            10,
+            KeyModifiers::NONE,
+        )
+    };
+    dashboard.mouse_action(click(), area);
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            moved_divider,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(click(), area);
+
+    let widths = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(widths, [39, 40]);
+    dashboard.install_terminal_input();
+    assert!(
+        dashboard
+            .input_request(b"wait for even split".to_vec(), 9300)
+            .is_none()
+    );
+    let request = dashboard
+        .request_view_at(area)
+        .expect("even split sends SetView");
+    let outgoing = dashboard.drain_outbox();
+    assert_eq!(outgoing.len(), 1);
+    let view = match request.request {
+        Request::SetView { view } => view,
+        other => panic!("expected SetView, got {other:?}"),
+    };
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        widths
+    );
+    acknowledge_all_view_targets(
+        &mut dashboard,
+        ClientMessage {
+            request_id: outgoing[0].request_id,
+            request: Request::SetView { view },
+        },
+    );
+}
+
+#[test]
+fn right_click_focuses_a_pane_and_opens_its_group() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let other = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("other pane");
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(
+                other.terminal,
+                MouseEventKind::Down(MouseButton::Right),
+                2,
+                3
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("Panes:"),
+        "right-click should open the Panes group"
+    );
+}
+
+#[test]
+fn terminal_right_click_remains_forwarded_to_the_focused_program() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
+    let action = dashboard.mouse_action(
+        click_in(inner, MouseEventKind::Down(MouseButton::Right), 2, 3),
+        area,
+    );
+    assert_eq!(
+        action,
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
+    );
 }
 
 fn terminal_rect(dashboard: &Dashboard, area: Rect) -> Rect {
@@ -803,4 +1388,101 @@ fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
         ))),
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;5;6m".to_vec())
     );
+}
+
+#[test]
+fn sidebar_create_buttons_open_row_menus_without_stealing_fold_or_close() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut project = dashboard_fixture();
+    let rows = rendered_rows(&project, area.width, area.height);
+    let project_row = rows
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("project row") as u16;
+    let workspace_row = rows
+        .iter()
+        .position(|line| line.contains("auth"))
+        .expect("workspace row") as u16;
+    project.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, project_row, KeyModifiers::NONE),
+        area,
+    );
+    assert_eq!(
+        project.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                36,
+                project_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let menu = rendered_rows(&project, area.width, area.height).join("\n");
+    assert!(menu.contains("New workspace"), "{menu}");
+    assert!(menu.contains("New agent session"), "{menu}");
+
+    assert_eq!(project.key(KeyCode::Esc), DashboardAction::Redraw);
+    let mut workspace = dashboard_fixture();
+    workspace.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    assert_eq!(
+        workspace.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                33,
+                workspace_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let menu = rendered_rows(&workspace, area.width, area.height).join("\n");
+    assert!(menu.contains("New agent session"), "{menu}");
+    assert!(menu.contains("New terminal"), "{menu}");
+    assert!(!menu.contains("New workspace"), "{menu}");
+
+    assert_eq!(workspace.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert_eq!(
+        workspace.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                2,
+                workspace_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    workspace.mouse_action(
+        mouse_event(MouseEventKind::Moved, 80, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    let sidebar =
+        rendered_rows(&workspace, area.width, area.height)[usize::from(workspace_row)].clone();
+    assert!(
+        sidebar.contains("▸"),
+        "workspace disclosure still folds: {sidebar}"
+    );
+
+    let mut close = dashboard_fixture();
+    close.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    close.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            36,
+            workspace_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&close).contains("Remove workspace"));
 }

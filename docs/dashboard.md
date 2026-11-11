@@ -51,18 +51,20 @@ you are away waits for you. A notice that waited behind it shows next.
 ## Operator chat
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
-starts with the first project. A fixed **Operator** dock sits below attention and
-quota, immediately above the Dashboard footer. Click anywhere on the dock or
-press `o` in Browse to open the conversation with the composer focused. There are
-no Operator controls in the title bar.
+shows attention first when needed, then a three-row **Operator** section before
+the project tree, followed by Resources and quota. Click anywhere in the section
+or press `o` in Browse to open the conversation with the composer focused. There
+are no Operator controls in the title bar.
 
-The dock shows **Open chat** when closed and idle, **Draft** for unfinished input,
-or **1 unread** until the loaded conversation tail has been seen. Unread takes
-priority over activity; activity and exceptional outcomes take priority over a
-draft. Sending, Responding, Waiting for a tool result, Stopping, Stop unconfirmed,
-failed and interrupted turns remain visible in words. A reviewed successful turn
-returns to idle. An open, idle conversation has a selection marker instead of the
-Open chat prompt. Opening and unavailable states are distinct.
+Before the conversation is opened, the section says **Off** when the Pi
+executable is available and **Not set up** when it is missing. If Pi is missing
+when opening begins, the singleton remains **Not set up**, including when its
+journal already has replies. A queued Open with Pi available shows **Idle** until
+the first response. A known Pi setup error after opening also shows **Not set up**. After opening, it
+shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**
+with a reply preview, or **Idle** with the latest reply. The section omits the model and
+harness. Drawing it never reviews a reply or starts a worker. The
+`operator.sidebar` setting controls the section and is on by default.
 
 **Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation
 from every view except Terminal mode; its composer edits the same draft and
@@ -78,8 +80,8 @@ plus `default`. Up/Down selects, Enter saves `operator.thinking_level`, and Esc
 closes. The header shows Pi's actual level, `(set: X)` for a substituted request,
 and `→ X next turn` when the saved choice changes during a running turn.
 
-The dock hides with the sidebar, and yields its row when fewer than three
-project-tree lines would remain. The `o` route still works. There is no New,
+The section hides with the sidebar and shrinks or disappears as a short window
+needs room for the tree. The `o` route still works. There is no New,
 switch or close action: pi compacts the one conversation when it needs room.
 `Ctrl-l` toggles the ordinary Projects sidebar and never reveals a conversation
 list. At widths below 100, the conversation opens full-width by default; reveal
@@ -91,9 +93,22 @@ Dashboard or the Archived palette.
 
 See [Operator setup and controls](operator.md).
 
+## Usage summary
+
+The sidebar's **Usage** section sits below the session tree and before Quota. It
+counts Working, needs input, Ready, Idle, Error, Paused, Exited and Unknown
+sessions using the same status as their rows; Stopped counts as Exited and
+Interrupted counts as Error. Its token total adds agent-reported input and
+output tokens, including sessions later archived or removed, from the current
+Server start. It resets when the Server restarts and does not estimate cost.
+Overlapping conversation and invocation reports contribute only the larger
+known total, and rebinding the same conversation continues its high-water count.
+The `usage.sidebar` setting controls the section and is on by default. The
+summary compacts to one line and then hides when the sidebar is short.
+
 ## Browse keys
 
-The sidebar's quota section, above the Operator dock, summarizes remaining Claude, Codex, Grok and Cursor account
+The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok and Cursor account
 allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
 least allowance left in any of its general windows. The number is red at 5% or
 less and yellow at 20% or less. A stale value is muted. A provider with no value
@@ -102,8 +117,8 @@ yet (still checking, failed, or every window past its reset) shows a muted
 give way from the end to `…`. Click the line, or press `u`, for the windows,
 states, ages and next checks in the [details](provider-quota.md). That page also
 covers native sources, collection settings, freshness and reset behavior. The
-line hides when the sidebar is too short to keep the Operator row and three
-tree lines. The tree scrolls above it; sidebar and pane dividers remain
+line compacts or hides when the sidebar is short so the tree keeps room; sidebar
+and pane dividers remain
 draggable over their full height.
 
 The palette offers **Refresh quota**, which asks the Server to read Codex and
@@ -119,9 +134,13 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
 | `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
+| `m` | Switch between the project tree and recent Agent activity; the Dashboard saves the choice through the Server |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
-| `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
-| `Tab` / `Shift-Tab` | Focus the other pane |
+| `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `<` / `>` | Make the focused pane two columns narrower / wider; the neighboring pane changes by the same amount |
+| `-` / `+` / `=` | Make the focused pane one row shorter / taller; `+` and `=` are aliases |
+| `z` | Zoom the focused pane to fill the pane area, or restore the layout |
+| `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Open New agent session |
 | `w` | Create a branch (form) |
@@ -136,7 +155,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `Ctrl-g` | Label at most the first nine visible running or retained Agent rows. Then press a shown digit `1`–`9` to select immediately. Press `Ctrl-g` again or `Esc` to close without choosing; any other key closes the labels and keeps its ordinary handling. Further visible rows stay unlabelled; scroll and press `Ctrl-g` again, or use `s` Agents search. `Ctrl-g` never reveals a hidden sidebar. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
-| `Space` | Show contextual groups, then choose an action |
+| `Space` | Show contextual groups, then choose an action; `Space s` opens pane actions |
 | `?` | Browse the same popup with arrows and `Enter` |
 | `N` | Toggle the Server-saved desktop notification setting; also in Settings |
 | `O` | Check unresolved macOS notification permission or open Settings when denied |
@@ -185,9 +204,10 @@ Running agent or implies Ready.
 Search uses case-insensitive, every-word substring matching against the full
 session title, Agent name, session ID, project and workspace identity. Opening or changing the query
 highlights the first match; arrows move the highlight. One Enter selects the
-highlighted destination and enables Terminal mode only after every matching
-visible screen, the final view acknowledgement and the drain of already-pending
-loading input. Enter used to choose never
+highlighted destination. It enters Terminal mode after every matching visible
+screen is ready, the final view is acknowledged, and already-pending loading
+input is drained, when input is allowed. A ready view-only destination settles
+in Browse. Enter used to choose never
 reaches either PTY. During loading, keyboard input and paste are discarded,
 never queued; the footer shows **Loading agent**. `Ctrl-g` or Escape cancels
 pending typing and stays in Browse. Pane/window focus, selection or geometry
@@ -402,27 +422,63 @@ explanation and leave wheel-up quiet.
 
 ## Panes
 
-`v` opens a second pane on the next different visible session and, over it, a
-session chooser with that suggestion highlighted. `Enter` shows the highlighted
-session in the new pane, typing filters by project, branch and title, and `Esc`
-keeps the suggestion. The chooser does not offer the session the other pane
-already shows. Sidebar navigation replaces the focused pane's session; selecting the session already
-shown in the other pane moves focus there instead. `x` closes the focused pane
-and expands the survivor, leaving its session running. If the window becomes too
-narrow for both panes, only the focused pane is drawn; widening it restores both.
-A new attachment starts with one pane. Each pane is capped at 1000 rows and
-1000 columns; a `SetView` requesting a larger pane is rejected before any PTY
-resize.
+`v` splits the focused pane to the right; `V` splits it down. Each opens a
+session chooser with the next different visible session highlighted. `Enter`
+shows the highlighted session in the new pane, typing filters by project,
+branch and title, and `Esc` keeps the suggestion. The chooser omits sessions
+already assigned to another pane. A layout can contain up to four panes, each
+at least 20 columns wide and 8 rows tall including its header. The footer gives
+the reason when another split cannot fit or the four-pane limit is reached.
+Drag any divider to resize its neighboring panes; click a pane to focus it.
+In Browse, `<` and `>` move the nearest left-right divider around the focused
+pane by two columns, and `-`, `+`, or `=` move its nearest top-bottom divider
+by one row. Repeated key events repeat that step. A pane stays at least 20
+columns wide and 8 rows tall including its header; the key does nothing at the
+minimum, and the Panes group explains when no matching divider exists. These
+keys are also available in `Space s`. Double-click a pane header to zoom or
+restore the layout, double-click a divider to make that split even, or
+right-click a pane to focus it and open the Panes group.
+`Tab` and `Shift-Tab` cycle through panes. Sidebar navigation replaces the
+focused pane's session; selecting a session already shown elsewhere moves focus
+to that pane instead. `x` closes the focused pane and gives its space to its
+sibling, leaving the session running. If the window becomes too small for the
+layout, only the focused pane is drawn and its header says `split hidden`;
+widening the window restores the full layout. A new attachment starts with one
+pane. Each pane is capped at 1000 rows and 1000 columns; a `SetView` requesting
+a larger pane is rejected before any PTY resize.
+
+`Space s` opens the **Panes** group. `h`, `j`, `k`, and `l` focus the pane to
+the left, below, above, or right; when several panes are in that direction,
+the one with the greatest shared edge is chosen, then the nearer pane breaks a
+tie. `H`, `J`, `K`, and `L` swap with that neighbour while focus follows the
+same session. These directional keys work in the group; in Browse, arrows and
+`j` / `k` continue to navigate the sidebar. `z` in Browse or in the Panes group
+shows only the focused pane and marks its header `zoomed`; the tree and other
+assignments stay in place. Press `z` again to restore the tree. `Tab` and
+`Shift-Tab` change the focused pane without ending zoom, while splitting or
+closing a pane restores the tree.
 
 ## Sidebar and status
 
-Each project is a section: its name in upper case with a rule to the sidebar
-edge, and a blank line before every project after the first. Workspaces follow
+The attention line leads when any session needs you. The three-row **OPERATOR**
+section follows it, then the project tree and quota. Each project is a section:
+its name in upper case with a rule to the sidebar edge, and a blank line before
+every project after the first. Workspaces follow
 with a branch glyph and the current branch name in bold. The repository-root
 workspace also shows a `root` marker. A warning marker appears when that
 checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
-stay on that workspace. A session row starts with a status
+stay on that workspace. Folded project and workspace rows show counts before
+their fold marker: `?N` sessions needing input and `✓N` ready Unread responses.
+A project row shows `[+]` at its right edge while hovered. A hovered workspace row
+shows `[+]` just before `[x]`. The project menu offers **New workspace** and
+**New agent session**; the workspace menu offers **New agent session** and
+**New terminal**. Each opens its existing form with that row's context. Use Up
+and Down to move, Enter to choose, or click an entry; Esc closes the menu. A
+launch action that cannot run is dimmed with its reason. The root workspace can
+still open the Agent branch picker, where its unavailable branch remains
+guarded.
+A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
 as in `pi:grok-4.7`. A model that repeats the agent name drops that repeat, and a
@@ -444,20 +500,44 @@ selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.
 
+Press `m` to switch to **Recent activity**; press it again to return to the tree.
+The saved `sidebar_view` setting defaults to `tree`. Recent activity lists only
+projects with Agents and only their Agent sessions, sorted newest first within
+each alphabetically ordered project. The age uses Last activity and falls back
+to the session start time. Each row always takes two lines: status, title and age,
+then the branch and harness name. Both lines keep the same selection, hover,
+close button and click behavior as one row. Project folds hide the Agent rows
+and retain their Input and Unread counts; hovering a project still shows `[+]`.
+
 `b` hides the sidebar and the panes take the full width; `b` again shows it at
 the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
-The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
-Short windows drop the trailing blank, then use compact provider summaries,
-then a `Quota: u` pointer. Press `u` or click the section for details.
+The **OPERATOR** section shows whether the conversation is working, unread,
+idle, not yet opened, or not set up, plus its current activity or latest reply.
+It omits the model and harness. Click anywhere in the section or press `o` in
+Browse to open the conversation. The `operator.sidebar` setting controls this
+section and is on by default. A short sidebar drops section gaps, compacts
+Resources, quota and Operator, and hides them as needed to preserve room for the
+tree; `o` still opens Operator when its section is hidden.
 
-While any session needs you, a line at the bottom of the sidebar, directly above
-the quota section, says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
-for more than one), or `? 1 · ✓ 2` when the words do not fit. Attention and quota
-sit above the pinned Operator dock. As attention comes and goes, the dock and
-existing tree rows stay put; only the tree's last visible line gives way. It counts every project,
+**Resources** follows the project tree and shows whole-machine CPU use and
+memory in use over installed memory. It samples on the Dashboard's existing
+redraw tick, at most every two seconds. CPU stays `…` until two samples show
+advancing counters; a failed reading says `unavailable` instead of keeping an
+older value. The one-line form keeps both values. Set `resources.sidebar = false`
+to hide the section and stop machine reads; it is on by default and changes
+apply while the Dashboard is running.
+
+The **QUOTA LEFT** section shows colored bars for each provider’s allowance windows.
+Short windows use compact provider summaries, then a `Quota: u` pointer. Press
+`u` or click the section for details.
+
+While any session needs you, a line at the top of the sidebar, above Operator,
+says how many: `? 1 needs input · ✓ 2 ready` (`? 2 need input`
+for more than one), or `? 1 · ✓ 2` when the words do not fit. The attention
+line stays at the top and is never hidden while counts are nonzero. It counts every project,
 including folded and scrolled-away rows and the focused session, and lists needs
 input first, the order the jump visits. Needs input means a running session
 waiting for an answer (including an open [input request](#input-requests)). A
@@ -466,8 +546,8 @@ paused session does not count as needing input: it cannot take the answer until
 that is not busy again; a busy session's older response waits for the turn in
 progress, as its spinner says, and still shows Unread in its pane header. A
 session that is both counts once, as needs input. The Operator conversation stays
-out; its own navigation row shows its unread reply. The line disappears when
-nothing is left, and stays visible while the quota section compacts when the sidebar is short.
+out; its section shows its unread reply. The line disappears when
+nothing is left, and stays visible while the sidebar is short.
 
 `i` in Browse (or `Ctrl-g` then `i` while typing), `Space v i`, the palette, or a
 click on that line selects the next session that needs you and shows it in the
@@ -540,6 +620,8 @@ for provider reporting behavior.
 
 In Browse and Terminal modes:
 
+- Hovering a project or workspace row shows `[+]`; the workspace keeps `[x]`
+  immediately to its right. Click `[+]` for that row's creation menu.
 - Clicking a session row selects it. `[x]` shows only while the pointer is over a session or workspace row. On a session it replaces the agent label and archives that session, the same as `X`, without switching the pane. A live or paused session asks first. An exited session archives immediately. On a workspace it opens Remove workspace for that row and does not clear the pane. A root workspace refuses, as the key does.
 - Clicking a project or workspace name selects it. Clicking the first cell of a
   project header, or the branch glyph of a workspace, folds or unfolds it. The
@@ -549,6 +631,10 @@ In Browse and Terminal modes:
   clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
+- Double-clicking a pane header zooms or restores that pane; double-clicking a
+  divider sets its split to an even ratio. Right-clicking a pane focuses it and
+  opens the Panes group in Browse. Terminal mouse input remains forwarded to
+  programs that request it.
 - Dragging the divider between two panes changes their widths. Each visible pane
   keeps at least 20 columns. The split proportion survives window resizing and
   the temporary single-pane layout used in narrow windows.
@@ -601,7 +687,8 @@ unlabelled; scroll and press `Ctrl-g` again to label the new first nine, or use
 `s` Agents search. Pressing `Ctrl-g` again without choosing closes the picker;
 the key keeps its ordinary Browse meaning elsewhere. After choosing a running
 Agent, it stays in Browse until the exact view is acknowledged and the input
-boundary is drained; queued loading input is discarded. Any other key closes the
+boundary is drained; it enters Terminal only if the existing input permission
+check succeeds, and queued loading input is discarded. Any other key closes the
 picker and keeps its ordinary Dashboard, Operator, or program handling. A
 retained Agent stays in Browse for inspection and is never resumed or reopened
 by navigation; use its explicit Resume/Reopen action when needed. Command/Super
@@ -626,7 +713,10 @@ the hook-owned activity state.
 ## Key popup
 
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
-and `v` View. Only groups relevant to the selected row appear. Terminal rows
+`v` View, and `s` Panes. Only groups relevant to the selected row appear. The
+Panes group lists split, directional focus, swap, resize, next and previous
+pane, zoom and close. A resize action explains when the focused pane has no divider in that
+direction. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
 `q` detaches from the top level, including when the hierarchy is empty. Nothing
 else sits beside the groups: desktop notifications and the ready sound are
@@ -782,33 +872,34 @@ sessions by title.
 
 ### New agent session (`n`)
 
-Choose a registered checkout by its current branch in **Branch**, then choose an
-**Agent harness**, **Model**, and optional **Initial prompt**. Workspaces are
-grouped by project; the picker searches the displayed project and branch labels
-and excludes retained sessions without a registered checkout. It follows the
-same registered checkout when its branch label changes. Unavailable checkouts
-remain visible with their state; root and detached destinations are labeled.
-An eligible current feature checkout is preselected. If the current target is
-missing or cannot launch, the form keeps its identity when registered and asks
-you to choose deliberately; it never substitutes the first listed checkout.
-Start checks the selected checkout again, including its registration, path,
-Git identity and root protection. Register a project with `a` when no project
-is available.
+**Project** starts on the project from the selected row, or the first registered
+project when there is no row context. Change it to narrow **Branch** to that
+project's registered workspaces; switching projects clears the branch text.
+Unavailable checkouts remain visible with their state; root and detached
+destinations are labeled. Start checks an existing checkout's registration,
+path, Git identity and root protection. Register a project with `a` when no
+project is available.
 
-**Create new branch…** opens the branch-only child form. The parent session
-form stays suspended with its prompt, destination, focus, and explicit harness
-or model choices. `Esc` from the unsubmitted child returns to that exact form.
-After a successful, identity-matched branch readback, the new checkout becomes
-the selected destination; the Agent still starts only when you submit the
-parent form.
+Type into **Branch** to filter existing branches. When the text is not an exact
+existing branch, the picker offers **Create branch "<name>"** after any matching
+branches, or first when there are no matches. It is omitted for empty text and
+an exact existing branch. Choosing it creates a workspace under the project's
+workspace root, using the detected default branch as its base. **Advanced
+options** contains **Base** to choose another local branch. **Destination**
+shows the workspace folder and branch base before you start. The form creates
+the workspace first and starts the Agent only after that succeeds.
+For an explicit model, the form keeps the selection and draft, then verifies
+that model against the newly registered workspace. Submit again after the lookup
+confirms the choice; if it is unavailable, choose an available model or
+**Harness default**.
 
 The picker opens even when the current workspace cannot launch. This does not
 change the separate **Create terminal** form or its existing root-workspace
 guard. The form shows a compact destination line and, when another agent is
 already using that checkout, a compact shared-files notice. Harness and model
 defaults can follow the selected project; explicit choices, the prompt and
-advanced name stay intact when changing destinations. **Advanced options** is
-collapsed and contains the optional session name.
+advanced values stay intact when changing destinations. **Advanced options** is
+collapsed and contains the optional Base and session name.
 
 Choice lists stay collapsed while you move through the form. Press `Enter` or
 click a choice field to open its list; while it is open, `Enter` accepts the
@@ -917,19 +1008,15 @@ valid and resolved.
 The worktree folder under the project root is derived from the branch name:
 `feature/auth-refresh` becomes `feature-auth-refresh`. Workspace creation uses
 the Server's automatic local-terminal setting. It never starts an Agent from
-this form. From New agent session, the child hides the parent form while keeping
-its prompt, branch choice, focus, and explicit harness/model choices; after a
-correlated successful receipt and matching fresh registry/hierarchy readback,
-the new branch is selected and the parent form returns. `Esc` before Submit
-restores that parent form. While creation or readback is pending, the child
-stays visible and cannot be dismissed or submitted again.
+this form. New agent session has its own Project and Branch fields for creating
+a branch and then starting an Agent.
 
 When `w` is used on its own, a verified branch returns to Browse with its
 workspace selected, even if the Server also created a local terminal. A normal
-`n` start submits the Agent only after the parent form is confirmed. `Create
-terminal` remains a separate command for an already registered workspace.
+`n` start submits the Agent only after the selected choices are confirmed.
+`Create terminal` remains a separate command for an already registered workspace.
 
-If creation fails before a workspace exists, the child keeps its branch and
+If creation fails before a workspace exists, this form keeps its branch and
 Base values for correction and retry with the same workspace identity. After a
 partial failure, the Dashboard performs a fresh Inspect and List before it
 allows another attempt; an uncertain or already-registered identity blocks
@@ -1237,6 +1324,9 @@ picker_roots = ["~/Code", "~/src", "~"]
 # [[agents]]                         # optional; a row replaces a detected agent's argv
 # name = "claude"
 # argv = ["claude", "--verbose"]
+
+[resources]
+# sidebar = false                    # hide Resources and stop local machine reads; default true
 
 [quota]                              # account quota; see provider-quota.md
 # enabled = false                    # explicit off; omit to collect while a Dashboard is attached

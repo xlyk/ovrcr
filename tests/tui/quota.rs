@@ -204,7 +204,25 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         current[last_tree_row], "▌      └ sh",
         "the stacked label is the last selectable tree line"
     );
-    assert_eq!(last_tree_row + 1, quota_row, "{current:?}");
+    let usage_row = current
+        .iter()
+        .position(|row| row.contains("USAGE") || row.contains("Usage ·"))
+        .expect("Usage follows the tree");
+    assert_eq!(last_tree_row + 1, usage_row, "{current:?}");
+    let resources_row = current
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources follows Usage");
+    assert_eq!(
+        usage_row + 5,
+        resources_row,
+        "Resources follows Usage's four content rows and blank"
+    );
+    assert_eq!(
+        resources_row + 4,
+        quota_row,
+        "Quota follows Resources' three content rows and blank"
+    );
     dashboard.install_focus(SessionId(49));
     let action = dashboard.mouse_action(
         mouse_event(
@@ -372,18 +390,20 @@ fn quota_block_shows_a_stale_value_with_its_age() {
 
 #[test]
 fn quota_block_ladder_gives_four_lines_then_one_then_none() {
+    // This case isolates Quota's own ladder with an empty tree; combined
+    // Operator + Quota shrinking is covered with the production default in operator_dock.
     let mut dashboard = dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.clear();
     dashboard.install_hierarchy(hierarchy);
     publish_quota(&mut dashboard, mixed_snapshot());
-    let full = rows_at(&dashboard, 12, NOW);
+    let full = rows_at(&dashboard, 24, NOW);
     assert!(
         full.iter().any(|row| row.contains("QUOTA LEFT")),
         "{full:?}"
     );
     let mut seen = Vec::new();
-    for height in (3..12).rev() {
+    for height in (3..24).rev() {
         let rows = rows_at(&dashboard, height, NOW);
         let compact = [
             "Claude · checking",
@@ -420,9 +440,11 @@ fn details_text(dashboard: &Dashboard, now: u64) -> String {
     terminal
         .draw(|frame| draw_dashboard_at(frame, dashboard, now))
         .unwrap();
-    (0..40)
+    // Return only the quota popup. The production-default Usage section also
+    // contains the word "tokens" behind the popup, outside its own content.
+    (5..35)
         .map(|row| {
-            (0..120)
+            (19..102)
                 .map(|column| terminal.backend().buffer()[(column, row)].symbol())
                 .collect::<String>()
         })

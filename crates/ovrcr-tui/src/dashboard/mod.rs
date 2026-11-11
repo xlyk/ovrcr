@@ -17,10 +17,15 @@ mod navigation;
 mod operator;
 mod outbox;
 mod palette;
+#[cfg(test)]
+#[path = "../../../../tests/support/pi_available_test.rs"]
+mod pi_available_test;
 pub(crate) mod picker;
 mod quota;
 mod ready;
 mod render;
+mod resources;
+mod row_menu;
 mod settings;
 mod settings_editor;
 mod state;
@@ -40,6 +45,7 @@ pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
+pub use resources::{CpuCounters, MachineReadings, MachineResourceSource, MemoryCounters};
 pub use settings::{LaunchChoice, Settings};
 pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
@@ -136,6 +142,8 @@ pub(super) struct SidebarRects {
     pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
+    pub usage: Rect,
+    pub resources: Rect,
     pub quota: Rect,
 }
 
@@ -146,8 +154,258 @@ pub struct PaneRects {
     pub terminal: Rect,
 }
 
+const MAX_PANE_COUNT: usize = 4;
+const MIN_PANE_WIDTH: u16 = 20;
+const MIN_PANE_HEIGHT: u16 = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SplitDirection {
+    Right,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneResize {
+    Narrower,
+    Wider,
+    Shorter,
+    Taller,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SplitRatio {
+    pub(super) first: u16,
+    pub(super) available: u16,
+}
+
+impl Default for SplitRatio {
+    fn default() -> Self {
+        Self {
+            first: 1,
+            available: 2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PaneLayout {
+    Pane(usize),
+    Split {
+        direction: SplitDirection,
+        ratio: SplitRatio,
+        first: Box<PaneLayout>,
+        second: Box<PaneLayout>,
+    },
+}
+
+impl PaneLayout {
+    pub(super) fn insert_after(
+        &mut self,
+        index: usize,
+        direction: SplitDirection,
+        new_index: usize,
+    ) -> bool {
+        match self {
+            Self::Pane(existing) if *existing == index => {
+                *self = Self::Split {
+                    direction,
+                    ratio: SplitRatio::default(),
+                    first: Box::new(Self::Pane(index)),
+                    second: Box::new(Self::Pane(new_index)),
+                };
+                true
+            }
+            Self::Pane(existing) => {
+                if *existing >= new_index {
+                    *existing += 1;
+                }
+                false
+            }
+            Self::Split { first, second, .. } => {
+                if first.insert_after(index, direction, new_index) {
+                    second.shift_indices(new_index, 1);
+                    true
+                } else {
+                    second.insert_after(index, direction, new_index)
+                }
+            }
+        }
+    }
+
+    pub(super) fn remove(self, index: usize) -> Option<Self> {
+        match self {
+            Self::Pane(existing) if existing == index => None,
+            Self::Pane(existing) => Some(Self::Pane(if existing > index {
+                existing - 1
+            } else {
+                existing
+            })),
+            Self::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => match (first.remove(index), second.remove(index)) {
+                (Some(first), Some(second)) => Some(Self::Split {
+                    direction,
+                    ratio,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (Some(sibling), None) | (None, Some(sibling)) => Some(sibling),
+                (None, None) => None,
+            },
+        }
+    }
+
+    fn shift_indices(&mut self, start: usize, delta: usize) {
+        match self {
+            Self::Pane(index) if *index >= start => *index += delta,
+            Self::Pane(_) => {}
+            Self::Split { first, second, .. } => {
+                first.shift_indices(start, delta);
+                second.shift_indices(start, delta);
+            }
+        }
+    }
+
+    pub(super) fn sibling_first(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::Pane(_) => None,
+            Self::Split { first, second, .. } => {
+                if first.contains(index) {
+                    first.sibling_first(index).or_else(|| Some(second.first()))
+                } else if second.contains(index) {
+                    second.sibling_first(index).or_else(|| Some(first.first()))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn contains(&self, index: usize) -> bool {
+        match self {
+            Self::Pane(existing) => *existing == index,
+            Self::Split { first, second, .. } => first.contains(index) || second.contains(index),
+        }
+    }
+
+    pub(super) fn nearest_split(
+        &self,
+        index: usize,
+        direction: SplitDirection,
+    ) -> Option<(Vec<bool>, bool)> {
+        fn find(
+            layout: &PaneLayout,
+            index: usize,
+            direction: SplitDirection,
+            path: &mut Vec<bool>,
+        ) -> Option<(Vec<bool>, bool)> {
+            match layout {
+                PaneLayout::Pane(_) => None,
+                PaneLayout::Split {
+                    direction: split_direction,
+                    first,
+                    second,
+                    ..
+                } => {
+                    let (child, first_side) = if first.contains(index) {
+                        (first.as_ref(), true)
+                    } else if second.contains(index) {
+                        (second.as_ref(), false)
+                    } else {
+                        return None;
+                    };
+                    path.push(!first_side);
+                    let nested = find(child, index, direction, path);
+                    path.pop();
+                    nested.or_else(|| {
+                        (*split_direction == direction).then(|| (path.clone(), first_side))
+                    })
+                }
+            }
+        }
+
+        find(self, index, direction, &mut Vec::new())
+    }
+
+    fn first(&self) -> usize {
+        match self {
+            Self::Pane(index) => *index,
+            Self::Split { first, .. } => first.first(),
+        }
+    }
+
+    pub(super) fn swap_indices(&mut self, left: usize, right: usize) -> bool {
+        if left == right || !self.contains(left) || !self.contains(right) {
+            return false;
+        }
+        fn swap(layout: &mut PaneLayout, left: usize, right: usize) {
+            match layout {
+                PaneLayout::Pane(index) if *index == left => *index = right,
+                PaneLayout::Pane(index) if *index == right => *index = left,
+                PaneLayout::Pane(_) => {}
+                PaneLayout::Split { first, second, .. } => {
+                    swap(first, left, right);
+                    swap(second, left, right);
+                }
+            }
+        }
+        swap(self, left, right);
+        true
+    }
+
+    pub(super) fn set_ratio(&mut self, path: &[bool], ratio: SplitRatio) -> bool {
+        match self {
+            Self::Pane(_) => false,
+            Self::Split {
+                ratio: current,
+                first,
+                second,
+                ..
+            } if path.is_empty() => {
+                *current = ratio;
+                true
+            }
+            Self::Split { first, second, .. } => {
+                if path[0] {
+                    second.set_ratio(&path[1..], ratio)
+                } else {
+                    first.set_ratio(&path[1..], ratio)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SplitBoundary {
+    pub path: Vec<bool>,
+    pub direction: SplitDirection,
+    pub area: Rect,
+    pub divider: Rect,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PaneLayoutRects {
+    pub panes: Vec<PaneRects>,
+    pub boundaries: Vec<SplitBoundary>,
+    pub hidden: bool,
+}
+
 pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects> {
-    pane_rects_with_preference(area, pane_count, focused, None, None)
+    let count = pane_count.min(MAX_PANE_COUNT);
+    let layout = default_pane_layout(count);
+    pane_layout_rects(area, &layout, count, focused, None).panes
 }
 
 pub(super) const DEFAULT_SIDEBAR_WIDTH: u16 = 40;
@@ -161,24 +419,40 @@ pub(super) fn sidebar_width_for(area: Rect, preferred: Option<u16>) -> u16 {
         .min(area.width / 2)
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct SplitPreference {
-    left: u16,
-    available: u16,
+fn default_pane_layout(count: usize) -> PaneLayout {
+    fn build(start: usize, count: usize) -> PaneLayout {
+        if count == 1 {
+            PaneLayout::Pane(start)
+        } else {
+            PaneLayout::Split {
+                direction: SplitDirection::Right,
+                ratio: SplitRatio::default(),
+                first: Box::new(PaneLayout::Pane(start)),
+                second: Box::new(build(start + 1, count - 1)),
+            }
+        }
+    }
+    if count == 0 {
+        PaneLayout::Pane(0)
+    } else {
+        build(0, count)
+    }
 }
 
-const MIN_SPLIT_PANE_WIDTH: u16 = 20;
-
-fn pane_rects_with_preference(
+pub(super) fn pane_layout_rects(
     area: Rect,
+    layout: &PaneLayout,
     pane_count: usize,
     focused: usize,
-    preference: Option<SplitPreference>,
     sidebar_width: Option<u16>,
-) -> Vec<PaneRects> {
-    let pane_count = pane_count.min(2);
+) -> PaneLayoutRects {
+    let pane_count = pane_count.min(MAX_PANE_COUNT);
     if pane_count == 0 {
-        return Vec::new();
+        return PaneLayoutRects {
+            panes: Vec::new(),
+            boundaries: Vec::new(),
+            hidden: false,
+        };
     }
     let sidebar = sidebar_width_for(area, sidebar_width);
     let right = Rect::new(
@@ -187,53 +461,133 @@ fn pane_rects_with_preference(
         area.width.saturating_sub(sidebar),
         area.height,
     );
-    let terminal_y = right.y.saturating_add(3);
-    let terminal_height = right.height.saturating_sub(4);
-    if terminal_height == 0 || right.width == 0 {
-        return Vec::new();
+    let content = Rect::new(
+        right.x,
+        right.y.saturating_add(1),
+        right.width,
+        right.height.saturating_sub(2),
+    );
+    if content.width == 0 || content.height < 3 {
+        return PaneLayoutRects {
+            panes: Vec::new(),
+            boundaries: Vec::new(),
+            hidden: false,
+        };
     }
-    if pane_count == 1 || right.width < 41 {
-        let index = focused.min(pane_count - 1);
-        return vec![PaneRects {
-            pane_index: index,
-            metadata: Rect::new(right.x, right.y.saturating_add(1), right.width, 2),
-            terminal: Rect::new(right.x, terminal_y, right.width, terminal_height),
-        }];
+    let mut panes = Vec::new();
+    let mut boundaries = Vec::new();
+    if append_layout_rects(
+        layout,
+        content,
+        &mut Vec::new(),
+        &mut panes,
+        &mut boundaries,
+    ) {
+        PaneLayoutRects {
+            panes,
+            boundaries,
+            hidden: false,
+        }
+    } else {
+        PaneLayoutRects {
+            panes: vec![pane_rect(focused.min(pane_count - 1), content)],
+            boundaries: Vec::new(),
+            hidden: pane_count > 1,
+        }
     }
-    let available = right.width - 1;
-    let left_width = preference
-        .filter(|preference| preference.available > 0)
-        .map(|preference| {
-            let scaled = (u32::from(available) * u32::from(preference.left)
-                + u32::from(preference.available) / 2)
-                / u32::from(preference.available);
-            u16::try_from(scaled).unwrap_or(available)
-        })
-        .unwrap_or(available / 2)
-        .clamp(MIN_SPLIT_PANE_WIDTH, available - MIN_SPLIT_PANE_WIDTH);
-    let right_width = available - left_width;
-    vec![
-        PaneRects {
-            pane_index: 0,
-            metadata: Rect::new(right.x, right.y.saturating_add(1), left_width, 2),
-            terminal: Rect::new(right.x, terminal_y, left_width, terminal_height),
-        },
-        PaneRects {
-            pane_index: 1,
-            metadata: Rect::new(
-                right.x.saturating_add(left_width).saturating_add(1),
-                right.y.saturating_add(1),
-                right_width,
-                2,
-            ),
-            terminal: Rect::new(
-                right.x.saturating_add(left_width).saturating_add(1),
-                terminal_y,
-                right_width,
-                terminal_height,
-            ),
-        },
-    ]
+}
+
+fn pane_rect(index: usize, area: Rect) -> PaneRects {
+    let metadata_height = area.height.min(2);
+    PaneRects {
+        pane_index: index,
+        metadata: Rect::new(area.x, area.y, area.width, metadata_height),
+        terminal: Rect::new(
+            area.x,
+            area.y.saturating_add(metadata_height),
+            area.width,
+            area.height.saturating_sub(metadata_height),
+        ),
+    }
+}
+
+fn append_layout_rects(
+    layout: &PaneLayout,
+    area: Rect,
+    path: &mut Vec<bool>,
+    panes: &mut Vec<PaneRects>,
+    boundaries: &mut Vec<SplitBoundary>,
+) -> bool {
+    match layout {
+        PaneLayout::Pane(index) => {
+            panes.push(pane_rect(*index, area));
+            true
+        }
+        PaneLayout::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => {
+            let (dimension, minimum) = match direction {
+                SplitDirection::Right => (area.width, MIN_PANE_WIDTH),
+                SplitDirection::Down => (area.height, MIN_PANE_HEIGHT),
+            };
+            let available = dimension.saturating_sub(1);
+            if available < minimum.saturating_mul(2)
+                || match direction {
+                    SplitDirection::Right => area.height < MIN_PANE_HEIGHT,
+                    SplitDirection::Down => area.width < MIN_PANE_WIDTH,
+                }
+            {
+                return false;
+            }
+            let first_size = ((u32::from(available) * u32::from(ratio.first))
+                / u32::from(ratio.available.max(1)))
+            .try_into()
+            .unwrap_or(available)
+            .clamp(minimum, available - minimum);
+            let second_size = available - first_size;
+            let (first_area, divider, second_area) = match direction {
+                SplitDirection::Right => (
+                    Rect::new(area.x, area.y, first_size, area.height),
+                    Rect::new(area.x.saturating_add(first_size), area.y, 1, area.height),
+                    Rect::new(
+                        area.x.saturating_add(first_size).saturating_add(1),
+                        area.y,
+                        second_size,
+                        area.height,
+                    ),
+                ),
+                SplitDirection::Down => (
+                    Rect::new(area.x, area.y, area.width, first_size),
+                    Rect::new(area.x, area.y.saturating_add(first_size), area.width, 1),
+                    Rect::new(
+                        area.x,
+                        area.y.saturating_add(first_size).saturating_add(1),
+                        area.width,
+                        second_size,
+                    ),
+                ),
+            };
+            boundaries.push(SplitBoundary {
+                path: path.clone(),
+                direction: *direction,
+                area,
+                divider,
+            });
+            path.push(false);
+            let fits = append_layout_rects(first, first_area, path, panes, boundaries);
+            path.pop();
+            if !fits {
+                return false;
+            }
+            path.push(true);
+            let fits = append_layout_rects(second, second_area, path, panes, boundaries);
+            path.pop();
+            fits
+        }
+    }
 }
 
 pub(super) struct HeldMouse {
@@ -250,15 +604,31 @@ pub(super) struct HeldMouse {
 pub(super) struct MouseForwarding {
     pub(super) held: [Option<HeldMouse>; 3],
     pub(super) last_motion: Option<MouseEvent>,
-    pub(super) split_dragging: bool,
+    pub(super) split_dragging: Option<Vec<bool>>,
     pub(super) sidebar_dragging: bool,
+    pub(super) last_pane_click: Option<PaneClick>,
     /// Row under the pointer. Drawing reads it; motion that stays on the same row does not redraw.
     pub(super) hovered: Option<HoveredRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PaneClickTarget {
+    Header(usize),
+    Divider(Vec<bool>),
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PaneClick {
+    pub(super) target: PaneClickTarget,
+    pub(super) column: u16,
+    pub(super) row: u16,
+    pub(super) at: std::time::Instant,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum HoveredRow {
     Session(SessionId),
+    Project(String),
     Workspace { project: String, id: String },
 }
 
@@ -268,6 +638,8 @@ pub struct Dashboard {
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
+    usage: crate::protocol::UsageSnapshot,
+    resources: resources::Sampler,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
     transcript: transcript::View,
@@ -280,6 +652,8 @@ pub struct Dashboard {
     mode: InputMode,
     panes: Vec<PaneState>,
     focused_pane: usize,
+    pane_layout: PaneLayout,
+    pub(super) zoomed: bool,
     /// The whole view state machine: the revision, the one in-flight `SetView`, the
     /// acknowledged view, and the marks pane readiness is derived from.
     handshake: view_handshake::ViewHandshake,
@@ -312,7 +686,6 @@ pub struct Dashboard {
     history: Option<HistoryView>,
     history_begin_request: Option<PendingHistoryBegin>,
     mouse: MouseForwarding,
-    split_preference: Option<SplitPreference>,
     /// Sidebar width chosen by dragging its border; `None` means the default.
     sidebar_width: Option<u16>,
     /// `b` hides the sidebar for this attachment; `sidebar_width` survives so
@@ -331,6 +704,7 @@ pub struct Dashboard {
     #[cfg(test)]
     model_agent_entries: Option<Vec<agents::AgentEntry>>,
     whichkey: Option<whichkey::WhichKey>,
+    sidebar_create_menu: Option<row_menu::SidebarCreateMenu>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     /// Set while startup left agent status off: the palette offers Connect agent status,

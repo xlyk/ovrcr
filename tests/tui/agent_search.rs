@@ -954,12 +954,12 @@ fn agent_search_browse_cancels_auto_entry_but_a_fresh_choice_can_succeed() {
     dashboard.ctrl('g');
     acknowledge_all_view_targets(&mut dashboard, request);
     assert!(rendered_footer(&dashboard, 120).contains("BROWSE"));
-    assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::None);
+    assert_eq!(dashboard.key(KeyCode::Char('e')), DashboardAction::None);
     let action = confirm_agent(&mut dashboard, 3);
     pump_view(&mut dashboard, action);
     assert_eq!(
-        dashboard.key(KeyCode::Char('z')),
-        DashboardAction::PtyBytes(b"z".to_vec())
+        dashboard.key(KeyCode::Char('e')),
+        DashboardAction::PtyBytes(b"e".to_vec())
     );
 }
 
@@ -1131,14 +1131,14 @@ fn agent_search_sibling_updates_superseding_the_view_cancel_pending_typing() {
             "a superseded intent must cancel, not wait forever"
         );
         assert!(rendered_footer(&dashboard, 120).contains("cancelled"));
-        assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::None);
+        assert_eq!(dashboard.key(KeyCode::Char('e')), DashboardAction::None);
         let action = confirm_agent(&mut dashboard, 1);
         assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
         let retry = only_request(dashboard.drain_outbox());
         acknowledge_all_view_targets(&mut dashboard, retry);
         assert_eq!(
-            dashboard.key(KeyCode::Char('z')),
-            DashboardAction::PtyBytes(b"z".to_vec())
+            dashboard.key(KeyCode::Char('e')),
+            DashboardAction::PtyBytes(b"e".to_vec())
         );
     }
 }

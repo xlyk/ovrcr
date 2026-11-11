@@ -4,6 +4,14 @@ Synchronous terminal multiplexer. One server owner, one active dashboard, fifty 
 
 ## Language
 
+**Project**:
+A repository registered with OVRCR, owning its root workspace and every other workspace made from it.
+_Avoid_: workspace, checkout as synonyms for the registered repository
+
+**Operator**:
+OVRCR's built-in assistant, with one instance-wide conversation shared by the Operator pane and Quick message.
+_Avoid_: workspace session, one conversation per selected project
+
 **Retained session**:
 A session whose identity and workspace placement remain available after its process ends or the server restarts. Agent sessions retain a reference to their provider-owned conversation; both Agent and Terminal launches have retained sessions.
 _Avoid_: live process, running terminal as interchangeable terms
@@ -209,6 +217,14 @@ _Avoid_: a second settings document, the settings snapshot, a separate path list
 **Allowance**:
 What a provider's subscription still permits in a window, shown in the sidebar's quota line as the remainder of a percentage. It is never a session's token count, context occupancy or API spend.
 _Avoid_: usage, tokens, cost, quota as a synonym for spend
+
+**Usage**:
+The tokens OVRCR's sessions report consuming over a stated period.
+_Avoid_: Allowance, cost
+
+**Last activity**:
+The most recent moment an Agent session changed state or the user sent it input. Terminal output, focus and selection do not move it.
+_Avoid_: last terminal output, last viewed time
 
 **Quota reason**:
 OVRCR's own one-line classification of why a provider's allowance is not current, such as the executable not being found or a read timing out. It never carries a response body, an account value or a credential.

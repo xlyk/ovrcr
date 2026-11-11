@@ -1,8 +1,4 @@
-#[cfg(not(target_os = "macos"))]
-#[path = "../support/deadline.rs"]
-mod deadline;
-
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[path = "../support/live.rs"]
 mod live;
 
@@ -47,6 +43,9 @@ mod sidebar;
 mod split;
 mod unread;
 
+#[path = "../support/pi_available_test.rs"]
+mod pi_available_test;
+
 fn session_summary(
     id: u64,
     project: &str,
@@ -73,6 +72,7 @@ fn session_summary(
         label: label.into(),
         pid,
         started_unix_ms: Some(started_unix_ms),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -84,6 +84,7 @@ fn session_summary(
 
 fn fixture_hierarchy() -> HierarchySnapshot {
     let mut hierarchy = HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
         projects: vec![
             ProjectSummary {
                 name: "spacelift-agent".into(),

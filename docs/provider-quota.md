@@ -1,5 +1,7 @@
 # Provider allowance in the Dashboard
 
+Usage is a separate server-lifetime total of agent-reported input and output tokens; it is not account allowance.
+
 The sidebar's quota section, immediately above the Operator dock, shows account allowance remaining, not a terminal's tokens, cost, or context occupancy. Click it, press `u` in Browse, or find **Quota details** in the menu or palette to see every window. Details remain accessible when the sidebar is hidden. Use Up/Down to scroll and Escape to close.
 
 ## Sources

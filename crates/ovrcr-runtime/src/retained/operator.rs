@@ -2,6 +2,7 @@
 use super::*;
 use ovrcr_protocol::operator::*;
 use rusqlite::OptionalExtension;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     let has_scope: bool = connection.query_row(
@@ -24,7 +25,7 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
         id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
         conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
         run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
-        model_override TEXT,
+        model_override TEXT, thinking_level TEXT NOT NULL DEFAULT '\"default\"',
         UNIQUE(conversation,run));
         CREATE TABLE IF NOT EXISTS operator_messages (
         ordinal INTEGER PRIMARY KEY AUTOINCREMENT, conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
@@ -54,6 +55,22 @@ pub(crate) fn migrate_reasoning(connection: &Connection) -> Result<()> {
         if has_table(connection, table)? && !has_column(connection, table, column)? {
             connection.execute_batch(&format!(
                 "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn migrate_sidebar_timing(connection: &Connection) -> Result<()> {
+    for (column, definition) in [
+        ("started_unix_ms", "INTEGER"),
+        ("completed_unix_ms", "INTEGER"),
+    ] {
+        if has_table(connection, "operator_turns")?
+            && !has_column(connection, "operator_turns", column)?
+        {
+            connection.execute_batch(&format!(
+                "ALTER TABLE operator_turns ADD COLUMN {column} {definition};"
             ))?;
         }
     }
@@ -170,6 +187,19 @@ fn read_turn(
         })
     })
     .transpose()
+}
+
+fn optional_unix_ms(value: Option<i64>) -> Result<Option<u64>> {
+    value
+        .map(|value| u64::try_from(value).context("negative Operator timestamp"))
+        .transpose()
+}
+
+fn wall_clock_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 impl SessionStore {
     /// The sole conversation, if it exists. Never creates a record or a process.
@@ -309,6 +339,21 @@ impl SessionStore {
                 id: model,
             },
         );
+        let current_turn = read_turn(&self.connection, id)?;
+        let current_turn_started_unix_ms = if let Some(turn) = &current_turn {
+            self.connection.query_row(
+                "SELECT started_unix_ms FROM operator_turns WHERE id=?1",
+                [sql_integer(turn.identity.turn.0)?],
+                |row| row.get::<_, Option<i64>>(0),
+            )?
+        } else {
+            None
+        };
+        let last_reply_unix_ms: Option<i64> = self.connection.query_row(
+            "SELECT MAX(completed_unix_ms) FROM operator_turns WHERE conversation=?1",
+            [sql_integer(id.0)?],
+            |row| row.get(0),
+        )?;
         Ok(OperatorConversationSummary {
             run: record.run,
             worker_stopped: record.stopped,
@@ -316,7 +361,7 @@ impl SessionStore {
             session: SessionId(session),
             model,
             title,
-            current_turn: read_turn(&self.connection, id)?,
+            current_turn,
             reasoning: self
                 .connection
                 .query_row(
@@ -326,6 +371,8 @@ impl SessionStore {
                 )?
                 .map(|raw| serde_json::from_str(&raw))
                 .transpose()?,
+            current_turn_started_unix_ms: optional_unix_ms(current_turn_started_unix_ms)?,
+            last_reply_unix_ms: optional_unix_ms(last_reply_unix_ms)?,
         })
     }
 
@@ -450,13 +497,14 @@ impl SessionStore {
                 .context("session run exhausted")?,
         );
         let transaction = self.connection.transaction()?;
+        let started_unix_ms = wall_clock_ms();
         let changed=transaction.execute("UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0,disposition=0 WHERE id=?3 AND run=?4 AND stopped=1 AND disposition IN (0,2)",params![sql_integer(run.0)?,self.boot_id,sql_integer(conversation.session.0)?,sql_integer(expected_run.0)?])?;
         if changed != 1 {
             bail!("operator session run changed");
         }
         transaction.execute(
-            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level) VALUES(?1,?2,'Running',?3,?4)",
-            params![sql_integer(id.0)?, sql_integer(run.0)?, settings.model, serde_json::to_string(&settings.thinking_level)?],
+            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4,?5)",
+            params![sql_integer(id.0)?, sql_integer(run.0)?, settings.model, serde_json::to_string(&settings.thinking_level)?, sql_integer(started_unix_ms)?],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
         append_message(
@@ -577,10 +625,13 @@ impl SessionStore {
             )?;
         }
         transaction.execute(
-            "UPDATE operator_turns SET state=?1,sequence=?2 WHERE id=?3",
+            "UPDATE operator_turns SET state=?1,sequence=?2,completed_unix_ms=?3 WHERE id=?4",
             params![
                 state,
                 sql_integer(batch.sequence)?,
+                (state == "Complete")
+                    .then(|| sql_integer(wall_clock_ms()))
+                    .transpose()?,
                 sql_integer(batch.identity.turn.0)?
             ],
         )?;
@@ -712,6 +763,9 @@ mod tests {
                 },
             )
             .unwrap();
+        let running = store.operator_conversation(conversation.id).unwrap();
+        assert!(running.current_turn_started_unix_ms.is_some());
+        assert_eq!(running.last_reply_unix_ms, None);
         assert_eq!(
             store
                 .operator_worker_start(turn.identity)
@@ -733,22 +787,16 @@ mod tests {
             ],
         };
         store.apply_operator_batch(&batch).unwrap();
-        assert_eq!(
-            store
-                .operator_conversation(conversation.id)
-                .unwrap()
-                .reasoning,
-            Some(reasoning.clone())
-        );
+        let completed = store.operator_conversation(conversation.id).unwrap();
+        assert!(completed.current_turn_started_unix_ms.is_some());
+        assert!(completed.last_reply_unix_ms.is_some());
+        assert_eq!(completed.reasoning, Some(reasoning.clone()));
         drop(store);
         let store = SessionStore::open(root.path()).unwrap();
-        assert_eq!(
-            store
-                .operator_conversation(conversation.id)
-                .unwrap()
-                .reasoning,
-            Some(reasoning)
-        );
+        let reopened = store.operator_conversation(conversation.id).unwrap();
+        assert_eq!(reopened.reasoning, Some(reasoning));
+        assert!(reopened.current_turn_started_unix_ms.is_some());
+        assert!(reopened.last_reply_unix_ms.is_some());
         // Recreate the previous writer's column shape, preserving the journal.
         store
             .connection
@@ -1684,7 +1732,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 32);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -1849,7 +1897,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 32);
         migrate_singleton_conversation(&store.connection).unwrap();
         let completed = store
             .operator_conversation(OperatorConversationId(1))
@@ -2000,7 +2048,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 32);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -2150,7 +2198,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30, "the comparison uses a migrated database");
+        assert_eq!(version, 32, "the comparison uses a migrated database");
         for table in [
             "operator_conversations",
             "operator_turns",

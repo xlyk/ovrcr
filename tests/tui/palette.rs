@@ -1,8 +1,5 @@
 //! Command palette, which-key popup, and the creation forms.
 
-#[cfg(not(target_os = "macos"))]
-use crate::deadline::wait_deadline;
-#[cfg(target_os = "macos")]
 use crate::live::wait_deadline;
 use crate::*;
 use ratatui::layout::Position;
@@ -59,6 +56,78 @@ fn stopped_fixture() -> Dashboard {
     let mut dashboard = dashboard_fixture();
     dashboard.install_hierarchy(stopped_hierarchy());
     dashboard
+}
+
+fn sidebar_row_for(dashboard: &Dashboard, needle: &str) -> u16 {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..40)
+        .find(|y| {
+            (0..39)
+                .map(|x| terminal.backend().buffer()[(x, *y)].symbol())
+                .collect::<String>()
+                .contains(needle)
+        })
+        .unwrap_or_else(|| panic!("sidebar row {needle:?} was not rendered"))
+}
+
+fn rendered_sequence(dashboard: &Dashboard, needle: &str) -> Position {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let symbols: Vec<_> = needle.chars().map(|ch| ch.to_string()).collect();
+    for y in 0..40 {
+        for x in 0..=120_u16.saturating_sub(symbols.len() as u16) {
+            if symbols.iter().enumerate().all(|(offset, symbol)| {
+                terminal.backend().buffer()[(x + offset as u16, y)].symbol() == symbol
+            }) {
+                return Position::new(x, y);
+            }
+        }
+    }
+    panic!("rendered text {needle:?} was not visible");
+}
+
+fn open_sidebar_create_menu(dashboard: &mut Dashboard, row_needle: &str) {
+    let area = Rect::new(0, 0, 120, 40);
+    let row = sidebar_row_for(dashboard, row_needle);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 5,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let button = rendered_sequence(dashboard, "[+]");
+    assert_eq!(button.y, row, "create button belongs to {row_needle}");
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: button.x + 1,
+            row: button.y,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+}
+
+fn click_rendered_menu_item(dashboard: &mut Dashboard, label: &str) {
+    let area = Rect::new(0, 0, 120, 40);
+    let position = rendered_sequence(dashboard, label);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: position.x,
+            row: position.y,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
 }
 
 fn open_new_terminal_from_menu(dashboard: &mut Dashboard) {
@@ -219,12 +288,12 @@ fn question_mark_popup_is_browsable() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
     assert!(palette_text(&dashboard).contains("Which key"));
-    for _ in 0..4 {
+    for _ in 0..5 {
         dashboard.key(KeyCode::Down);
     }
     dashboard.key(KeyCode::Enter);
     let text = palette_text(&dashboard);
-    assert!(!text.contains("Which key"));
+    assert!(!text.contains("Which key"), "{text}");
     assert!(text.contains("Register project"));
     assert!(text.contains("Repository"));
     assert!(text.contains("Workspace root"));
@@ -241,6 +310,7 @@ fn space_top_level_lists_groups_registration_and_detach_but_no_toggles() {
             "w  Workspace",
             "p  Project",
             "v  View",
+            "s  Panes",
             "a  Register project",
             "q  Detach",
         ] {
@@ -1108,13 +1178,22 @@ fn fixture_agents(dashboard: &mut Dashboard) {
                 argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
             })
             .collect(),
-        launch_choices: [(
-            "consigint".to_owned(),
-            ovrcr_protocol::LaunchChoice::Agent {
-                preset: "fixture-a".into(),
-                model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
-            },
-        )]
+        launch_choices: [
+            (
+                "consigint".to_owned(),
+                ovrcr_protocol::LaunchChoice::Agent {
+                    preset: "fixture-a".into(),
+                    model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                },
+            ),
+            (
+                "spacelift-agent".to_owned(),
+                ovrcr_protocol::LaunchChoice::Agent {
+                    preset: "fixture-a".into(),
+                    model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+                },
+            ),
+        ]
         .into(),
         ..Default::default()
     });
@@ -1841,6 +1920,709 @@ fn n_opens_new_agent_form_prefilled_for_selected_workspace() {
 }
 
 #[test]
+fn new_agent_project_picker_defaults_from_selected_session_and_scopes_branches() {
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('n'));
+    answer_palette_inspect_with_fixture_registry(&mut dashboard, action);
+
+    let form = palette_text(&dashboard);
+    assert_in_order(&form, &["Project", "consigint", "Branch", "auth"]);
+
+    assert_eq!(
+        dashboard.key(KeyCode::Tab),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let branches = palette_text(&dashboard);
+    let picker = branches
+        .lines()
+        .filter(|line| line.contains("││"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(picker.contains("lifecycle"), "{picker}");
+    assert!(picker.contains("auth"), "{picker}");
+    assert!(
+        !picker.contains("progress"),
+        "branches crossed project boundary: {picker}"
+    );
+}
+
+#[test]
+fn new_agent_project_defaults_follow_project_workspace_and_session_rows() {
+    for (row_label, expected_project) in [
+        ("SPACELIFT-AGENT", "spacelift-agent"),
+        ("lifecycle", "consigint"),
+        ("implement", "consigint"),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        let area = Rect::new(0, 0, 120, 40);
+        let row = sidebar_row_for(&dashboard, row_label);
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        let action = dashboard.key(KeyCode::Char('n'));
+        answer_palette_inspect_with_fixture_registry(&mut dashboard, action);
+        let form = palette_text(&dashboard);
+        assert_in_order(&form, &["Project", expected_project, "Branch"]);
+    }
+}
+
+#[test]
+fn new_agent_project_uses_first_project_without_selection_and_switch_clears_branch() {
+    let mut empty = Dashboard::new(ovrcr::session::TerminalSize { rows: 38, cols: 88 });
+    empty.install_area(Rect::new(0, 0, 88, 38));
+    empty.install_hierarchy(fixture_hierarchy());
+    let action = empty.key(KeyCode::Char('n'));
+    answer_palette_inspect_with_fixture_registry(&mut empty, action);
+    let first_project = palette_text(&empty);
+    assert_in_order(&first_project, &["Project", "spacelift-agent", "Branch"]);
+
+    let mut dashboard = dashboard_fixture();
+    fixture_agents(&mut dashboard);
+    let action = dashboard.key(KeyCode::Char('n'));
+    answer_palette_inspect_with_fixture_registry(&mut dashboard, action);
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.event_action(Event::Paste("au".into()));
+    dashboard.key(KeyCode::Esc);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.event_action(Event::Paste("spacelift-agent".into()));
+    dashboard.key(KeyCode::Enter);
+
+    let switched = palette_text(&dashboard);
+    assert!(switched.contains("spacelift-agent"), "{switched}");
+    assert!(
+        !switched.contains("consigint / auth"),
+        "stale branch survived: {switched}"
+    );
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    let branches = palette_text(&dashboard)
+        .lines()
+        .filter(|line| line.contains("││"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(branches.contains("progress"), "{branches}");
+    assert!(
+        !branches.contains("auth"),
+        "old project branch survived: {branches}"
+    );
+
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let requests = dashboard.drain_outbox();
+    assert_eq!(requests.len(), 1, "{}", palette_text(&dashboard));
+    let allocation = requests.into_iter().next().unwrap();
+    assert_eq!(allocation.request, Request::AllocateInitialPromptIntent);
+    let followup = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: allocation.request_id,
+        response: Response::InitialPromptIntent(ovrcr::protocol::InitialPromptIntentId {
+            server_lifetime: "123e4567-e89b-12d3-a456-426614174000".into(),
+            sequence: 1,
+        }),
+    });
+    let [message] = followup.as_slice() else {
+        panic!("initial-prompt intent should resume the selected launch: {followup:?}");
+    };
+    let Request::CreateAgentSessionWithPrompt(launch) = &message.request else {
+        panic!(
+            "expected Agent launch for stable project workspace: {:?}",
+            message.request
+        );
+    };
+    assert_eq!(launch.launch.session.project, "spacelift-agent");
+    assert_eq!(launch.launch.session.workspace, "progress");
+}
+
+#[test]
+fn new_agent_branch_picker_offers_typed_creation_by_match_position() {
+    fn picker(query: &str) -> String {
+        let mut dashboard = dashboard_fixture();
+        let action = dashboard.key(KeyCode::Char('n'));
+        answer_palette_inspect_with_fixture_registry(&mut dashboard, action);
+        dashboard.key(KeyCode::Tab);
+        dashboard.key(KeyCode::Enter);
+        if !query.is_empty() {
+            dashboard.event_action(Event::Paste(query.into()));
+        }
+        palette_text(&dashboard)
+            .lines()
+            .filter(|line| line.contains("││"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let empty = picker("");
+    assert!(!empty.contains("Create branch"), "{empty}");
+
+    let partial = picker("au");
+    assert_in_order(&partial, &["auth", "Create branch \"au\""]);
+    assert!(!partial.contains("Create new branch"), "{partial}");
+
+    let exact = picker("auth");
+    assert!(exact.contains("auth"), "{exact}");
+    assert!(!exact.contains("Create branch"), "{exact}");
+
+    let unmatched = picker("spike/pane-tree");
+    assert!(
+        unmatched.contains("Create branch \"spike/pane-tree\""),
+        "{unmatched}"
+    );
+    assert!(!unmatched.contains("auth"), "{unmatched}");
+    assert!(!unmatched.contains("lifecycle"), "{unmatched}");
+}
+
+#[test]
+fn new_agent_destination_uses_default_and_advanced_base_at_supported_sizes() {
+    fn render_at(dashboard: &Dashboard, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+            .unwrap();
+        (0..height)
+            .map(|row| {
+                (0..width)
+                    .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let repo = hint_repository(&["develop"]);
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('n'));
+    let requests = dashboard.drain_outbox();
+    let inspect = requests
+        .iter()
+        .find(|message| matches!(message.request, Request::Inspect))
+        .unwrap();
+    answer_workspace_inspect(&mut dashboard, inspect.request_id, repo.path());
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.event_action(Event::Paste("feature/destination-preview".into()));
+    dashboard.key(KeyCode::Enter);
+    wait_for_branch_hints(&mut dashboard);
+    let destination = palette_text(&dashboard);
+    assert!(
+        destination.contains("worktrees/feature-destination-preview")
+            && destination.contains("From main"),
+        "default branch destination missing: {destination}"
+    );
+    for (width, height) in [(80, 24), (60, 18)] {
+        let text = render_at(&dashboard, width, height);
+        assert!(
+            text.contains("worktrees/feature-destination-preview") && text.contains("From main"),
+            "{width}x{height}: {text}"
+        );
+    }
+
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Tab);
+    }
+    assert_eq!(
+        dashboard.key(KeyCode::Char(' ')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    dashboard.key(KeyCode::Tab);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("develop".into()));
+    let overridden = palette_text(&dashboard);
+    assert!(overridden.contains("From develop"), "{overridden}");
+    for (width, height) in [(80, 24), (60, 18)] {
+        let text = render_at(&dashboard, width, height);
+        assert!(text.contains("From develop"), "{width}x{height}: {text}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_dashboard_creates_typed_branch_before_starting_agent() {
+    use crate::live::{Live, PROJECT};
+    use ovrcr::protocol as p;
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    fn exchange_dashboard_requests(
+        dashboard: &mut Dashboard,
+        stream: &mut std::os::unix::net::UnixStream,
+        initial: Vec<p::ClientMessage>,
+    ) {
+        let mut pending = HashSet::new();
+        let mut outgoing = initial;
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !outgoing.is_empty() || !pending.is_empty() {
+            for message in outgoing.drain(..) {
+                pending.insert(message.request_id);
+                p::write_frame(stream, &message).expect("send Dashboard request");
+            }
+            if pending.is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "Dashboard requests timed out");
+            let server =
+                p::read_frame::<p::ServerMessage>(stream).expect("read Dashboard response");
+            if let p::ServerMessage::Response { request_id, .. } = &server {
+                pending.remove(request_id);
+            }
+            outgoing.extend(dashboard.handle_server_message(server));
+        }
+    }
+
+    let live = Live::idle().bounded();
+    std::fs::write(
+        live.config.join("dashboard.toml"),
+        "agents = [{ name = \"fixture-agent\", argv = [\"/bin/sh\", \"-c\", \"exit 0\"] }]\n\
+         [launch_choices.fixture]\nkind = \"Agent\"\npreset = \"fixture-agent\"\nmodel_policy = \"HarnessDefault\"\n",
+    )
+    .unwrap();
+    live.start_binary();
+    live.ready("feature/live-seed");
+    let mut stream = p::connect_server(&live.socket).expect("connect to private Server");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let p::Response::Hierarchy(hierarchy) =
+        p::client::request(&mut stream, 910_000, p::Request::DashboardHello).unwrap()
+    else {
+        panic!("DashboardHello should return the live hierarchy");
+    };
+
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.install_area(Rect::new(0, 0, 80, 24));
+    dashboard.install_hierarchy(hierarchy);
+    let settings_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            Instant::now() < settings_deadline,
+            "DashboardHello did not publish the initial Server settings"
+        );
+        let server =
+            p::read_frame::<p::ServerMessage>(&mut stream).expect("read initial Dashboard events");
+        let is_settings = matches!(
+            &server,
+            p::ServerMessage::Event(p::ServerEvent::SettingsChanged(_))
+        );
+        if let p::ServerMessage::Event(p::ServerEvent::SettingsChanged(report)) = &server {
+            assert!(
+                report
+                    .settings
+                    .agents
+                    .iter()
+                    .any(|agent| agent.name == "fixture-agent"),
+                "live fixture must publish its configured test launcher: {:?}",
+                report.settings.agents
+            );
+            assert_eq!(
+                report.settings.launch_choices.get(PROJECT),
+                Some(&p::LaunchChoice::Agent {
+                    preset: "fixture-agent".into(),
+                    model_policy: p::AgentModelPolicy::HarnessDefault,
+                })
+            );
+        }
+        dashboard.handle_server_message(server);
+        if is_settings {
+            break;
+        }
+    }
+    dashboard.key(KeyCode::Char('n'));
+    let initial = dashboard.drain_outbox();
+    exchange_dashboard_requests(&mut dashboard, &mut stream, initial);
+    assert!(palette_text(&dashboard).contains("Project"));
+    assert!(palette_text(&dashboard).contains(PROJECT));
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.event_action(Event::Paste("feature/live-agent".into()));
+    dashboard.key(KeyCode::Enter);
+    wait_for_branch_hints(&mut dashboard);
+    let form = palette_text(&dashboard);
+    assert!(form.contains("feature-live-agent"), "{form}");
+    assert!(form.contains("From main"), "{form}");
+
+    let form_before_submit = palette_text(&dashboard);
+    let action = dashboard.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    let form_after_submit = palette_text(&dashboard);
+    let requests = dashboard.drain_outbox();
+    let [create] = requests.as_slice() else {
+        panic!(
+            "typed branch should issue one live workspace request: {requests:?}; action={action:?}; form before submit:\n{form_before_submit}\nform after submit:\n{form_after_submit}"
+        );
+    };
+    let (workspace_id, token) = match &create.request {
+        Request::CreateWorkspaceWithLaunch {
+            project,
+            id,
+            launch,
+            branch: p::BranchRequest::New { branch, base },
+        } => {
+            assert_eq!(project, PROJECT);
+            assert_eq!(branch, "feature/live-agent");
+            assert_eq!(base, "main");
+            assert!(launch.is_none());
+            (id.clone(), create.request_id)
+        }
+        other => panic!("expected new branch workspace request: {other:?}"),
+    };
+    p::write_frame(&mut stream, create).expect("send branch creation to live Server");
+
+    let mut accepted = false;
+    let mut workspace_succeeded = false;
+    let mut allocation = None;
+    let workspace_deadline = Instant::now() + Duration::from_secs(20);
+    while !workspace_succeeded {
+        assert!(
+            Instant::now() < workspace_deadline,
+            "workspace lifecycle timed out"
+        );
+        let server =
+            p::read_frame::<p::ServerMessage>(&mut stream).expect("read live workspace lifecycle");
+        match &server {
+            p::ServerMessage::Response {
+                request_id,
+                response,
+            } if *request_id == token => {
+                assert_eq!(
+                    response,
+                    &p::Response::Ok,
+                    "Server accepted branch creation"
+                );
+                accepted = true;
+            }
+            p::ServerMessage::Event(p::ServerEvent::LifecycleCompleted {
+                client_token,
+                op: p::LifecycleOp::CreateWorkspaceWithLaunch,
+                outcome: p::LifecycleOutcome::Succeeded,
+                target_workspace: Some(identity),
+            }) if *client_token == token => {
+                assert_eq!(identity.project, PROJECT);
+                assert_eq!(identity.id, workspace_id);
+                workspace_succeeded = true;
+            }
+            p::ServerMessage::Event(p::ServerEvent::LifecycleCompleted {
+                client_token,
+                outcome: p::LifecycleOutcome::Failed { code, message },
+                ..
+            }) if *client_token == token => {
+                panic!("live branch creation failed: {code:?}: {message}");
+            }
+            _ => {}
+        }
+        for message in dashboard.handle_server_message(server) {
+            if matches!(message.request, Request::AllocateInitialPromptIntent) {
+                allocation = Some(message.clone());
+            }
+            p::write_frame(&mut stream, &message).expect("send chained Dashboard request");
+        }
+    }
+    assert!(
+        accepted,
+        "the branch mutation received its acceptance response"
+    );
+    let allocation = allocation.expect("workspace success should allocate a prompt intent");
+
+    let mut agent_launch = None;
+    let mut prompt_intent = None;
+    let prompt_deadline = Instant::now() + Duration::from_secs(8);
+    while agent_launch.is_none() {
+        assert!(
+            Instant::now() < prompt_deadline,
+            "prompt allocation timed out"
+        );
+        let server =
+            p::read_frame::<p::ServerMessage>(&mut stream).expect("read prompt intent response");
+        if let p::ServerMessage::Response {
+            request_id,
+            response,
+        } = &server
+            && *request_id == allocation.request_id
+        {
+            let p::Response::InitialPromptIntent(intent) = response else {
+                panic!("prompt allocation returned an unexpected response: {response:?}");
+            };
+            prompt_intent = Some(intent.clone());
+        }
+        let followup = dashboard.handle_server_message(server);
+        for message in followup {
+            if matches!(message.request, Request::CreateAgentSessionWithPrompt(_)) {
+                agent_launch = Some(message.clone());
+            } else {
+                p::write_frame(&mut stream, &message).expect("send chained Dashboard request");
+            }
+        }
+    }
+    let agent_launch = agent_launch.unwrap();
+    let Request::CreateAgentSessionWithPrompt(launch) = &agent_launch.request else {
+        unreachable!();
+    };
+    assert_eq!(launch.launch.session.project, PROJECT);
+    assert_eq!(launch.launch.session.workspace, workspace_id);
+    assert!(launch.prompt.is_empty());
+    p::write_frame(&mut stream, &agent_launch).expect("start Agent in created workspace");
+
+    let mut agent_accepted = false;
+    let mut launched_session = None;
+    let mut visible_session = None;
+    let mut hierarchy_session_ids = HashSet::new();
+    let agent_deadline = Instant::now() + Duration::from_secs(20);
+    while !(agent_accepted && launched_session.is_some() && visible_session.is_some()) {
+        assert!(
+            Instant::now() < agent_deadline,
+            "Agent launch was not accepted and published to the Dashboard"
+        );
+        let server =
+            p::read_frame::<p::ServerMessage>(&mut stream).expect("read live Agent launch events");
+        match &server {
+            p::ServerMessage::Response {
+                request_id,
+                response,
+            } if *request_id == agent_launch.request_id => {
+                assert_eq!(
+                    response,
+                    &p::Response::Ok,
+                    "Server accepted the Agent start"
+                );
+                agent_accepted = true;
+            }
+            p::ServerMessage::Event(p::ServerEvent::InitialPromptIntentChanged(snapshot))
+                if prompt_intent
+                    .as_ref()
+                    .is_some_and(|intent| intent == &snapshot.id) =>
+            {
+                match snapshot.state {
+                    p::InitialPromptIntentState::LaunchAccepted => {
+                        let session = snapshot
+                            .session
+                            .expect("accepted prompt intent is bound to an Agent session");
+                        assert_eq!(snapshot.project, PROJECT);
+                        assert_eq!(snapshot.workspace, workspace_id);
+                        launched_session = Some(session);
+                    }
+                    p::InitialPromptIntentState::Refused => {
+                        panic!("live Agent launch was refused: {:?}", snapshot.message);
+                    }
+                    _ => {}
+                }
+            }
+            p::ServerMessage::Event(p::ServerEvent::HierarchyChanged(hierarchy)) => {
+                hierarchy_session_ids = hierarchy
+                    .projects
+                    .iter()
+                    .find(|project| project.name == PROJECT)
+                    .and_then(|project| {
+                        project
+                            .workspaces
+                            .iter()
+                            .find(|workspace| workspace.id == workspace_id)
+                    })
+                    .map(|workspace| {
+                        workspace
+                            .sessions
+                            .iter()
+                            .map(|session| session.id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+            _ => {}
+        }
+        visible_session =
+            launched_session.filter(|session| hierarchy_session_ids.contains(session));
+        let _ = dashboard.handle_server_message(server);
+    }
+    assert!(
+        agent_accepted,
+        "Agent start received its acceptance response"
+    );
+    let created_session = launched_session.expect("accepted prompt intent names the new session");
+    assert_eq!(visible_session, Some(created_session));
+
+    let p::Response::Inventory { registry, .. } = live.request(p::Request::Inspect) else {
+        panic!("live registry readback failed");
+    };
+    let project = registry
+        .projects
+        .iter()
+        .find(|project| project.name == PROJECT)
+        .unwrap();
+    let workspace = project
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .expect("typed branch workspace is registered");
+    assert_eq!(workspace.branch, "feature/live-agent");
+    let branch_commit = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&project.repo)
+        .args(["rev-parse", "feature/live-agent"])
+        .output()
+        .unwrap();
+    let main_commit = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&project.repo)
+        .args(["rev-parse", "main"])
+        .output()
+        .unwrap();
+    assert!(branch_commit.status.success());
+    assert!(main_commit.status.success());
+    assert_eq!(
+        branch_commit.stdout, main_commit.stdout,
+        "new branch starts at main"
+    );
+    assert!(workspace.path.exists(), "created worktree exists");
+}
+
+#[test]
+fn row_create_menu_entries_open_existing_forms_with_the_row_context() {
+    let mut create_workspace = dashboard_fixture();
+    open_sidebar_create_menu(&mut create_workspace, "CONSIGINT");
+    click_rendered_menu_item(&mut create_workspace, "New workspace");
+    let form = palette_text(&create_workspace);
+    assert!(form.contains("Create branch"), "{form}");
+    assert!(form.contains("Project"), "{form}");
+    assert!(
+        form.contains("consigint"),
+        "project context missing: {form}"
+    );
+
+    let mut project_agent = dashboard_fixture();
+    open_sidebar_create_menu(&mut project_agent, "CONSIGINT");
+    click_rendered_menu_item(&mut project_agent, "New agent session");
+    let form = palette_text(&project_agent);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("consigint"),
+        "project context missing: {form}"
+    );
+
+    let mut workspace_agent = dashboard_fixture();
+    open_sidebar_create_menu(&mut workspace_agent, "auth");
+    click_rendered_menu_item(&mut workspace_agent, "New agent session");
+    let form = palette_text(&workspace_agent);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("consigint / auth"),
+        "workspace context missing: {form}"
+    );
+
+    let mut workspace_terminal = dashboard_fixture();
+    open_sidebar_create_menu(&mut workspace_terminal, "auth");
+    click_rendered_menu_item(&mut workspace_terminal, "New terminal");
+    let form = palette_text(&workspace_terminal);
+    assert!(form.contains("Create terminal"), "{form}");
+    assert!(
+        form.contains("consigint / auth"),
+        "workspace context missing: {form}"
+    );
+}
+
+#[test]
+fn root_workspace_menu_reuses_launch_reason_without_blocking_agent_setup() {
+    let mut hierarchy = fixture_hierarchy();
+    let root = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap()
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "auth")
+        .unwrap();
+    root.root = true;
+    root.name = "feature/x".into();
+    root.warning = Some("root is on feature/x; check out main".into());
+    let registry = registry_from_hierarchy(&hierarchy);
+
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    open_sidebar_create_menu(&mut dashboard, "feature/x");
+    let menu_rows = rendered_rows(&dashboard, 120, 40);
+    let agent = menu_rows
+        .iter()
+        .find(|line| line.contains("New agent session"))
+        .expect("agent setup entry");
+    assert!(!agent.contains("root workspace is not on the default branch"));
+    let terminal = menu_rows
+        .iter()
+        .find(|line| line.contains("New terminal"))
+        .expect("terminal entry");
+    assert!(
+        terminal.contains("New terminal · root workspace is not on the default branch"),
+        "{terminal}"
+    );
+    let disabled = rendered_sequence(&dashboard, "New terminal");
+    let mut screen = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    screen
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        screen.backend().buffer()[(disabled.x, disabled.y)]
+            .modifier
+            .contains(Modifier::DIM),
+        "unavailable entry is visibly dimmed"
+    );
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: disabled.x,
+                row: disabled.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        DashboardAction::None
+    );
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("New terminal")
+    );
+
+    dashboard.drain_outbox();
+    assert_eq!(dashboard.key(KeyCode::Down), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::None);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("New terminal")
+    );
+
+    assert_eq!(dashboard.key(KeyCode::Up), DashboardAction::Redraw);
+    let action = dashboard.key(KeyCode::Enter);
+    assert_eq!(action, DashboardAction::Redraw);
+    answer_palette_inspect_with_registry(&mut dashboard, action, registry);
+    let form = palette_text(&dashboard);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("launch blocked"),
+        "root target should retain its form guard: {form}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Char('n')), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("New agent session"));
+}
+
+#[test]
 fn created_session_enters_terminal_mode() {
     let mut dashboard = dashboard_fixture();
     open_new_terminal_from_menu(&mut dashboard);
@@ -1871,6 +2653,7 @@ fn created_session_enters_terminal_mode() {
         label: request.label.clone().unwrap_or_default(),
         pid: Some(1),
         started_unix_ms: Some(0),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -1898,7 +2681,7 @@ fn browse_footer_lists_only_menu_commands_and_help() {
         .collect();
     assert_eq!(
         footer.trim_end(),
-        "BROWSE  Space Menu  : Commands  ? Help",
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity",
         "{footer}"
     );
 }
@@ -2469,7 +3252,7 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
 #[test]
 fn ux_browse_footer_is_stable_across_widths_and_state() {
     let mut dashboard = dashboard_fixture();
-    let full = "BROWSE  Space Menu  : Commands  ? Help";
+    let full = "BROWSE  Space Menu  : Commands  ? Help  m Recent activity";
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
     for width in [20, 40, 80, 120] {
         let text = rendered_footer(&dashboard, width);
@@ -2479,8 +3262,26 @@ fn ux_browse_footer_is_stable_across_widths_and_state() {
     // Selection and an empty hierarchy change the menu, not the footer.
     dashboard.install_focus(SessionId(3));
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
-    dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
+    dashboard.install_hierarchy(HierarchySnapshot {
+        usage: ovrcr_protocol::UsageSnapshot::default(),
+        projects: vec![],
+    });
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
+}
+
+#[test]
+fn recent_sidebar_toggle_is_in_browse_footer_view_popup_and_palette() {
+    let mut dashboard = dashboard_fixture();
+    assert!(rendered_footer(&dashboard, 120).contains("m Recent activity"));
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('v'));
+    let menu = whichkey_menu_text(&dashboard);
+    assert!(menu.contains("Recent activity"), "View popup: {menu}");
+    dashboard.key(KeyCode::Esc);
+
+    palette_search(&mut dashboard, "Recent activity");
+    assert!(palette_text(&dashboard).contains("Recent activity"));
 }
 
 #[test]
@@ -2845,7 +3646,10 @@ fn removal_picker_rejects_no_match_and_excludes_root() {
 fn removal_pickers_with_empty_hierarchy_never_confirm() {
     for query in ["remove project", "remove workspace"] {
         let mut dashboard = dashboard_fixture();
-        dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
+        dashboard.install_hierarchy(HierarchySnapshot {
+            usage: ovrcr_protocol::UsageSnapshot::default(),
+            projects: vec![],
+        });
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         for key in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {
@@ -3211,6 +4015,7 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         label: request.label.clone().unwrap_or_default(),
         pid: None,
         started_unix_ms: None,
+        last_activity_unix_ms: None,
         phase: SessionPhase::Stopped,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -3328,6 +4133,7 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
             label: request.label.clone().unwrap_or_default(),
             pid: None,
             started_unix_ms: None,
+            last_activity_unix_ms: None,
             phase: SessionPhase::Stopped,
             activity: AgentActivity::Unknown,
             context_usage: None,
@@ -4374,6 +5180,8 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
                         model: None,
                         title: "Operator".into(),
                         current_turn: None,
+                        current_turn_started_unix_ms: None,
+                        last_reply_unix_ms: None,
                     },
                 )),
             });

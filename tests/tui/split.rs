@@ -49,6 +49,49 @@ fn split(dashboard: &mut Dashboard) {
     pump_view(dashboard, action);
 }
 
+fn split_down(dashboard: &mut Dashboard) {
+    let action = dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(dashboard, action);
+}
+
+fn four_pane_dashboard() -> Dashboard {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab);
+    split_down(&mut dashboard);
+    dashboard
+}
+
+fn four_running_pane_dashboard() -> Dashboard {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| project.workspaces.iter_mut())
+        .flat_map(|workspace| workspace.sessions.iter_mut())
+        .filter(|session| (1..=4).contains(&session.id.0))
+    {
+        session.phase = SessionPhase::Running;
+        session.pid = Some(u32::try_from(session.id.0).expect("fixture pid"));
+    }
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab);
+    split_down(&mut dashboard);
+    dashboard
+}
+
 fn close_pane(dashboard: &mut Dashboard) {
     let action = dashboard.key(KeyCode::Char('x'));
     pump_view(dashboard, action);
@@ -86,7 +129,9 @@ fn split_state_focus_and_close_preserve_sessions() {
     assert_eq!(dashboard.pane_rects(area).len(), 2);
     let right = dashboard.focused_session().unwrap();
     assert_ne!(right, SessionId(1));
-    split(&mut dashboard);
+    split_down(&mut dashboard);
+    assert_eq!(dashboard.pane_rects(area).len(), 3);
+    close_pane(&mut dashboard);
     assert_eq!(dashboard.pane_rects(area).len(), 2);
     close_pane(&mut dashboard);
     assert_eq!(dashboard.pane_rects(area).len(), 1);
@@ -196,6 +241,446 @@ fn split_layout_geometry_and_narrow_fallback() {
 }
 
 #[test]
+fn nested_splits_right_and_down_fill_four_panes() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(&mut dashboard, DashboardAction::Redraw);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    pump_view(&mut dashboard, DashboardAction::Redraw);
+
+    let rects = dashboard.pane_rects(area);
+    assert_eq!(rects.len(), 4);
+    assert_eq!(
+        rects.iter().map(|pane| pane.terminal).collect::<Vec<_>>(),
+        [
+            Rect::new(40, 3, 39, 16),
+            Rect::new(40, 22, 39, 17),
+            Rect::new(80, 3, 40, 16),
+            Rect::new(80, 22, 40, 17),
+        ]
+    );
+}
+
+#[test]
+fn split_limits_refuse_with_reasons_and_restore_after_too_small_layout() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    assert_eq!(dashboard.pane_rects(area).len(), 4);
+    dashboard.key(KeyCode::Char('v'));
+    assert!(banner(&dashboard).contains("split refused: four panes is the most"));
+
+    let mut narrow = dashboard_fixture();
+    let area = Rect::new(0, 0, 80, 24);
+    narrow.install_area(area);
+    narrow.key(KeyCode::Char('v'));
+    assert!(banner(&narrow).contains("split refused: panes would be narrower than 20 columns"));
+
+    let mut short = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 18);
+    short.install_area(area);
+    short.key(KeyCode::Char('V'));
+    assert!(banner(&short).contains("split refused: panes would be shorter than 8 rows"));
+
+    let hidden = Rect::new(0, 0, 80, 24);
+    assert_eq!(dashboard.pane_rects(hidden).len(), 1);
+    assert!(drawn_contains(
+        &dashboard,
+        hidden.width,
+        hidden.height,
+        "split hidden"
+    ));
+    assert_eq!(dashboard.pane_rects(wide_area()).len(), 4);
+}
+
+#[test]
+fn view_handshake_covers_four_panes_and_retarget_revokes_input_until_ack() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    for _ in 0..dashboard.pane_rects(area).len() {
+        if dashboard
+            .focused_session()
+            .is_some_and(|session| fixture_session(session).phase == SessionPhase::Running)
+        {
+            break;
+        }
+        dashboard.key(KeyCode::Tab);
+    }
+    let request = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("before".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Split the lower right pane down to create the fourth pane.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('V'));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(dashboard.pane_rects(area).len(), 4);
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after split".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    let request = request_view(&mut dashboard, area, 0);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 4);
+    let sessions = view
+        .panes
+        .iter()
+        .map(|pane| pane.session)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(sessions.len(), 4);
+    let expected = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|rect| TerminalSize {
+            rows: rect.terminal.height,
+            cols: rect.terminal.width,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        view.panes.iter().map(|pane| pane.size).collect::<Vec<_>>(),
+        expected
+    );
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after split ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Focus by cycling; the new focus is not authorized until its view is acknowledged.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Tab);
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after focus".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    let request = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after focus ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Dragging the root divider changes every pane's geometry in one request.
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            79,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            75,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after drag".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            75,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    let request = request_view(&mut dashboard, area, 0);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 4);
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(matches!(
+        dashboard.event_action(Event::Paste("after drag ack".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Closing removes one target without archiving its session and revokes focus readiness.
+    dashboard.ctrl('g');
+    dashboard.key(KeyCode::Char('x'));
+    dashboard.install_terminal_input();
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked after close".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+    let request = request_view(&mut dashboard, area, 0);
+    assert_eq!(set_view(&request).panes.len(), 3);
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn nested_dividers_drag_independently_and_pane_headers_focus_the_clicked_pane() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    let initial = request_view(&mut dashboard, area, 0);
+    let pane_sessions = set_view(&initial)
+        .panes
+        .iter()
+        .map(|pane| pane.session)
+        .collect::<Vec<_>>();
+    assert_eq!(pane_sessions.len(), 4);
+    acknowledge_view_request(&mut dashboard, initial);
+
+    // A click in a pane's metadata selects that pane without forwarding it to the PTY.
+    let previous = dashboard.focused_session();
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                100,
+                22,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let clicked = dashboard.focused_session().expect("clicked pane session");
+    assert_ne!(Some(clicked), previous);
+    assert_eq!(Some(clicked), pane_sessions.get(3).copied());
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("must not reach an unfocused pane".into())),
+        DashboardAction::PtyBytes(_)
+    ));
+
+    // Move each of the two child dividers. Each resize revokes the previous view
+    // permission until the complete four-pane geometry is acknowledged.
+    let mut previous_geometry = dashboard
+        .pane_rects(area)
+        .iter()
+        .map(|pane| pane.terminal)
+        .collect::<Vec<_>>();
+    for (down, drag) in [((50, 19), (50, 24)), ((100, 19), (100, 17))] {
+        assert_eq!(
+            dashboard.mouse_action(
+                mouse_event(
+                    MouseEventKind::Down(MouseButton::Left),
+                    down.0,
+                    down.1,
+                    KeyModifiers::NONE,
+                ),
+                area,
+            ),
+            DashboardAction::Redraw
+        );
+        let action = dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                drag.0,
+                drag.1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        );
+        assert_eq!(
+            action,
+            DashboardAction::Redraw,
+            "drag {down:?}->{drag:?}: {}",
+            rendered_rows(&dashboard, 120, 40).join("\n")
+        );
+        assert!(!matches!(
+            dashboard.event_action(Event::Paste("must wait for child resize ack".into())),
+            DashboardAction::PtyBytes(_)
+        ));
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                drag.0,
+                drag.1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        );
+        let request = request_view(&mut dashboard, area, 0);
+        let geometry = dashboard
+            .pane_rects(area)
+            .iter()
+            .map(|pane| pane.terminal)
+            .collect::<Vec<_>>();
+        assert_eq!(set_view(&request).panes.len(), 4);
+        assert_ne!(
+            geometry, previous_geometry,
+            "drag {down:?}->{drag:?} moved a divider"
+        );
+        previous_geometry = geometry;
+        acknowledge_view_request(&mut dashboard, request);
+    }
+}
+
+#[test]
+fn keyboard_resize_sends_one_complete_view_and_revokes_input_until_acknowledged() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let initial = request_view(&mut dashboard, area, 0);
+    acknowledge_view_request(&mut dashboard, initial);
+
+    let before = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(before.len(), 2);
+    assert_eq!(dashboard.key(KeyCode::Char('>')), DashboardAction::Redraw);
+
+    let after = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(after, [before[0] - 2, before[1] + 2]);
+
+    dashboard.install_terminal_input();
+    assert!(
+        dashboard
+            .input_request(b"resize must wait".to_vec(), 9200)
+            .is_none(),
+        "input permission must be revoked while resized panes are unacknowledged"
+    );
+
+    let request = dashboard
+        .request_view_at(area)
+        .expect("resize queues a complete SetView");
+    let outgoing = dashboard.drain_outbox();
+    assert_eq!(outgoing.len(), 1, "one resize produces one SetView");
+    assert!(matches!(outgoing[0].request, Request::SetView { .. }));
+    let view = set_view(&request);
+    assert_eq!(view.panes.len(), 2);
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        after
+    );
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn resize_keys_repeat_and_clamp_the_nearest_horizontal_divider() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let before = pane_widths(&dashboard, area);
+
+    for _ in 0..5 {
+        dashboard.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('>'),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+    }
+    let repeated = pane_widths(&dashboard, area);
+    assert_eq!(repeated, [before[0] - 10, before[1] + 10]);
+
+    for _ in 0..15 {
+        dashboard.key(KeyCode::Char('<'));
+    }
+    let at_minimum = pane_widths(&dashboard, area);
+    assert_eq!(at_minimum[1], 20);
+    dashboard.key(KeyCode::Char('<'));
+    assert_eq!(pane_widths(&dashboard, area), at_minimum);
+}
+
+#[test]
+fn height_resize_aliases_work_in_browse_and_panes_group_and_clamp_at_minimum() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split_down(&mut dashboard);
+    let heights = |dashboard: &Dashboard| {
+        dashboard
+            .pane_rects(area)
+            .into_iter()
+            .map(|pane| pane.metadata.height + pane.terminal.height)
+            .collect::<Vec<_>>()
+    };
+    let before = heights(&dashboard);
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+    dashboard.key(KeyCode::Char('='));
+    dashboard.key(KeyCode::Char('+'));
+    assert_eq!(heights(&dashboard), [before[0] - 2, before[1] + 2]);
+    dashboard.key(KeyCode::Char('-'));
+    dashboard.key(KeyCode::Char('-'));
+    assert_eq!(heights(&dashboard), before);
+
+    for _ in 0..usize::from(before[1] - 8) {
+        dashboard.key(KeyCode::Char('-'));
+    }
+    let at_minimum = heights(&dashboard);
+    assert_eq!(at_minimum[1], 8);
+    dashboard.key(KeyCode::Char('-'));
+    assert_eq!(heights(&dashboard), at_minimum);
+}
+
+#[test]
+fn resize_without_a_matching_divider_reports_why() {
+    let mut horizontal = dashboard_fixture();
+    horizontal.install_area(wide_area());
+    horizontal.key(KeyCode::Char('>'));
+    assert!(
+        banner(&horizontal).contains("no left-right divider to resize"),
+        "{}",
+        banner(&horizontal)
+    );
+
+    let mut vertical = dashboard_fixture();
+    vertical.install_area(wide_area());
+    vertical.key(KeyCode::Char('-'));
+    assert!(
+        banner(&vertical).contains("no top-bottom divider to resize"),
+        "{}",
+        banner(&vertical)
+    );
+}
+
+#[test]
+fn keyboard_resize_uses_the_nearest_nested_divider() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split(&mut dashboard);
+    let before = pane_widths(&dashboard, area);
+    assert_eq!(before.len(), 3);
+
+    dashboard.key(KeyCode::Char('<'));
+
+    let after = pane_widths(&dashboard, area);
+    assert_eq!(after, [before[0], before[1] + 2, before[2] - 2]);
+}
+
+#[test]
 fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     let mut dashboard = dashboard_fixture();
     let area = wide_area();
@@ -245,8 +730,13 @@ fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let review_row = rows
+        .iter()
+        .position(|row| row.split('│').next().unwrap_or(row).contains("review"))
+        .expect("review session remains visible beside the resized pane");
     let review = (0..49)
-        .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+        .map(|x| terminal.backend().buffer()[(x, review_row as u16)].symbol())
         .collect::<String>();
     assert_eq!(review, format!("▌    - review{}claude ", " ".repeat(29)));
 
@@ -459,7 +949,10 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
         .iter()
         .rposition(|row| row.contains("QUOTA LEFT"))
         .unwrap_or_else(|| panic!("missing the quota section: {rows:?}"));
-    assert_eq!(quota, 32, "quota heading follows the tree");
+    assert_eq!(
+        quota, 33,
+        "the new top Operator section reduces tree height by one row"
+    );
     assert_eq!(rows[quota].chars().nth(49), Some('│'), "{}", rows[quota]);
     let resized = request_view(&mut dashboard, area, 0);
     assert_eq!(
@@ -1244,12 +1737,12 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(dashboard.focused_session(), left);
     assert_eq!(
         dashboard.mouse_action(click(80, 1), area),
-        ovrcr::tui::DashboardAction::None
+        ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.focused_session(), left);
+    assert_eq!(dashboard.focused_session(), Some(right_session));
     assert_eq!(
         dashboard.mouse_action(click(80, 3), area),
-        ovrcr::tui::DashboardAction::Redraw
+        ovrcr::tui::DashboardAction::None
     );
     assert_eq!(dashboard.focused_session(), Some(right_session));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -2471,7 +2964,11 @@ fn split_error_is_cleared_by_the_view_the_next_selection_requests() {
         dashboard.key(KeyCode::Char('v')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(banner(&dashboard).contains("No other visible session to split"));
+    assert!(
+        banner(&dashboard).contains("No other visible session to split"),
+        "{}",
+        banner(&dashboard)
+    );
     let request = (0..16)
         .find_map(|_| {
             assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
@@ -3080,14 +3577,437 @@ fn ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes() {
             assert_eq!(dashboard.pane_rects(area).len(), 1);
             acknowledge_all_view_targets(&mut dashboard, request);
             let rows = rendered_rows(&dashboard, width, height);
-            assert!(
-                rows.last().unwrap().contains("? Help"),
-                "{width} split={do_split}: {rows:?}"
-            );
+            if do_split {
+                assert!(
+                    rows.last()
+                        .unwrap()
+                        .contains("split refused: panes would be narrower"),
+                    "{width} split={do_split}: {rows:?}"
+                );
+            } else {
+                assert!(rows.last().unwrap().contains("? Help"), "{width}: {rows:?}");
+            }
             assert_view_input_allowed(&mut dashboard);
             let before = dashboard.focused_session();
             dashboard.key(KeyCode::Char('j'));
             assert_ne!(dashboard.focused_session(), before);
         }
     }
+}
+
+#[test]
+fn space_s_lists_every_pane_action_and_unavailable_reason() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(wide_area());
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+
+    let screen = rendered_rows(&dashboard, 120, 40).join("\n");
+    for entry in [
+        "Panes: 1 of 4",
+        "v  Split right",
+        "s  Split down",
+        "h  Focus left",
+        "j  Focus down",
+        "k  Focus up",
+        "l  Focus right",
+        "H  Swap left",
+        "J  Swap down",
+        "K  Swap up",
+        "L  Swap right",
+        "Tab  Next pane",
+        "z  Zoom",
+        "x  Close pane",
+        "<  Narrower",
+        ">  Wider",
+        "-  Shorter",
+        "+/=  Taller",
+    ] {
+        assert!(screen.contains(entry), "missing {entry:?}: {screen}");
+    }
+
+    // The disabled directional row stays visible and explains why it cannot run.
+    dashboard.key(KeyCode::Down);
+    dashboard.key(KeyCode::Down);
+    let screen = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        screen.contains("Focus left: no pane to the left"),
+        "{screen}"
+    );
+
+    // Resize keys now explain that this focused pane has no divider.
+    for _ in 0..10 {
+        dashboard.key(KeyCode::Down);
+    }
+    let screen = rendered_rows(&dashboard, 120, 40).join("\n");
+    assert!(
+        screen.contains("Narrower: no left-right divider to") && screen.contains("resize"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn focus_left_chooses_the_nearest_pane_among_equal_overlaps() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let middle = dashboard.focused_session().expect("middle pane session");
+    split(&mut dashboard);
+    let rightmost = dashboard.focused_session().expect("rightmost pane session");
+    assert_ne!(rightmost, middle);
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+    dashboard.key(KeyCode::Char('h'));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(middle),
+        "equal-overlap focus left must choose the nearer middle pane"
+    );
+
+    dashboard.install_terminal_input();
+    assert!(dashboard.input_request(b"x".to_vec(), 9000).is_none());
+    dashboard.ctrl('g');
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 3);
+    assert_eq!(view.focused, Some(middle));
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(dashboard.input_request(b"x".to_vec(), 9001).is_some());
+}
+
+fn key_and_capture_view(dashboard: &mut Dashboard, key: KeyCode, area: Rect) -> DashboardView {
+    dashboard.key(key);
+    let revision = dashboard.view_revision();
+    let request = request_view(dashboard, area, revision);
+    let view = set_view(&request).clone();
+    acknowledge_view_request(dashboard, request);
+    view
+}
+
+fn panes_group_key(dashboard: &mut Dashboard, key: char) {
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+    dashboard.key(KeyCode::Char(key));
+}
+
+#[test]
+fn focus_by_direction_finds_the_overlapping_pane_in_every_direction() {
+    let area = wide_area();
+    for (navigation, action, target) in [
+        (vec![KeyCode::Tab], 'h', 0),
+        (vec![KeyCode::BackTab], 'j', 1),
+        (Vec::new(), 'k', 0),
+        (vec![KeyCode::BackTab], 'l', 2),
+    ] {
+        let mut dashboard = four_running_pane_dashboard();
+        let revision = dashboard.view_revision();
+        let request = request_view(&mut dashboard, area, revision);
+        let mut source_view = set_view(&request).clone();
+        acknowledge_view_request(&mut dashboard, request);
+        for key in navigation {
+            source_view = key_and_capture_view(&mut dashboard, key, area);
+        }
+        assert_eq!(source_view.panes.len(), 4);
+        let expected = source_view.panes[target].session;
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"before focus".to_vec(), 9100)
+                .is_some()
+        );
+        dashboard.ctrl('g');
+        dashboard.key(KeyCode::Esc);
+
+        panes_group_key(&mut dashboard, action);
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(expected),
+            "action {action}, source view {source_view:?}, rects {:?}",
+            dashboard.pane_rects(area)
+        );
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"during focus".to_vec(), 9101)
+                .is_none()
+        );
+        dashboard.ctrl('g');
+        dashboard.key(KeyCode::Esc);
+        let revision = dashboard.view_revision();
+        let request = request_view(&mut dashboard, area, revision);
+        assert_eq!(set_view(&request).focused, Some(expected));
+        acknowledge_view_request(&mut dashboard, request);
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"after focus".to_vec(), 9102)
+                .is_some(),
+            "action {action} did not restore input for {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn focus_from_a_spanning_pane_chooses_the_stable_neighbor_with_greatest_overlap() {
+    let area = wide_area();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    split_down(&mut dashboard);
+    dashboard.key(KeyCode::BackTab);
+    let view = key_and_capture_view(&mut dashboard, KeyCode::BackTab, area);
+    assert_eq!(view.panes.len(), 3);
+    let bottom_right = view.panes[2].session;
+
+    panes_group_key(&mut dashboard, 'l');
+    assert_eq!(dashboard.focused_session(), Some(bottom_right));
+}
+
+#[test]
+fn browse_arrows_and_j_k_still_move_the_sidebar_selection() {
+    for key in [
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+        KeyCode::Down,
+        KeyCode::Up,
+    ] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.install_area(wide_area());
+        let before = dashboard.focused_session();
+
+        dashboard.key(key);
+
+        assert_ne!(
+            dashboard.focused_session(),
+            before,
+            "Browse key {key:?} must keep navigating the sidebar"
+        );
+    }
+}
+
+#[test]
+fn swap_left_uses_the_nearest_neighbor_and_focus_follows_its_session() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    let leftmost = dashboard.focused_session().expect("left pane session");
+    split(&mut dashboard);
+    let middle = dashboard.focused_session().expect("middle pane session");
+    split(&mut dashboard);
+    let rightmost = dashboard.focused_session().expect("right pane session");
+    assert_ne!(rightmost, middle);
+
+    panes_group_key(&mut dashboard, 'H');
+    assert_eq!(dashboard.focused_session(), Some(rightmost));
+
+    dashboard.install_terminal_input();
+    assert!(dashboard.input_request(b"x".to_vec(), 9002).is_none());
+    dashboard.ctrl('g');
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.focused, Some(rightmost));
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        [leftmost, rightmost, middle]
+    );
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn swap_works_in_each_direction_with_focus_following_the_session() {
+    let area = wide_area();
+    for (navigation, action, source, target) in [
+        (vec![KeyCode::Tab], 'H', 2, 0),
+        (vec![KeyCode::BackTab], 'J', 0, 1),
+        (Vec::new(), 'K', 1, 0),
+        (Vec::new(), 'L', 1, 3),
+    ] {
+        let mut dashboard = four_running_pane_dashboard();
+        let revision = dashboard.view_revision();
+        let request = request_view(&mut dashboard, area, revision);
+        let mut view = set_view(&request).clone();
+        acknowledge_view_request(&mut dashboard, request);
+        for key in navigation {
+            view = key_and_capture_view(&mut dashboard, key, area);
+        }
+        let source_session = view.panes[source].session;
+        let mut expected = view
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>();
+        expected.swap(source, target);
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"before swap".to_vec(), 9200)
+                .is_some()
+        );
+        dashboard.ctrl('g');
+        dashboard.key(KeyCode::Esc);
+
+        panes_group_key(&mut dashboard, action);
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"during swap".to_vec(), 9201)
+                .is_none()
+        );
+        dashboard.ctrl('g');
+        dashboard.key(KeyCode::Esc);
+        let revision = dashboard.view_revision();
+        let request = request_view(&mut dashboard, area, revision);
+        let view = set_view(&request).clone();
+        assert_eq!(view.focused, Some(source_session), "action {action}");
+        assert_eq!(
+            view.panes
+                .iter()
+                .map(|pane| pane.session)
+                .collect::<Vec<_>>(),
+            expected,
+            "action {action}"
+        );
+        acknowledge_view_request(&mut dashboard, request);
+        dashboard.install_terminal_input();
+        assert!(
+            dashboard
+                .input_request(b"after swap".to_vec(), 9202)
+                .is_some(),
+            "action {action} did not restore input for {source_session:?}"
+        );
+    }
+}
+
+#[test]
+fn zoom_shows_one_focused_pane_then_restores_the_same_layout() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    let original = dashboard.pane_rects(area);
+    let focused = dashboard.focused_session();
+
+    dashboard.key(KeyCode::Char('z'));
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+    dashboard.install_terminal_input();
+    assert!(dashboard.input_request(b"x".to_vec(), 9003).is_none());
+    dashboard.ctrl('g');
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 1);
+    assert_eq!(view.focused, focused);
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("zoomed")
+    );
+    acknowledge_view_request(&mut dashboard, request);
+    dashboard.install_terminal_input();
+    assert!(dashboard.input_request(b"x".to_vec(), 9004).is_some());
+    dashboard.ctrl('g');
+
+    dashboard.key(KeyCode::Char('z'));
+    assert_eq!(dashboard.pane_rects(area), original);
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 4);
+    assert_eq!(view.focused, focused);
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn tab_keeps_zoom_and_panes_group_offers_unzoom() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    let initial = dashboard.focused_session();
+    dashboard.key(KeyCode::Char('z'));
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+
+    let zoom_revision = dashboard.view_revision();
+    let zoom_request = request_view(&mut dashboard, area, zoom_revision);
+    let zoom_view = set_view(&zoom_request).clone();
+    assert_eq!(zoom_view.panes.len(), 1);
+    acknowledge_view_request(&mut dashboard, zoom_request);
+
+    dashboard.key(KeyCode::Tab);
+    let next = dashboard.focused_session();
+    assert_ne!(next, initial);
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 1);
+    assert_eq!(view.focused, next);
+    acknowledge_view_request(&mut dashboard, request);
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('s'));
+    let text = rendered_rows(&dashboard, 160, 40).join("\n");
+    assert!(text.contains("z  Unzoom"), "{text}");
+    dashboard.key(KeyCode::Char('z'));
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    let view = set_view(&request).clone();
+    assert_eq!(view.panes.len(), 2);
+    assert_eq!(view.focused, next);
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn splitting_while_zoomed_restores_the_tree_before_adding_a_pane() {
+    let area = Rect::new(0, 0, 160, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    split(&mut dashboard);
+    dashboard.key(KeyCode::Char('z'));
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    assert_eq!(set_view(&request).panes.len(), 1);
+    acknowledge_view_request(&mut dashboard, request);
+
+    split(&mut dashboard);
+    assert_eq!(dashboard.pane_rects(area).len(), 3);
+    assert!(
+        !rendered_rows(&dashboard, 160, 40)
+            .join("\n")
+            .contains("zoomed")
+    );
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    assert_eq!(set_view(&request).panes.len(), 3);
+    acknowledge_view_request(&mut dashboard, request);
+}
+
+#[test]
+fn closing_while_zoomed_restores_the_remaining_layout() {
+    let area = wide_area();
+    let mut dashboard = four_pane_dashboard();
+    dashboard.key(KeyCode::Char('z'));
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    assert_eq!(set_view(&request).panes.len(), 1);
+    acknowledge_view_request(&mut dashboard, request);
+
+    close_pane(&mut dashboard);
+    assert_eq!(dashboard.pane_rects(area).len(), 3);
+    assert!(
+        !rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("zoomed")
+    );
+    let revision = dashboard.view_revision();
+    let request = request_view(&mut dashboard, area, revision);
+    assert_eq!(set_view(&request).panes.len(), 3);
+    acknowledge_view_request(&mut dashboard, request);
 }

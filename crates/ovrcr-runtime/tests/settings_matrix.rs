@@ -71,6 +71,7 @@ const ENUMS: &[(&str, &str, &[&str])] = &[
             "light",
         ],
     ),
+    ("sidebar_view", "\"{}\"", &["tree", "recent"]),
     (
         "automatic_local_terminals",
         "\"{}\"",
@@ -99,6 +100,7 @@ const SAMPLES: &[(&str, &str)] = &[
     ),
     ("agents", "[{ name = \"matrix\", argv = [\"matrix\"] }]"),
     ("launch_choices", "{ p = { kind = \"Terminal\" } }"),
+    ("usage.sidebar", "false"),
     ("remote.login", "\"owner@example.com\""),
 ];
 
@@ -385,6 +387,7 @@ fn matrix_covers_every_declared_setting() {
             "ready_sound_choice",
             "iterm_focus",
             "theme",
+            "sidebar_view",
             "automatic_local_terminals",
             "save_uncommitted_work",
             "branch_prefix",
@@ -398,11 +401,14 @@ fn matrix_covers_every_declared_setting() {
             "quota.grok.home",
             "quota.cursor.dashboard",
             "quota.cursor.state_db",
+            "usage.sidebar",
+            "resources.sidebar",
             "agents",
             "cursor_cloud_accounts",
             "launch_choices",
             "operator.model",
             "operator.thinking_level",
+            "operator.sidebar",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
             "delegation.allowed_harnesses",
@@ -421,9 +427,9 @@ fn matrix_covers_every_declared_setting() {
     assert_eq!(
         kinds,
         [
-            Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Array, Table, Str, Str, Integer, Bool, Array, Array, Str, Str,
-            Integer, Integer, Bool, Integer, Str,
+            Bool, Bool, Str, Bool, Str, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str,
+            Str, Bool, Str, Bool, Bool, Array, Array, Table, Str, Str, Bool, Integer, Bool, Array,
+            Array, Str, Str, Integer, Integer, Bool, Integer, Str,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

@@ -167,6 +167,7 @@ impl Dashboard {
             Some('w') if !workspace.is_empty() => Some(format!("Workspace: {workspace_title}")),
             Some('p') if !project.is_empty() => Some(format!("Project: {project}")),
             Some('v') => Some("View".into()),
+            Some('s') => Some(format!("Panes: {} of 4", self.panes.len())),
             _ => None,
         };
         let mut hints = Vec::new();
@@ -227,6 +228,18 @@ impl Dashboard {
                 _ => Vec::new(),
             };
             hints.extend(menu_only);
+            if group == 's' {
+                const ORDER: [&str; 17] = [
+                    "v", "s", "h", "j", "k", "l", "H", "J", "K", "L", "Tab", "z", "<", ">", "-",
+                    "+/=", "x",
+                ];
+                hints.sort_by_key(|hint| {
+                    ORDER
+                        .iter()
+                        .position(|key| *key == hint.key)
+                        .unwrap_or(usize::MAX)
+                });
+            }
             return vec![KeyGroup { title, keys: hints }];
         }
         for (key, name, target, available) in [
@@ -246,6 +259,7 @@ impl Dashboard {
             ),
             ("p", "Project", project.clone(), !project.is_empty()),
             ("v", "View", "dashboard".into(), true),
+            ("s", "Panes", "panes".into(), true),
         ] {
             if available {
                 let group = key.chars().next().unwrap();
@@ -284,6 +298,7 @@ impl Dashboard {
     /// Open the popup: `leader` waits for the next key, otherwise it starts browsable.
     pub(super) fn open_whichkey(&mut self, leader: bool) -> DashboardAction {
         self.agent_typing = None;
+        self.mouse.last_pane_click = None;
         self.cancel_mouse_gesture();
         self.whichkey = Some(WhichKey {
             pending_leader: leader,

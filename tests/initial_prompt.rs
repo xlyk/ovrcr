@@ -577,6 +577,9 @@ fn dashboard_new_agent_session_starts_on_the_selected_registered_checkout() {
     assert_eq!(opening[1].request, Request::List);
     drive_dashboard_requests(&mut connection, &mut dashboard, opening);
 
+    // The new-agent form starts with Project focused. Keep the registered
+    // fixture project and move to Branch before filtering for its checkout.
+    dashboard.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     for character in "feature/dashboard-agent".chars() {
         dashboard.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
     }

@@ -582,7 +582,9 @@ fn top_items(report: &SettingsReport) -> Vec<Row> {
             Some(collection) => Kind::Collection(collection),
             None => editor_kind(entry, &report.settings),
         };
-        let mut row = top_row(entry, report, kind, collection);
+        let row = top_row(entry, report, kind, collection);
+        #[cfg(target_os = "macos")]
+        let mut row = row;
         #[cfg(target_os = "macos")]
         if entry.path == ovrcr_protocol::ReadySoundChoice::KEY
             && let Some(choice) = report.settings.ready_sound_choice
@@ -4361,7 +4363,7 @@ mod tests {
         );
         let reading = report(Settings::default(), &[]);
         let rows = top_items(&reading);
-        let expected = if cfg!(target_os = "macos") { 34 } else { 33 };
+        let expected = if cfg!(target_os = "macos") { 38 } else { 37 };
         assert_eq!(rows.len(), expected);
         let mut ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         ids.sort_unstable();

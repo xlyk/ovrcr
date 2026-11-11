@@ -41,8 +41,14 @@ pub(super) enum Action {
     CopyScreen,
     History,
     Split,
+    SplitDown,
+    FocusPane(super::PaneDirection),
+    SwapPane(super::PaneDirection),
+    ResizePane(super::PaneResize),
+    ZoomPane,
     ClosePane,
     OtherPane,
+    PreviousPane,
     NextSession,
     PreviousSession,
     /// Select the next session that needs the user; see `attention`.
@@ -53,6 +59,7 @@ pub(super) enum Action {
     ToggleSound,
     CycleLocalTerminals,
     ToggleSidebar,
+    ToggleSidebarView,
     QuotaDetails,
     /// The Settings editor. Reached from the menu and the palette
     /// only; it has no Browse key of its own.
@@ -200,7 +207,8 @@ impl KeyBinding {
     /// A group drops a row the current target cannot use, and dims one that is
     /// only waiting for the screen.
     pub(super) fn shown_in_group(&self) -> bool {
-        self.enabled()
+        self.group.is_some_and(|slot| slot.group == 's')
+            || self.enabled()
             || matches!(
                 self.reason,
                 Some(WAITING | LAUNCH_BLOCKED | ROOT_PROTECTED | SIDEBAR_JUMP_BLOCKED)
@@ -220,6 +228,12 @@ impl KeyBinding {
 
     pub(super) fn matches(&self, key: KeyEvent) -> bool {
         if self.press_only && key.kind != KeyEventKind::Press {
+            return false;
+        }
+        if self.action == Action::PreviousPane {
+            return key.code == KeyCode::BackTab;
+        }
+        if self.action == Action::OtherPane && key.code == KeyCode::BackTab {
             return false;
         }
         if let Action::OperatorKey(code, modifiers) = self.action {
@@ -252,6 +266,9 @@ impl KeyBinding {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return false;
         }
+        if self.action == Action::ResizePane(super::PaneResize::Taller) {
+            return matches!(key.code, KeyCode::Char('+' | '='));
+        }
         if self.key.chars().count() == 1 {
             return key.code == self.code;
         }
@@ -267,6 +284,11 @@ impl Dashboard {
         keymap(self)
             .into_iter()
             .flat_map(|group| group.keys)
+            // Pane-direction and placeholder rows only run inside the popup;
+            // direct Browse lookup must keep j/k and arrows on the sidebar.
+            .filter(|binding| {
+                !browse || !matches!(binding.action, Action::FocusPane(_) | Action::SwapPane(_))
+            })
             .find(|binding| {
                 binding.matches(
                     if browse && !binding.bare && !matches!(binding.action, Action::OperatorKey(..))
@@ -357,7 +379,23 @@ impl Dashboard {
             Action::MarkReviewed => self.mark_reviewed_request(),
             Action::CopyScreen => self.begin_copy(),
             Action::History => self.begin_history_request(false),
-            Action::Split => self.open_split_chooser(),
+            Action::Split => self.open_split_chooser(super::SplitDirection::Right),
+            Action::SplitDown => self.open_split_chooser(super::SplitDirection::Down),
+            Action::FocusPane(direction) => {
+                if let Some(index) = self.pane_neighbor(direction) {
+                    self.focus_pane(index);
+                }
+                DashboardAction::Redraw
+            }
+            Action::SwapPane(direction) => {
+                self.swap_focused_pane(direction);
+                DashboardAction::Redraw
+            }
+            Action::ResizePane(resize) => {
+                self.resize_focused_pane(resize);
+                DashboardAction::Redraw
+            }
+            Action::ZoomPane => self.toggle_pane_zoom(),
             Action::ClosePane => {
                 if self.action_session().is_some() {
                     self.close_focused_pane();
@@ -368,8 +406,14 @@ impl Dashboard {
             // own words, so every action holds its own bound: this one keeps the
             // pane count the "only one pane" reason reports.
             Action::OtherPane => {
-                if self.action_session().is_some() && self.panes.len() == 2 {
-                    self.focus_pane((self.focused_pane + 1) % 2);
+                if self.action_session().is_some() && self.panes.len() > 1 {
+                    self.focus_pane((self.focused_pane + 1) % self.panes.len());
+                }
+                DashboardAction::Redraw
+            }
+            Action::PreviousPane => {
+                if self.action_session().is_some() && self.panes.len() > 1 {
+                    self.focus_pane((self.focused_pane + self.panes.len() - 1) % self.panes.len());
                 }
                 DashboardAction::Redraw
             }
@@ -396,6 +440,7 @@ impl Dashboard {
             Action::ToggleSound => self.toggle_ready_sound(),
             Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::ToggleSidebarView => self.toggle_sidebar_view(),
             Action::QuotaDetails => self.open_quota_details(),
             Action::Settings => self.open_details(super::quota::Details::Settings),
             Action::Events => self.open_events(),
@@ -871,32 +916,26 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .group('v', ":"),
         key_binding(
             "v",
-            "Split",
-            format!(
-                "Open a second pane beside {target} and choose its session; Esc keeps the suggestion"
-            ),
+            "Split right",
+            format!("Split {target} to the right and choose a session; Esc keeps the suggestion"),
             Char('v'),
             Action::Split,
         )
-        .unless(
-            (dashboard.panes.len() >= 2)
-                .then_some("already split")
-                .or(missing)
-                .or_else(|| {
-                    (dashboard
-                        .visible_rows()
-                        .iter()
-                        .filter(|r| matches!(r, TreeRow::Session { .. }))
-                        .count()
-                        < 2)
-                    .then_some("no other visible session")
-                }),
-        )
-        .group('v', "v"),
+        .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Right)))
+        .group('s', "v"),
         key_binding(
-            "Tab/Shift-Tab",
+            "V",
+            "Split down",
+            format!("Split {target} down and choose a session; Esc keeps the suggestion"),
+            Char('V'),
+            Action::SplitDown,
+        )
+        .unless(missing.or(dashboard.split_refusal(super::SplitDirection::Down)))
+        .group('s', "s"),
+        key_binding(
+            "Tab",
             "Next pane",
-            "Focus the other pane; sessions keep running".into(),
+            "Focus the next pane; sessions keep running".into(),
             Tab,
             Action::OtherPane,
         )
@@ -905,7 +944,38 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "Tab/Shift-Tab"),
+        .group('s', "Tab"),
+        key_binding(
+            "Shift-Tab",
+            "Previous pane",
+            "Focus the previous pane; sessions keep running".into(),
+            KeyCode::BackTab,
+            Action::PreviousPane,
+        )
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
+        .group('s', "Shift-Tab"),
+        key_binding(
+            "z",
+            if dashboard.zoomed { "Unzoom" } else { "Zoom" },
+            if dashboard.zoomed {
+                "Restore the pane layout; every session keeps running".into()
+            } else {
+                "Show the focused pane alone; other panes keep their place".into()
+            },
+            Char('z'),
+            Action::ZoomPane,
+        )
+        .once()
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
+        .group('s', "z"),
         key_binding(
             "x",
             "Close pane",
@@ -918,7 +988,115 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 .then_some("only one pane")
                 .or(missing),
         )
-        .group('v', "x"),
+        .group('s', "x"),
+        key_binding(
+            "h",
+            "Focus left",
+            "Focus the pane to the left".into(),
+            Char('h'),
+            Action::FocusPane(super::PaneDirection::Left),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Left))
+        .group('s', "h"),
+        key_binding(
+            "j",
+            "Focus down",
+            "Focus the pane below".into(),
+            Char('j'),
+            Action::FocusPane(super::PaneDirection::Down),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Down))
+        .group('s', "j"),
+        key_binding(
+            "k",
+            "Focus up",
+            "Focus the pane above".into(),
+            Char('k'),
+            Action::FocusPane(super::PaneDirection::Up),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Up))
+        .group('s', "k"),
+        key_binding(
+            "l",
+            "Focus right",
+            "Focus the pane to the right".into(),
+            Char('l'),
+            Action::FocusPane(super::PaneDirection::Right),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Right))
+        .group('s', "l"),
+        key_binding(
+            "H",
+            "Swap left",
+            "Swap with the pane to the left; focus follows the session".into(),
+            Char('H'),
+            Action::SwapPane(super::PaneDirection::Left),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Left))
+        .group('s', "H"),
+        key_binding(
+            "J",
+            "Swap down",
+            "Swap with the pane below; focus follows the session".into(),
+            Char('J'),
+            Action::SwapPane(super::PaneDirection::Down),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Down))
+        .group('s', "J"),
+        key_binding(
+            "K",
+            "Swap up",
+            "Swap with the pane above; focus follows the session".into(),
+            Char('K'),
+            Action::SwapPane(super::PaneDirection::Up),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Up))
+        .group('s', "K"),
+        key_binding(
+            "L",
+            "Swap right",
+            "Swap with the pane to the right; focus follows the session".into(),
+            Char('L'),
+            Action::SwapPane(super::PaneDirection::Right),
+        )
+        .unless(dashboard.pane_direction_refusal(super::PaneDirection::Right))
+        .group('s', "L"),
+        key_binding(
+            "<",
+            "Narrower",
+            "Shrink the focused pane by 2 columns".into(),
+            Char('<'),
+            Action::ResizePane(super::PaneResize::Narrower),
+        )
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Right))
+        .group('s', "<"),
+        key_binding(
+            ">",
+            "Wider",
+            "Grow the focused pane by 2 columns".into(),
+            Char('>'),
+            Action::ResizePane(super::PaneResize::Wider),
+        )
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Right))
+        .group('s', ">"),
+        key_binding(
+            "-",
+            "Shorter",
+            "Shrink the focused pane by 1 row".into(),
+            Char('-'),
+            Action::ResizePane(super::PaneResize::Shorter),
+        )
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Down))
+        .group('s', "-"),
+        key_binding(
+            "+/=",
+            "Taller",
+            "Grow the focused pane by 1 row (+ or =)".into(),
+            Char('+'),
+            Action::ResizePane(super::PaneResize::Taller),
+        )
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Down))
+        .group('s', "+/="),
         key_binding(
             "j/Down",
             "Next row",
@@ -949,6 +1127,20 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .once()
         .group('v', "b"),
+        key_binding(
+            "m",
+            if dashboard.settings.sidebar_view == ovrcr_protocol::SidebarView::Tree {
+                "Recent activity"
+            } else {
+                "Tree sidebar"
+            },
+            "Switch between the project tree and Agents ordered by recent activity; save the choice through the Server"
+                .into(),
+            Char('m'),
+            Action::ToggleSidebarView,
+        )
+        .once()
+        .group('v', "m"),
         {
             let next = dashboard.next_attention();
             key_binding(

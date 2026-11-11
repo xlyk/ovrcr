@@ -1070,6 +1070,77 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
 }
 
 #[test]
+fn last_activity_falls_back_to_start_and_survives_shutdown_and_restart() {
+    let live = Live::binary();
+    live.ready("feature/last-activity");
+    let created = create_terminal(&live, "last-activity", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    let session_row = |sessions: &Value| {
+        sessions
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|session| session["id"] == id)
+            .unwrap()
+            .clone()
+    };
+
+    let initial = session_row(&json(&live, &["terminal", "list"]));
+    assert_eq!(
+        initial["last_activity_unix_ms"], initial["started_unix_ms"],
+        "sessions without activity use their start time"
+    );
+
+    json(
+        &live,
+        &[
+            "terminal",
+            "send",
+            &id_arg,
+            "--text",
+            "first input",
+            "--no-submit",
+        ],
+    );
+    let first = session_row(&json(&live, &["terminal", "list"]))["last_activity_unix_ms"]
+        .as_u64()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    json(
+        &live,
+        &[
+            "terminal",
+            "send",
+            &id_arg,
+            "--text",
+            "second input",
+            "--no-submit",
+        ],
+    );
+    let latest = session_row(&json(&live, &["terminal", "list"]))["last_activity_unix_ms"]
+        .as_u64()
+        .unwrap();
+    assert!(latest > first);
+
+    json(&live, &["kill", &id_arg]);
+    let ended = wait_phase(&live, id, "exited");
+    assert_eq!(ended["last_activity_unix_ms"], latest);
+
+    let shutdown = cli(&live, &["shutdown", "--kill"]);
+    assert!(shutdown.status.success());
+    live.join();
+    let offline = json(&live, &["terminal", "list"]);
+    assert_eq!(session_row(&offline)["last_activity_unix_ms"], latest);
+
+    live.start_binary();
+    assert_eq!(json(&live, &["terminal", "list"]), offline);
+    let shutdown = cli(&live, &["shutdown"]);
+    assert!(shutdown.status.success());
+    live.join();
+}
+
+#[test]
 fn retained_rows_preserve_identity_and_title_without_restoring_output_or_live_state() {
     let live = Live::binary();
     live.ready("feature/retained");

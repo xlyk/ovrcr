@@ -1,0 +1,60 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │plan snapshot restore  pi:grok-4.6  Waiting for input · 17m                 pid 35793
+                                       │─────────────────────────────────────────────────────────────────────────────────────
+ OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───
+  ✓ Rep
+		3 text (settable) 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+		4 text (settable)  ? 1 needs input                       │plan snapshot restore  pi:grok-4.6  Waiting for input · 17m                 pid 35793
+		5 text (settable)                                        │─────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)  OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───
+		7 text (settable)   ✓ Reply ready · 1 unread             ││ fixture: snapshot
+		8 text (settable) ↳ “FIXTURE_FOLLOWUP_DONE”              │╰───────────────────
+		9 text (settable)                                        │
+		10 text (settable)  CONSIGINT ────────────────────────────│✓ deterministic loca
+		11 text (settable) ▌    ? plan snapshot restore        10m│sh-3.2$ '/private/tm
+		12 text (settable) ▌      └ 󰘬 gui-consigint-worktree-lif… │' report activity --
+		13 text (settable)      - review auth handoff          17m│_%s\n' "$?"
+		14 text (settable)        └ 󰘬 gui-consigint-auth-handoff… │CUA_448_ACTIVITY_REP
+		15 text (settable)      - review websocket shutdown    17m│sh-3.2$
+		16 text (settable)        └ 󰘬 gui-consigint-worktree-lif… │
+		17 text (settable)      - implement lifecycle cleanup  17m│
+		18 text (settable)        └ 󰘬 gui-consigint-worktree-lif… │
+		19 text (settable)                                        │
+		20 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		21 text (settable)      · cua-native-448                9m│
+		22 text (settable)        └ 󰘬 cua-native-448 · claude     │
+		23 text (settable)      - review scope quality         17m│
+		24 text (settable)        └ 󰘬 gui-spacelift-agent-scope-… │
+		25 text (settable)      - build pipeline progress      17m│
+		26 text (settable)        └ 󰘬 gui-spacelift-agent-pipeli… │
+		27 text (settable) USAGE · 0 tokens · 17m                 │
+		28 text (settable) ⠹ 0 working  ? 1 input  ✓ 0 ready      │
+		29 text (settable) · 0 idle  ! 0 error  P 0 paused        │
+		30 text (settable) · 1 exited  - 11 unknown               │
+		31 text (settable)                                        │
+		32 text (settable)  RESOURCES ────────────────────────────│
+		33 text (settable)  cpu       ━━━━━━━───────────────  30% │
+		34 text (settable)  mem       ━━━━━━━━━━━━━━──── 36.7/48G │
+		35 text (settable)                                        │
+		36 text (settable)  QUOTA LEFT ───────────────────────────│
+		37 text (settable) Claude · not signed in                 │
+		38 text (settable) Codex · unavailable · retry 3m         │
+		39 text (settable) Grok · not signed in · retry 3m        │
+		40 text (settable) Cursor · usage off                     │
+		41 text (settable)                                        │
+		42 text (settable) Terminal mode  Ctrl-g browse  then s Agents, Ctrl-o Quick message
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text OVRCR GUI
+47 menu bar
+	48 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │plan snapshot restore  pi:grok-4.6  Waiting for input · 17m                 pid 35793
+                                       │─────────────────────────────────────────────────────────────────────────────────────
+ OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───
+  ✓ Rep

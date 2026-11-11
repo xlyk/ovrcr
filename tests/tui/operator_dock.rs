@@ -1,17 +1,25 @@
-//! The Operator dock is the last sidebar row: the first project leads the
-//! sidebar, attention and quota stay between the tree and the dock, and the
-//! title bar carries no Operator shortcut. Every case drives the production
+//! The Operator sidebar section leads the session tree, after attention when
+//! present; Quota remains below the tree. Every case drives the production
 //! Dashboard input/render path with real protocol replies.
 
 use crate::*;
 use ovrcr::protocol::{
-    OperatorConversationId, OperatorConversationSummary, OperatorRequest, OperatorResponse,
-    QuotaSnapshot, QuotaState, QuotaWindow, SessionKind, SessionRunId,
+    ErrorCode, OperatorConversationId, OperatorConversationSummary, OperatorHistory,
+    OperatorMessage, OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorTurn,
+    OperatorTurnId, OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, QuotaSnapshot,
+    QuotaState, QuotaWindow, SessionKind, SessionRunId,
 };
+
+fn operator_dashboard_fixture() -> Dashboard {
+    let mut dashboard = crate::dashboard_fixture();
+    let mut settings = ovrcr::tui::Settings::default();
+    settings.operator.sidebar = true;
+    dashboard.install_settings(settings);
+    dashboard
+}
 
 fn summary() -> OperatorConversationSummary {
     OperatorConversationSummary {
-        reasoning: None,
         run: SessionRunId(1),
         worker_stopped: true,
         id: OperatorConversationId(7),
@@ -19,7 +27,32 @@ fn summary() -> OperatorConversationSummary {
         model: None,
         title: "Operator".into(),
         current_turn: None,
+        reasoning: None,
+        current_turn_started_unix_ms: None,
+        last_reply_unix_ms: None,
     }
+}
+
+fn summary_with_turn(
+    state: OperatorTurnState,
+    worker_stopped: bool,
+) -> OperatorConversationSummary {
+    let mut value = summary();
+    let identity = OperatorTurnIdentity {
+        conversation: value.id,
+        turn: OperatorTurnId(1),
+        session: value.session,
+        run: value.run,
+    };
+    value.worker_stopped = worker_stopped;
+    value.current_turn = Some(OperatorTurn {
+        identity,
+        state,
+        sequence: 2,
+    });
+    value.current_turn_started_unix_ms = Some(0);
+    value.last_reply_unix_ms = Some(0);
+    value
 }
 
 fn operator_requests(messages: &[ClientMessage]) -> Vec<&OperatorRequest> {
@@ -39,6 +72,53 @@ fn respond(dashboard: &mut Dashboard, request_id: u64, value: OperatorConversati
     });
 }
 
+fn open_with_history(
+    dashboard: &mut Dashboard,
+    area: Rect,
+    summary: OperatorConversationSummary,
+    messages: Vec<OperatorMessage>,
+) {
+    let open = open_once(dashboard, area, 2, 2);
+    let followups = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: open,
+        response: Response::Operator(OperatorResponse::Opened(summary.clone())),
+    });
+    let read = followups
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Read { .. })
+            )
+        })
+        .expect("opening the conversation reads its retained history");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: read.request_id,
+        response: Response::Operator(OperatorResponse::History(OperatorHistory {
+            conversation: summary,
+            messages,
+            next_after: None,
+        })),
+    });
+}
+
+fn assistant_reply(text: &str) -> Vec<OperatorMessage> {
+    vec![
+        OperatorMessage {
+            ordinal: 1,
+            turn: OperatorTurnId(1),
+            content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                text.into(),
+            )),
+        },
+        OperatorMessage {
+            ordinal: 2,
+            turn: OperatorTurnId(1),
+            content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+        },
+    ]
+}
+
 fn click(dashboard: &mut Dashboard, area: Rect, column: u16, row: u16) -> DashboardAction {
     dashboard.mouse_action(
         mouse_event(
@@ -51,18 +131,18 @@ fn click(dashboard: &mut Dashboard, area: Rect, column: u16, row: u16) -> Dashbo
     )
 }
 
-/// Clicks the dock once and returns the single Open it sends.
+/// Clicks the Operator section once and returns the single Open it sends.
 fn open_once(dashboard: &mut Dashboard, area: Rect, column: u16, row: u16) -> u64 {
     assert_eq!(
         click(dashboard, area, column, row),
         DashboardAction::Redraw,
-        "the dock row is navigation"
+        "the Operator section is navigation"
     );
     let mut out = dashboard.drain_outbox();
     assert_eq!(
         operator_requests(&out),
         [&OperatorRequest::Open],
-        "one Open from the dock: {out:?}"
+        "one Open from the section: {out:?}"
     );
     out.drain(..)
         .find(|message| matches!(message.request, Request::Operator(OperatorRequest::Open)))
@@ -78,6 +158,10 @@ fn session_id_in(row: &str) -> Option<u64> {
         .collect::<String>()
         .parse()
         .ok()
+}
+
+fn sidebar_line(row: &str) -> &str {
+    row.split_once('│').map_or(row, |(sidebar, _)| sidebar)
 }
 
 fn quota_with_windows() -> QuotaSnapshot {
@@ -109,9 +193,539 @@ fn quota_with_windows() -> QuotaSnapshot {
 }
 
 #[test]
-fn the_first_project_leads_the_sidebar_and_the_dock_ends_it() {
+fn attention_and_operator_sections_lead_the_tree_and_leave_blank_rows() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::attention_and_operator_sections_lead_the_tree_and_leave_blank_rows",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = operator_dashboard_fixture();
+    dashboard.install_area(area);
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::WaitingInput;
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        quota_with_windows(),
+    ))));
+
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(rows[1].contains("? 1 needs input"), "{rows:?}");
+    assert!(
+        sidebar_line(&rows[2]).trim().is_empty(),
+        "attention has one blank row: {rows:?}"
+    );
+    assert!(rows[3].starts_with(" OPERATOR "), "{rows:?}");
+    assert!(
+        rows[4].contains("Off") || rows[4].contains("Not set up"),
+        "{rows:?}"
+    );
+    assert!(
+        rows[5].contains("Ctrl-o"),
+        "the detail gives the Off entry points: {rows:?}"
+    );
+    assert!(
+        sidebar_line(&rows[6]).trim().is_empty(),
+        "Operator has one blank row: {rows:?}"
+    );
+    assert!(
+        rows[7].contains("CONSIGINT"),
+        "the tree follows Operator: {rows:?}"
+    );
+    let quota = rows
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("Quota remains below the tree");
+    assert!(quota > 7, "{rows:?}");
+}
+
+#[test]
+fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() {
+    let mut dashboard = operator_dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::WaitingInput;
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        quota_with_windows(),
+    ))));
+
+    let rows_at = |dashboard: &mut Dashboard, height: u16| {
+        dashboard.install_area(Rect::new(0, 0, 120, height));
+        rendered_rows(dashboard, 120, height)
+    };
+    let full = rows_at(&mut dashboard, 35);
+    assert!(
+        sidebar_line(&full[2]).trim().is_empty(),
+        "the attention gap exists while roomy: {full:?}"
+    );
+    assert!(
+        full[3].starts_with(" OPERATOR "),
+        "Operator follows attention: {full:?}"
+    );
+    assert!(
+        sidebar_line(&full[6]).trim().is_empty(),
+        "the Operator gap exists while roomy: {full:?}"
+    );
+    assert!(
+        full[7].contains("CONSIGINT"),
+        "tree follows Operator: {full:?}"
+    );
+    let full_usage = full
+        .iter()
+        .position(|row| row.contains("USAGE ·"))
+        .expect("Usage follows the tree");
+    let full_resources = full
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources follows Usage");
+    let full_quota = full
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("full Quota includes its heading");
+    assert!(full_usage > 7, "{full:?}");
+    assert_eq!(full_usage + 5, full_resources, "{full:?}");
+    assert_eq!(full_resources + 4, full_quota, "{full:?}");
+    let no_attention_gap = rows_at(&mut dashboard, 34);
+    assert!(
+        no_attention_gap[1].contains("needs input"),
+        "attention persists: {no_attention_gap:?}"
+    );
+    assert!(
+        no_attention_gap[2].starts_with(" OPERATOR "),
+        "first gap shrinks: {no_attention_gap:?}"
+    );
+    assert!(
+        sidebar_line(&no_attention_gap[5]).trim().is_empty(),
+        "Operator gap remains for the next step: {no_attention_gap:?}"
+    );
+
+    let no_operator_gap = rows_at(&mut dashboard, 33);
+    assert!(
+        no_operator_gap[1].contains("needs input"),
+        "attention persists: {no_operator_gap:?}"
+    );
+    assert!(
+        no_operator_gap[2].starts_with(" OPERATOR "),
+        "Operator stays three rows: {no_operator_gap:?}"
+    );
+    assert!(
+        no_operator_gap[5].contains("CONSIGINT"),
+        "second gap shrinks: {no_operator_gap:?}"
+    );
+
+    let compact_usage = rows_at(&mut dashboard, 32);
+    assert!(
+        compact_usage
+            .iter()
+            .any(|row| row.contains("Usage · 5 sessions")),
+        "Usage compacts to one line: {compact_usage:?}"
+    );
+    assert!(
+        compact_usage.iter().any(|row| row.contains("QUOTA LEFT")),
+        "Quota stays full while Usage compacts: {compact_usage:?}"
+    );
+
+    let quota_with_resources = rows_at(&mut dashboard, 26);
+    assert!(
+        quota_with_resources
+            .iter()
+            .any(|row| row.contains("Resources ·")),
+        "Resources compacts to one row before Quota: {quota_with_resources:?}"
+    );
+    assert!(
+        quota_with_resources
+            .iter()
+            .any(|row| row.contains("QUOTA LEFT")),
+        "the quota heading remains before its compact form: {quota_with_resources:?}"
+    );
+
+    let compact_quota = rows_at(&mut dashboard, 24);
+    assert!(
+        compact_quota[1].contains("needs input"),
+        "attention persists: {compact_quota:?}"
+    );
+    assert!(
+        !compact_quota.iter().any(|row| row.contains("QUOTA LEFT")),
+        "provider-only Quota has no heading: {compact_quota:?}"
+    );
+    for provider in ["Claude", "Codex", "Grok", "Cursor"] {
+        assert!(
+            compact_quota.iter().any(|row| row.contains(provider)),
+            "provider row {provider}: {compact_quota:?}"
+        );
+    }
+
+    let usage_hidden = rows_at(&mut dashboard, 18);
+    assert!(
+        !usage_hidden
+            .iter()
+            .any(|row| row.contains("USAGE") || row.contains("Usage ·")),
+        "Usage hides before Operator compacts: {usage_hidden:?}"
+    );
+    assert!(
+        usage_hidden[2].starts_with(" OPERATOR "),
+        "Operator remains expanded when Usage is hidden: {usage_hidden:?}"
+    );
+
+    let compact_operator = rows_at(&mut dashboard, 16);
+    assert!(
+        compact_operator[1].contains("needs input"),
+        "attention persists: {compact_operator:?}"
+    );
+    assert!(
+        !compact_operator[2].contains("OPERATOR"),
+        "the title is removed from compact Operator: {compact_operator:?}"
+    );
+    assert!(
+        compact_operator[2].contains("Operator"),
+        "Operator keeps one row: {compact_operator:?}"
+    );
+
+    let quota_pointer = rows_at(&mut dashboard, 12);
+    assert!(
+        quota_pointer[1].contains("needs input"),
+        "attention persists: {quota_pointer:?}"
+    );
+    assert!(
+        quota_pointer.iter().any(|row| row.contains("Quota: u")),
+        "Quota reaches its one-line pointer: {quota_pointer:?}"
+    );
+
+    let quota_hidden = rows_at(&mut dashboard, 7);
+    assert!(
+        quota_hidden[1].contains("needs input"),
+        "attention persists: {quota_hidden:?}"
+    );
+    assert!(
+        !quota_hidden
+            .iter()
+            .any(|row| row.contains("Quota") || row.contains("Claude")),
+        "Quota hides before Operator: {quota_hidden:?}"
+    );
+    assert!(
+        quota_hidden[2].contains("Operator"),
+        "Operator remains while Quota is hidden: {quota_hidden:?}"
+    );
+
+    let operator_hidden = rows_at(&mut dashboard, 6);
+    assert!(
+        operator_hidden[1].contains("needs input"),
+        "attention persists at the minimum height: {operator_hidden:?}"
+    );
+    assert!(
+        !operator_hidden
+            .iter()
+            .any(|row| row.contains("OPERATOR") || row.contains("Operator")),
+        "Operator hides last: {operator_hidden:?}"
+    );
+    assert!(
+        operator_hidden[2..5]
+            .iter()
+            .all(|row| !sidebar_line(row).trim().is_empty()),
+        "three tree rows remain when feasible: {operator_hidden:?}"
+    );
+
+    let no_attention = operator_dashboard_fixture();
+    let rows = rendered_rows(&no_attention, 120, 40);
+    assert!(
+        rows[1].starts_with(" OPERATOR "),
+        "no counts means no attention row or gap: {rows:?}"
+    );
+}
+
+#[test]
+fn clicking_the_operator_status_row_opens_the_single_conversation() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = operator_dashboard_fixture();
+    dashboard.install_area(area);
+    dashboard.drain_outbox();
+
+    let open = open_once(&mut dashboard, area, 2, 2);
+    respond(&mut dashboard, open, summary());
+    assert!(rendered_rows(&dashboard, 120, 40)[1].contains("Operator"));
+}
+
+#[test]
+fn the_dashboard_setting_hides_the_operator_section_without_disabling_its_key() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(fixture_hierarchy());
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("OPERATOR"))
+    );
+
+    dashboard.install_settings(ovrcr::tui::Settings {
+        operator: ovrcr_protocol::OperatorSettings {
+            sidebar: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(!rows.iter().any(|row| row.contains("OPERATOR")), "{rows:?}");
+    assert!(
+        rows[1].contains("CONSIGINT"),
+        "the tree takes its rows: {rows:?}"
+    );
+
+    dashboard.key(KeyCode::Char('o'));
+    assert_eq!(
+        operator_requests(&dashboard.drain_outbox()),
+        [&OperatorRequest::Open]
+    );
+}
+
+#[test]
+fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::the_five_sidebar_states_show_timing_activity_and_the_last_reply",
+    ) {
+        return;
+    }
+    let area = Rect::new(0, 0, 120, 40);
+
+    let mut off = operator_dashboard_fixture();
+    off.install_area(area);
+    let rows = rendered_rows(&off, 120, 40);
+    if rows[2].contains("Off") {
+        assert!(
+            rows[3].contains("o opens Operator"),
+            "Off explains how to start: {rows:?}"
+        );
+    } else {
+        assert!(
+            rows[2].contains("Not set up"),
+            "missing Pi is reported honestly: {rows:?}"
+        );
+        assert!(
+            rows[3].contains("run ovrcr operator setup"),
+            "setup action is clear: {rows:?}"
+        );
+    }
+
+    for failure in [
+        "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+        "No Pi model selected; run ovrcr operator setup.",
+        "Configured Operator model is unavailable in the dedicated Pi profile.",
+    ] {
+        let mut not_setup = operator_dashboard_fixture();
+        not_setup.install_area(area);
+        not_setup.key(KeyCode::Char('o'));
+        let open = not_setup.drain_outbox().into_iter().next().expect("Open");
+        not_setup.handle_server_message(ServerMessage::Response {
+            request_id: open.request_id,
+            response: Response::Error {
+                code: ErrorCode::Internal,
+                message: failure.into(),
+            },
+        });
+        let rows = rendered_rows(&not_setup, 120, 40);
+        assert!(rows[2].contains("Not set up"), "{failure}: {rows:?}");
+        assert!(
+            rows[3].contains("run ovrcr operator setup"),
+            "{failure}: {rows:?}"
+        );
+    }
+
+    let mut working = operator_dashboard_fixture();
+    working.install_area(area);
+    let summary = summary_with_turn(OperatorTurnState::Running, false);
+    let tool = OperatorMessage {
+        ordinal: 1,
+        turn: OperatorTurnId(1),
+        content: OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+            id: "tool-1".into(),
+            name: "bash".into(),
+            arguments: r#"{"command":"ovrcr terminal list"}"#.into(),
+        }),
+    };
+    open_with_history(&mut working, area, summary, vec![tool]);
+    let rows = rendered_rows(&working, 120, 40);
+    assert!(
+        rows[2].contains("Responding"),
+        "working state is explicit: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("0s"),
+        "the retained turn start provides elapsed time: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("running ovrcr terminal list"),
+        "current command is shown: {rows:?}"
+    );
+    assert!(
+        !rows[2].contains("pi") && !rows[2].contains("model"),
+        "no harness or model: {rows:?}"
+    );
+
+    let mut reply_ready = operator_dashboard_fixture();
+    reply_ready.install_area(area);
+    let summary = summary_with_turn(OperatorTurnState::Complete, true);
+    open_with_history(
+        &mut reply_ready,
+        area,
+        summary,
+        assistant_reply("The deployment finished cleanly."),
+    );
+    let rows = rendered_rows(&reply_ready, 120, 40);
+    assert!(
+        rows[2].contains("Reply ready · 1 unread"),
+        "unread reply is counted: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("“The deployment finished cleanly.”"),
+        "reply preview is visible: {rows:?}"
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    reply_ready.draw(&mut terminal).unwrap();
+    reply_ready.key(KeyCode::Esc);
+    let rows = rendered_rows(&reply_ready, 120, 40);
+    assert!(
+        rows[2].contains("Idle"),
+        "a reviewed conversation becomes idle: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("last reply 0s"),
+        "completed reply time is retained: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("“The deployment finished cleanly.”"),
+        "idle keeps the last reply: {rows:?}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section",
+    ) {
+        return;
+    }
+    use ovrcr::protocol::{ClientMessage, exchange_preamble, read_frame, write_frame};
+    use std::collections::BTreeSet;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    fn drive(
+        connection: &mut UnixStream,
+        dashboard: &mut Dashboard,
+        initial: Vec<ClientMessage>,
+    ) -> Vec<ServerMessage> {
+        let mut awaiting = BTreeSet::new();
+        for message in initial {
+            assert!(awaiting.insert(message.request_id));
+            write_frame(connection, &message).expect("send Dashboard request");
+        }
+        let mut observed = Vec::new();
+        while !awaiting.is_empty() {
+            let message = read_frame::<ServerMessage>(connection).expect("read Dashboard frame");
+            let response_id = match &message {
+                ServerMessage::Response { request_id, .. } => Some(*request_id),
+                ServerMessage::Event(_) => None,
+            };
+            for followup in dashboard.handle_server_message(message.clone()) {
+                assert!(awaiting.insert(followup.request_id));
+                write_frame(connection, &followup).expect("send Dashboard follow-up");
+            }
+            if let Some(request_id) = response_id {
+                awaiting.remove(&request_id);
+            }
+            observed.push(message);
+        }
+        observed
+    }
+
+    let live = crate::live::Live::thread().bounded();
+    live.ready("feature/sidebar-operator");
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_config_dir(live.config.clone());
+    dashboard.install_area(area);
+    let mut connection = UnixStream::connect(&live.socket).expect("connect fixture Server");
+    connection
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    connection
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    exchange_preamble(&mut connection).expect("Dashboard protocol handshake");
+    let startup = drive(
+        &mut connection,
+        &mut dashboard,
+        vec![
+            ClientMessage {
+                request_id: 900_001,
+                request: Request::DashboardHello,
+            },
+            ClientMessage {
+                request_id: 900_002,
+                request: Request::DashboardGeometry {
+                    size: ovrcr::protocol::TerminalSize {
+                        rows: 40,
+                        cols: 120,
+                    },
+                },
+            },
+        ],
+    );
+    assert!(
+        startup.iter().any(|message| {
+            matches!(
+                message,
+                ServerMessage::Event(ServerEvent::SettingsChanged(_))
+            )
+        }),
+        "the Dashboard receives the Server's settings"
+    );
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(
+        rows[1].starts_with(" OPERATOR "),
+        "live Dashboard draws the section first: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        "live state follows server setup: {rows:?}"
+    );
+    assert!(
+        rows[5].contains("FIXTURE"),
+        "the real Server hierarchy follows Operator: {rows:?}"
+    );
+
+    assert_eq!(click(&mut dashboard, area, 2, 2), DashboardAction::Redraw);
+    let requests = dashboard.drain_outbox();
+    let opened = drive(&mut connection, &mut dashboard, requests);
+    assert!(
+        opened.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                response: Response::Operator(OperatorResponse::Opened(_)),
+                ..
+            }
+        )),
+        "clicking the live section opens the Server's singleton"
+    );
+    let rows = rendered_rows(&dashboard, 120, 40);
+    assert!(
+        rows[2].contains("Idle"),
+        "live Open returns the idle state: {rows:?}"
+    );
+}
+
+#[test]
+fn the_operator_section_precedes_the_tree_and_does_not_claim_title_space() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
     let rows = rendered_rows(&dashboard, 120, 40);
@@ -126,14 +740,19 @@ fn the_first_project_leads_the_sidebar_and_the_dock_ends_it() {
         rows[0]
     );
     assert!(
-        rows[1].contains("CONSIGINT"),
-        "the first project sits directly below the title: {:?}",
-        &rows[..3]
+        rows[1].starts_with(" OPERATOR "),
+        "Operator follows the title: {:?}",
+        &rows[..6]
     );
     assert!(
-        rows[38].contains("Operator"),
-        "the dock is the last sidebar row above the footer: {:?}",
-        &rows[36..]
+        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        "state follows heading: {:?}",
+        rows[2]
+    );
+    assert!(
+        rows[5].contains("CONSIGINT"),
+        "the first project follows Operator: {:?}",
+        &rows[3..7]
     );
     assert!(rows[39].starts_with("BROWSE"), "{:?}", rows[39]);
 }
@@ -141,7 +760,7 @@ fn the_first_project_leads_the_sidebar_and_the_dock_ends_it() {
 #[test]
 fn retired_title_controls_open_neither_surface() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
     let before = rendered_rows(&dashboard, 120, 40);
@@ -185,7 +804,7 @@ fn retired_title_controls_open_neither_surface() {
     );
 
     // Commands still reaches Quick message after the title control retired.
-    let mut commands = dashboard_fixture();
+    let mut commands = operator_dashboard_fixture();
     commands.install_area(area);
     palette_search(&mut commands, "Quick message");
     commands.key(KeyCode::Enter);
@@ -197,44 +816,45 @@ fn retired_title_controls_open_neither_surface() {
 }
 
 #[test]
-fn both_ends_of_the_dock_open_the_same_conversation() {
+fn both_ends_of_the_operator_section_open_the_same_conversation() {
+    if crate::pi_available_test::run_with_pi_available(
+        "operator_dock::both_ends_of_the_operator_section_open_the_same_conversation",
+    ) {
+        return;
+    }
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
 
     // Left end of the row.
-    let open = open_once(&mut dashboard, area, 0, 38);
+    let open = open_once(&mut dashboard, area, 0, 2);
     respond(&mut dashboard, open, summary());
     dashboard.drain_outbox();
     let open_rows = rendered_rows(&dashboard, 120, 40);
     assert!(
-        open_rows[38].starts_with('▌'),
+        open_rows[2].starts_with('▌'),
         "the open conversation draws its selection marker: {:?}",
-        open_rows[38]
+        open_rows[2]
     );
-    assert!(open_rows[38].contains("Operator"), "{:?}", open_rows[38]);
+    assert!(open_rows[2].contains("Idle"), "{:?}", open_rows[2]);
 
     // Returning to Browse restores the terminal panes and the quiet row.
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
     let browse_rows = rendered_rows(&dashboard, 120, 40);
-    assert!(!browse_rows[38].starts_with('▌'), "{:?}", browse_rows[38]);
+    assert!(!browse_rows[2].starts_with('▌'), "{:?}", browse_rows[2]);
+    assert!(browse_rows[2].contains("Idle"), "{:?}", browse_rows[2]);
     assert!(
-        browse_rows[38].contains("Operator"),
-        "{:?}",
-        browse_rows[38]
-    );
-    assert!(
-        browse_rows[1].contains("CONSIGINT"),
+        browse_rows[5].contains("CONSIGINT"),
         "the tree is back: {:?}",
         &browse_rows[..3]
     );
 
     // Right end of the row opens the same singleton.
-    let open = open_once(&mut dashboard, area, 38, 38);
+    let open = open_once(&mut dashboard, area, 38, 2);
     respond(&mut dashboard, open, summary());
     let reopened = rendered_rows(&dashboard, 120, 40);
-    assert!(reopened[38].starts_with('▌'), "{:?}", reopened[38]);
+    assert!(reopened[2].starts_with('▌'), "{:?}", reopened[2]);
     assert!(
         reopened.iter().any(|row| row.contains("Operator · pi")),
         "{reopened:?}"
@@ -242,31 +862,38 @@ fn both_ends_of_the_dock_open_the_same_conversation() {
 }
 
 #[test]
-fn representative_frames_keep_the_dock_at_the_sidebar_foot() {
+fn representative_frames_keep_the_operator_section_before_the_tree() {
     for (cols, rows) in [(140, 40), (100, 24), (80, 24), (60, 24), (60, 16)] {
         let area = Rect::new(0, 0, cols, rows);
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = operator_dashboard_fixture();
         dashboard.install_area(area);
         dashboard.drain_outbox();
         let frame = rendered_rows(&dashboard, cols, rows);
-        let dock = usize::from(rows) - 2;
         assert!(
             frame[0].starts_with("󰚩 OVRCR") && !frame[0].contains("Operator"),
             "{cols}x{rows}: {:?}",
             frame[0]
         );
         assert!(
-            frame[1].contains("CONSIGINT"),
-            "{cols}x{rows}: the first project leads: {:?}",
-            &frame[..3]
+            frame[1].starts_with(" OPERATOR "),
+            "{cols}x{rows}: Operator follows the title: {:?}",
+            &frame[..6]
         );
         assert!(
-            frame[dock].contains("Operator"),
-            "{cols}x{rows}: the dock is the last sidebar row: {:?}",
-            &frame[dock - 2..]
+            frame[2].contains("Off") || frame[2].contains("Not set up"),
+            "{cols}x{rows}: state follows title: {:?}",
+            &frame[1..4]
+        );
+        assert!(
+            frame
+                .iter()
+                .skip(4)
+                .any(|row| sidebar_line(row).contains("CONSIGINT")),
+            "{cols}x{rows}: tree follows Operator: {:?}",
+            &frame[1..]
         );
 
-        let open = open_once(&mut dashboard, area, 0, dock as u16);
+        let open = open_once(&mut dashboard, area, 0, 2);
         respond(&mut dashboard, open, summary());
         let open_frame = rendered_rows(&dashboard, cols, rows);
         let header: String = if cols < 100 {
@@ -279,7 +906,7 @@ fn representative_frames_keep_the_dock_at_the_sidebar_foot() {
             open_frame[1].chars().take(14).collect()
         } else {
             assert!(
-                open_frame[1].contains("CONSIGINT"),
+                open_frame[1].contains("OPERATOR"),
                 "{cols}x{rows}: the sidebar stays: {:?}",
                 &open_frame[..3]
             );
@@ -288,18 +915,22 @@ fn representative_frames_keep_the_dock_at_the_sidebar_foot() {
         assert_eq!(header, "Operator · pi ", "{cols}x{rows}");
 
         if cols < 100 {
-            // The ordinary sidebar stays available on demand, dock included.
+            // The ordinary sidebar stays available on demand, section included.
             dashboard.ctrl('l');
             let shown = rendered_rows(&dashboard, cols, rows);
             assert!(
-                shown[1].contains("CONSIGINT"),
+                shown[1].starts_with(" OPERATOR ")
+                    && shown
+                        .iter()
+                        .skip(4)
+                        .any(|row| sidebar_line(row).contains("CONSIGINT")),
                 "{cols}x{rows}: Ctrl-l reveals the sidebar: {:?}",
-                &shown[..3]
+                &shown[..7]
             );
             assert!(
-                shown[dock].starts_with('▌') && shown[dock].contains("Operator"),
-                "{cols}x{rows}: the selected dock returns with the sidebar: {:?}",
-                shown[dock]
+                shown[1].contains("OPERATOR") && shown[2].starts_with('▌'),
+                "{cols}x{rows}: the selected Operator returns with the sidebar: {:?}",
+                &shown[1..4]
             );
         }
     }
@@ -308,10 +939,10 @@ fn representative_frames_keep_the_dock_at_the_sidebar_foot() {
 #[test]
 fn the_floor_keeps_the_composer_and_drafts_survive_below_it() {
     let area = Rect::new(0, 0, 60, 16);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
-    let open = open_once(&mut dashboard, area, 0, 14);
+    let open = open_once(&mut dashboard, area, 0, 2);
     respond(&mut dashboard, open, summary());
     dashboard.drain_outbox();
     for character in "unsent draft".chars() {
@@ -339,14 +970,14 @@ fn the_floor_keeps_the_composer_and_drafts_survive_below_it() {
 }
 
 #[test]
-fn a_hidden_or_short_sidebar_yields_the_dock_but_keeps_the_keyboard_route() {
+fn a_hidden_or_short_sidebar_yields_the_operator_section_but_keeps_the_key() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
-    assert!(rendered_rows(&dashboard, 120, 40)[38].contains("Operator"));
+    assert!(rendered_rows(&dashboard, 120, 40)[1].contains("OPERATOR"));
 
-    // A hidden sidebar hides the dock row too.
+    // A hidden sidebar hides the Operator section too.
     dashboard.key(KeyCode::Char('b'));
     let hidden = rendered_rows(&dashboard, 120, 40);
     assert!(
@@ -360,7 +991,7 @@ fn a_hidden_or_short_sidebar_yields_the_dock_but_keeps_the_keyboard_route() {
     assert_eq!(
         operator_requests(&out),
         [&OperatorRequest::Open],
-        "the keyboard route works without the dock: {out:?}"
+        "the keyboard route works without the section: {out:?}"
     );
     let request = out
         .iter()
@@ -372,19 +1003,19 @@ fn a_hidden_or_short_sidebar_yields_the_dock_but_keeps_the_keyboard_route() {
     dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Char('b'));
 
-    // Six rows leave four sidebar lines: three tree lines plus the dock row.
+    // Six rows leave four sidebar lines: three tree lines plus compact Operator.
     dashboard.install_area(Rect::new(0, 0, 120, 6));
     let roomy = rendered_rows(&dashboard, 120, 6);
-    assert!(roomy[4].contains("Operator"), "{roomy:?}");
-    for row in &roomy[1..4] {
+    assert!(roomy[1].contains("Operator"), "{roomy:?}");
+    for row in &roomy[2..5] {
         assert!(
             !row.contains("QUOTA"),
             "the tree keeps three lines: {roomy:?}"
         );
     }
 
-    // Five rows leave three: the dock yields them to the tree, whose three
-    // drawn lines are the same.
+    // Five rows leave three: Operator yields them to the tree, whose three
+    // drawn lines move up by one row.
     dashboard.install_area(Rect::new(0, 0, 120, 5));
     let tight = rendered_rows(&dashboard, 120, 5);
     assert!(
@@ -392,9 +1023,15 @@ fn a_hidden_or_short_sidebar_yields_the_dock_but_keeps_the_keyboard_route() {
         "{tight:?}"
     );
     assert_eq!(
-        &roomy[1..4],
-        &tight[1..4],
-        "the short sidebar gives the dock row to the tree"
+        roomy[2..5]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        tight[1..4]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        "the short sidebar gives the compact Operator row to the tree"
     );
     assert!(roomy[5].starts_with("BROWSE"), "{roomy:?}");
     assert!(tight[4].starts_with("BROWSE"), "{tight:?}");
@@ -409,7 +1046,7 @@ fn a_hidden_or_short_sidebar_yields_the_dock_but_keeps_the_keyboard_route() {
 }
 
 #[test]
-fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
+fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
     let area = Rect::new(0, 0, 120, 40);
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.truncate(1);
@@ -440,17 +1077,17 @@ fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
 
     let initial = rendered_rows(&dashboard, 120, 40);
     assert!(
-        initial[1].contains("session-"),
-        "the scrolled tree leads the sidebar: {:?}",
-        &initial[..3]
+        initial[5].contains("session-"),
+        "the scrolled tree follows Operator: {:?}",
+        &initial[3..8]
     );
-    assert!(initial[38].contains("Operator"), "{:?}", &initial[36..]);
+    assert!(initial[1].contains("OPERATOR"), "{:?}", &initial[..5]);
     let quota_row = initial
         .iter()
         .position(|row| row.contains("QUOTA LEFT"))
         .expect("quota section");
 
-    // Scrolling the tree never moves the dock.
+    // Scrolling the tree never moves the preceding Operator section.
     for _ in 0..3 {
         assert_eq!(
             click_wheel(&mut dashboard, area, MouseEventKind::ScrollUp, 10, 5),
@@ -459,12 +1096,19 @@ fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
     }
     let scrolled = rendered_rows(&dashboard, 120, 40);
     assert_eq!(
-        scrolled[38], initial[38],
-        "the dock is pinned while the tree scrolls"
+        scrolled[1..4]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        initial[1..4]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        "Operator stays fixed while the tree scrolls"
     );
     assert_ne!(
-        &scrolled[1..quota_row],
-        &initial[1..quota_row],
+        &scrolled[5..quota_row],
+        &initial[5..quota_row],
         "the tree scrolled"
     );
 
@@ -480,31 +1124,49 @@ fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(identity)));
 
-    // A quota update changes the section but not the dock.
+    // A quota update changes the section but not Operator's rows.
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
         quota_with_windows(),
     ))));
     dashboard.drain_outbox();
     let requoted = rendered_rows(&dashboard, 120, 40);
     assert_eq!(
-        requoted[38], initial[38],
-        "a quota update leaves the dock in place"
+        requoted[1..4]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        initial[1..4]
+            .iter()
+            .map(|row| sidebar_line(row))
+            .collect::<Vec<_>>(),
+        "a quota update leaves Operator in place"
     );
     assert_ne!(
-        requoted[..38],
-        initial[..38],
+        &requoted[5..],
+        &initial[5..],
         "the quota section changed shape"
     );
 
-    // An attention update adds the strip above quota without moving the dock.
+    // Attention moves Operator down by its line and blank row.
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         waiting,
     ))));
     dashboard.drain_outbox();
     let attended = rendered_rows(&dashboard, 120, 40);
-    assert_eq!(
-        attended[38], initial[38],
-        "an attention update leaves the dock in place"
+    assert!(
+        attended[1].contains("needs input"),
+        "attention remains first: {:?}",
+        &attended[..5]
+    );
+    assert!(
+        attended[3].starts_with(" OPERATOR "),
+        "attention shifts Operator: {:?}",
+        &attended[..7]
+    );
+    assert!(
+        attended[7].contains("session-"),
+        "tree follows attention and Operator: {:?}",
+        &attended[5..9]
     );
     let strip = attended
         .iter()
@@ -533,7 +1195,7 @@ fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
     assert!(details.contains("Quota details"), "{details}");
     dashboard.key(KeyCode::Esc);
 
-    // The divider responds on the dock's own row, and the dock keeps the last row.
+    // The sidebar divider remains draggable, and Operator keeps its top rows.
     for (kind, column) in [
         (MouseEventKind::Down(MouseButton::Left), 39),
         (MouseEventKind::Drag(MouseButton::Left), 19),
@@ -547,11 +1209,11 @@ fn a_fifty_session_tree_scrolls_under_a_pinned_dock() {
     assert_eq!(dashboard.pane_rects(area)[0].terminal.x, 20);
     let resized = rendered_rows(&dashboard, 120, 40);
     assert!(
-        resized[38].contains("Operator"),
-        "the dock keeps the last row at the minimum width: {:?}",
-        &resized[36..]
+        resized[2].contains("OPERATOR"),
+        "Operator stays at the top at the minimum sidebar width: {:?}",
+        &resized[1..7]
     );
-    let open = open_once(&mut dashboard, area, 18, 38);
+    let open = open_once(&mut dashboard, area, 18, 3);
     respond(&mut dashboard, open, summary());
 }
 
@@ -594,7 +1256,7 @@ fn jump_hierarchy(count: u64) -> HierarchySnapshot {
 }
 
 #[test]
-fn jump_labels_stay_in_the_tree_and_never_mark_the_dock() {
+fn jump_labels_stay_in_the_tree_and_never_mark_operator() {
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
@@ -616,11 +1278,11 @@ fn jump_labels_stay_in_the_tree_and_never_mark_the_dock() {
         "Agent sessions keep their labels: {rows:?}"
     );
     assert!(
-        !rows[38].contains('['),
-        "the dock is outside the numbered targets: {:?}",
-        rows[38]
+        !rows[1..4].iter().any(|row| row.contains('[')),
+        "Operator is outside the numbered targets: {:?}",
+        &rows[1..4]
     );
-    assert!(rows[38].contains("Operator"), "{:?}", rows[38]);
+    assert!(rows[1].contains("OPERATOR"), "{:?}", rows[1]);
 
     // A number still addresses the Agent session it marks.
     dashboard.key(KeyCode::Char('1'));

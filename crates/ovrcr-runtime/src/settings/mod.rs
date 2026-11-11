@@ -10,7 +10,7 @@
 use ovrcr_protocol::{
     AgentModelPolicy, AgentOverride, AutomaticLocalTerminals, DelegationHarness,
     DelegationSettings, LaunchChoice, NativeCommand, ReadySoundChoice, SettingRow, Settings,
-    SettingsFinding, SettingsReport, ThemeId,
+    SettingsFinding, SettingsReport, SidebarView, ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -195,6 +195,15 @@ impl Loader<'_> {
                 None => self.finding(
                     ThemeId::KEY,
                     format!("unknown value {raw:?}; expected {}", ThemeId::EXPECTED),
+                ),
+            }
+        }
+        if let Some(raw) = self.take::<String>(table, SidebarView::KEY) {
+            match SidebarView::parse(&raw) {
+                Some(view) => self.accept(SidebarView::KEY, &mut settings.sidebar_view, view),
+                None => self.finding(
+                    SidebarView::KEY,
+                    format!("unknown value {raw:?}; expected \"tree\" or \"recent\""),
                 ),
             }
         }
@@ -470,6 +479,9 @@ impl Loader<'_> {
             self.unknown(delegation, "delegation.");
         }
         if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
+            if let Some(value) = self.take::<bool>(&mut operator, "operator.sidebar") {
+                self.accept("operator.sidebar", &mut settings.operator.sidebar, value);
+            }
             if let Some(value) = self.take::<ovrcr_protocol::OperatorThinkingLevel>(
                 &mut operator,
                 "operator.thinking_level",
@@ -491,6 +503,18 @@ impl Loader<'_> {
                 }
             }
             self.unknown(operator, "operator.");
+        }
+        if let Some(mut usage) = self.take::<toml::Table>(table, "usage") {
+            if let Some(value) = self.take::<bool>(&mut usage, "usage.sidebar") {
+                self.accept("usage.sidebar", &mut settings.usage.sidebar, value);
+            }
+            self.unknown(usage, "usage.");
+        }
+        if let Some(mut resources) = self.take::<toml::Table>(table, "resources") {
+            if let Some(value) = self.take::<bool>(&mut resources, "resources.sidebar") {
+                self.accept("resources.sidebar", &mut settings.resources.sidebar, value);
+            }
+            self.unknown(resources, "resources.");
         }
         self.unknown(std::mem::take(table), "");
     }
@@ -959,6 +983,7 @@ mod tests {
 ready_sound = true
 iterm_focus = true
 theme = "light"
+sidebar_view = "recent"
 save_uncommitted_work = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
@@ -991,9 +1016,16 @@ command = "/opt/grok"
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
 
+[resources]
+sidebar = true
+
+[usage]
+sidebar = true
+
 [operator]
 model = "openai/chat-model"
 thinking_level = "low"
+sidebar = true
 
 [delegation]
 progress_deadline_ms = 12345
@@ -1051,6 +1083,8 @@ login = "owner@example.com"
         assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
         assert!(settings.iterm_focus);
         assert_eq!(settings.theme, ThemeId::Light);
+        assert_eq!(settings.sidebar_view, SidebarView::Recent);
+        assert!(settings.usage.sidebar);
         assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,
@@ -1077,6 +1111,7 @@ login = "owner@example.com"
         assert_eq!(settings.launch_choices["notes"], LaunchChoice::Terminal);
         assert!(settings.quota.enabled);
         assert!(settings.quota.claude_probe);
+        assert!(settings.resources.sidebar);
         assert_eq!(settings.quota.codex.command, PathBuf::from("/opt/codex"));
         assert_eq!(
             settings.quota.codex.home,
@@ -1204,6 +1239,7 @@ login = "owner@example.com"
                 "ready_sound_choice",
                 "iterm_focus",
                 "theme",
+                "sidebar_view",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -1217,11 +1253,14 @@ login = "owner@example.com"
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
+                "usage.sidebar",
+                "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",
                 "launch_choices",
                 "operator.model",
                 "operator.thinking_level",
+                "operator.sidebar",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -1258,7 +1297,7 @@ login = "owner@example.com"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 27, "expected path", &report);
+        finding("quota.codex.command", 28, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

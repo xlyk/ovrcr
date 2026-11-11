@@ -1,7 +1,7 @@
 󰚩 OVRCR                                                                                                                    [Commands] [Menu]
-                                       │Operator · pi · openai/gpt-6.1-sol · ready                                  [Reasoning — ▾ Ctrl-t]
-                                       │❯ You
-                                       │  ▸ Context · global
+ OPERATOR ─────────────────────────────│Operator · pi · openai/gpt-6.1-sol · ready                                  [Reasoning — ▾ Ctrl-t]
+▌ · Idle                               │❯ You
+↳ No replies yet                       │  ▸ Context · global
                                        │  Review this workspace.
                                        │
                                        ││ Operator
@@ -22,19 +22,19 @@
                                        │
                                        │
                                        │
+USAGE · 0 tokens · <1m                 │
+⠹ 0 working  ? 0 input  ✓ 0 ready      │
+· 0 idle  ! 0 error  P 0 paused        │
+· 0 exited  - 0 unknown                │
                                        │
-                                       │
-                                       │
-                                       │
-                                       │
-                                       │
-                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ──────────────────────    … │
+ mem       …                           │
                                        │
  QUOTA LEFT ───────────────────────────│
-Claude · checking                      │
-Codex · usage off                      │ Managing global
-Grok · usage off                       │ ──────────────────────────────────────────────────────────────────────────────────────────────────
-Cursor · usage off                     │ > ▏
-                                       │
-▌ Operator                             │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+Claude · checking                      │ Managing global
+Codex · usage off                      │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ──────────────────────────────────────────────────────────────────────────────────────────────────
 OPERATOR  Shift-Enter Newline  Ctrl-g Browse

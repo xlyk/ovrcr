@@ -2642,6 +2642,7 @@ fn test_state_with_dispatch(
     let (state, receiver) = (
         Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            usage: Mutex::new(super::usage::Lifetime::new(0)),
             delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
@@ -2696,6 +2697,7 @@ pub(super) fn test_state_with_socket(
     (
         Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            usage: Mutex::new(super::usage::Lifetime::new(0)),
             delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
@@ -3505,6 +3507,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
         for _ in 0..DASHBOARD_QUEUE {
             if sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: ovrcr_protocol::UsageSnapshot::default(),
                     projects: Vec::new(),
                 })),
                 completion: None,
@@ -3676,6 +3679,7 @@ fn dashboard_overflow_closes_affected_connection() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: ovrcr_protocol::UsageSnapshot::default(),
                     projects: Vec::new()
                 },)),
                 completion: None,
@@ -3720,6 +3724,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new()
             })),
             completion: None,
@@ -3743,6 +3748,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    usage: ovrcr_protocol::UsageSnapshot::default(),
                     projects: Vec::new()
                 })),
                 completion: None,
@@ -3753,6 +3759,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     assert!(matches!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new()
             })),
             completion: None,
@@ -5364,6 +5371,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let _socket_guard = UnixListener::bind(&socket_path).unwrap();
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        usage: Mutex::new(super::usage::Lifetime::new(0)),
         delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
@@ -5590,6 +5598,7 @@ fn session_output_flows_while_another_session_spawns() {
     .unwrap();
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        usage: Mutex::new(super::usage::Lifetime::new(0)),
         delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
@@ -8648,6 +8657,7 @@ fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
     let (dispatch, _dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        usage: Mutex::new(super::usage::Lifetime::new(0)),
         delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
@@ -9181,6 +9191,7 @@ fn workspace_explicit_model_refusal_precedes_mutation_and_default_branch_policy_
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        usage: Mutex::new(super::usage::Lifetime::new(0)),
         delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,
@@ -9325,6 +9336,7 @@ fn automatic_local_terminals_on_and_off_cover_root_and_feature() {
         let (dispatch, dispatch_receiver) = dispatch_channel(None);
         let state = Arc::new(ServerState {
             server_lifetime: super::navigation::new_identity().unwrap(),
+            usage: Mutex::new(super::usage::Lifetime::new(0)),
             delegation_observations: delegation_observation::Observations::default(),
             callback_executable_sha256: Some("0".repeat(64)),
             tasks: None,
@@ -9432,6 +9444,7 @@ fn changing_automatic_local_policy_leaves_existing_terminals() {
     let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let state = Arc::new(ServerState {
         server_lifetime: super::navigation::new_identity().unwrap(),
+        usage: Mutex::new(super::usage::Lifetime::new(0)),
         delegation_observations: delegation_observation::Observations::default(),
         callback_executable_sha256: Some("0".repeat(64)),
         tasks: None,

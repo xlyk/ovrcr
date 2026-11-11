@@ -24,7 +24,50 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
-Sidebar session-jump labels are derived from the drawn tree order, viewport,
+Pane arrangement is Dashboard-owned: `PaneLayout` stores a tree of right or
+down splits, while `DashboardView` sends only the visible sessions and their
+terminal sizes. The Server does not retain the tree, and a new attachment starts
+with one pane. Geometry keeps each pane at least 20 columns wide and 8 rows
+high including its header. If the full tree no longer fits, render only the
+focused pane while preserving every assignment and split ratio; render the tree
+again when it fits. Focus and visible-geometry changes go through
+`retarget(PaneChange)` and revoke input until the one in-flight view request is
+acknowledged for all of its pane snapshots.
+
+In the remembered `sidebar_view = "recent"` projection, `visible_rows` orders
+projects by name and Agent sessions by `last_activity_unix_ms` (falling back to
+start time), omitting Terminal sessions and empty projects/workspaces. Every
+Agent row is two lines there: status/title/age and branch/harness. Both lines use
+the same `TreeRow` for selection, hover, click, and close behavior.
+`SessionChanged` makes the new order visible immediately; selection remains
+attached to its session ID and `ensure_selection_visible` follows it. After a
+session or hierarchy snapshot, a change to visible row order, row heights, the
+tree viewport, or its offset clears stale hover in either projection. A fresh
+pointer motion reacquires hover for the row now under it.
+`tree_row_heights`, `tree_line_at`, `tree_line_count` and `tree_row_start` remain
+the shared basis for rendering, scrolling, jump labels and mouse hit-testing.
+
+`Space s` exposes split, directional focus, swap, zoom, next, and close through
+the shared keymap. Directional focus and swap are popup-only so Browse's
+arrows and `j` / `k` keep their sidebar behavior. Choose a neighbour by greatest
+perpendicular overlap, then shortest edge distance, then pane index for a
+stable final tie-break. Swapping changes the tree's pane indices and preserves
+focus on the same session. Zoom draws and sizes one focused leaf while keeping
+the tree unchanged; zoom, focus, swap, split, and close still use `retarget` so
+input permission follows the acknowledged visible view.
+
+Browse and `Space s` share the `<`, `>`, `-`, `+`, and `=` resize bindings.
+Width keys move the nearest left-right divider around the focused pane by two
+columns; height keys move its nearest top-bottom divider by one row. Each key
+repeat is one step, and split ratios clamp to the 20-column and 8-row pane
+minimums. A missing divider reports a reason. Each real resize retargets once
+with all changed pane sizes; a clamp no-op keeps input readiness. Header
+double-click toggles zoom, divider double-click makes its ratio even, and a
+Browse right-click focuses the pane and opens the Panes group. Right-clicks in
+Terminal mode continue through normal PTY mouse forwarding.
+
+Sidebar session-jump labels are derived from the currently drawn sidebar order
+(tree order or recent-activity order), viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
 Use only single-digit labels 1–9 on the first nine eligible drawn Agent title
@@ -36,8 +79,10 @@ retry hint, with no prefix state or Backspace editor. Esc or Ctrl-g closes the
 picker without selecting. Every other key closes it and continues through its
 ordinary Dashboard, Operator, or program handling. Command/Super never opens
 the picker. Hide labels on selection. A selected running destination remains in
-Browse until the existing view and input boundary is drained; queued loading
-input must never become child bytes. Opening an overlay, losing focus,
+Browse until the existing view and input boundary is drained; it enters
+Terminal only when the existing input permission check succeeds. A ready
+view-only destination settles in Browse, and queued loading input never becomes
+child bytes. Opening an overlay, losing focus,
 scrolling, or resizing closes the picker.
 
 Enhanced keyboard reporting belongs to the existing `TerminalGuard` lifecycle.
@@ -52,11 +97,16 @@ qualification, environment probe, or `DashboardInputProfile`. Enhanced key
 reporting remains for the modes and shortcuts that need it.
 
 Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph, the plain-words state (with its narrow form, a bare `Unread` when there is one), the reporting words (`starting…`, `status off`) and elapsed clauses the pane headers read, and the activity, Unread and health clauses the Agents picker reads — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers, the picker and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width (`render::pane_header` gives up the pid, model, elapsed time and label before the state), and readiness itself is still decided in `dashboard::ready`. Quality words and reporter reasons never reach the headers. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the header still says Ready. The sidebar agent label appends the current model after a colon when one is known; on a shared line the title keeps its room first, so the model goes, then the agent, before the title clips. A session row is one or two sidebar lines: `render::tree_row_heights` decides, for the whole visible tree at the current sidebar width, whether every agent label fits inline or every one takes a second line, and rendering, scrolling, selection visibility and mouse hit-testing all read those heights through `tree_line_at`, `tree_line_count` and `tree_row_start`, so the extra line always resolves to the same session.
-Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard. The palette applies the popup's `shown_in_group` rule: it drops bindings the target cannot use and keeps waiting or protected rows with their reason, so the list never shifts under the cursor when a screen is acknowledged. The title bar's `[Commands]` control opens the palette. Split (`v`) reuses the palette's Search page as the new pane's session chooser (`Palette::split`), and palette setting rows open the editor through `Editor::select`.
+Readiness is derived by `ViewHandshake::is_ready`; pane changes go through `retarget(PaneChange)`; outbound requests go through the outbox and are drained by `drain_outbox`. Session status — the glyph, the plain-words state (with its narrow form, a bare `Unread` when there is one), the reporting words (`starting…`, `status off`) and elapsed clauses the pane headers read, and the activity, Unread and health clauses the Agents picker reads — is decided once by `dashboard::status::SessionStatus`, which the sidebar row, both pane headers, the picker and the spinner redraw cadence read; each surface still arranges and clips the clauses for its own width (`render::pane_header` gives up the pid, model, elapsed time and label before the state), and readiness itself is still decided in `dashboard::ready`. Quality words and reporter reasons never reach the headers. The Ready checkmark is drawn only while that response is Unread; after review the glyph is blank and the header still says Ready. The sidebar agent label appends the current model after a colon when one is known; on a shared line the title keeps its room first, so the model goes, then the agent, before the title clips. In the remembered `sidebar_view = "recent"` projection, `visible_rows` orders projects by name and Agent sessions by `last_activity_unix_ms` (falling back to start time), omitting Terminal sessions and empty projects/workspaces. Every Agent row is two lines there: status/title/age and branch/harness. Both lines use the same `TreeRow` for selection, hover, click, and close behavior. `SessionChanged` makes the new order visible immediately; selection remains attached to its session ID and `ensure_selection_visible` follows it. `tree_row_heights`, `tree_line_at`, `tree_line_count` and `tree_row_start` remain the shared basis for rendering, scrolling, jump labels and mouse hit-testing.
+Key bindings live in one table, `dashboard::keymap`: it holds each key's label, action and the reason it is unavailable, and `key_action`, the footer, the key popup and the palette all read it rather than repeating a guard. Browse `m` writes the next `SidebarView` through `SetSetting`; `install_settings_report` remains authoritative, so a view change settles when the Server republishes its settings. The View popup exposes the same action under `m`. The palette applies the popup's `shown_in_group` rule: it drops bindings the target cannot use and keeps waiting or protected rows with their reason, so the list never shifts under the cursor when a screen is acknowledged. The title bar's `[Commands]` control opens the palette. Split (`v`) reuses the palette's Search page as the new pane's session chooser (`Palette::split`), and palette setting rows open the editor through `Editor::select`.
 
 Ordinary palette forms submit Enter from any field after `form_problem` checks the visible fields top to bottom (required, pick value in its list, Branch after the prefix and valid under `git check-ref-format --branch` via `branch_name_problem`); the first problem takes the focus and is drawn under its field from `Palette.invalid`. A pick field's value is its highlighted option (`accept_pick` after every arrow, cycle or filter edit). New-agent Branch, Agent harness and Model, plus child Create-branch Project, are compact pickers: Enter opens or accepts the choice and leaves the creation form active; Alt-Enter starts or creates. Other form pickers keep ordinary Enter submission into their existing confirmation flow. These creation menus are bounded overlays anchored to the focused value surface: opening one does not resize or reflow the form, and a menu can temporarily cover nearby fields. The same `creation_picker_popup` rectangle and option-row map drive rendering and mouse hits. Lists use `PickList::lines_bounded`, keep the highlighted item visible while scrolling, flip above the anchor when needed, and stay within the form body. A click on an option accepts it; an outside click closes the menu and is consumed by the palette. Clicking another visible picker field switches the anchored menu. Escape closes the menu before the form, while Tab/Shift-Tab closes it and advances focus. The Initial prompt field is multiline: Enter inserts a newline and the visible Alt-Enter chord submits or retries. `form_keys` builds the footer from the form and its focused field, and Tab remains in the active dialog.
 New-agent and child branch forms use one bordered card with theme-backed field surfaces. Harness and Model share a row only when both columns fit. The optional prompt keeps its `Initial prompt` field identity and a bounded, cursor-aware viewport (three rows when wide); mouse targeting uses the same page-aware dialog and field rows as rendering.
 Git failure text omits preparation progress before the fatal reason, so narrow creation forms show the cause of the refusal.
+Sidebar row menus use the selected `TreeRow` as form context and reuse the
+`keymap` action's availability reason. `tree_line_text` draws the hover-only
+`[+]` spans, while `sidebar_mouse_action` keeps their hit boxes beside the
+existing disclosure and `[x]` cells; preserve those cell positions together.
 A Lifecycle job submitted from the palette carries that palette on its Provisional row while the job runs (`take_palette_for_job`). On failure, `fail_lifecycle_job` returns it through `return_to_form`, which replays the failure through `palette_response` exactly as a synchronous refusal, so recovery pages (RecoverLaunch, WIP save, discard) are shared. Only when the form cannot come back (another overlay, or a non-Browse mode) does a failed row stay. Workspace removal with running sessions sends CloseTerminal for each and then the removal, chaining each request from the previous `LifecycleCompleted` through `Provisional.then`. Standalone `w` opens the branch-only form; the New agent Branch picker can suspend its parent form and open that same child. Branch creation completes through a matching lifecycle receipt and fresh Inspect/List readback, and never starts an Agent. The parent Agent request is submitted separately after the new checkout becomes its selected destination.
 
 The separate Initial prompt field travels through one-use intent allocation. A
@@ -149,24 +199,27 @@ for Claude, Codex, Pi and Oh My Pi. Unknown providers and references without a
 native picker keep the unavailable notice.
 
 
-The Operator occupies one fixed dock row at the bottom of the existing sidebar,
-immediately above the Dashboard footer. `SidebarRects` supplies project-tree,
-attention, quota and Operator rectangles to rendering, mouse input and viewport
-calculations in that order. The tree starts at the top. Attention and quota sit
-above the dock; their updates never move it at a fixed window size. Reserve three
-project-tree lines before a dock row; shorter sidebars yield the dock to the tree.
-The strip takes one line, and quota uses full provider bars, compact rows, a
-one-line details pointer, or hides as space shrinks, independently of the clock.
-The dock preserves its name and right-aligned state before optional glyphs. Idle
-is quiet; the open conversation uses the existing selected-row background/bar.
-Unread leads activity or exceptional outcomes, then Draft, then Open chat (omitted
-when open and idle). Opening and unavailable remain distinct. No count, collapse
-arrow, plus button, child row, hover close mark or close hit target is added.
-A server update that brings the strip in or out keeps the tree selection in view.
+The Operator occupies a three-row section below the attention line and above the
+project tree; Resources follows the tree and quota stays at the bottom.
+`SidebarRects` supplies attention, Operator, project-tree, Resources and quota
+rectangles to rendering, mouse input and viewport calculations. A section can
+have a trailing blank row, and the shared height ladder removes gaps first, then
+compacts or hides sections to preserve tree space. Operator's full section shows
+state and one activity/reply detail row; the one-row form clips to its name and
+status. `operator.sidebar` controls visibility and defaults on. Resources uses
+the whole-machine CPU and memory source at the existing redraw tick, throttled
+to one read every two seconds; `resources.sidebar` defaults on and off prevents
+sampling. CPU remains unknown until two readings establish an advancing delta,
+and a failed read clears its baseline and displays unavailable. The section
+preserves the selected-row
+background when the conversation is open. Working shows the durable turn-start
+age; Idle and unread states show the durable last-reply age when known. Legacy
+turns without timestamps remain untimed. Setup detection checks for the Pi
+executable without starting a process or validating provider credentials.
 Saved summaries load asynchronously after the production handshake and initial
 terminal attachment, through `OperatorRequest::Current`, without opening Operator.
 
-Browse `o` and any cell of the dock open the single conversation with the composer
+Browse `o` and any cell of the section open the single conversation with the composer
 focused. The title bar has neither full-chat nor Quick message targets; Quick
 message remains in Commands and on its existing key routes. Terminal pane assignments survive, but the
 desired terminal view is empty while Operator is visible and native composer input

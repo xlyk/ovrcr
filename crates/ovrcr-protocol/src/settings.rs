@@ -7,6 +7,41 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+/// How the Dashboard orders workspace agent rows in its sidebar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarView {
+    #[default]
+    Tree,
+    Recent,
+}
+
+impl SidebarView {
+    pub const KEY: &'static str = "sidebar_view";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tree => "tree",
+            Self::Recent => "recent",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "tree" => Some(Self::Tree),
+            "recent" => Some(Self::Recent),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Tree => Self::Recent,
+            Self::Recent => Self::Tree,
+        }
+    }
+}
+
 /// The four approved native notification sounds; never a caller-selected path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1710,11 +1745,27 @@ impl Default for RemoteSettings {
 pub const REMOTE_OFF: &str =
     "Remote web server off: set `[remote] enabled = true` to serve the phone UI on loopback";
 
+/// Dashboard-owned visibility for local whole-machine readings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResourcesSettings {
+    pub sidebar: bool,
+}
+
+impl Default for ResourcesSettings {
+    fn default() -> Self {
+        Self { sidebar: true }
+    }
+}
+
 /// Every effective value. `picker_roots` is already `~`-expanded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub operator: crate::OperatorSettings,
+    /// Dashboard Usage summary visibility.
+    #[serde(default)]
+    pub usage: UsageSettings,
     pub desktop_notifications: bool,
     pub ready_sound: bool,
     /// Absent document choice is `Some(Default)`; an explicit invalid value is
@@ -1744,6 +1795,25 @@ pub struct Settings {
     /// not moved. The root workspace is never saved.
     #[serde(default)]
     pub save_uncommitted_work: bool,
+    /// Dashboard-owned sidebar presentation, remembered by the Server.
+    #[serde(default)]
+    pub sidebar_view: SidebarView,
+    /// Dashboard-owned visibility and sampling for the Resources section.
+    #[serde(default)]
+    pub resources: ResourcesSettings,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UsageSettings {
+    /// Whether the Dashboard shows the Usage section in its sidebar.
+    pub sidebar: bool,
+}
+
+impl Default for UsageSettings {
+    fn default() -> Self {
+        Self { sidebar: true }
+    }
 }
 
 /// Shown while `save_uncommitted_work` is off.
@@ -1765,6 +1835,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             operator: crate::OperatorSettings::default(),
+            usage: UsageSettings::default(),
             desktop_notifications: false,
             ready_sound: false,
             ready_sound_choice: Some(ReadySoundChoice::Default),
@@ -1781,6 +1852,8 @@ impl Default for Settings {
             delegation: DelegationSettings::default(),
             remote: RemoteSettings::default(),
             save_uncommitted_work: false,
+            sidebar_view: SidebarView::default(),
+            resources: ResourcesSettings::default(),
         }
     }
 }
