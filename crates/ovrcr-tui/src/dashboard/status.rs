@@ -83,6 +83,8 @@ pub(super) struct SessionStatus {
     /// The headers' reporting health, only when it matters: `starting…` before an agent's
     /// first report, `status off` when its reporting is off or lost.
     pub reporting: Option<&'static str>,
+    /// An Input request is open, even when the session cannot currently answer it.
+    pub has_open_input_request: bool,
     /// The Agents picker's activity clause, leading space included: ` busy observed`,
     /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
     pub activity: String,
@@ -119,6 +121,10 @@ impl SessionStatus {
             state,
             narrow_state,
             reporting: reporting_words(session, now_unix_ms),
+            has_open_input_request: session
+                .agent
+                .as_ref()
+                .is_some_and(|agent| !agent.input_requests.is_empty()),
             activity: {
                 let mut clause = activity_clause(session);
                 if let Some(control) = super::assignment_control::control_clause(
@@ -162,6 +168,18 @@ impl SessionStatus {
                     None => unread,
                 }
             }),
+        }
+    }
+
+    /// The shared sidebar attention classification used by the strip, its jump, and folded
+    /// counts.
+    pub(super) fn attention(session: &SessionSummary) -> Option<super::attention::Attention> {
+        let activity = super::ready::activity(session);
+        if session.phase == SessionPhase::Running && activity == AgentActivity::WaitingInput {
+            Some(super::attention::Attention::Input)
+        } else {
+            (session.unread.is_some() && activity != AgentActivity::Busy)
+                .then_some(super::attention::Attention::Ready)
         }
     }
 }
@@ -599,6 +617,7 @@ mod tests {
             label: "claude/sonnet".into(),
             pid: Some(42),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase,
             activity: AgentActivity::Unknown,
             context_usage: None,

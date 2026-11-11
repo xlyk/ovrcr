@@ -1733,7 +1733,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -1898,7 +1898,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         migrate_singleton_conversation(&store.connection).unwrap();
         let completed = store
             .operator_conversation(OperatorConversationId(1))
@@ -2049,7 +2049,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -2199,7 +2199,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30, "the comparison uses a migrated database");
+        assert_eq!(version, 31, "the comparison uses a migrated database");
         for table in [
             "operator_conversations",
             "operator_turns",

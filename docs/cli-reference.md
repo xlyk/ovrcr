@@ -79,6 +79,10 @@ Workspace lines use the current branch name. Terminal
 lists include running sessions and retained exited records. A `--workspace` filter
 requires `--project` and matches that current branch. Terminal JSON includes `cwd`, the original working directory;
 the text table includes it as the last column, including for archived records.
+Both the table and JSON include Last activity. It advances when an agent changes
+state or a user sends terminal input; terminal output, focus, and selection do
+not count. If no activity has been recorded, it uses the session start time when
+available.
 
 `workspace get` and `workspace remove` take `--project` with `--branch` (the
 current checkout branch; slashes such as `feature/cleanup` are valid) or `--path`
@@ -523,7 +527,7 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 | --- | --- |
 | Project | `name`, `repo`, `workspace_root`, `workspace_count` |
 | Workspace | `project`, `name`, `path`, `branch`, `terminal_count` |
-| Terminal | `id`, `run`, `kind`, `scope`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
+| Terminal | `id`, `run`, `kind`, `scope`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `last_activity_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
 | Screen read | `id`, `rows`, `cols`, `text` |
 
 `name` is the stable session name. `title` is its nullable effective title;
@@ -535,7 +539,10 @@ activity or reporting support.
 executable; it is not proof of resume support. `phase` is `running`, `paused`,
 `exited`, `stopped`, or `interrupted`; `exit_code` and `exit_signal` are nullable
 and set only for `exited`. Dormant rows have a null `started_unix_ms` rather than
-inventing elapsed time from epoch. `recovery` describes ownership and resume state.
+inventing elapsed time from epoch. `last_activity_unix_ms` is the most recent
+accepted agent-state change or user terminal input, falling back to
+`started_unix_ms` when no activity has been recorded. Terminal output, focus, and
+selection do not advance it. `recovery` describes ownership and resume state.
 `activity` is one of `unknown`, `idle`, `busy`,
 `waiting_input`, `response_ready`, or `error`, and is the latest accepted provider
 observation — `waiting_input` while the terminal's `agent.input_requests` set is non-empty,

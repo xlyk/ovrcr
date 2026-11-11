@@ -102,6 +102,9 @@ pub struct SessionSummary {
     /// Durable assignment owner, separate from passive Dashboard selection.
     #[serde(default)]
     pub assignment_control: Option<crate::AssignmentControlView>,
+    /// Last agent-state change or user input. Falls back to the current run's start time.
+    #[serde(default)]
+    pub last_activity_unix_ms: Option<u64>,
 }
 
 impl SessionSummary {

@@ -5033,6 +5033,7 @@ mod tests {
                         label: "shell".into(),
                         pid: None,
                         started_unix_ms: Some(0),
+                        last_activity_unix_ms: None,
                         phase: SessionPhase::Running,
                         activity: AgentActivity::Unknown,
                         context_usage: None,

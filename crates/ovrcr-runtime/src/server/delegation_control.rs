@@ -471,6 +471,9 @@ impl ServerState {
         drop(store);
         // Do not build hierarchy or write a socket while any input guard is held.
         if result.is_ok() {
+            if !bytes.is_empty() {
+                self.record_user_activity(&session);
+            }
             super::super::dispatch::publish_session_changed(self, id);
         }
         result

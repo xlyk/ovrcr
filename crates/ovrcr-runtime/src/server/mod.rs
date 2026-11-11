@@ -568,6 +568,21 @@ impl ServerState {
         Ok(())
     }
 
+    pub(crate) fn persist_last_activity(&self, id: SessionId, run: SessionRunId, timestamp: u64) {
+        if let Err(error) = self
+            .retained
+            .lock()
+            .record_last_activity(id, run, timestamp)
+        {
+            eprintln!("persist session {} Last activity: {error:#}", id.0);
+        }
+    }
+
+    pub(crate) fn record_user_activity(&self, session: &Session) {
+        let timestamp = session.record_user_activity();
+        self.persist_last_activity(session.id(), session.run(), timestamp);
+    }
+
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
         let mut registry = self.registry.lock().unwrap().clone();
         git::observe_registry(&mut registry);
@@ -633,9 +648,13 @@ impl ServerState {
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
         }
-        session
-            .send_text(text, submit)
-            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
+        session.send_text(text, submit).map_err(|error| {
+            lifecycle_error(input_error_code(&error), error_chain_string(&error))
+        })?;
+        if !text.is_empty() || submit {
+            self.record_user_activity(&session);
+        }
+        Ok(())
     }
 
     /// Write one named key to `expected_run`. Focus is read here, at write
@@ -657,9 +676,11 @@ impl ServerState {
                 "the Dashboard is focused on this session; focus another session or detach first",
             ));
         }
-        session
-            .send_key(key, modifiers)
-            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
+        session.send_key(key, modifiers).map_err(|error| {
+            lifecycle_error(input_error_code(&error), error_chain_string(&error))
+        })?;
+        self.record_user_activity(&session);
+        Ok(())
     }
 
     fn reject_archive_lifecycle(&self, id: SessionId) -> Result<()> {
@@ -2164,6 +2185,12 @@ impl ServerState {
             if !failures.is_empty() {
                 return error_response(ErrorCode::PartialFailure, failures.join("; "));
             }
+        }
+        if let Err(error) = self.retained.lock().flush_last_activity() {
+            return error_response(
+                ErrorCode::PartialFailure,
+                format!("persist Last activity: {error:#}"),
+            );
         }
         self.stopping.store(true, Ordering::Release);
         catalog_shutdown.close();

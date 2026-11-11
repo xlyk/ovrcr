@@ -877,10 +877,17 @@ pub(super) fn handle_request_with_id(
             }
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
             match selected_session {
-                Some(session) if session.run() == run => session.write(&bytes).map_or_else(
-                    |error| error_response(input_error_code(&error), error_chain_string(&error)),
-                    |_| Response::Ok,
-                ),
+                Some(session) if session.run() == run => match session.write(&bytes) {
+                    Ok(()) => {
+                        if !bytes.is_empty() {
+                            state.record_user_activity(&session);
+                        }
+                        Response::Ok
+                    }
+                    Err(error) => {
+                        error_response(input_error_code(&error), error_chain_string(&error))
+                    }
+                },
                 Some(_) => error_response(
                     ErrorCode::InvalidRequest,
                     "input is only accepted for the focused dashboard session",

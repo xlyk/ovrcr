@@ -73,6 +73,7 @@ fn session_summary(
         label: label.into(),
         pid,
         started_unix_ms: Some(started_unix_ms),
+        last_activity_unix_ms: None,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
