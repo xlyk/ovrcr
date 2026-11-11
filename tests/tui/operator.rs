@@ -14,6 +14,7 @@ const BUSY_REASON: &str = "The Operator is busy or its worker stop is unconfirme
 
 fn summary() -> OperatorConversationSummary {
     OperatorConversationSummary {
+        reasoning: None,
         run: SessionRunId(1),
         worker_stopped: true,
         id: OperatorConversationId(7),
@@ -198,6 +199,144 @@ fn mouse(column: u16, row: u16) -> MouseEvent {
         row,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+fn reasoning_summary(running: bool) -> OperatorConversationSummary {
+    use ovrcr_protocol::{OperatorReasoning, OperatorThinkingLevel as Level};
+    let mut value = with_model(if running { busy() } else { summary() });
+    value.reasoning = Some(OperatorReasoning {
+        requested: Level::High,
+        level: Level::High,
+        available: vec![Level::Minimal, Level::Low, Level::Medium, Level::High],
+    });
+    value
+}
+
+#[test]
+fn operator_reasoning_header_and_picker_use_pi_capabilities_and_server_setting_writes() {
+    use ovrcr_protocol::OperatorThinkingLevel as Level;
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_settings(ovrcr::tui::Settings {
+        operator: ovrcr_protocol::OperatorSettings {
+            thinking_level: Level::High,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    open_and_settle(&mut dashboard, reasoning_summary(false));
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("[Reasoning high ▾ Ctrl-t]"), "{screen}");
+    dashboard.ctrl('t');
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("default (Pi's choice)"), "{screen}");
+    assert!(screen.contains("✓ high"), "{screen}");
+    assert!(screen.contains("not offered: off, xhigh, max"), "{screen}");
+    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Enter);
+    let out = dashboard.drain_outbox();
+    assert!(
+        out.iter().any(|message| matches!(&message.request,
+        Request::SetSetting { path, value: Some(value) }
+        if path == "operator.thinking_level" && value == "\"medium\"")),
+        "{out:?}"
+    );
+    assert!(!draw_text(&mut dashboard, 160, 40).contains("Enter pick"));
+
+    // Both entry points use the drawn control's geometry.
+    let rows = rendered_rows(&dashboard, 160, 40);
+    let row = rows
+        .iter()
+        .position(|row| row.contains("[Reasoning"))
+        .unwrap();
+    let column = rows[row].chars().position(|ch| ch == '[').unwrap();
+    dashboard.mouse_action(
+        mouse(column as u16 + 2, row as u16),
+        Rect::new(0, 0, 160, 40),
+    );
+    assert!(draw_text(&mut dashboard, 160, 40).contains("Enter pick"));
+    dashboard.key(KeyCode::Esc);
+    assert!(!draw_text(&mut dashboard, 160, 40).contains("Enter pick"));
+    assert!(draw_text(&mut dashboard, 160, 40).contains("Reasoning high"));
+}
+
+#[test]
+fn operator_reasoning_substitution_and_next_turn_are_distinct_at_narrow_sizes() {
+    use ovrcr_protocol::OperatorThinkingLevel as Level;
+    for (cols, rows) in [(160, 40), (80, 24), (60, 24)] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.install_settings(ovrcr::tui::Settings {
+            operator: ovrcr_protocol::OperatorSettings {
+                thinking_level: Level::Xhigh,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut value = reasoning_summary(false);
+        value.reasoning.as_mut().unwrap().requested = Level::Xhigh;
+        open_and_settle(&mut dashboard, value);
+        let screen = draw_text(&mut dashboard, cols, rows);
+        assert!(
+            screen.contains("Reasoning high (set: xhigh)"),
+            "{cols}: {screen}"
+        );
+        assert!(screen.contains("Ctrl-t]"), "{cols}: {screen}");
+        dashboard.ctrl('t');
+        let screen = draw_text(&mut dashboard, cols, rows);
+        assert!(
+            screen.contains("not offered: off, xhigh, max"),
+            "{cols}: {screen}"
+        );
+    }
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_settings(ovrcr::tui::Settings {
+        operator: ovrcr_protocol::OperatorSettings {
+            thinking_level: Level::High,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    open_and_settle(&mut dashboard, reasoning_summary(true));
+    dashboard.ctrl('t');
+    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Enter);
+    let request = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|message| matches!(message.request, Request::SetSetting { .. }))
+        .unwrap();
+    // A refused write must not change the displayed saved value.
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr_protocol::ErrorCode::Conflict,
+            message: "write refused".into(),
+        },
+    });
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("write refused"), "{screen}");
+    assert!(!screen.contains("next turn"), "{screen}");
+    let mut settings = ovrcr::tui::Settings::default();
+    settings.operator.thinking_level = Level::Medium;
+    dashboard.install_settings(settings);
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(
+        screen.contains("Reasoning high → medium next turn"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn operator_reasoning_pending_default_is_distinct_from_applied_default() {
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, reasoning_summary(false));
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("Reasoning high (set: default)"), "{screen}");
+    let mut value = reasoning_summary(false);
+    value.reasoning.as_mut().unwrap().requested = ovrcr_protocol::OperatorThinkingLevel::Default;
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, value);
+    let screen = draw_text(&mut dashboard, 160, 40);
+    assert!(screen.contains("[Reasoning high ▾ Ctrl-t]"), "{screen}");
 }
 
 /// The production draw path, retained as cells for real hit coordinates.
@@ -985,6 +1124,7 @@ fn header_names_pi_and_only_a_really_selected_model() {
     dashboard.install_settings(ovrcr::tui::Settings {
         operator: ovrcr_protocol::OperatorSettings {
             model: Some("openai/gpt-6.1-sol".into()),
+            ..Default::default()
         },
         ..Default::default()
     });
@@ -1027,6 +1167,7 @@ fn header_names_pi_and_only_a_really_selected_model() {
     dashboard.install_settings(ovrcr::tui::Settings {
         operator: ovrcr_protocol::OperatorSettings {
             model: Some("openai/gpt-6.1-sol".into()),
+            ..Default::default()
         },
         ..Default::default()
     });

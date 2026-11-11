@@ -350,6 +350,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
             message.content,
             OperatorMessageContent::Worker(
                 OperatorWorkerEvent::ModelSelected(_)
+                    | OperatorWorkerEvent::ReasoningSelected(_)
                     | OperatorWorkerEvent::CompactionStarted
                     | OperatorWorkerEvent::CompactionEnded
             )
@@ -584,6 +585,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
             }
             OperatorMessageContent::Worker(
                 OperatorWorkerEvent::ModelSelected(_)
+                | OperatorWorkerEvent::ReasoningSelected(_)
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
             ) => {}
@@ -965,7 +967,28 @@ impl Dashboard {
         .len();
         let height = (draft_rows.clamp(2, usize::from((body.height / 3).clamp(2, 6))) as u16)
             .min(body.height.saturating_sub(5));
-        let header = Rect::new(body.x, body.y, body.width, body.height.min(1));
+        let title_width = self.operator.chat.as_ref().map_or(0, |chat| {
+            format!("{} · {}", identity(chat), status(chat)).width()
+        });
+        let controls_width = self.operator_reasoning_label().width()
+            + 13
+            + if self.operator_stop_available() {
+                13
+            } else {
+                0
+            };
+        let header = Rect::new(
+            body.x,
+            body.y,
+            body.width,
+            body.height.min(
+                if body.width >= 50 && title_width + controls_width > usize::from(body.width) {
+                    2
+                } else {
+                    1
+                },
+            ),
+        );
         let composer = Rect::new(
             body.x.saturating_add(3),
             body.bottom().saturating_sub(height + 1),
@@ -1018,10 +1041,12 @@ impl Dashboard {
                 .current_turn
                 .as_ref()
                 .is_some_and(|turn| turn.state == OperatorTurnState::Running);
-        let title_width = layout
-            .header
-            .width
-            .saturating_sub(if stop { 13 } else { 0 });
+        let reasoning = self.operator_reasoning_rect(layout.header);
+        let title_width = if layout.header.height > 1 {
+            layout.header.width
+        } else {
+            reasoning.x.saturating_sub(layout.header.x)
+        };
         let title = format!("{} · {}", identity(chat), status(chat));
         frame.render_widget(
             Paragraph::new(clip_text(&title, title_width as usize))
@@ -1034,6 +1059,15 @@ impl Dashboard {
                 stop_rect(layout.header),
             );
         }
+        let suffix = " ▾ Ctrl-t]";
+        let label = clip_text(
+            &self.operator_reasoning_label(),
+            usize::from(reasoning.width).saturating_sub(suffix.width() + 1),
+        );
+        frame.render_widget(
+            Paragraph::new(format!("[{label}{suffix}")).style(Style::default().fg(MAUVE())),
+            reasoning,
+        );
         let rows = transcript_rows(chat, layout.transcript.width, now_unix_ms);
         let height = layout.transcript.height as usize;
         let offset = transcript_offset(chat, &rows, height);
@@ -1124,5 +1158,79 @@ impl Dashboard {
                 layout.composer.y + row.saturating_sub(offset) as u16,
             ));
         }
+        self.draw_operator_reasoning_picker(frame);
+    }
+
+    fn draw_operator_reasoning_picker(&self, frame: &mut Frame<'_>) {
+        let Some(picker) = &self.operator.reasoning_picker else {
+            return;
+        };
+        let outer = frame.area();
+        let chat = self.operator.chat.as_ref();
+        let state = chat.and_then(|chat| chat.summary.reasoning.as_ref());
+        let model = chat
+            .and_then(|chat| chat.summary.model.as_ref())
+            .map_or("model unknown", |model| model.id.as_str());
+        let width = outer.width.min(56);
+        let unsupported = if let Some(state) = state {
+            let names: Vec<_> = ThinkingLevel::ALL
+                .into_iter()
+                .skip(1)
+                .filter(|level| !state.available.contains(level))
+                .map(ThinkingLevel::as_str)
+                .collect();
+            if names.is_empty() {
+                "All levels offered".into()
+            } else {
+                format!("not offered: {}", names.join(", "))
+            }
+        } else {
+            "Supported levels available after the first turn".into()
+        };
+        let mut lines: Vec<Line<'static>> = picker
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(index, level)| {
+                let tick = if state.is_some_and(|state| state.level == *level) {
+                    "✓"
+                } else {
+                    " "
+                };
+                let label = if *level == ThinkingLevel::Default {
+                    "default (Pi's choice)"
+                } else {
+                    level.as_str()
+                };
+                Line::raw(format!("{tick} {label}")).style(if index == picker.selected {
+                    Style::default().fg(TEXT()).bg(SURFACE2())
+                } else {
+                    Style::default().fg(TEXT())
+                })
+            })
+            .collect();
+        lines.extend(wrapped_lines(
+            vec![Line::raw(unsupported)],
+            width.saturating_sub(2),
+        ));
+        lines.push(Line::raw("↑↓ Enter pick · Esc close").style(Style::default().fg(MAUVE())));
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" Reasoning · {} ", display_text(model)))
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
     }
 }

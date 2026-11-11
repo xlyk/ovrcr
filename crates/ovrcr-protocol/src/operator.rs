@@ -7,6 +7,66 @@ pub const MAX_OPERATOR_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_OPERATOR_BATCH_EVENTS: usize = 32;
 pub const MAX_OPERATOR_PAGE_MESSAGES: u16 = 100;
 
+/// `Default` leaves Pi's model-specific choice alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OperatorThinkingLevel {
+    #[default]
+    Default,
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+impl OperatorThinkingLevel {
+    pub const ALL: [Self; 8] = [
+        Self::Default,
+        Self::Off,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+    ];
+    pub const NAMES: [&'static str; 8] = [
+        "default", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
+}
+
+/// Pi's readback for the selected model, distinct from the saved request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorReasoning {
+    pub requested: OperatorThinkingLevel,
+    pub level: OperatorThinkingLevel,
+    pub available: Vec<OperatorThinkingLevel>,
+}
+impl OperatorReasoning {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.level == OperatorThinkingLevel::Default
+            || self.available.is_empty()
+            || self.available.len() > 7
+            || self.available.contains(&OperatorThinkingLevel::Default)
+            || !self.available.contains(&self.level)
+            || self
+                .available
+                .iter()
+                .enumerate()
+                .any(|(i, level)| self.available[..i].contains(level))
+        {
+            return Err("invalid operator reasoning state".into());
+        }
+        Ok(())
+    }
+}
+
 /// One exact Pi model identity: its provider and its model id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorModel {
@@ -122,6 +182,7 @@ pub struct OperatorConversationSummary {
     pub model: Option<OperatorModel>,
     pub title: String,
     pub current_turn: Option<OperatorTurn>,
+    pub reasoning: Option<OperatorReasoning>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -154,6 +215,7 @@ pub enum OperatorWorkerEvent {
     /// Native pi automatic compaction finished successfully. Failure and Stop
     /// remain represented by the turn's terminal event/state, never by an end.
     CompactionEnded,
+    ReasoningSelected(OperatorReasoning),
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
@@ -181,6 +243,7 @@ impl OperatorEventBatch {
                 return Err("terminal operator event must be last".into());
             }
             match event {
+                OperatorWorkerEvent::ReasoningSelected(reasoning) => reasoning.validate()?,
                 OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
                 OperatorWorkerEvent::Completed
                 | OperatorWorkerEvent::CompactionStarted
@@ -345,6 +408,7 @@ pub struct OperatorExchangeResult {
 pub struct OperatorSettings {
     /// `provider/model`; unset means the dedicated Pi profile's current default.
     pub model: Option<String>,
+    pub thinking_level: OperatorThinkingLevel,
 }
 
 /// Immutable bootstrap data read only by the authenticated current worker.
@@ -357,6 +421,7 @@ pub struct OperatorWorkerStart {
     pub context: OperatorContext,
     /// The last completed turn whose native session is this turn's context base.
     pub checkpoint_turn: Option<OperatorTurnId>,
+    pub thinking_level: OperatorThinkingLevel,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {

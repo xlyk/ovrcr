@@ -270,7 +270,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 33] = [
+const CATALOG: [Entry; 34] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -538,6 +538,22 @@ const CATALOG: [Entry; 33] = [
         show_off: |_| false,
     },
     Entry {
+        path: "operator.thinking_level",
+        shape: Shape::Pick {
+            options: &crate::OperatorThinkingLevel::NAMES,
+            expected: "default, off, minimal, low, medium, high, xhigh or max",
+        },
+        owner: SettingOwner::Server,
+        group: "Operator",
+        label: "Reasoning level",
+        off_state: None,
+        about: &[
+            "Default leaves Pi's choice. Changes apply from the next accepted turn; Pi may substitute an unsupported level.",
+        ],
+        value: |settings| Some(settings.operator.thinking_level.as_str().into()),
+        show_off: |_| false,
+    },
+    Entry {
         path: "delegation.progress_deadline_ms",
         shape: Shape::Typed("an integer from 1 to 86400000"),
         owner: SettingOwner::Server,
@@ -712,6 +728,7 @@ mod tests {
                 "cursor_cloud_accounts",
                 "launch_choices",
                 "operator.model",
+                "operator.thinking_level",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -953,6 +970,7 @@ mod tests {
             title_model: Some("pi/test".into()),
             operator: crate::OperatorSettings {
                 model: Some("openai/test".into()),
+                ..Default::default()
             },
             delegation: crate::DelegationSettings {
                 default_model: Some("test/model".into()),

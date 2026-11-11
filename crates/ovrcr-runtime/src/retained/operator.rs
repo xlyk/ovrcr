@@ -38,7 +38,26 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     // `CREATE TABLE IF NOT EXISTS` leaves a schema-26/27/28 Operator table exactly
     // as the old writer shaped it, so the current columns are added explicitly.
     ensure_singleton_columns(connection)?;
+    migrate_reasoning(connection)?;
     create_operator_indexes(connection)
+}
+
+pub(crate) fn migrate_reasoning(connection: &Connection) -> Result<()> {
+    for (table, column, definition) in [
+        (
+            "operator_turns",
+            "thinking_level",
+            "TEXT NOT NULL DEFAULT '\"default\"'",
+        ),
+        ("operator_conversations", "reasoning", "TEXT"),
+    ] {
+        if has_table(connection, table)? && !has_column(connection, table, column)? {
+            connection.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    Ok(())
 }
 
 /// Columns the singleton/checkpoint contract needs. Both the fresh path and the
@@ -298,6 +317,15 @@ impl SessionStore {
             model,
             title,
             current_turn: read_turn(&self.connection, id)?,
+            reasoning: self
+                .connection
+                .query_row(
+                    "SELECT reasoning FROM operator_conversations WHERE id=?1",
+                    [sql_integer(id.0)?],
+                    |r| r.get::<_, Option<String>>(0),
+                )?
+                .map(|raw| serde_json::from_str(&raw))
+                .transpose()?,
         })
     }
 
@@ -383,7 +411,7 @@ impl SessionStore {
         expected_run: SessionRunId,
         text: &str,
         context: OperatorContext,
-        model: Option<String>,
+        settings: OperatorSettings,
     ) -> Result<OperatorTurn> {
         OperatorRequest::Submit {
             conversation: id,
@@ -394,7 +422,7 @@ impl SessionStore {
         .validate()
         .map_err(anyhow::Error::msg)?;
         self.require_current_operator(id)?;
-        if let Some(model) = &model {
+        if let Some(model) = &settings.model {
             validate_operator_model(model).map_err(anyhow::Error::msg)?;
         }
         let conversation = self.operator_conversation(id)?;
@@ -427,8 +455,8 @@ impl SessionStore {
             bail!("operator session run changed");
         }
         transaction.execute(
-            "INSERT INTO operator_turns(conversation,run,state,model_override) VALUES(?1,?2,'Running',?3)",
-            params![sql_integer(id.0)?, sql_integer(run.0)?, model],
+            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level) VALUES(?1,?2,'Running',?3,?4)",
+            params![sql_integer(id.0)?, sql_integer(run.0)?, settings.model, serde_json::to_string(&settings.thinking_level)?],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
         append_message(
@@ -520,9 +548,16 @@ impl SessionStore {
             // Metadata events update the retained conversation without entering
             // the visible transcript.
             match event {
+                OperatorWorkerEvent::ReasoningSelected(reasoning) => {
+                    transaction.execute(
+                        "UPDATE operator_conversations SET reasoning=?1 WHERE id=?2 AND singleton=1",
+                        params![serde_json::to_string(reasoning)?, sql_integer(batch.identity.conversation.0)?],
+                    )?;
+                    continue;
+                }
                 OperatorWorkerEvent::ModelSelected(model) => {
                     transaction.execute(
-                        "UPDATE operator_conversations SET provider=?1,model=?2 WHERE id=?3 AND singleton=1",
+                        "UPDATE operator_conversations SET provider=?1,model=?2,reasoning=NULL WHERE id=?3 AND singleton=1",
                         params![model.provider, model.id, sql_integer(batch.identity.conversation.0)?],
                     )?;
                     continue;
@@ -643,6 +678,11 @@ impl SessionStore {
             text,
             context,
             checkpoint_turn,
+            thinking_level: serde_json::from_str(&self.connection.query_row(
+                "SELECT thinking_level FROM operator_turns WHERE id=?1",
+                [sql_integer(identity.turn.0)?],
+                |r| r.get::<_, String>(0),
+            )?)?,
         })
     }
 }
@@ -654,6 +694,94 @@ mod tests {
         store
             .open_operator_conversation(Path::new("/tmp/operator"))
             .unwrap()
+    }
+    #[test]
+    fn reasoning_snapshot_and_metadata_survive_reopen_and_schema_29_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(root.path()).unwrap();
+        let conversation = open(&mut store);
+        let turn = store
+            .submit_operator_turn(
+                conversation.id,
+                conversation.run,
+                "hello",
+                OperatorContext::default(),
+                OperatorSettings {
+                    thinking_level: OperatorThinkingLevel::Xhigh,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .operator_worker_start(turn.identity)
+                .unwrap()
+                .thinking_level,
+            OperatorThinkingLevel::Xhigh
+        );
+        let reasoning = OperatorReasoning {
+            requested: OperatorThinkingLevel::Xhigh,
+            level: OperatorThinkingLevel::High,
+            available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+        };
+        let batch = OperatorEventBatch {
+            identity: turn.identity,
+            sequence: 1,
+            events: vec![
+                OperatorWorkerEvent::ReasoningSelected(reasoning.clone()),
+                OperatorWorkerEvent::Completed,
+            ],
+        };
+        store.apply_operator_batch(&batch).unwrap();
+        assert_eq!(
+            store
+                .operator_conversation(conversation.id)
+                .unwrap()
+                .reasoning,
+            Some(reasoning.clone())
+        );
+        drop(store);
+        let store = SessionStore::open(root.path()).unwrap();
+        assert_eq!(
+            store
+                .operator_conversation(conversation.id)
+                .unwrap()
+                .reasoning,
+            Some(reasoning)
+        );
+        // Recreate the previous writer's column shape, preserving the journal.
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE operator_turns DROP COLUMN thinking_level;
+            ALTER TABLE operator_conversations DROP COLUMN reasoning; PRAGMA user_version=29;",
+            )
+            .unwrap();
+        drop(store);
+        let store = SessionStore::open(root.path()).unwrap();
+        let summary = store.operator_conversation(conversation.id).unwrap();
+        assert!(summary.reasoning.is_none());
+        assert_eq!(summary.current_turn.unwrap().identity, turn.identity);
+        let raw: String = store
+            .connection
+            .query_row(
+                "SELECT thinking_level FROM operator_turns WHERE id=?1",
+                [sql_integer(turn.identity.turn.0).unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<OperatorThinkingLevel>(&raw).unwrap(),
+            OperatorThinkingLevel::Default
+        );
+        assert_eq!(
+            store
+                .read_operator_history(conversation.id, 0, 100)
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
     }
     fn submit(
         store: &mut SessionStore,
@@ -667,7 +795,10 @@ mod tests {
                 run,
                 "hello",
                 OperatorContext::default(),
-                model.map(str::to_owned),
+                OperatorSettings {
+                    model: model.map(str::to_owned),
+                    ..Default::default()
+                },
             )
             .unwrap()
     }
@@ -1136,7 +1267,10 @@ mod tests {
                     run,
                     "hello",
                     OperatorContext::default(),
-                    Some(invalid.into()),
+                    OperatorSettings {
+                        model: Some(invalid.into()),
+                        ..Default::default()
+                    },
                 )
                 .unwrap_err();
             assert!(
@@ -1245,7 +1379,10 @@ mod tests {
                     t.identity.run,
                     "unsafe",
                     OperatorContext::default(),
-                    None
+                    OperatorSettings {
+                        model: None,
+                        ..Default::default()
+                    },
                 )
                 .is_err()
         );
@@ -1256,7 +1393,10 @@ mod tests {
                 store.get(c.session).unwrap().run,
                 "fresh",
                 OperatorContext::default(),
-                None,
+                OperatorSettings {
+                    model: None,
+                    ..Default::default()
+                },
             )
             .unwrap();
         assert_eq!(fresh.identity.run.0, t.identity.run.0 + 1);
@@ -1396,7 +1536,10 @@ mod tests {
                     turn.identity.run,
                     "revive",
                     OperatorContext::default(),
-                    None
+                    OperatorSettings {
+                        model: None,
+                        ..Default::default()
+                    },
                 )
                 .is_err()
         );
@@ -1541,7 +1684,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 29);
+        assert_eq!(version, 30);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -1706,7 +1849,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 29);
+        assert_eq!(version, 30);
         migrate_singleton_conversation(&store.connection).unwrap();
         let completed = store
             .operator_conversation(OperatorConversationId(1))
@@ -1770,7 +1913,10 @@ mod tests {
                     SessionRunId(3),
                     "revive",
                     OperatorContext::default(),
-                    None
+                    OperatorSettings {
+                        model: None,
+                        ..Default::default()
+                    },
                 )
                 .is_err()
         );
@@ -1854,7 +2000,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 29);
+        assert_eq!(version, 30);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -2004,7 +2150,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 29, "the comparison uses a migrated database");
+        assert_eq!(version, 30, "the comparison uses a migrated database");
         for table in [
             "operator_conversations",
             "operator_turns",
@@ -2092,7 +2238,10 @@ mod tests {
                     SessionRunId(0),
                     &"x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
                     OperatorContext::default(),
-                    None
+                    OperatorSettings {
+                        model: None,
+                        ..Default::default()
+                    },
                 )
                 .is_err()
         );
@@ -2103,7 +2252,10 @@ mod tests {
                     SessionRunId(0),
                     "   ",
                     OperatorContext::default(),
-                    None
+                    OperatorSettings {
+                        model: None,
+                        ..Default::default()
+                    },
                 )
                 .is_err()
         );

@@ -310,7 +310,8 @@ the exact 16 MiB record limit, profile-default selection, checkpoint promotion
 only after an acknowledged Completed, interrupted and failed turns keeping their
 journal without a checkpoint, startup/contract refusal before any prompt, a
 resumed turn using the fresh profile default plus the last completed checkpoint,
-the per-turn `operator.model` snapshot, prefix-deduplicated assistant and thinking
+the per-turn model/reasoning snapshot, Pi reasoning substitution readback and
+invalid-capability refusal before prompting, prefix-deduplicated assistant and thinking
 text across content blocks and final-only suffixes, pi OpenAI Responses
 `thinking_end` authoritative separator retraction, interleaved text/thinking
 indexes (0,1,0), held whitespace released before a later block, deferred end-only

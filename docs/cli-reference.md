@@ -387,6 +387,13 @@ front of it.
 
 ## Operator account commands
 
+`ovrcr settings set operator.thinking_level low` saves the Operator's reasoning
+choice for subsequent turns. Accepted values are `default` (the default), `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh` and `max`. `default` leaves Pi's choice
+alone. Pi can substitute an unsupported level; the Dashboard's Reasoning control
+shows its readback alongside the saved request. Reset with
+`ovrcr settings reset operator.thinking_level`.
+
 | Command | Behaviour |
 | --- | --- |
 | `operator login chatgpt\|grok` | Explicit browser/device sign-in for the selected instance; does not start a Server. |

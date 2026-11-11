@@ -1,0 +1,45 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                [Commands] [Menu]
+Operator · pi · fixture/gpt-5-mini · running                            
+                   [Reasoning high (set: xhigh) ▾ Ctrl-t]  [Stop Ctrl-x]
+│ REASONING_FIXTURE_READY                                               
+│ Interrupted · accepted operations may finish; no rollback.            
+                                                                        
+❯ You                                                                   
+
+		3 text (settable) 󰚩 OVRCR                                                [Commands] [Menu]
+		4 text (settable) Operator · pi · fixture/gpt-5-mini · running                            
+		5 text (settable)                    [Reasoning high (set: xhigh) ▾ Ctrl-t]  [Stop Ctrl-x]
+		6 text (settable) │ REASONING_FIXTURE_READY                                               
+		7 text (settable) │ Interrupted · accepted operations may finish; no rollback.            
+		8 text (settable) ❯ You                                                                   
+		9 text (settable)   Verify medium on the next turn                                        
+		10 text (settable) │ Operator                                                              
+		11 text (settable) │ REASONING_FIXTURE_READY                                               
+		12 text (settable) │ Interrupted · accepted operations may finish; no rollback.            
+		13 text (settable) ❯ You                                                                   
+		14 text (settable)   Verify unsupported reasoning readback                                 
+		15 text (settable) │ Operator                                                              
+		16 text (settable) │ REASONING_FIXTURE_READY                                               
+		17 text (settable)   ⠇ Responding                                                          
+		18 text (settable)  Managing consigint / main / #1 run 1                                   
+		19 text (settable)  ────────────────────────────────────────────────────────────────────── 
+		20 text (settable)  > ▏                                                                    
+		21 text (settable)  ────────────────────────────────────────────────────────────────────── 
+		22 text (settable) OPERATOR  Shift-Enter Newline  Ctrl-g Browse  Ctrl-x Stop selected turn 
+	23 close button
+	24 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	25 minimize button
+	26 text OVRCR GUI
+27 menu bar
+	28 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                [Commands] [Menu]
+Operator · pi · fixture/gpt-5-mini · running                            
+                   [Reasoning high (set: xhigh) ▾ Ctrl-t]  [Stop Ctrl-x]
+│ REASONING_FIXTURE_READY                                               
+│ Interrupted · accepted operations may finish; no rollback.            
+                                                                        
+❯ You                                                                   

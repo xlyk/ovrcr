@@ -41,6 +41,11 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
     (
+        "operator.thinking_level",
+        "\"{}\"",
+        &ovrcr_protocol::OperatorThinkingLevel::NAMES,
+    ),
+    (
         "delegation.default_harness",
         "\"{}\"",
         &["claude", "codex", "grok", "pi"],
@@ -397,6 +402,7 @@ fn matrix_covers_every_declared_setting() {
             "cursor_cloud_accounts",
             "launch_choices",
             "operator.model",
+            "operator.thinking_level",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
             "delegation.allowed_harnesses",
@@ -416,8 +422,8 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Array, Table, Str, Integer, Bool, Array, Array, Str, Str, Integer,
-            Integer, Bool, Integer, Str,
+            Bool, Str, Array, Array, Table, Str, Str, Integer, Bool, Array, Array, Str, Str,
+            Integer, Integer, Bool, Integer, Str,
         ]
     );
     // Every test-side table names a declared setting, so none goes stale.

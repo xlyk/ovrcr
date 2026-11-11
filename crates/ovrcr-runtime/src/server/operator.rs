@@ -231,16 +231,15 @@ impl ServerState {
                 self.reject_if_stopping()?;
                 self.check_live_capacity()?;
                 self.validate_operator_context(&context)?;
-                // The accepted turn captures the current `operator.model` reading, so a
+                // The accepted turn captures the current model and reasoning settings, so a
                 // later settings edit cannot change what this turn asked the worker to use.
-                let model = self
+                let settings = self
                     .settings
                     .lock()
                     .unwrap()
                     .report
                     .settings
                     .operator
-                    .model
                     .clone();
                 let turn = {
                     #[cfg(test)]
@@ -256,7 +255,7 @@ impl ServerState {
                                 expected_run,
                                 &text,
                                 context,
-                                model,
+                                settings,
                             )
                         })
                         .context("dashboard owner changed")??

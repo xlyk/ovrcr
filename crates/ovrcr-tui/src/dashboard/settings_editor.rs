@@ -4361,7 +4361,7 @@ mod tests {
         );
         let reading = report(Settings::default(), &[]);
         let rows = top_items(&reading);
-        let expected = if cfg!(target_os = "macos") { 33 } else { 32 };
+        let expected = if cfg!(target_os = "macos") { 34 } else { 33 };
         assert_eq!(rows.len(), expected);
         let mut ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         ids.sort_unstable();

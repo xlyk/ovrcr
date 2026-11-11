@@ -87,6 +87,17 @@ const expectedSession = requestedSession;
 let sessionFile = sessionDir ? join(sessionDir, `${requestedSession}.jsonl`) : undefined;
 let currentModel = scenario.default_model ?? null;
 let thinkingLevel = scenario.thinking_level ?? null;
+const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+function availableThinkingLevels() {
+  return scenario.model_thinking_levels?.[`${currentModel?.provider}/${currentModel?.id}`]
+    ?? scenario.available_thinking_levels ?? thinkingLevels.slice(0, 5);
+}
+function clampThinkingLevel(level) {
+  const available = availableThinkingLevels();
+  const index = thinkingLevels.indexOf(level);
+  return thinkingLevels.slice(Math.max(0, index)).find((item) => available.includes(item))
+    ?? thinkingLevels.slice(0, index).reverse().find((item) => available.includes(item));
+}
 let promptRunning = false;
 let aborted = false;
 let exited = false;
@@ -657,14 +668,20 @@ function handleCommand(command) {
         break;
       }
       currentModel = match;
+      thinkingLevel = clampThinkingLevel(scenario.model_default_thinking?.[`${match.provider}/${match.id}`]
+        ?? scenario.thinking_level ?? thinkingLevel);
       appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       respond("set_model", id, { provider: match.provider, id: match.id, name: match.name ?? match.id });
       break;
     }
+    case "get_available_thinking_levels":
+      record({ event: "command", command: command.type, id });
+      respond(command.type, id, { levels: availableThinkingLevels() });
+      break;
     case "set_thinking_level":
       record({ event: "command", command: "set_thinking_level", id, level: command.level });
-      thinkingLevel = command.level;
-      appendSessionEntry({ type: "thinking_level_change", thinkingLevel: command.level });
+      thinkingLevel = clampThinkingLevel(command.level);
+      appendSessionEntry({ type: "thinking_level_change", thinkingLevel });
       respond("set_thinking_level", id);
       break;
     case "set_auto_retry":

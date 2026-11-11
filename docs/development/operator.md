@@ -108,10 +108,15 @@ Server.
 4. Resolve the model: split the captured override at the first `/`, otherwise use
    the fresh profile default (never the resumed session's old model). The exact
    provider/id must appear in `get_available_models`; `set_model` must return the
-   same identity; the profile's thinking level is restored with
-   `set_thinking_level`. Then `set_auto_retry` off and `set_auto_compaction` on.
+   same identity. Set `set_auto_retry` off and `set_auto_compaction` on, then
+   commit `ModelSelected`, clearing the previous model's reasoning readback.
+   Apply the turn's captured `operator.thinking_level` unless it is `default`,
+   which leaves Pi's choice alone. Read `get_state.thinkingLevel`
+   and `get_available_thinking_levels` (`{levels: [...]}`) back and commit
+   `ReasoningSelected` with the effective level, supported list and captured
+   request.
    A missing or unavailable model fails the turn; there is no fallback.
-5. Commit `ModelSelected`, then send exactly one `prompt` whose message is the
+5. Send exactly one `prompt` whose message is the
    captured context JSON followed by the user text, so input such as `/new` is
    never a native command.
 6. Stream until `agent_settled`. `prompt.success` is acceptance only. Success
@@ -243,6 +248,31 @@ turn; an explicit value overrides it and is captured per accepted Submit. The
 legacy `operator.provider`, `operator.chat_gpt_model` and `operator.grok_model`
 keys are not translated; the unknown-setting findings identify them, and the
 document is never rewritten automatically.
+
+## Thinking level
+
+`OperatorSettings.thinking_level` is a typed catalog enum (`default`, `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`), defaulting to `default`.
+Submit captures it beside the model in the same durable transaction. A settings
+edit never reconfigures an accepted turn; the next turn applies it after model
+selection, including checkpoint resume. There is no per-conversation override
+and no step that restores the startup profile's reasoning level.
+
+Pi can silently clamp `set_thinking_level` while reporting success. The worker
+reads `get_state.thinkingLevel` and `get_available_thinking_levels` after applying
+the request and validates the bounded list before prompting. `ReasoningSelected`
+updates retained conversation metadata without adding a transcript row. The
+summary publishes the actual level, supported levels and captured request so the
+Dashboard can distinguish substitution from a saved change for the next turn.
+Before the first selection the level and supported list remain unknown; opening
+the conversation never launches Pi just to discover capabilities.
+
+The header control and `Ctrl-t` share one picker. It writes `SetSetting` through
+the Outbox and waits for the Server's settings publication; a refused write
+leaves the saved value unchanged and displays the error. The controls move to a
+second header row when the title and controls cannot fit and at least 50 content
+columns remain. A tighter on-demand sidebar view prioritizes controls over the
+title. The ordinary 80×24 and 60-column views retain the model title.
 
 ## Removed engine
 

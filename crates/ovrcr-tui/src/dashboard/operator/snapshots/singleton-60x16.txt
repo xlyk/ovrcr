@@ -1,6 +1,6 @@
 󰚩 OVRCR                                    [Commands] [Menu]
 Operator · pi · openai/gpt-6.1-sol · ready
-❯ You
+                                    [Reasoning — ▾ Ctrl-t]
   ▸ Context · global
   Review this workspace.
 

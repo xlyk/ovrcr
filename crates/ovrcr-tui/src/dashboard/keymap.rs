@@ -501,6 +501,16 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
+        if dashboard.operator_reasoning_picker_open() {
+            return vec![KeyGroup {
+                title: "Operator reasoning".into(),
+                keys: vec![
+                    native("↑/↓", "Select level", KeyCode::Down, KeyModifiers::NONE),
+                    native("Enter", "Pick", Enter, KeyModifiers::NONE),
+                    native("Esc", "Close", Esc, KeyModifiers::NONE),
+                ],
+            }];
+        }
         if dashboard.operator_transcript_focused() {
             return vec![KeyGroup {
                 title: "Operator transcript".into(),
@@ -510,6 +520,12 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                     native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
                     native("PageDown", "Later", PageDown, KeyModifiers::NONE),
                     native("Tab", "Composer", Tab, KeyModifiers::NONE),
+                    native(
+                        "Ctrl-t",
+                        "Reasoning level",
+                        Char('t'),
+                        KeyModifiers::CONTROL,
+                    ),
                     native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
                 ],
             }];
@@ -520,6 +536,12 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             ),
             native("Shift-Enter", "Newline", Enter, KeyModifiers::SHIFT),
             native("Ctrl-l", "Toggle sidebar", Char('l'), KeyModifiers::CONTROL),
+            native(
+                "Ctrl-t",
+                "Reasoning level",
+                Char('t'),
+                KeyModifiers::CONTROL,
+            ),
             native("Tab", "Transcript", Tab, KeyModifiers::NONE),
             native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
             native("PageDown", "Later", PageDown, KeyModifiers::NONE),

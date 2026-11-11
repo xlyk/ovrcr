@@ -179,3 +179,8 @@ catalog, loader, editor and snapshots. It holds one optional `model` string
 (`provider/model`); unset uses the dedicated pi profile's current default before
 each turn, and an explicit value is captured per accepted Submit. Settings never
 contain credentials.
+
+Schema version 30 adds the Operator turn's captured `thinking_level` (legacy
+turns default to `default`) and the conversation's optional Pi reasoning readback.
+It preserves existing journals and checkpoints. Protocol 78 adds the reasoning
+setting, worker bootstrap choice and `ReasoningSelected` metadata event.
