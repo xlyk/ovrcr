@@ -248,10 +248,11 @@ ovrcr terminal acknowledge-stopped SESSION_ID
 Acknowledgement marks an unfinished turn Interrupted and unlocks the next message.
 Interrupted or uncertain commands are never automatically replayed.
 
-Each running Operator turn uses one of the existing fifty live-session slots; an
-idle conversation uses none and at most one Operator turn runs at a time. At
-capacity, stop or close an ordinary session through the normal controls, then
-retry the preserved draft.
+The Operator worker has a dedicated live slot outside the fifty live Workspace
+session slots. It can run while all fifty Workspace sessions are active; a
+fifty-first Workspace session is still refused. Generic `terminal send`,
+`terminal keystroke`, `pause` and `resume` commands refuse Operator conversations.
+Use the Operator composer to submit a turn and its native Stop control to stop it.
 
 ## Existing data
 

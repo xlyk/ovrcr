@@ -374,8 +374,10 @@ nothing, late replies after dismissal, Unicode input, narrow layout, unread, pag
 history, visible thinking blocks in stream order, durable compaction activity
 across reopen/catch-up with no stale phase after end/failure/Stop or a later turn,
 and reopening either composer capturing the reselected target for the next
-message. `tests/operator_scope.rs` covers Operator-scope lifecycle refusals
-and the hidden legacy rows. The TUI snapshot test renders the singleton at 140×40,
+message. `tests/operator_scope.rs` covers Operator-scope lifecycle and generic
+terminal control refusals, hidden legacy rows, and the dedicated Operator slot
+beside fifty live Workspace sessions (including refusal of the 51st). The TUI
+snapshot test renders the singleton at 140×40,
 100×24, 80×24, 60×24 and 60×16 with the composer at its two-row minimum; its
 journal holds one empty collapsed successful receipt and no control characters, so
 it does not exercise receipt escaping. Escaping is covered by

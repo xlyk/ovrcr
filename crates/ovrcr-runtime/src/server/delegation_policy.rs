@@ -153,7 +153,10 @@ impl super::ServerState {
             .lock()
             .unwrap()
             .values()
-            .filter(|session| session.is_live())
+            .filter(|session| {
+                session.is_live()
+                    && session.summary().scope == ovrcr_protocol::SessionScope::Workspace
+            })
             .map(|session| session.id())
             .collect();
         let retained = self.retained.lock();
