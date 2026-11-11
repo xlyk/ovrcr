@@ -1692,7 +1692,7 @@ fn standalone_branch_shortcut_creates_and_returns_to_browse() -> Result<()> {
 }
 
 /// A disposable detected Claude stand-in proves New agent's initial prompt
-/// stays one literal argv item through the branch child, compiled CLI, Server,
+/// stays one literal argv item through typed branch creation, compiled CLI, Server,
 /// and PTY launch without starting a real provider.
 #[test]
 fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<()> {
@@ -1726,40 +1726,41 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
             pixel_height: 0,
         },
     )?;
-    // The new-agent Branch picker can open the branch-only child. The child
-    // returns to the parent with its new registered destination selected.
+    // New agent session accepts a typed branch directly, then starts the Agent
+    // after the workspace lifecycle succeeds.
     dashboard.send(b"\x07n")?;
     dashboard.wait_until(
         |screen| screen.contains("New agent session") && screen.contains("feature/acceptance"),
         wait_deadline(),
     )?;
-    dashboard.send(b"\rCreate new branch")?;
+    dashboard.send(b"\t\rfeature/cua-agent-prompt")?;
     dashboard.wait_until(
-        |screen| screen.contains("Create new branch"),
+        |screen| screen.contains("Create branch \"feature/cua-agent-prompt\""),
         wait_deadline(),
     )?;
     dashboard.send(b"\r")?;
-    dashboard.wait_until(|screen| screen.contains("Branch name"), wait_deadline())?;
+    dashboard.wait_until(
+        |screen| {
+            screen.contains("fixture-workspaces/feature-cua-agent-prompt")
+                && screen.contains("From main")
+        },
+        wait_deadline(),
+    )?;
     let base = live::git(&fixture.repo, &["symbolic-ref", "--short", "HEAD"]);
     let base = base.trim();
-    // Expand Workspace options, focus Base, clear its placeholder, and choose
-    // the fixture repository's actual default branch before creating the child.
-    dashboard.send(format!("feature/cua-agent-prompt\t \t\x15{base}").as_bytes())?;
+    // Expand Advanced options, focus Base, clear its placeholder, and choose
+    // the fixture repository's actual default branch before starting the Agent.
+    dashboard.send(format!("\t\t\t\t \t\x15{base}").as_bytes())?;
     dashboard.wait_until(
         |screen| screen.contains("Base") && screen.contains(base),
         wait_deadline(),
     )?;
-    dashboard.send(b"\r")?;
-    dashboard.wait_until(
-        |screen| screen.contains("New agent session") && screen.contains("Agent harness"),
-        Duration::from_secs(30),
-    )?;
-    // Agent harness has focus after child success; the next fields are Model,
-    // then the multiline Initial prompt.
+    // Base is focused. Return to the multiline prompt, then submit with the
+    // form's Alt+Enter binding.
+    dashboard.send(b"\x1b[Z\x1b[Z")?;
     let prompt = "--help me fix the build\nand keep this exact second line";
     let prompt_input = prompt.replace('\n', "\r");
-    // Enter inserts the newline; Escape + Enter is the form's actual Start action.
-    dashboard.send(format!("\t\t{prompt_input}\x1b\r").as_bytes())?;
+    dashboard.send(format!("{prompt_input}\x1b\r").as_bytes())?;
     dashboard.wait_until(|screen| screen.contains("AGENT_ARGS_END"), wait_deadline())?;
     fixture.managed_pgids = fixture.session_pgids()?;
     let hierarchy = fixture.list()?;
@@ -1773,7 +1774,7 @@ fn agent_initial_prompt_reaches_fake_claude_as_one_literal_argument() -> Result<
                 .iter()
                 .find(|workspace| workspace.name == "feature/cua-agent-prompt")
         })
-        .context("branch child workspace missing")?;
+        .context("typed branch workspace missing")?;
     let session = workspace
         .sessions
         .iter()
