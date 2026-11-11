@@ -3971,13 +3971,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0450017301630168016c0104",
+            "2a0451017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0450017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0451017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4027,18 +4027,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04500000"),
+        ("Response::NotificationNavigation", "0d04510000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0450017301630168016c0104",
+            "0e01016e0451017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010450017301630168016c0164",
+            "0f0107080901016901010451017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004500107080901016901010450017301630168016c0164",
+            "1004510107080901016901010451017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4078,7 +4078,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0450017301630168016c0104",
+            "08016e0451017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
