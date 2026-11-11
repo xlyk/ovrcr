@@ -15530,10 +15530,10 @@ fn pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_prod
     // to it at all, so nothing about the binding or the generation moves.
     let before = fixture.session_summary(summary.id);
     pi_callback(&fixture, summary.id, &mut index, "session_compact");
-    assert_eq!(
-        fixture.session_summary(summary.id),
-        before,
-        "same-conversation compaction preserves the binding"
+    assert_unchanged_after_fixture_input(
+        &fixture.session_summary(summary.id),
+        &before,
+        "same-conversation compaction preserves the binding",
     );
 
     // A -> B -> A: returning to the first conversation is a third generation, never the
@@ -15664,10 +15664,10 @@ fn pi_source_gap_pauses_then_recovers_at_the_next_boundary() {
     let quiet = fixture.session_summary(summary.id);
     for command in ["agent_settled", "agent_end:ok"] {
         pi_callback(&fixture, summary.id, &mut index, command);
-        assert_eq!(
-            fixture.session_summary(summary.id),
-            quiet,
-            "{command} while paused changes nothing"
+        assert_unchanged_after_fixture_input(
+            &fixture.session_summary(summary.id),
+            &quiet,
+            &format!("{command} while paused preserves reporting state"),
         );
     }
     // The next trustworthy boundary recovers: one fresh generation, nothing restored.
