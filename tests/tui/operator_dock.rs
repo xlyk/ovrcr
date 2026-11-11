@@ -249,7 +249,7 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         rendered_rows(dashboard, 120, height)
     };
 
-    let full = rows_at(&mut dashboard, 26);
+    let full = rows_at(&mut dashboard, 30);
     assert!(
         sidebar_line(&full[2]).trim().is_empty(),
         "the attention gap exists while roomy: {full:?}"
@@ -267,11 +267,17 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "tree follows Operator: {full:?}"
     );
     assert!(
-        full[15].contains("QUOTA LEFT"),
+        full[19].contains("QUOTA LEFT"),
         "full Quota includes its heading: {full:?}"
     );
 
-    let no_attention_gap = rows_at(&mut dashboard, 25);
+    let full_resources = full
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources remains between the tree and Quota");
+    assert!(full_resources > 7 && full_resources < 19, "{full:?}");
+
+    let no_attention_gap = rows_at(&mut dashboard, 29);
     assert!(
         no_attention_gap[1].contains("needs input"),
         "attention persists: {no_attention_gap:?}"
@@ -285,7 +291,7 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "Operator gap remains for the next step: {no_attention_gap:?}"
     );
 
-    let no_operator_gap = rows_at(&mut dashboard, 24);
+    let no_operator_gap = rows_at(&mut dashboard, 28);
     assert!(
         no_operator_gap[1].contains("needs input"),
         "attention persists: {no_operator_gap:?}"
@@ -299,7 +305,15 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "second gap shrinks: {no_operator_gap:?}"
     );
 
-    let compact_quota = rows_at(&mut dashboard, 23);
+    let quota_with_resources = rows_at(&mut dashboard, 25);
+    assert!(
+        quota_with_resources
+            .iter()
+            .any(|row| row.contains("QUOTA LEFT")),
+        "the quota heading remains before its compact form: {quota_with_resources:?}"
+    );
+
+    let compact_quota = rows_at(&mut dashboard, 24);
     assert!(
         compact_quota[1].contains("needs input"),
         "attention persists: {compact_quota:?}"

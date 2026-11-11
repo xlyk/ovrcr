@@ -145,7 +145,7 @@ fn current_activity(chat: &Chat) -> String {
 }
 
 fn activity(chat: &Chat) -> AgentActivity {
-    if chat.stopping {
+    if chat.submitting || chat.stopping {
         return AgentActivity::Busy;
     }
     match chat.summary.current_turn.as_ref().map(|turn| turn.state) {
@@ -287,6 +287,11 @@ impl Dashboard {
                 .as_ref()
                 .is_some_and(|chat| activity(chat) == AgentActivity::Busy)
     }
+    pub(super) fn capture_operator_setup_for_open(&mut self) {
+        if self.operator.chat.is_none() || self.operator.sidebar_setup_unavailable {
+            self.operator.sidebar_setup_unavailable = !pi_available();
+        }
+    }
     fn operator_sidebar_status(&self, now: u64) -> SidebarStatus {
         let setup_failed = setup_failure(self.operator.error.as_deref())
             || self
@@ -294,7 +299,9 @@ impl Dashboard {
                 .chat
                 .as_ref()
                 .is_some_and(|chat| setup_failure(chat.error.as_deref()));
-        if setup_failed || (self.operator.chat.is_none() && !pi_available()) {
+        let should_check_pi =
+            self.operator.chat.is_none() || self.operator.sidebar_setup_unavailable;
+        if setup_failed || (should_check_pi && !pi_available()) {
             return SidebarStatus {
                 glyph: '−',
                 color: PEACH(),

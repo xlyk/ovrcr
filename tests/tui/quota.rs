@@ -204,7 +204,15 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         current[last_tree_row], "▌      └ sh",
         "the stacked label is the last selectable tree line"
     );
-    assert_eq!(last_tree_row + 1, quota_row, "{current:?}");
+    let resources_row = current
+        .iter()
+        .position(|row| row.contains("RESOURCES"))
+        .expect("Resources remains after the tree");
+    assert_eq!(last_tree_row + 1, resources_row, "{current:?}");
+    assert!(
+        resources_row < quota_row,
+        "Resources precedes Quota: {current:?}"
+    );
     dashboard.install_focus(SessionId(49));
     let action = dashboard.mouse_action(
         mouse_event(

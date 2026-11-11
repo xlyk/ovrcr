@@ -32,6 +32,10 @@ pub(super) struct Hub {
     editing: bool,
     transcript_focus: bool,
     sidebar_open: bool,
+    /// Preserve an unavailable-Pi status that was actually displayed before
+    /// opening the singleton; logical loaded-chat state alone is not evidence
+    /// that this host can launch Pi.
+    sidebar_setup_unavailable: bool,
     chat: Option<Chat>,
     /// One Open or history read is in flight for the singleton.
     loading: bool,
@@ -676,6 +680,7 @@ impl Dashboard {
         {
             return;
         }
+        self.capture_operator_setup_for_open();
         self.operator.loading = true;
         self.operator_request(Pending::Open { origin }, OperatorRequest::Open);
     }
@@ -2283,6 +2288,34 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_pending_submission_keeps_sidebar_busy_without_claiming_a_server_turn() {
+        let mut d = dashboard();
+        d.settings.operator.sidebar = true;
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(summary(), Vec::new(), None),
+        );
+        assert!(!d.operator_sidebar_busy());
+
+        d.event_action(Event::Paste("pending message".into()));
+        d.key(KeyCode::Enter);
+        assert!(d.operator.chat.as_ref().unwrap().submitting);
+        assert!(d.operator_sidebar_busy());
+        assert_eq!(d.redraw_interval(), super::super::status::SPINNER_INTERVAL);
+        assert!(
+            !d.operator_stop_available(),
+            "a pending submission has no Server-owned turn to stop"
+        );
+        assert!(
+            !d.operator_submit_available(),
+            "a pending submission remains single-flight"
+        );
     }
 
     #[test]

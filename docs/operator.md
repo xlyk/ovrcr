@@ -62,9 +62,11 @@ press `o` in Browse to open the conversation with the composer focused. The titl
 bar has no Operator controls.
 
 Before the conversation has been opened, the section says **Off** when the Pi
-executable is available and **Not set up** when it is missing. Known Pi setup
-errors after opening also show **Not set up**. The section shows **Working** with elapsed time and current activity, **Reply ready · 1
-unread** with a reply preview, or **Idle** with the latest reply. The last reply
+executable is available and **Not set up** when it is missing. If Pi is missing
+when opening begins, that status remains while opening the singleton.
+Known Pi setup errors after opening also show **Not set up**. The section shows
+**Working** with elapsed time and current activity, **Reply ready · 1 unread**
+with a reply preview, or **Idle** with the latest reply. The last reply
 and turn start times come from the Server's retained turn records; older turns
 without recorded times remain untimed. Drawing the section never reviews a reply
 or starts a worker. The `operator.sidebar` setting controls it and is on by
