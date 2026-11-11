@@ -496,23 +496,26 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_quota(frame, now_unix_ms);
     dashboard.draw_attention(frame);
 
-    let rects = dashboard.pane_rects(frame.area());
-    let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
-    let split_separator = dashboard.panes.len() == 2 && rects.len() == 2;
-    if split_separator {
-        let separator_x = rects[0].terminal.right();
-        for row in 0..layout.sidebar.height {
-            let cell = frame
-                .buffer_mut()
-                .cell_mut((separator_x, layout.sidebar.y + row))
-                .expect("split separator is in frame");
-            cell.reset();
-            cell.set_symbol("│").set_fg(SURFACE2()).set_bg(BASE());
+    let pane_layout = dashboard.pane_layout_rects(frame.area());
+    let rects = &pane_layout.panes;
+    let split_hidden = pane_layout.hidden;
+    for boundary in &pane_layout.boundaries {
+        let (symbol, area) = match boundary.direction {
+            super::SplitDirection::Right => ("│", boundary.divider),
+            super::SplitDirection::Down => ("─", boundary.divider),
+        };
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(symbol).set_fg(SURFACE2()).set_bg(BASE());
+                }
+            }
         }
     }
 
-    if dashboard.panes.len() == 2 {
-        for rect in &rects {
+    if dashboard.panes.len() > 1 {
+        for rect in rects {
             let Some(pane) = dashboard.panes.get(rect.pane_index) else {
                 continue;
             };
@@ -522,6 +525,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 pane,
                 dashboard,
                 rect.pane_index == dashboard.focused_pane,
+                split_hidden,
                 now_unix_ms,
             );
             render_terminal(
@@ -729,6 +733,7 @@ fn render_split_metadata(
     pane: &PaneState,
     dashboard: &Dashboard,
     focused: bool,
+    split_hidden: bool,
     now_unix_ms: u64,
 ) {
     if rect.metadata.is_empty() {
@@ -767,11 +772,13 @@ fn render_split_metadata(
     );
     if rect.metadata.height > 1 {
         frame.render_widget(
-            Paragraph::new(
+            Paragraph::new(if split_hidden {
+                Line::from("split hidden")
+            } else {
                 session
                     .and_then(|session| provider_metrics(session, now_unix_ms, width))
-                    .unwrap_or_else(|| Line::from("─".repeat(width))),
-            )
+                    .unwrap_or_else(|| Line::from("─".repeat(width)))
+            })
             .style(Style::default().fg(MUTED()).bg(BASE())),
             Rect::new(
                 rect.metadata.x,

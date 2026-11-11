@@ -2216,6 +2216,8 @@ mod tests {
             "visible focused pane still alerts"
         );
         d.desktop.pending.clear();
+        d.pane_layout
+            .insert_after(0, super::super::SplitDirection::Right, 1);
         d.panes.push(crate::dashboard::PaneState::new(TerminalSize {
             rows: 24,
             cols: 80,

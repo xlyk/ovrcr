@@ -142,8 +142,8 @@ impl DashboardView {
         if self.revision == 0 {
             return Err("view revision must be greater than zero".into());
         }
-        if self.panes.len() > 2 {
-            return Err("view cannot contain more than two panes".into());
+        if self.panes.len() > 4 {
+            return Err("view cannot contain more than four panes".into());
         }
         for (index, pane) in self.panes.iter().enumerate() {
             if pane.size.rows == 0 || pane.size.cols == 0 {
@@ -4700,5 +4700,35 @@ mod tests {
             cols: 1000,
         });
         assert!(at_limit.validate().is_ok(), "1000 by 1000 must pass");
+    }
+
+    #[test]
+    fn view_limit_accepts_four_panes_and_rejects_five_and_duplicates() {
+        let target = |session| PaneTarget {
+            session: SessionId(session),
+            run: SessionRunId(1),
+            size: TerminalSize { rows: 8, cols: 20 },
+        };
+        let mut view = DashboardView {
+            revision: 1,
+            panes: (1..=4).map(target).collect(),
+            focused: Some(SessionId(4)),
+        };
+        assert!(view.validate().is_ok(), "four distinct panes must pass");
+
+        view.panes.push(target(5));
+        view.focused = Some(SessionId(5));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain more than four panes"
+        );
+
+        view.panes.pop();
+        view.panes[3].session = SessionId(3);
+        view.focused = Some(SessionId(3));
+        assert_eq!(
+            view.validate().unwrap_err(),
+            "view cannot contain duplicate sessions"
+        );
     }
 }

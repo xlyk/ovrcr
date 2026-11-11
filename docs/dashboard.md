@@ -121,8 +121,8 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `m` | Switch between the project tree and recent Agent activity; the Dashboard saves the choice through the Server |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
-| `v` | Open a second pane on the next different visible session and choose its session; `Esc` keeps that suggestion |
-| `Tab` / `Shift-Tab` | Focus the other pane |
+| `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Open New agent session |
 | `w` | Create a branch (form) |
@@ -403,17 +403,22 @@ explanation and leave wheel-up quiet.
 
 ## Panes
 
-`v` opens a second pane on the next different visible session and, over it, a
-session chooser with that suggestion highlighted. `Enter` shows the highlighted
-session in the new pane, typing filters by project, branch and title, and `Esc`
-keeps the suggestion. The chooser does not offer the session the other pane
-already shows. Sidebar navigation replaces the focused pane's session; selecting the session already
-shown in the other pane moves focus there instead. `x` closes the focused pane
-and expands the survivor, leaving its session running. If the window becomes too
-narrow for both panes, only the focused pane is drawn; widening it restores both.
-A new attachment starts with one pane. Each pane is capped at 1000 rows and
-1000 columns; a `SetView` requesting a larger pane is rejected before any PTY
-resize.
+`v` splits the focused pane to the right; `V` splits it down. Each opens a
+session chooser with the next different visible session highlighted. `Enter`
+shows the highlighted session in the new pane, typing filters by project,
+branch and title, and `Esc` keeps the suggestion. The chooser omits sessions
+already assigned to another pane. A layout can contain up to four panes, each
+at least 20 columns wide and 8 rows tall including its header. The footer gives
+the reason when another split cannot fit or the four-pane limit is reached.
+Drag any divider to resize its neighboring panes; click a pane to focus it.
+`Tab` and `Shift-Tab` cycle through panes. Sidebar navigation replaces the
+focused pane's session; selecting a session already shown elsewhere moves focus
+to that pane instead. `x` closes the focused pane and gives its space to its
+sibling, leaving the session running. If the window becomes too small for the
+layout, only the focused pane is drawn and its header says `split hidden`;
+widening the window restores the full layout. A new attachment starts with one
+pane. Each pane is capped at 1000 rows and 1000 columns; a `SetView` requesting
+a larger pane is rejected before any PTY resize.
 
 ## Sidebar and status
 

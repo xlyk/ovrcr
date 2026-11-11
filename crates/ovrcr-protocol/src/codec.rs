@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn split_view_validation_rejects_ambiguous_targets() {
+    fn split_view_validation_accepts_four_and_rejects_five_and_ambiguous_targets() {
         let target = PaneTarget {
             session: SessionId(1),
             run: SessionRunId(1),
@@ -235,24 +235,20 @@ mod tests {
         view.focused = Some(SessionId(2));
         assert!(view.validate().is_err());
 
-        view.panes = vec![
-            PaneTarget {
-                session: SessionId(1),
+        view.panes = (1..=4)
+            .map(|session| PaneTarget {
+                session: SessionId(session),
                 run: SessionRunId(1),
-                size: TerminalSize { rows: 36, cols: 39 },
-            },
-            PaneTarget {
-                session: SessionId(2),
-                run: SessionRunId(1),
-                size: TerminalSize { rows: 18, cols: 39 },
-            },
-            PaneTarget {
-                session: SessionId(3),
-                run: SessionRunId(1),
-                size: TerminalSize { rows: 18, cols: 39 },
-            },
-        ];
+                size: TerminalSize { rows: 16, cols: 39 },
+            })
+            .collect();
         view.focused = Some(SessionId(1));
+        assert!(view.validate().is_ok());
+        view.panes.push(PaneTarget {
+            session: SessionId(5),
+            run: SessionRunId(1),
+            size: TerminalSize { rows: 16, cols: 39 },
+        });
         assert!(view.validate().is_err());
 
         view.panes.truncate(1);

@@ -24,7 +24,28 @@ that blocks shutdown.
 - Preserve overlay input priority, bounded event batches, and the input-drain-before-clipboard-emission boundary.
 - Treat literal spacing, terminal modes, Unicode width, colors, cursor placement, and accessibility text as behavior. Keep natural wide-glyph widths and clip at pane boundaries. A TestBackend pass alone may miss errors in emitted terminal coordinates.
 
-Sidebar session-jump labels are derived from the active sidebar row order, viewport,
+Pane arrangement is Dashboard-owned: `PaneLayout` stores a tree of right or
+down splits, while `DashboardView` sends only the visible sessions and their
+terminal sizes. The Server does not retain the tree, and a new attachment starts
+with one pane. Geometry keeps each pane at least 20 columns wide and 8 rows
+high including its header. If the full tree no longer fits, render only the
+focused pane while preserving every assignment and split ratio; render the tree
+again when it fits. Focus and visible-geometry changes go through
+`retarget(PaneChange)` and revoke input until the one in-flight view request is
+acknowledged for all of its pane snapshots.
+
+In the remembered `sidebar_view = "recent"` projection, `visible_rows` orders
+projects by name and Agent sessions by `last_activity_unix_ms` (falling back to
+start time), omitting Terminal sessions and empty projects/workspaces. Every
+Agent row is two lines there: status/title/age and branch/harness. Both lines use
+the same `TreeRow` for selection, hover, click, and close behavior.
+`SessionChanged` makes the new order visible immediately; selection remains
+attached to its session ID and `ensure_selection_visible` follows it.
+`tree_row_heights`, `tree_line_at`, `tree_line_count` and `tree_row_start` remain
+the shared basis for rendering, scrolling, jump labels and mouse hit-testing.
+
+Sidebar session-jump labels are derived from the currently drawn sidebar row
+order and viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
 indent so status, title, row height, hit-testing, and PTY geometry stay fixed.
 Use only single-digit labels 1–9 on the first nine eligible drawn Agent title
