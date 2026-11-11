@@ -75,6 +75,76 @@ fn complete(
 }
 
 #[test]
+fn reasoning_changes_during_a_turn_apply_only_to_the_next_turn() {
+    use ovrcr::protocol::OperatorThinkingLevel as Level;
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::Delta("held turn".into()), Step::Hold]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let output = live
+        .command()
+        .args(["settings", "set", "operator.thinking_level", "low"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "first");
+    let history = client.wait_history(opened.id, |history| has_assistant(history, "held turn"));
+    assert_eq!(
+        history.conversation.reasoning.as_ref().unwrap().level,
+        Level::Low
+    );
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'high'".into()),
+        }),
+        Response::Ok
+    );
+    let history = client.read(opened.id.0, 0, 100);
+    assert_eq!(
+        history.conversation.reasoning.as_ref().unwrap().level,
+        Level::Low
+    );
+    let levels: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["command"] == "set_thinking_level")
+        .collect();
+    assert_eq!(levels.len(), 1, "no mid-turn reconfiguration");
+    assert_eq!(levels[0]["level"], "low");
+    client.stop_turn(first.identity);
+    client.wait_stopped(opened.id);
+
+    let mut second = Scenario::new();
+    second.steps(vec![Step::assistant("next turn"), Step::Settle]);
+    fake.script(&second);
+    let current = client.current().unwrap();
+    client.submit_turn(&current, "second");
+    let history = complete(&mut client, opened.id);
+    assert_eq!(
+        history.conversation.reasoning.as_ref().unwrap().requested,
+        Level::High
+    );
+    assert_eq!(
+        history.conversation.reasoning.as_ref().unwrap().level,
+        Level::High
+    );
+    let output = live
+        .command()
+        .args(["settings", "set", "operator.thinking_level", "bogus"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "unknown levels must be refused by the CLI writer"
+    );
+}
+
+#[test]
 fn operator_cli_is_the_native_profile_entry_point() {
     let live = Live::idle();
     let output = live
@@ -341,8 +411,8 @@ fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption()
         .collect();
     assert_eq!(
         levels,
-        vec!["high".to_owned()],
-        "the follow-up restores the fresh profile thinking level, not the resumed one"
+        Vec::<String>::new(),
+        "default leaves Pi's model-specific thinking choice alone"
     );
     let resumed_session = checkpoint_file(&live, turn_four.identity.turn.0);
     assert!(

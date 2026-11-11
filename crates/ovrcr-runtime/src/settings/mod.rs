@@ -470,6 +470,16 @@ impl Loader<'_> {
             self.unknown(delegation, "delegation.");
         }
         if let Some(mut operator) = self.take::<toml::Table>(table, "operator") {
+            if let Some(value) = self.take::<ovrcr_protocol::OperatorThinkingLevel>(
+                &mut operator,
+                "operator.thinking_level",
+            ) {
+                self.accept(
+                    "operator.thinking_level",
+                    &mut settings.operator.thinking_level,
+                    value,
+                );
+            }
             if let Some(value) = self.take::<String>(&mut operator, "operator.model") {
                 if ovrcr_protocol::DelegationSettings::valid_model(&value) {
                     self.accept("operator.model", &mut settings.operator.model, Some(value));
@@ -983,6 +993,7 @@ state_db = "/tmp/cursor/state.vscdb"
 
 [operator]
 model = "openai/chat-model"
+thinking_level = "low"
 
 [delegation]
 progress_deadline_ms = 12345
@@ -1210,6 +1221,7 @@ login = "owner@example.com"
                 "cursor_cloud_accounts",
                 "launch_choices",
                 "operator.model",
+                "operator.thinking_level",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",

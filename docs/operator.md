@@ -40,6 +40,20 @@ model is visible in the profile, not that the account may run it.
 The model pi uses for a turn is either the profile's current default or the
 `operator.model` setting; there is no per-conversation model form.
 
+Choose reasoning with `ovrcr settings set operator.thinking_level low`, or press
+`Ctrl-t` in the full Operator pane (also available by clicking its **Reasoning**
+header control). The list offers `default (Pi's choice)` and the levels Pi reports
+for the current model, ticks the level in use, and names unsupported levels.
+Use Up/Down and Enter to save; Esc closes the list. Before the first turn only
+`default` is offered because no model capabilities have been reported yet.
+
+The setting accepts `default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`
+or `max`; its default is `default`, which leaves Pi's model-specific choice alone.
+The header shows Pi's actual level. If Pi substitutes a level, it also shows the
+stored request, for example `Reasoning high (set: xhigh)`. A change during a turn
+shows `Reasoning high → low next turn` and applies from the next accepted turn.
+The setting is shared by full chat and Quick message and survives model changes.
+
 ## One conversation in the Dashboard
 
 The sidebar starts with the first project. One fixed **Operator** dock sits below

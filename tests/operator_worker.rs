@@ -86,6 +86,86 @@ fn failed_text(history: &ovrcr::protocol::OperatorHistory) -> Option<String> {
 }
 
 #[test]
+fn reasoning_setting_is_applied_read_back_and_kept_after_model_change() {
+    use ovrcr::protocol::OperatorThinkingLevel as Level;
+    let mut scenario = Scenario::new();
+    scenario.set(
+        "available_thinking_levels",
+        json!(["minimal", "low", "medium", "high"]),
+    );
+    scenario.steps(vec![Step::assistant("reasoning applied"), Step::Settle]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'xhigh'".into()),
+        }),
+        Response::Ok
+    );
+    let opened = client.open();
+    client.submit_turn(&opened, "first");
+    let history = client.wait_terminal(opened.id);
+    let reasoning = history.conversation.reasoning.as_ref().unwrap();
+    assert_eq!(reasoning.requested, Level::Xhigh);
+    assert_eq!(reasoning.level, Level::High, "Pi silently substitutes high");
+    assert_eq!(
+        reasoning.available,
+        vec![Level::Minimal, Level::Low, Level::Medium, Level::High]
+    );
+    assert!(history.messages.iter().all(|message| !matches!(
+        message.content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::ReasoningSelected(_))
+    )));
+    client.wait_stopped(opened.id);
+
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.model".into(),
+            value: Some("'fixture/alternate'".into()),
+        }),
+        Response::Ok
+    );
+    fake.clear_log();
+    let summary = client.current().unwrap();
+    client.submit_turn(&summary, "second");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(history.conversation.model.as_ref().unwrap().id, "alternate");
+    assert_eq!(
+        history.conversation.reasoning.as_ref().unwrap().requested,
+        Level::Xhigh
+    );
+    let log = fake.log();
+    let set = log
+        .iter()
+        .position(|line| line["command"] == "set_thinking_level")
+        .unwrap();
+    assert_eq!(log[set]["level"], "xhigh");
+    assert!(log[..set].iter().any(|line| line["command"] == "set_model"));
+    assert!(
+        log[set + 1..]
+            .iter()
+            .any(|line| line["command"] == "get_state")
+    );
+}
+
+#[test]
+fn invalid_pi_reasoning_readback_stops_before_prompt() {
+    for available in [json!([]), json!(["bogus"]), json!(["medium", "medium"])] {
+        let mut scenario = Scenario::new();
+        scenario.set("available_thinking_levels", available);
+        let (_live, fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        client.submit_turn(&opened, "must not run");
+        let history = client.wait_terminal(opened.id);
+        assert_eq!(
+            history.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Error
+        );
+        assert!(fake.log().iter().all(|line| line["event"] != "prompt"));
+    }
+}
+
+#[test]
 fn operator_cli_exposes_setup_and_models_and_hides_worker() {
     let live = Live::idle();
     let output = live
@@ -561,9 +641,8 @@ fn a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoi
     let checkpoint_bytes = std::fs::read_to_string(&checkpoint).unwrap();
     assert!(checkpoint_bytes.contains("turn one answer"));
 
-    // The dedicated profile's default changes between turns. The checkpoint
-    // restored by switch_session still says thinking "medium" (turn one), so a
-    // worker that keeps the resumed level instead of the fresh default fails.
+    // Pi re-derives its thinking choice after a model change. Default must
+    // leave that choice alone instead of restoring the startup level.
     let mut second = Scenario::new();
     second.default_model("fixture", "alternate");
     second.set("thinking_level", json!("high"));
@@ -611,13 +690,14 @@ fn a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoi
         .find(|line| line["event"] == "command" && line["command"] == "set_model")
         .unwrap();
     assert_eq!(set_model["modelId"], "alternate");
-    let set_thinking = log
-        .iter()
-        .find(|line| line["event"] == "command" && line["command"] == "set_thinking_level")
-        .expect("thinking-level receipt");
+    assert!(
+        log.iter()
+            .all(|line| line["command"] != "set_thinking_level"),
+        "default must leave Pi's model-specific thinking choice alone"
+    );
     assert_eq!(
-        set_thinking["level"], "high",
-        "the fresh profile thinking level, not the checkpoint's restored medium"
+        history.conversation.reasoning.as_ref().unwrap().level,
+        ovrcr::protocol::OperatorThinkingLevel::High
     );
 
     // Only the new checkpoint survives; the superseded copy is removed.

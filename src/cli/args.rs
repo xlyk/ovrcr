@@ -47,6 +47,8 @@ pub(super) enum SettingsCommand {
     /// `launch_choices.myproj.kind`. VALUE is TOML value text (`true`, `"kh/"`,
     /// `["claude", "--verbose"]`); a bare word is taken as is for a string or
     /// path setting.
+    /// `operator.thinking_level` accepts default, off, minimal, low, medium,
+    /// high, xhigh or max; changes apply from the next Operator turn.
     Set { path: String, value: String },
     /// Remove one setting, list element or launch choice from the document,
     /// so the setting returns to its default.

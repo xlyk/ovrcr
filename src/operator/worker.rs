@@ -190,14 +190,16 @@ fn attempt(
         )?;
     }
 
-    // Step 4: exact model resolution, then the profile's thinking level and safety flags.
+    // Step 4: exact model resolution, then the accepted reasoning choice.
     let model = resolve_model(&mut connection, journal, &mut state, start.model.as_deref())?;
+    let reasoning = resolve_reasoning(&mut connection, journal, &mut state, start.thinking_level)?;
 
     // Step 5: one prompt carrying the captured context ahead of the user text.
     if termination.requested() {
         return Err(Failure::Terminated);
     }
     journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
     let prompt = prompt_text(start)?;
     state.prompted = true;
     let response = connection.request(
@@ -923,9 +925,7 @@ struct TurnState {
     /// Trusted-extension binding notifications seen (a switch binds again).
     ready_count: usize,
     default_model: Option<OperatorModel>,
-    default_thinking: Option<String>,
     current_model: Option<OperatorModel>,
-    current_thinking: Option<String>,
     session_file: Option<PathBuf>,
     /// Display text already streamed for the current assistant message, keyed by
     /// pi's content index. One content block has exactly one display kind.
@@ -986,9 +986,7 @@ impl TurnState {
             workdir,
             ready_count: 0,
             default_model: None,
-            default_thinking: None,
             current_model: None,
-            current_thinking: None,
             session_file: None,
             stream_blocks: BTreeMap::new(),
             last_stream_index: None,
@@ -1408,7 +1406,6 @@ impl TurnState {
         }
         self.session_file = data["sessionFile"].as_str().map(PathBuf::from);
         self.current_model = operator_model(&data["model"]);
-        self.current_thinking = data["thinkingLevel"].as_str().map(str::to_owned);
         Ok(())
     }
 
@@ -1416,7 +1413,6 @@ impl TurnState {
     fn capture_fresh(&mut self, data: &Value) -> std::result::Result<(), Failure> {
         self.capture(data)?;
         self.default_model = self.current_model.clone();
-        self.default_thinking = self.current_thinking.clone();
         Ok(())
     }
 
@@ -1570,8 +1566,6 @@ enum ModelStep {
     Catalog,
     /// Applying the exact selected model.
     Model,
-    /// Restoring the profile's thinking level.
-    Thinking,
 }
 
 /// A refused model step is a configuration answer, never a transport failure: with
@@ -1654,19 +1648,6 @@ fn resolve_model(
         // The command succeeded but a different model is active.
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
     }
-    if let Some(level) = state.default_thinking.clone() {
-        model_step_outcome(
-            connection.request(
-                journal,
-                state,
-                "set_thinking_level",
-                json!({ "level": level }),
-                CONTROL_DEADLINE,
-            ),
-            ModelStep::Thinking,
-            explicit,
-        )?;
-    }
     for (command, params) in [
         ("set_auto_retry", json!({ "enabled": false })),
         ("set_auto_compaction", json!({ "enabled": true })),
@@ -1680,6 +1661,48 @@ fn resolve_model(
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
     }
     Ok(desired)
+}
+
+fn resolve_reasoning(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    requested: ovrcr_protocol::OperatorThinkingLevel,
+) -> std::result::Result<ovrcr_protocol::OperatorReasoning, Failure> {
+    if requested != ovrcr_protocol::OperatorThinkingLevel::Default {
+        require_success(&connection.request(
+            journal,
+            state,
+            "set_thinking_level",
+            json!({ "level": requested.as_str() }),
+            CONTROL_DEADLINE,
+        )?)?;
+    }
+    // Pi reports success even when it substitutes another supported level.
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    let level = serde_json::from_value(response.data["thinkingLevel"].clone())
+        .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    let response = connection.request(
+        journal,
+        state,
+        "get_available_thinking_levels",
+        json!({}),
+        CONTROL_DEADLINE,
+    )?;
+    require_success(&response)?;
+    let available = serde_json::from_value(response.data["levels"].clone())
+        .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    let reasoning = ovrcr_protocol::OperatorReasoning {
+        requested,
+        level,
+        available,
+    };
+    reasoning
+        .validate()
+        .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    Ok(reasoning)
 }
 
 fn delete_previous_checkpoint(paths: &PiPaths, start: &OperatorWorkerStart) {
@@ -2219,16 +2242,14 @@ mod tests {
             ),
             Err(Failure::Failed(MODEL_UNAVAILABLE))
         );
-        for step in [ModelStep::Model, ModelStep::Thinking] {
-            assert_eq!(
-                model_step_outcome(Ok(reply("set_model", false)), step, false),
-                Err(Failure::Failed(MODEL_UNAVAILABLE))
-            );
-            assert_eq!(
-                model_step_outcome(Ok(reply("set_model", false)), step, true),
-                Err(Failure::Failed(MODEL_UNAVAILABLE))
-            );
-        }
+        assert_eq!(
+            model_step_outcome(Ok(reply("set_model", false)), ModelStep::Model, false),
+            Err(Failure::Failed(MODEL_UNAVAILABLE))
+        );
+        assert_eq!(
+            model_step_outcome(Ok(reply("set_model", false)), ModelStep::Model, true),
+            Err(Failure::Failed(MODEL_UNAVAILABLE))
+        );
         // A structured success is not a failure, whatever its command.
         assert!(
             model_step_outcome(
@@ -2428,6 +2449,7 @@ mod tests {
     #[test]
     fn prompt_text_always_keeps_the_context_ahead_of_user_text() {
         let start = OperatorWorkerStart {
+            thinking_level: Default::default(),
             identity: ovrcr_protocol::OperatorTurnIdentity {
                 conversation: ovrcr_protocol::OperatorConversationId(1),
                 turn: ovrcr_protocol::OperatorTurnId(1),

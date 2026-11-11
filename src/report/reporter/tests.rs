@@ -621,6 +621,7 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                             assert_eq!(i, identity);
                             Response::OperatorWorker(OperatorWorkerResult::Start(Box::new(
                                 OperatorWorkerStart {
+                                    thinking_level: Default::default(),
                                     identity,
                                     model: None,
                                     text: "prompt".into(),

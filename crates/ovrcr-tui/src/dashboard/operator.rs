@@ -11,7 +11,8 @@ use crossterm::event::{
 use ovrcr_protocol::{
     ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorToolStatus, OperatorTurnId,
+    OperatorMessageContent, OperatorRequest, OperatorResponse,
+    OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus, OperatorTurnId,
     OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request, Response, SessionId,
     SessionRunId,
 };
@@ -39,6 +40,11 @@ pub(super) struct Hub {
     error: Option<String>,
     quick: Option<QuickMessage>,
     quick_generation: u64,
+    reasoning_picker: Option<ReasoningPicker>,
+}
+struct ReasoningPicker {
+    choices: Vec<ThinkingLevel>,
+    selected: usize,
 }
 struct QuickMessage {
     generation: u64,
@@ -162,6 +168,7 @@ impl Chat {
     }
 }
 enum Pending {
+    ReasoningSetting,
     Current,
     Open {
         origin: OpenOrigin,
@@ -222,7 +229,7 @@ fn stop_rect(right: Rect) -> Rect {
     let width = right.width.min(13);
     Rect::new(
         right.right().saturating_sub(width),
-        right.y,
+        right.bottom().saturating_sub(1),
         width,
         right.height.min(1),
     )
@@ -778,9 +785,112 @@ impl Dashboard {
             OperatorRequest::Stop { identity },
         );
     }
+    fn operator_reasoning_label(&self) -> String {
+        let saved = self.settings.operator.thinking_level;
+        let chat = self.operator.chat.as_ref();
+        let reasoning = chat.and_then(|chat| chat.summary.reasoning.as_ref());
+        let level = reasoning.map_or("—", |state| state.level.as_str());
+        if chat.is_some_and(|chat| !chat.can_submit())
+            && reasoning.is_some_and(|state| state.requested != saved)
+        {
+            format!("Reasoning {level} → {} next turn", saved.as_str())
+        } else if saved != ThinkingLevel::Default
+            && reasoning.is_none_or(|state| state.level != saved)
+        {
+            format!("Reasoning {level} (set: {})", saved.as_str())
+        } else {
+            format!("Reasoning {level}")
+        }
+    }
+
+    fn operator_reasoning_rect(&self, header: Rect) -> Rect {
+        let right = header
+            .right()
+            .saturating_sub(if self.operator_stop_available() {
+                13
+            } else {
+                0
+            });
+        let width = (self.operator_reasoning_label().width() as u16 + 13)
+            .min(right.saturating_sub(header.x));
+        Rect::new(
+            right.saturating_sub(width),
+            header.bottom().saturating_sub(1),
+            width,
+            header.height.min(1),
+        )
+    }
+
+    pub(super) fn operator_reasoning_picker_open(&self) -> bool {
+        self.operator.reasoning_picker.is_some()
+    }
+
+    fn operator_open_reasoning(&mut self) {
+        let mut choices = vec![ThinkingLevel::Default];
+        if let Some(reasoning) = self
+            .operator
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.summary.reasoning.as_ref())
+        {
+            choices.extend(
+                ThinkingLevel::ALL
+                    .into_iter()
+                    .skip(1)
+                    .filter(|level| reasoning.available.contains(level)),
+            );
+        }
+        let selected = choices
+            .iter()
+            .position(|level| *level == self.settings.operator.thinking_level)
+            .unwrap_or(0);
+        self.operator.reasoning_picker = Some(ReasoningPicker { choices, selected });
+    }
+
+    fn operator_reasoning_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let picker = self.operator.reasoning_picker.as_mut().unwrap();
+        match key.code {
+            KeyCode::Esc => self.operator.reasoning_picker = None,
+            KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Down => picker.selected = (picker.selected + 1).min(picker.choices.len() - 1),
+            KeyCode::Enter => {
+                let level = picker.choices[picker.selected];
+                self.operator.reasoning_picker = None;
+                if !self
+                    .operator
+                    .pending
+                    .values()
+                    .any(|pending| matches!(pending, Pending::ReasoningSetting))
+                {
+                    let request_id = self.next_request_id();
+                    self.operator.error = None;
+                    self.operator
+                        .pending
+                        .insert(request_id, Pending::ReasoningSetting);
+                    self.enqueue_request(ClientMessage {
+                        request_id,
+                        request: Request::SetSetting {
+                            path: "operator.thinking_level".into(),
+                            value: Some(format!("\"{}\"", level.as_str())),
+                        },
+                    });
+                }
+            }
+            _ => {}
+        }
+        DashboardAction::Redraw
+    }
+
     pub(super) fn operator_key(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
+        }
+        if self.operator.reasoning_picker.is_some() {
+            return self.operator_reasoning_key(key);
+        }
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('t') {
+            self.operator_open_reasoning();
+            return DashboardAction::Redraw;
         }
         if !self.operator.transcript_focus
             && key.modifiers != KeyModifiers::NONE
@@ -991,6 +1101,12 @@ impl Dashboard {
         mouse: MouseEvent,
         area: Rect,
     ) -> Option<DashboardAction> {
+        if self.operator.reasoning_picker.is_some() {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                self.operator.reasoning_picker = None;
+            }
+            return Some(DashboardAction::Redraw);
+        }
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
             return Some(action);
         }
@@ -1006,7 +1122,10 @@ impl Dashboard {
         let transcript = layout.transcript;
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if !transcript.is_empty() => {
-                if stop_rect(layout.header).contains(point) && self.operator_stop_available() {
+                if self.operator_reasoning_rect(layout.header).contains(point) {
+                    self.operator_open_reasoning();
+                } else if stop_rect(layout.header).contains(point) && self.operator_stop_available()
+                {
                     self.operator_stop();
                 } else {
                     self.operator.editing = true;
@@ -1039,6 +1158,7 @@ impl Dashboard {
             return false;
         };
         match &pending {
+            Pending::ReasoningSetting => {}
             Pending::Current => {}
             Pending::Open { .. } => self.operator.loading = false,
             Pending::Read { .. } => {
@@ -1084,6 +1204,7 @@ impl Dashboard {
             return true;
         }
         match (pending, response) {
+            (Pending::ReasoningSetting, Response::Ok) => {}
             (Pending::Current, Response::Operator(OperatorResponse::Current(current))) => {
                 if let Some(summary) = current {
                     let context = self.operator.context.clone();
@@ -1298,6 +1419,9 @@ impl Dashboard {
         {
             return false;
         }
+        if chat.summary.model != summary.model || chat.summary.reasoning != summary.reasoning {
+            self.operator.reasoning_picker = None;
+        }
         chat.summary = summary;
         self.operator_quick_adopt_draft();
         true
@@ -1463,6 +1587,7 @@ mod tests {
 
     fn summary() -> Summary {
         Summary {
+            reasoning: None,
             run: SessionRunId(1),
             worker_stopped: true,
             id: Id(1),

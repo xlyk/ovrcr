@@ -41,6 +41,11 @@ const UNSET_KINDS: &[(&str, Kind)] = &[
 /// spellings. Near misses of each spelling are the unknown-spelling cases.
 const ENUMS: &[(&str, &str, &[&str])] = &[
     (
+        "operator.thinking_level",
+        "\"{}\"",
+        &ovrcr_protocol::OperatorThinkingLevel::NAMES,
+    ),
+    (
         "delegation.default_harness",
         "\"{}\"",
         &["claude", "codex", "grok", "pi"],
@@ -397,6 +402,7 @@ fn matrix_covers_every_declared_setting() {
             "cursor_cloud_accounts",
             "launch_choices",
             "operator.model",
+            "operator.thinking_level",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
             "delegation.allowed_harnesses",

@@ -272,3 +272,10 @@ run and superseding End requests retire their pending responses. Text uses Opera
 control escaping. The byte/entry-bounded window slides toward older pages, while End
 reloads the tail; rendering skips whole wrapped logical lines before its u16 scroll
 remainder so long views reach their actual tail. No page causes input, review or launch.
+
+The Operator's `Ctrl-t` and clickable Reasoning header open one supported-level
+picker, including `default`. Enter sends the shared `operator.thinking_level`
+setting write, Esc closes, and the header distinguishes Pi's substituted actual
+level from a saved choice awaiting the next turn. Controls use a second header
+row when the title and controls cannot fit and at least 50 content columns remain;
+a tighter on-demand sidebar view prioritizes controls.

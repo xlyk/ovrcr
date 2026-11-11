@@ -11,6 +11,7 @@ use ovrcr::protocol::{
 
 fn summary() -> OperatorConversationSummary {
     OperatorConversationSummary {
+        reasoning: None,
         run: SessionRunId(1),
         worker_stopped: true,
         id: OperatorConversationId(7),

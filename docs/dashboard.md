@@ -73,6 +73,10 @@ resets the conversation: it keeps the draft and re-captures the current selectio
 as the target for the next message, and an earlier message's recorded target never
 overwrites that capture. The header reads `Operator · pi` before a model is
 selected and `Operator · pi · provider/id` afterwards.
+The **Reasoning** header control and `Ctrl-t` open the model's supported levels
+plus `default`. Up/Down selects, Enter saves `operator.thinking_level`, and Esc
+closes. The header shows Pi's actual level, `(set: X)` for a substituted request,
+and `→ X next turn` when the saved choice changes during a running turn.
 
 The dock hides with the sidebar, and yields its row when fewer than three
 project-tree lines would remain. The `o` route still works. There is no New,

@@ -4366,6 +4366,7 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
                 request_id: open.request_id,
                 response: Response::Operator(OperatorResponse::Opened(
                     ovrcr_protocol::OperatorConversationSummary {
+                        reasoning: None,
                         id: ovrcr_protocol::OperatorConversationId(7),
                         session: SessionId(99),
                         run: ovrcr_protocol::SessionRunId(0),

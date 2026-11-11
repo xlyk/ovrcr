@@ -1848,6 +1848,7 @@ mod operator_loop_tests {
     }
     fn summary(run: u64) -> OperatorConversationSummary {
         OperatorConversationSummary {
+            reasoning: None,
             run: SessionRunId(run),
             worker_stopped: true,
             id: OperatorConversationId(1),
