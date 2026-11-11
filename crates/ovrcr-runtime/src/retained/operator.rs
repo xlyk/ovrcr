@@ -25,7 +25,7 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
         id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
         conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
         run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
-        model_override TEXT, started_unix_ms INTEGER, completed_unix_ms INTEGER,
+        model_override TEXT, thinking_level TEXT NOT NULL DEFAULT '\"default\"',
         UNIQUE(conversation,run));
         CREATE TABLE IF NOT EXISTS operator_messages (
         ordinal INTEGER PRIMARY KEY AUTOINCREMENT, conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
@@ -342,10 +342,10 @@ impl SessionStore {
         let current_turn = read_turn(&self.connection, id)?;
         let current_turn_started_unix_ms = if let Some(turn) = &current_turn {
             self.connection.query_row(
-                    "SELECT started_unix_ms FROM operator_turns WHERE id=?1",
-                    [sql_integer(turn.identity.turn.0)?],
-                    |row| row.get::<_, Option<i64>>(0),
-                )?
+                "SELECT started_unix_ms FROM operator_turns WHERE id=?1",
+                [sql_integer(turn.identity.turn.0)?],
+                |row| row.get::<_, Option<i64>>(0),
+            )?
         } else {
             None
         };
@@ -629,7 +629,9 @@ impl SessionStore {
             params![
                 state,
                 sql_integer(batch.sequence)?,
-                (state == "Complete").then(|| sql_integer(wall_clock_ms())).transpose()?,
+                (state == "Complete")
+                    .then(|| sql_integer(wall_clock_ms()))
+                    .transpose()?,
                 sql_integer(batch.identity.turn.0)?
             ],
         )?;
@@ -788,10 +790,7 @@ mod tests {
         let completed = store.operator_conversation(conversation.id).unwrap();
         assert!(completed.current_turn_started_unix_ms.is_some());
         assert!(completed.last_reply_unix_ms.is_some());
-        assert_eq!(
-            completed.reasoning,
-            Some(reasoning.clone())
-        );
+        assert_eq!(completed.reasoning, Some(reasoning.clone()));
         drop(store);
         let store = SessionStore::open(root.path()).unwrap();
         let reopened = store.operator_conversation(conversation.id).unwrap();
@@ -1733,7 +1732,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -1898,7 +1897,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         migrate_singleton_conversation(&store.connection).unwrap();
         let completed = store
             .operator_conversation(OperatorConversationId(1))
@@ -2049,7 +2048,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -2199,7 +2198,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 31, "the comparison uses a migrated database");
+        assert_eq!(version, 32, "the comparison uses a migrated database");
         for table in [
             "operator_conversations",
             "operator_turns",

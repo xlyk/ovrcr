@@ -997,6 +997,7 @@ state_db = "/tmp/cursor/state.vscdb"
 [operator]
 model = "openai/chat-model"
 thinking_level = "low"
+sidebar = true
 
 [delegation]
 progress_deadline_ms = 12345
@@ -1225,6 +1226,7 @@ login = "owner@example.com"
                 "launch_choices",
                 "operator.model",
                 "operator.thinking_level",
+                "operator.sidebar",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",

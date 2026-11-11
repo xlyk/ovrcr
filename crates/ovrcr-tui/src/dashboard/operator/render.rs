@@ -114,9 +114,12 @@ fn current_activity(chat: &Chat) -> String {
         return "responding".into();
     };
     let mut finished = std::collections::BTreeSet::new();
-    for message in chat.messages.iter().rev().filter(|message| {
-        message.turn == turn.identity.turn
-    }) {
+    for message in chat
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| message.turn == turn.identity.turn)
+    {
         match &message.content {
             OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { id, .. }) => {
                 finished.insert(id.as_str());
@@ -334,7 +337,8 @@ impl Dashboard {
             };
         }
         if let Some(turn) = chat.unread {
-            let preview = reply_preview(chat, turn).unwrap_or_else(|| "No reply text available".into());
+            let preview =
+                reply_preview(chat, turn).unwrap_or_else(|| "No reply text available".into());
             return SidebarStatus {
                 glyph: '✓',
                 color: GREEN(),

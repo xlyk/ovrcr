@@ -398,7 +398,11 @@ fn dock_rows(rows: &[String]) -> Vec<String> {
         .iter()
         .position(|row| row.contains("OPERATOR") || row.contains("Operator ·"))
         .expect("the Operator section is drawn");
-    let height = if left[start].contains("OPERATOR") { 3 } else { 1 };
+    let height = if left[start].contains("OPERATOR") {
+        3
+    } else {
+        1
+    };
     left.into_iter().skip(start).take(height).collect()
 }
 
@@ -421,7 +425,10 @@ fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
         dock.contains("OPERATOR") && dock.contains("Off"),
         "an unopened conversation has a section and Off state: {dock:?}"
     );
-    assert!(dock.contains("o opens Operator"), "Off explains how to start: {dock:?}");
+    assert!(
+        dock.contains("o opens Operator"),
+        "Off explains how to start: {dock:?}"
+    );
     assert!(
         dashboard.drain_outbox().is_empty(),
         "drawing an unopened dock starts no worker or request"
@@ -435,7 +442,10 @@ fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
         dock.starts_with('▌'),
         "an open conversation keeps the selected section row: {dock:?}"
     );
-    assert!(dock.contains("Idle"), "an open conversation is idle: {dock:?}");
+    assert!(
+        dock.contains("Idle"),
+        "an open conversation is idle: {dock:?}"
+    );
     assert!(!dock.contains("ready"), "{dock:?}");
     assert!(
         dashboard.drain_outbox().is_empty(),
@@ -497,7 +507,10 @@ fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
     dashboard.install_area(Rect::new(0, 0, 120, 40));
     let open = open_request(&mut dashboard);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Off"), "a pending Open does not imply a worker: {dock:?}");
+    assert!(
+        dock.contains("Off"),
+        "a pending Open does not imply a worker: {dock:?}"
+    );
     assert!(!dock.contains("Responding"), "{dock:?}");
     assert!(
         dashboard.drain_outbox().is_empty(),
@@ -531,7 +544,10 @@ fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
     );
     let dock = dock_status_row(&rendered_rows(&dashboard, 120, 40));
     assert!(dock.starts_with('▌'), "{dock:?}");
-    assert!(dock.contains("Idle"), "successful open returns to Idle: {dock:?}");
+    assert!(
+        dock.contains("Idle"),
+        "successful open returns to Idle: {dock:?}"
+    );
 }
 
 #[test]
@@ -667,7 +683,10 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Responding"), "an unconfirmed worker remains Working: {dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
 
     // A failure stays identifiable while the worker's stop is unconfirmed.
     let mut failed = summary();
@@ -684,7 +703,10 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Responding"), "an unconfirmed worker remains Working: {dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
     assert!(draw_text(&mut dashboard, 120, 40).contains("provider refused"));
 
     // An interruption remains identifiable as well.
@@ -880,9 +902,15 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
     // The real minimum draggable width leaves 19 content cells.
     drag_sidebar_to(&mut dashboard, area, 19);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("OPERATOR"), "the section heading survives: {dock:?}");
+    assert!(
+        dock.contains("OPERATOR"),
+        "the section heading survives: {dock:?}"
+    );
     assert!(dock_status_row(&rendered_rows(&dashboard, 120, 40)).contains("Off"));
-    assert!(dock.lines().all(|line| line.chars().count() == 19), "{dock:?}");
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
+    );
 
     open_and_settle(&mut dashboard, busy());
     let out = changed(
@@ -900,9 +928,18 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
     );
     assert!(out.is_empty(), "{out:?}");
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("OPERATOR") && dock.contains("Responding"), "{dock:?}");
-    assert!(dock.contains("running mcp__too…"), "detail clips within the narrow section: {dock:?}");
-    assert!(dock.lines().all(|line| line.chars().count() == 19), "{dock:?}");
+    assert!(
+        dock.contains("OPERATOR") && dock.contains("Responding"),
+        "{dock:?}"
+    );
+    assert!(
+        dock.contains("running mcp__too…"),
+        "detail clips within the narrow section: {dock:?}"
+    );
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
+    );
 
     // A long unconfirmed-stop clause keeps a distinct cell-readable prefix.
     dashboard.ctrl('x');
@@ -932,8 +969,14 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.contains("Responding"), "an unconfirmed worker remains Working: {dock:?}");
-    assert!(dock.lines().all(|line| line.chars().count() == 19), "{dock:?}");
+    assert!(
+        dock.contains("Responding"),
+        "an unconfirmed worker remains Working: {dock:?}"
+    );
+    assert!(
+        dock.lines().all(|line| line.chars().count() == 19),
+        "{dock:?}"
+    );
 
     // An unconfirmed error still reads as Working; a confirmed interruption
     // returns the sidebar to the compact Idle state.
@@ -2935,7 +2978,10 @@ fn short_sidebar_compacts_then_hides_the_operator_section_to_preserve_tree() {
 
     // 6 rows leave 4 body lines: the section compacts to one row above the tree.
     let roomy = rendered_rows(&dashboard, 120, 6);
-    assert!(roomy[1].contains("Operator") && roomy[1].contains("Off"), "{roomy:?}");
+    assert!(
+        roomy[1].contains("Operator") && roomy[1].contains("Off"),
+        "{roomy:?}"
+    );
     assert!(roomy[2].contains("CONSIGINT"), "{roomy:?}");
     // 5 rows leave 3: the section is hidden and the tree takes the space.
     let tight = rendered_rows(&dashboard, 120, 5);

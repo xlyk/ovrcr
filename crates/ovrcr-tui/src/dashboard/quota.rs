@@ -311,7 +311,11 @@ impl Dashboard {
         let mut entries = vec![
             entry(
                 SidebarSection::Attention,
-                if has_attention { &[(1, 1), (1, 0)] } else { &[(0, 0)] },
+                if has_attention {
+                    &[(1, 1), (1, 0)]
+                } else {
+                    &[(0, 0)]
+                },
             ),
             entry(SidebarSection::Operator, &operator_heights),
             entry(SidebarSection::Tree, &[(tree_floor, 0)]),

@@ -699,9 +699,7 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     assert!(turn_columns.contains(&"started_unix_ms".to_string()));
     assert!(turn_columns.contains(&"completed_unix_ms".to_string()));
     let legacy_timing: Vec<(i64, Option<i64>, Option<i64>)> = connection
-        .prepare(
-            "SELECT id,started_unix_ms,completed_unix_ms FROM operator_turns ORDER BY id",
-        )
+        .prepare("SELECT id,started_unix_ms,completed_unix_ms FROM operator_turns ORDER BY id")
         .unwrap()
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .unwrap()

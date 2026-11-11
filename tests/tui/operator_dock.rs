@@ -4,10 +4,10 @@
 
 use crate::*;
 use ovrcr::protocol::{
-    ErrorCode, OperatorConversationId, OperatorConversationSummary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorTurn, OperatorTurnId,
-    OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, QuotaSnapshot, QuotaState,
-    QuotaWindow, SessionKind, SessionRunId,
+    ErrorCode, OperatorConversationId, OperatorConversationSummary, OperatorHistory,
+    OperatorMessage, OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorTurn,
+    OperatorTurnId, OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, QuotaSnapshot,
+    QuotaState, QuotaWindow, SessionKind, SessionRunId,
 };
 
 fn operator_dashboard_fixture() -> Dashboard {
@@ -33,7 +33,10 @@ fn summary() -> OperatorConversationSummary {
     }
 }
 
-fn summary_with_turn(state: OperatorTurnState, worker_stopped: bool) -> OperatorConversationSummary {
+fn summary_with_turn(
+    state: OperatorTurnState,
+    worker_stopped: bool,
+) -> OperatorConversationSummary {
     let mut value = summary();
     let identity = OperatorTurnIdentity {
         conversation: value.id,
@@ -82,7 +85,12 @@ fn open_with_history(
     });
     let read = followups
         .into_iter()
-        .find(|message| matches!(message.request, Request::Operator(OperatorRequest::Read { .. })))
+        .find(|message| {
+            matches!(
+                message.request,
+                Request::Operator(OperatorRequest::Read { .. })
+            )
+        })
         .expect("opening the conversation reads its retained history");
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: read.request_id,
@@ -192,18 +200,33 @@ fn attention_and_operator_sections_lead_the_tree_and_leave_blank_rows() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::WaitingInput;
     dashboard.install_hierarchy(hierarchy);
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
-        Box::new(quota_with_windows()),
-    )));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        quota_with_windows(),
+    ))));
 
     let rows = rendered_rows(&dashboard, 120, 40);
     assert!(rows[1].contains("? 1 needs input"), "{rows:?}");
-    assert!(sidebar_line(&rows[2]).trim().is_empty(), "attention has one blank row: {rows:?}");
+    assert!(
+        sidebar_line(&rows[2]).trim().is_empty(),
+        "attention has one blank row: {rows:?}"
+    );
     assert!(rows[3].starts_with(" OPERATOR "), "{rows:?}");
-    assert!(rows[4].contains("Off") || rows[4].contains("Not set up"), "{rows:?}");
-    assert!(rows[5].contains("Ctrl-o"), "the detail gives the Off entry points: {rows:?}");
-    assert!(sidebar_line(&rows[6]).trim().is_empty(), "Operator has one blank row: {rows:?}");
-    assert!(rows[7].contains("CONSIGINT"), "the tree follows Operator: {rows:?}");
+    assert!(
+        rows[4].contains("Off") || rows[4].contains("Not set up"),
+        "{rows:?}"
+    );
+    assert!(
+        rows[5].contains("Ctrl-o"),
+        "the detail gives the Off entry points: {rows:?}"
+    );
+    assert!(
+        sidebar_line(&rows[6]).trim().is_empty(),
+        "Operator has one blank row: {rows:?}"
+    );
+    assert!(
+        rows[7].contains("CONSIGINT"),
+        "the tree follows Operator: {rows:?}"
+    );
     let quota = rows
         .iter()
         .position(|row| row.contains("QUOTA LEFT"))
@@ -217,9 +240,9 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::WaitingInput;
     dashboard.install_hierarchy(hierarchy);
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(
-        Box::new(quota_with_windows()),
-    )));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
+        quota_with_windows(),
+    ))));
 
     let rows_at = |dashboard: &mut Dashboard, height: u16| {
         dashboard.install_area(Rect::new(0, 0, 120, height));
@@ -227,51 +250,135 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     };
 
     let full = rows_at(&mut dashboard, 26);
-    assert!(sidebar_line(&full[2]).trim().is_empty(), "the attention gap exists while roomy: {full:?}");
-    assert!(full[3].starts_with(" OPERATOR "), "Operator follows attention: {full:?}");
-    assert!(sidebar_line(&full[6]).trim().is_empty(), "the Operator gap exists while roomy: {full:?}");
-    assert!(full[7].contains("CONSIGINT"), "tree follows Operator: {full:?}");
-    assert!(full[15].contains("QUOTA LEFT"), "full Quota includes its heading: {full:?}");
+    assert!(
+        sidebar_line(&full[2]).trim().is_empty(),
+        "the attention gap exists while roomy: {full:?}"
+    );
+    assert!(
+        full[3].starts_with(" OPERATOR "),
+        "Operator follows attention: {full:?}"
+    );
+    assert!(
+        sidebar_line(&full[6]).trim().is_empty(),
+        "the Operator gap exists while roomy: {full:?}"
+    );
+    assert!(
+        full[7].contains("CONSIGINT"),
+        "tree follows Operator: {full:?}"
+    );
+    assert!(
+        full[15].contains("QUOTA LEFT"),
+        "full Quota includes its heading: {full:?}"
+    );
 
     let no_attention_gap = rows_at(&mut dashboard, 25);
-    assert!(no_attention_gap[1].contains("needs input"), "attention persists: {no_attention_gap:?}");
-    assert!(no_attention_gap[2].starts_with(" OPERATOR "), "first gap shrinks: {no_attention_gap:?}");
-    assert!(sidebar_line(&no_attention_gap[5]).trim().is_empty(), "Operator gap remains for the next step: {no_attention_gap:?}");
+    assert!(
+        no_attention_gap[1].contains("needs input"),
+        "attention persists: {no_attention_gap:?}"
+    );
+    assert!(
+        no_attention_gap[2].starts_with(" OPERATOR "),
+        "first gap shrinks: {no_attention_gap:?}"
+    );
+    assert!(
+        sidebar_line(&no_attention_gap[5]).trim().is_empty(),
+        "Operator gap remains for the next step: {no_attention_gap:?}"
+    );
 
     let no_operator_gap = rows_at(&mut dashboard, 24);
-    assert!(no_operator_gap[1].contains("needs input"), "attention persists: {no_operator_gap:?}");
-    assert!(no_operator_gap[2].starts_with(" OPERATOR "), "Operator stays three rows: {no_operator_gap:?}");
-    assert!(no_operator_gap[5].contains("CONSIGINT"), "second gap shrinks: {no_operator_gap:?}");
+    assert!(
+        no_operator_gap[1].contains("needs input"),
+        "attention persists: {no_operator_gap:?}"
+    );
+    assert!(
+        no_operator_gap[2].starts_with(" OPERATOR "),
+        "Operator stays three rows: {no_operator_gap:?}"
+    );
+    assert!(
+        no_operator_gap[5].contains("CONSIGINT"),
+        "second gap shrinks: {no_operator_gap:?}"
+    );
 
     let compact_quota = rows_at(&mut dashboard, 23);
-    assert!(compact_quota[1].contains("needs input"), "attention persists: {compact_quota:?}");
-    assert!(!compact_quota.iter().any(|row| row.contains("QUOTA LEFT")), "provider-only Quota has no heading: {compact_quota:?}");
+    assert!(
+        compact_quota[1].contains("needs input"),
+        "attention persists: {compact_quota:?}"
+    );
+    assert!(
+        !compact_quota.iter().any(|row| row.contains("QUOTA LEFT")),
+        "provider-only Quota has no heading: {compact_quota:?}"
+    );
     for provider in ["Claude", "Codex", "Grok", "Cursor"] {
-        assert!(compact_quota.iter().any(|row| row.contains(provider)), "provider row {provider}: {compact_quota:?}");
+        assert!(
+            compact_quota.iter().any(|row| row.contains(provider)),
+            "provider row {provider}: {compact_quota:?}"
+        );
     }
 
     let compact_operator = rows_at(&mut dashboard, 16);
-    assert!(compact_operator[1].contains("needs input"), "attention persists: {compact_operator:?}");
-    assert!(!compact_operator[2].contains("OPERATOR"), "the title is removed from compact Operator: {compact_operator:?}");
-    assert!(compact_operator[2].contains("Operator"), "Operator keeps one row: {compact_operator:?}");
+    assert!(
+        compact_operator[1].contains("needs input"),
+        "attention persists: {compact_operator:?}"
+    );
+    assert!(
+        !compact_operator[2].contains("OPERATOR"),
+        "the title is removed from compact Operator: {compact_operator:?}"
+    );
+    assert!(
+        compact_operator[2].contains("Operator"),
+        "Operator keeps one row: {compact_operator:?}"
+    );
 
     let quota_pointer = rows_at(&mut dashboard, 12);
-    assert!(quota_pointer[1].contains("needs input"), "attention persists: {quota_pointer:?}");
-    assert!(quota_pointer.iter().any(|row| row.contains("Quota: u")), "Quota reaches its one-line pointer: {quota_pointer:?}");
+    assert!(
+        quota_pointer[1].contains("needs input"),
+        "attention persists: {quota_pointer:?}"
+    );
+    assert!(
+        quota_pointer.iter().any(|row| row.contains("Quota: u")),
+        "Quota reaches its one-line pointer: {quota_pointer:?}"
+    );
 
     let quota_hidden = rows_at(&mut dashboard, 7);
-    assert!(quota_hidden[1].contains("needs input"), "attention persists: {quota_hidden:?}");
-    assert!(!quota_hidden.iter().any(|row| row.contains("Quota") || row.contains("Claude")), "Quota hides before Operator: {quota_hidden:?}");
-    assert!(quota_hidden[2].contains("Operator"), "Operator remains while Quota is hidden: {quota_hidden:?}");
+    assert!(
+        quota_hidden[1].contains("needs input"),
+        "attention persists: {quota_hidden:?}"
+    );
+    assert!(
+        !quota_hidden
+            .iter()
+            .any(|row| row.contains("Quota") || row.contains("Claude")),
+        "Quota hides before Operator: {quota_hidden:?}"
+    );
+    assert!(
+        quota_hidden[2].contains("Operator"),
+        "Operator remains while Quota is hidden: {quota_hidden:?}"
+    );
 
     let operator_hidden = rows_at(&mut dashboard, 6);
-    assert!(operator_hidden[1].contains("needs input"), "attention persists at the minimum height: {operator_hidden:?}");
-    assert!(!operator_hidden.iter().any(|row| row.contains("OPERATOR") || row.contains("Operator")), "Operator hides last: {operator_hidden:?}");
-    assert!(operator_hidden[2..5].iter().all(|row| !sidebar_line(row).trim().is_empty()), "three tree rows remain when feasible: {operator_hidden:?}");
+    assert!(
+        operator_hidden[1].contains("needs input"),
+        "attention persists at the minimum height: {operator_hidden:?}"
+    );
+    assert!(
+        !operator_hidden
+            .iter()
+            .any(|row| row.contains("OPERATOR") || row.contains("Operator")),
+        "Operator hides last: {operator_hidden:?}"
+    );
+    assert!(
+        operator_hidden[2..5]
+            .iter()
+            .all(|row| !sidebar_line(row).trim().is_empty()),
+        "three tree rows remain when feasible: {operator_hidden:?}"
+    );
 
     let no_attention = operator_dashboard_fixture();
     let rows = rendered_rows(&no_attention, 120, 40);
-    assert!(rows[1].starts_with(" OPERATOR "), "no counts means no attention row or gap: {rows:?}");
+    assert!(
+        rows[1].starts_with(" OPERATOR "),
+        "no counts means no attention row or gap: {rows:?}"
+    );
 }
 
 #[test]
@@ -289,12 +396,17 @@ fn clicking_the_operator_status_row_opens_the_single_conversation() {
 #[test]
 fn the_dashboard_setting_hides_the_operator_section_without_disabling_its_key() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 40, cols: 120 });
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_area(area);
     dashboard.install_hierarchy(fixture_hierarchy());
-    assert!(rendered_rows(&dashboard, 120, 40)
-        .iter()
-        .any(|row| row.contains("OPERATOR")));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .iter()
+            .any(|row| row.contains("OPERATOR"))
+    );
 
     dashboard.install_settings(ovrcr::tui::Settings {
         operator: ovrcr_protocol::OperatorSettings {
@@ -305,10 +417,16 @@ fn the_dashboard_setting_hides_the_operator_section_without_disabling_its_key() 
     });
     let rows = rendered_rows(&dashboard, 120, 40);
     assert!(!rows.iter().any(|row| row.contains("OPERATOR")), "{rows:?}");
-    assert!(rows[1].contains("CONSIGINT"), "the tree takes its rows: {rows:?}");
+    assert!(
+        rows[1].contains("CONSIGINT"),
+        "the tree takes its rows: {rows:?}"
+    );
 
     dashboard.key(KeyCode::Char('o'));
-    assert_eq!(operator_requests(&dashboard.drain_outbox()), [&OperatorRequest::Open]);
+    assert_eq!(
+        operator_requests(&dashboard.drain_outbox()),
+        [&OperatorRequest::Open]
+    );
 }
 
 #[test]
@@ -319,10 +437,19 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
     off.install_area(area);
     let rows = rendered_rows(&off, 120, 40);
     if rows[2].contains("Off") {
-        assert!(rows[3].contains("o opens Operator"), "Off explains how to start: {rows:?}");
+        assert!(
+            rows[3].contains("o opens Operator"),
+            "Off explains how to start: {rows:?}"
+        );
     } else {
-        assert!(rows[2].contains("Not set up"), "missing Pi is reported honestly: {rows:?}");
-        assert!(rows[3].contains("run ovrcr operator setup"), "setup action is clear: {rows:?}");
+        assert!(
+            rows[2].contains("Not set up"),
+            "missing Pi is reported honestly: {rows:?}"
+        );
+        assert!(
+            rows[3].contains("run ovrcr operator setup"),
+            "setup action is clear: {rows:?}"
+        );
     }
 
     for failure in [
@@ -343,7 +470,10 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
         });
         let rows = rendered_rows(&not_setup, 120, 40);
         assert!(rows[2].contains("Not set up"), "{failure}: {rows:?}");
-        assert!(rows[3].contains("run ovrcr operator setup"), "{failure}: {rows:?}");
+        assert!(
+            rows[3].contains("run ovrcr operator setup"),
+            "{failure}: {rows:?}"
+        );
     }
 
     let mut working = operator_dashboard_fixture();
@@ -360,10 +490,22 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
     };
     open_with_history(&mut working, area, summary, vec![tool]);
     let rows = rendered_rows(&working, 120, 40);
-    assert!(rows[2].contains("Responding"), "working state is explicit: {rows:?}");
-    assert!(rows[2].contains("0s"), "the retained turn start provides elapsed time: {rows:?}");
-    assert!(rows[3].contains("running ovrcr terminal list"), "current command is shown: {rows:?}");
-    assert!(!rows[2].contains("pi") && !rows[2].contains("model"), "no harness or model: {rows:?}");
+    assert!(
+        rows[2].contains("Responding"),
+        "working state is explicit: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("0s"),
+        "the retained turn start provides elapsed time: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("running ovrcr terminal list"),
+        "current command is shown: {rows:?}"
+    );
+    assert!(
+        !rows[2].contains("pi") && !rows[2].contains("model"),
+        "no harness or model: {rows:?}"
+    );
 
     let mut reply_ready = operator_dashboard_fixture();
     reply_ready.install_area(area);
@@ -375,16 +517,31 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
         assistant_reply("The deployment finished cleanly."),
     );
     let rows = rendered_rows(&reply_ready, 120, 40);
-    assert!(rows[2].contains("Reply ready · 1 unread"), "unread reply is counted: {rows:?}");
-    assert!(rows[3].contains("“The deployment finished cleanly.”"), "reply preview is visible: {rows:?}");
+    assert!(
+        rows[2].contains("Reply ready · 1 unread"),
+        "unread reply is counted: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("“The deployment finished cleanly.”"),
+        "reply preview is visible: {rows:?}"
+    );
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     reply_ready.draw(&mut terminal).unwrap();
     reply_ready.key(KeyCode::Esc);
     let rows = rendered_rows(&reply_ready, 120, 40);
-    assert!(rows[2].contains("Idle"), "a reviewed conversation becomes idle: {rows:?}");
-    assert!(rows[2].contains("last reply 0s"), "completed reply time is retained: {rows:?}");
-    assert!(rows[3].contains("“The deployment finished cleanly.”"), "idle keeps the last reply: {rows:?}");
+    assert!(
+        rows[2].contains("Idle"),
+        "a reviewed conversation becomes idle: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("last reply 0s"),
+        "completed reply time is retained: {rows:?}"
+    );
+    assert!(
+        rows[3].contains("“The deployment finished cleanly.”"),
+        "idle keeps the last reply: {rows:?}"
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -427,7 +584,10 @@ fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section()
     let live = crate::live::Live::thread().bounded();
     live.ready("feature/sidebar-operator");
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 40, cols: 120 });
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
     dashboard.install_config_dir(live.config.clone());
     dashboard.install_area(area);
     let mut connection = UnixStream::connect(&live.socket).expect("connect fixture Server");
@@ -449,31 +609,55 @@ fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section()
             ClientMessage {
                 request_id: 900_002,
                 request: Request::DashboardGeometry {
-                    size: ovrcr::protocol::TerminalSize { rows: 40, cols: 120 },
+                    size: ovrcr::protocol::TerminalSize {
+                        rows: 40,
+                        cols: 120,
+                    },
                 },
             },
         ],
     );
-    assert!(startup.iter().any(|message| {
-        matches!(message, ServerMessage::Event(ServerEvent::SettingsChanged(_)))
-    }), "the Dashboard receives the Server's settings");
+    assert!(
+        startup.iter().any(|message| {
+            matches!(
+                message,
+                ServerMessage::Event(ServerEvent::SettingsChanged(_))
+            )
+        }),
+        "the Dashboard receives the Server's settings"
+    );
     let rows = rendered_rows(&dashboard, 120, 40);
-    assert!(rows[1].starts_with(" OPERATOR "), "live Dashboard draws the section first: {rows:?}");
-    assert!(rows[2].contains("Off") || rows[2].contains("Not set up"), "live state follows server setup: {rows:?}");
-    assert!(rows[5].contains("FIXTURE"), "the real Server hierarchy follows Operator: {rows:?}");
+    assert!(
+        rows[1].starts_with(" OPERATOR "),
+        "live Dashboard draws the section first: {rows:?}"
+    );
+    assert!(
+        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        "live state follows server setup: {rows:?}"
+    );
+    assert!(
+        rows[5].contains("FIXTURE"),
+        "the real Server hierarchy follows Operator: {rows:?}"
+    );
 
     assert_eq!(click(&mut dashboard, area, 2, 2), DashboardAction::Redraw);
     let requests = dashboard.drain_outbox();
     let opened = drive(&mut connection, &mut dashboard, requests);
-    assert!(opened.iter().any(|message| matches!(
-        message,
-        ServerMessage::Response {
-            response: Response::Operator(OperatorResponse::Opened(_)),
-            ..
-        }
-    )), "clicking the live section opens the Server's singleton");
+    assert!(
+        opened.iter().any(|message| matches!(
+            message,
+            ServerMessage::Response {
+                response: Response::Operator(OperatorResponse::Opened(_)),
+                ..
+            }
+        )),
+        "clicking the live section opens the Server's singleton"
+    );
     let rows = rendered_rows(&dashboard, 120, 40);
-    assert!(rows[2].contains("Idle"), "live Open returns the idle state: {rows:?}");
+    assert!(
+        rows[2].contains("Idle"),
+        "live Open returns the idle state: {rows:?}"
+    );
 }
 
 #[test]
@@ -493,9 +677,21 @@ fn the_operator_section_precedes_the_tree_and_does_not_claim_title_space() {
         "the title bar carries no Operator shortcut: {:?}",
         rows[0]
     );
-    assert!(rows[1].starts_with(" OPERATOR "), "Operator follows the title: {:?}", &rows[..6]);
-    assert!(rows[2].contains("Off") || rows[2].contains("Not set up"), "state follows heading: {:?}", rows[2]);
-    assert!(rows[5].contains("CONSIGINT"), "the first project follows Operator: {:?}", &rows[3..7]);
+    assert!(
+        rows[1].starts_with(" OPERATOR "),
+        "Operator follows the title: {:?}",
+        &rows[..6]
+    );
+    assert!(
+        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        "state follows heading: {:?}",
+        rows[2]
+    );
+    assert!(
+        rows[5].contains("CONSIGINT"),
+        "the first project follows Operator: {:?}",
+        &rows[3..7]
+    );
     assert!(rows[39].starts_with("BROWSE"), "{:?}", rows[39]);
 }
 
@@ -580,11 +776,7 @@ fn both_ends_of_the_operator_section_open_the_same_conversation() {
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
     let browse_rows = rendered_rows(&dashboard, 120, 40);
     assert!(!browse_rows[2].starts_with('▌'), "{:?}", browse_rows[2]);
-    assert!(
-        browse_rows[2].contains("Idle"),
-        "{:?}",
-        browse_rows[2]
-    );
+    assert!(browse_rows[2].contains("Idle"), "{:?}", browse_rows[2]);
     assert!(
         browse_rows[5].contains("CONSIGINT"),
         "the tree is back: {:?}",
@@ -894,9 +1086,21 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
     ))));
     dashboard.drain_outbox();
     let attended = rendered_rows(&dashboard, 120, 40);
-    assert!(attended[1].contains("needs input"), "attention remains first: {:?}", &attended[..5]);
-    assert!(attended[3].starts_with(" OPERATOR "), "attention shifts Operator: {:?}", &attended[..7]);
-    assert!(attended[7].contains("session-"), "tree follows attention and Operator: {:?}", &attended[5..9]);
+    assert!(
+        attended[1].contains("needs input"),
+        "attention remains first: {:?}",
+        &attended[..5]
+    );
+    assert!(
+        attended[3].starts_with(" OPERATOR "),
+        "attention shifts Operator: {:?}",
+        &attended[..7]
+    );
+    assert!(
+        attended[7].contains("session-"),
+        "tree follows attention and Operator: {:?}",
+        &attended[5..9]
+    );
     let strip = attended
         .iter()
         .position(|row| row.contains("needs input") || row.contains("need input"))

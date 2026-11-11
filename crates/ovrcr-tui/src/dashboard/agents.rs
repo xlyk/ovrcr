@@ -190,9 +190,8 @@ fn executable_in(dir: &Path, name: impl AsRef<OsStr>) -> Option<PathBuf> {
 }
 
 fn is_executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|metadata| {
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    })
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(test)]
@@ -215,7 +214,10 @@ mod tests {
         write_stub(dir.path(), "not-executable", 0o644);
         let path = dir.path().as_os_str();
         assert!(executable_available(OsStr::new("pi"), path));
-        assert!(executable_available(dir.path().join("pi").as_os_str(), path));
+        assert!(executable_available(
+            dir.path().join("pi").as_os_str(),
+            path
+        ));
         assert!(!executable_available(OsStr::new("missing"), path));
         assert!(!executable_available(
             dir.path().join("not-executable").as_os_str(),

@@ -319,12 +319,18 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
             .unwrap();
         let review_row = sidebar_row_with(&terminal, "review");
-        assert_eq!(terminal.backend().buffer()[(5, review_row)].symbol(), marker);
+        assert_eq!(
+            terminal.backend().buffer()[(5, review_row)].symbol(),
+            marker
+        );
         assert_eq!(
             terminal.backend().buffer()[(5, review_row)].fg,
             Color::Rgb(166, 227, 161)
         );
-        assert_eq!(terminal.backend().buffer()[(5, review_row - 1)].symbol(), "$");
+        assert_eq!(
+            terminal.backend().buffer()[(5, review_row - 1)].symbol(),
+            "$"
+        );
     }
     review.activity = AgentActivity::Idle;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
@@ -345,7 +351,10 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
     let implement_row = sidebar_row_with(&terminal, "implement");
-    assert_eq!(terminal.backend().buffer()[(5, implement_row)].symbol(), "·");
+    assert_eq!(
+        terminal.backend().buffer()[(5, implement_row)].symbol(),
+        "·"
+    );
 }
 
 #[test]
@@ -473,7 +482,10 @@ fn agent_hook_sidebar_states_are_literal() {
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let implement_row = sidebar_row_with(&terminal, "implement");
-    assert_eq!(terminal.backend().buffer()[(5, implement_row)].symbol(), "·");
+    assert_eq!(
+        terminal.backend().buffer()[(5, implement_row)].symbol(),
+        "·"
+    );
     assert_eq!(terminal.backend().buffer()[(5, implement_row)].fg, muted);
     // A local shell stays quiet until a hook reports real activity inside it.
     let mut progress = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
@@ -2092,12 +2104,7 @@ fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts()
     };
     let sidebar_position = |rows: &[String], needle: &str| {
         rows.iter()
-            .position(|row| {
-                row.split('│')
-                    .next()
-                    .unwrap_or(row)
-                    .contains(needle)
-            })
+            .position(|row| row.split('│').next().unwrap_or(row).contains(needle))
             .unwrap_or_else(|| panic!("missing sidebar row containing {needle:?}: {rows:?}"))
     };
     let auth_row = sidebar_position(&rendered_rows(&workspace_dashboard, 120, 40), " auth");
