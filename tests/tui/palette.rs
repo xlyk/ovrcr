@@ -4582,6 +4582,8 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
                         model: None,
                         title: "Operator".into(),
                         current_turn: None,
+                        current_turn_started_unix_ms: None,
+                        last_reply_unix_ms: None,
                     },
                 )),
             });

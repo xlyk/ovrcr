@@ -86,6 +86,9 @@ const QUOTA_ABOUT: &[&str] = &[
     "Off also stops the opt-in Cursor reader.",
 ];
 
+const OPERATOR_SIDEBAR_ABOUT: &[&str] =
+    &["Shows the Operator section in the Dashboard sidebar; on by default."];
+
 const SAVE_UNCOMMITTED_WORK_ABOUT: &[&str] = &[
     "Pushes uncommitted workspace work to origin/wip/<branch> when a workspace is removed or the server shuts down.",
 ];
@@ -270,7 +273,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 34] = [
+const CATALOG: [Entry; 35] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -554,6 +557,17 @@ const CATALOG: [Entry; 34] = [
         show_off: |_| false,
     },
     Entry {
+        path: "operator.sidebar",
+        shape: Shape::Toggle,
+        owner: SettingOwner::Dashboard,
+        group: "Operator",
+        label: "Sidebar section",
+        off_state: None,
+        about: OPERATOR_SIDEBAR_ABOUT,
+        value: |settings| display(&settings.operator.sidebar),
+        show_off: |_| false,
+    },
+    Entry {
         path: "delegation.progress_deadline_ms",
         shape: Shape::Typed("an integer from 1 to 86400000"),
         owner: SettingOwner::Server,
@@ -729,6 +743,7 @@ mod tests {
                 "launch_choices",
                 "operator.model",
                 "operator.thinking_level",
+                "operator.sidebar",
                 "delegation.progress_deadline_ms",
                 "delegation.enabled",
                 "delegation.allowed_harnesses",
@@ -791,6 +806,14 @@ mod tests {
                 SettingOwner::Dashboard
             );
         }
+        assert_eq!(
+            entries()
+                .iter()
+                .find(|entry| entry.path == "operator.sidebar")
+                .unwrap()
+                .owner,
+            SettingOwner::Dashboard
+        );
     }
 
     #[test]

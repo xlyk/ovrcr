@@ -1,10 +1,148 @@
 //! The shared sidebar is the sole conversation list and hit-test geometry.
 use super::*;
 use crate::dashboard::render::{
-    BASE, BLUE, GREEN, MAUVE, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEAL, TEXT, clip_text,
+    BASE, BLUE, GREEN, MAUVE, MUTED, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEAL, TEXT, clip_text,
     compose_row,
 };
 use ovrcr_protocol::AgentActivity;
+use ratatui::style::Color;
+
+struct SidebarStatus {
+    glyph: char,
+    color: Color,
+    label: String,
+    right: String,
+    detail: String,
+    detail_color: Color,
+}
+
+fn elapsed(timestamp: Option<u64>, now: u64) -> String {
+    let Some(seconds) = timestamp
+        .and_then(|stamp| now.checked_sub(stamp))
+        .map(|millis| millis / 1_000)
+    else {
+        return String::new();
+    };
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3_600 => format!("{}m {}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {}m", seconds / 3_600, (seconds % 3_600) / 60),
+    }
+}
+
+fn age(timestamp: Option<u64>, now: u64) -> String {
+    let Some(seconds) = timestamp
+        .and_then(|stamp| now.checked_sub(stamp))
+        .map(|millis| millis / 1_000)
+    else {
+        return String::new();
+    };
+    match seconds {
+        0..60 => format!("{}s", seconds),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
+}
+
+fn format_age(timestamp: Option<u64>, now: u64) -> String {
+    let age = age(timestamp, now);
+    if age.is_empty() {
+        age
+    } else {
+        format!("last reply {age}")
+    }
+}
+
+fn setup_failure(error: Option<&str>) -> bool {
+    error.is_some_and(|error| {
+        error.starts_with("Pi is unavailable;")
+            || error.starts_with("No Pi model selected;")
+            || error.starts_with("Configured Operator model is unavailable")
+    })
+}
+
+fn pi_available() -> bool {
+    let executable = std::env::var_os("OVRCR_PI_EXECUTABLE").unwrap_or_else(|| "pi".into());
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    super::super::agents::executable_available(&executable, &path)
+}
+
+fn reply_preview(chat: &Chat, turn: ovrcr_protocol::OperatorTurnId) -> Option<String> {
+    let text = chat
+        .messages
+        .iter()
+        .filter(|message| message.turn == turn)
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then(|| format!("“{}”", display_text(&text)))
+}
+
+fn latest_completed_turn(chat: &Chat) -> Option<ovrcr_protocol::OperatorTurnId> {
+    chat.messages
+        .iter()
+        .rev()
+        .find(|message| {
+            matches!(
+                message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+            )
+        })
+        .map(|message| message.turn)
+        .or_else(|| {
+            chat.summary.current_turn.as_ref().and_then(|turn| {
+                (turn.state == OperatorTurnState::Complete).then_some(turn.identity.turn)
+            })
+        })
+}
+
+fn current_activity(chat: &Chat) -> String {
+    if chat.submitting {
+        return "sending message".into();
+    }
+    if chat.stopping {
+        return "stopping the worker".into();
+    }
+    let Some(turn) = chat.summary.current_turn.as_ref() else {
+        return "responding".into();
+    };
+    let mut finished = std::collections::BTreeSet::new();
+    for message in chat
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| message.turn == turn.identity.turn)
+    {
+        match &message.content {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { id, .. }) => {
+                finished.insert(id.as_str());
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id,
+                name,
+                arguments,
+            }) if !finished.contains(id.as_str()) => {
+                let command = (name == "bash")
+                    .then(|| serde_json::from_str::<serde_json::Value>(arguments).ok())
+                    .flatten()
+                    .and_then(|arguments| arguments.get("command")?.as_str().map(str::to_owned));
+                return command.map_or_else(
+                    || format!("running {}", display_text(name)),
+                    |command| format!("running {}", display_text(&command)),
+                );
+            }
+            _ => {}
+        }
+    }
+    "responding".into()
+}
 
 fn activity(chat: &Chat) -> AgentActivity {
     if chat.stopping {
@@ -142,19 +280,90 @@ impl Dashboard {
         );
     }
     pub(in crate::dashboard) fn operator_sidebar_busy(&self) -> bool {
-        self.sidebar_preference() != Some(0)
+        self.settings.operator.sidebar
             && self
                 .operator
                 .chat
                 .as_ref()
                 .is_some_and(|chat| activity(chat) == AgentActivity::Busy)
     }
-    /// One fixed navigation row below the tree: the first project starts at the
-    /// top, and the row's right-hand words say whether a conversation can be
-    /// opened, holds a draft or unread reply, or needs inspection. It has no
-    /// count, collapse arrow, plus button, child row or close target.
+    fn operator_sidebar_status(&self, now: u64) -> SidebarStatus {
+        let setup_failed = setup_failure(self.operator.error.as_deref())
+            || self
+                .operator
+                .chat
+                .as_ref()
+                .is_some_and(|chat| setup_failure(chat.error.as_deref()));
+        if setup_failed || (self.operator.chat.is_none() && !pi_available()) {
+            return SidebarStatus {
+                glyph: '−',
+                color: PEACH(),
+                label: "Not set up".into(),
+                right: String::new(),
+                detail: "run ovrcr operator setup".into(),
+                detail_color: SUBTEXT(),
+            };
+        }
+        let Some(chat) = &self.operator.chat else {
+            return SidebarStatus {
+                glyph: '·',
+                color: MUTED(),
+                label: "Off".into(),
+                right: String::new(),
+                detail: "o opens Operator · Ctrl-o quick message".into(),
+                detail_color: SUBTEXT(),
+            };
+        };
+        if activity(chat) == AgentActivity::Busy {
+            let label = if chat.stopping {
+                "Stopping"
+            } else if chat.submitting {
+                "Sending"
+            } else {
+                "Responding"
+            };
+            return SidebarStatus {
+                glyph: crate::dashboard::status::sidebar_activity_glyph(
+                    AgentActivity::Busy,
+                    false,
+                    now,
+                )
+                .0,
+                color: TEAL(),
+                label: label.into(),
+                right: elapsed(chat.summary.current_turn_started_unix_ms, now),
+                detail: format!("↳ {}", current_activity(chat)),
+                detail_color: SUBTEXT(),
+            };
+        }
+        if let Some(turn) = chat.unread {
+            let preview =
+                reply_preview(chat, turn).unwrap_or_else(|| "No reply text available".into());
+            return SidebarStatus {
+                glyph: '✓',
+                color: GREEN(),
+                label: "Reply ready · 1 unread".into(),
+                right: format_age(chat.summary.last_reply_unix_ms, now),
+                detail: format!("↳ {preview}"),
+                detail_color: TEXT(),
+            };
+        }
+        let detail = latest_completed_turn(chat)
+            .and_then(|turn| reply_preview(chat, turn))
+            .map_or_else(|| "↳ No replies yet".into(), |reply| format!("↳ {reply}"));
+        SidebarStatus {
+            glyph: '·',
+            color: MUTED(),
+            label: "Idle".into(),
+            right: format_age(chat.summary.last_reply_unix_ms, now),
+            detail,
+            detail_color: MUTED(),
+        }
+    }
+    /// Three-row navigation section with the conversation's state, activity
+    /// and last reply. It deliberately omits harness and model metadata.
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
-        if self.sidebar_preference() == Some(0) {
+        if !self.settings.operator.sidebar {
             return;
         }
         let area = self.sidebar_rects(frame.area()).operator;
@@ -163,94 +372,98 @@ impl Dashboard {
         }
         let width = usize::from(area.width);
         let selected = self.operator.visible;
-        let (glyph, color, clause) = match &self.operator.chat {
-            Some(chat) => {
-                let (glyph, color) = crate::dashboard::status::sidebar_activity_glyph(
-                    activity(chat),
-                    chat.unread.is_some(),
-                    now,
-                );
-                let turn = chat.summary.current_turn.as_ref().map(|turn| turn.state);
-                // A failure or interruption stays identifiable even while the
-                // worker's stop is still unconfirmed; the dock spells both out
-                // instead of reusing the full view's longer status sentence.
-                let outcome = match (turn, chat.summary.worker_stopped) {
-                    (Some(OperatorTurnState::Error), true) => Some("Turn failed"),
-                    (Some(OperatorTurnState::Error), false) => Some("Failed · stop unconfirmed"),
-                    (Some(OperatorTurnState::Interrupted), true) => Some("Interrupted"),
-                    (Some(OperatorTurnState::Interrupted), false) => {
-                        Some("Interrupted · stop unconfirmed")
-                    }
-                    (Some(OperatorTurnState::Complete), false) => Some("Stop unconfirmed"),
-                    _ => None,
-                };
-                let clause = if chat.unread.is_some() {
-                    "1 unread".to_string()
-                } else if chat.submitting
-                    || chat.stopping
-                    || turn == Some(OperatorTurnState::Running)
-                {
-                    conversation_activity(chat)
-                        .map_or_else(|| status(chat).to_string(), |activity| activity.label)
-                } else if let Some(outcome) = outcome {
-                    outcome.to_string()
-                } else if !chat.draft.is_empty() {
-                    "Draft".to_string()
-                } else if selected {
-                    String::new()
+        let status = self.operator_sidebar_status(now);
+        if area.height == 1 {
+            let compact = compose_row(
+                vec![Span::raw(" Operator")],
+                Span::raw(" "),
+                vec![Span::styled(
+                    format!("{} {}", status.glyph, status.label),
+                    Style::default().fg(status.color),
+                )],
+                width,
+                selected,
+            );
+            frame.render_widget(
+                Paragraph::new(compact).style(Style::default().fg(TEXT()).bg(if selected {
+                    SURFACE0()
                 } else {
-                    "Open chat".to_string()
-                };
-                (glyph, color, clause)
-            }
-            None => (
-                ' ',
-                super::super::render::MUTED(),
-                if self.operator.error.is_some() {
-                    "Unavailable".to_string()
-                } else if self.operator.loading {
-                    "Opening…".to_string()
-                } else {
-                    "Open chat".to_string()
-                },
-            ),
-        };
-        let (inset, end) = if width < 24 { (" ", "") } else { ("  ", " ") };
-        let title = clip_text("Operator", width.saturating_sub(inset.width()));
-        let room = width.saturating_sub(inset.width() + title.width() + 1 + end.width());
-        // At the minimum sidebar width the state words outrank the activity glyph.
-        let marker = if glyph != ' ' && clause.width() + 2 <= room {
-            format!("{glyph} ")
+                    BASE()
+                })),
+                area,
+            );
+            return;
+        }
+        let title = compose_row(
+            vec![Span::styled(
+                " OPERATOR ",
+                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+            )],
+            Span::styled("─", Style::default().fg(SURFACE2())),
+            Vec::new(),
+            width,
+            false,
+        );
+        frame.render_widget(
+            Paragraph::new(title).style(Style::default().fg(TEXT()).bg(BASE())),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+
+        let right = if status.right.is_empty() {
+            Vec::new()
         } else {
-            String::new()
+            vec![Span::styled(
+                format!("{} ", status.right),
+                Style::default().fg(SUBTEXT()),
+            )]
         };
-        let clause = clip_text(&clause, room.saturating_sub(marker.width()));
-        let line = compose_row(
-            vec![Span::raw(inset), Span::raw(title)],
-            Span::raw(" "),
+        let status_line = compose_row(
             vec![
-                Span::styled(marker, Style::default().fg(color)),
-                Span::styled(clause, Style::default().fg(super::super::render::SUBTEXT())),
-                Span::raw(end),
+                Span::raw("  "),
+                Span::styled(status.glyph.to_string(), Style::default().fg(status.color)),
+                Span::raw(" "),
+                Span::styled(status.label, Style::default().fg(status.color)),
             ],
+            Span::raw(" "),
+            right,
             width,
             selected,
         );
         frame.render_widget(
-            Paragraph::new(line).style(Style::default().fg(TEXT()).bg(if selected {
+            Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(if selected {
                 SURFACE0()
             } else {
                 BASE()
             })),
-            area,
+            Rect::new(area.x, area.y + 1, area.width, 1),
         );
+        if area.height >= 3 {
+            let detail = compose_row(
+                vec![Span::styled(
+                    clip_text(&status.detail, width),
+                    Style::default().fg(status.detail_color),
+                )],
+                Span::raw(" "),
+                Vec::new(),
+                width,
+                false,
+            );
+            frame.render_widget(
+                Paragraph::new(detail).style(Style::default().fg(TEXT()).bg(if selected {
+                    SURFACE0()
+                } else {
+                    BASE()
+                })),
+                Rect::new(area.x, area.y + 2, area.width, 1),
+            );
+        }
     }
     pub(super) fn operator_sidebar_mouse(
         &mut self,
         mouse: MouseEvent,
         area: Rect,
     ) -> Option<DashboardAction> {
-        if self.sidebar_preference() == Some(0) {
+        if !self.settings.operator.sidebar {
             return None;
         }
         let rect = self.sidebar_rects(area).operator;

@@ -403,6 +403,7 @@ fn matrix_covers_every_declared_setting() {
             "launch_choices",
             "operator.model",
             "operator.thinking_level",
+            "operator.sidebar",
             "delegation.progress_deadline_ms",
             "delegation.enabled",
             "delegation.allowed_harnesses",
@@ -422,7 +423,7 @@ fn matrix_covers_every_declared_setting() {
         kinds,
         [
             Bool, Bool, Str, Bool, Str, Str, Bool, Str, Array, Str, Bool, Bool, Str, Str, Str, Str,
-            Bool, Str, Array, Array, Table, Str, Str, Integer, Bool, Array, Array, Str, Str,
+            Bool, Str, Array, Array, Table, Str, Str, Bool, Integer, Bool, Array, Array, Str, Str,
             Integer, Integer, Bool, Integer, Str,
         ]
     );

@@ -558,8 +558,13 @@ fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
+    let rows = rendered_rows(&dashboard, 120, 40);
+    let review_row = rows
+        .iter()
+        .position(|row| row.split('│').next().unwrap_or(row).contains("review"))
+        .expect("review session remains visible beside the resized pane");
     let review = (0..49)
-        .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+        .map(|x| terminal.backend().buffer()[(x, review_row as u16)].symbol())
         .collect::<String>();
     assert_eq!(review, format!("▌    - review{}claude ", " ".repeat(29)));
 
@@ -772,7 +777,10 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
         .iter()
         .rposition(|row| row.contains("QUOTA LEFT"))
         .unwrap_or_else(|| panic!("missing the quota section: {rows:?}"));
-    assert_eq!(quota, 32, "quota heading follows the tree");
+    assert_eq!(
+        quota, 33,
+        "the new top Operator section reduces tree height by one row"
+    );
     assert_eq!(rows[quota].chars().nth(49), Some('│'), "{}", rows[quota]);
     let resized = request_view(&mut dashboard, area, 0);
     assert_eq!(
