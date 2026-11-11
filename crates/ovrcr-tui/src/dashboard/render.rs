@@ -1691,6 +1691,7 @@ mod harness_agent_label_tests {
             label: label.into(),
             pid: Some(1),
             started_unix_ms: Some(1),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Idle,
             agent: None,

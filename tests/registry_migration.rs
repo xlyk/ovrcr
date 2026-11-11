@@ -152,6 +152,85 @@ fn offline_inventory_before_startup_does_not_create_sqlite() {
 }
 
 #[test]
+fn schema_30_migrates_retained_sessions_with_empty_last_activity() {
+    let live = Live::idle().bounded();
+    live.start_binary();
+    live.ready("feature/last-activity");
+    let workspace = live.workspace_path(live::WORKSPACE);
+    let created = json(
+        &live,
+        &[
+            "terminal",
+            "create",
+            "--project",
+            live::PROJECT,
+            "--path",
+            workspace.to_str().unwrap(),
+            "--name",
+            "migrated-last-activity",
+            "--",
+            "/bin/sh",
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let shutdown = run(&live, &["shutdown", "--kill"]);
+    assert!(
+        shutdown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shutdown.stderr)
+    );
+    live.join();
+
+    let connection = Connection::open(database(&live)).unwrap();
+    let has_last_activity = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name='last_activity_unix_ms')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap();
+    if has_last_activity {
+        connection
+            .execute(
+                "ALTER TABLE retained_sessions DROP COLUMN last_activity_unix_ms",
+                [],
+            )
+            .unwrap();
+    }
+    connection
+        .pragma_update(None, "user_version", 30i64)
+        .unwrap();
+    drop(connection);
+
+    live.start_binary();
+    assert!(matches!(
+        live.request(Request::List),
+        Response::Hierarchy(_)
+    ));
+    let sessions = json(&live, &["terminal", "list"]);
+    let session = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == id)
+        .unwrap();
+    assert!(
+        session
+            .as_object()
+            .is_some_and(|session| session.contains_key("last_activity_unix_ms")),
+        "migrated session summary omitted Last activity: {session}"
+    );
+    assert!(session["last_activity_unix_ms"].is_null());
+    let shutdown = run(&live, &["shutdown"]);
+    assert!(
+        shutdown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shutdown.stderr)
+    );
+    live.join();
+}
+
+#[test]
 fn malformed_legacy_startup_and_offline_query_fail_without_replacing_source() {
     let live = Live::idle().bounded();
     let original = "[[projects]\n";
@@ -591,13 +670,13 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     let connection = Connection::open(&database).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut version: i64 = 0;
-    while version != 30 && std::time::Instant::now() < deadline {
+    while version != 31 && std::time::Instant::now() < deadline {
         version = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(version, 30, "the application upgrades schema 28 to 30");
+    assert_eq!(version, 31, "the application upgrades schema 28 to 31");
     let columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
         .unwrap()

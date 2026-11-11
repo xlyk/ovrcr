@@ -272,10 +272,26 @@ struct SessionState {
     phase: SessionPhase,
     pid: Option<u32>,
     activity: AgentActivity,
+    last_activity_unix_ms: Option<u64>,
     hook_capability: Option<[u8; 32]>,
     activity_order: ReportOrder,
     context_usage: Option<ContextUsageSnapshot>,
     context_order: ReportOrder,
+}
+
+fn effective_activity(state: &SessionState) -> AgentActivity {
+    state
+        .reporting
+        .snapshot
+        .as_ref()
+        .map_or(state.activity, |agent| agent.effective_activity())
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 struct JoinHandles {
@@ -658,6 +674,7 @@ impl Session {
                 label: spec.label,
                 pid: Some(pid),
                 started_unix_ms: Some(started_unix_ms),
+                last_activity_unix_ms: None,
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
@@ -672,6 +689,7 @@ impl Session {
                 phase: SessionPhase::Running,
                 pid: Some(pid),
                 activity: AgentActivity::Unknown,
+                last_activity_unix_ms: None,
                 hook_capability: spec.hook_env.as_ref().map(|hook| hook.capability),
                 activity_order: ReportOrder::default(),
                 context_usage: None,
@@ -753,6 +771,16 @@ impl Session {
         self.summary.run
     }
 
+    pub(crate) fn last_activity_unix_ms(&self) -> Option<u64> {
+        self.state.lock().unwrap().last_activity_unix_ms
+    }
+
+    pub(crate) fn record_user_activity(&self) -> u64 {
+        let timestamp = unix_time_ms();
+        self.state.lock().unwrap().last_activity_unix_ms = Some(timestamp);
+        timestamp
+    }
+
     pub fn id(&self) -> SessionId {
         self.summary.id
     }
@@ -810,6 +838,7 @@ impl Session {
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
         summary.activity = state.activity;
+        summary.last_activity_unix_ms = state.last_activity_unix_ms.or(summary.started_unix_ms);
         summary.context_usage = state.context_usage.clone();
         summary.agent_epoch = state.reporting.epoch;
         summary.unread = state.reporting.unread();
@@ -969,7 +998,12 @@ impl Session {
         {
             bail!("legacy reports rejected while supervisor is active");
         }
-        match &report.update {
+        let previous_activity = effective_activity(&state);
+        let activity_update = matches!(
+            &report.update,
+            AgentUpdate::Activity(_) | AgentUpdate::Provider(_)
+        );
+        let result = match &report.update {
             AgentUpdate::Provider(provider) => state.reporting.apply(provider, false),
             AgentUpdate::Activity(activity) => {
                 let mut next_order = state.activity_order;
@@ -998,7 +1032,11 @@ impl Session {
                 state.context_usage = Some(snapshot);
                 Ok(changed)
             }
+        };
+        if result.is_ok() && activity_update && effective_activity(&state) != previous_activity {
+            state.last_activity_unix_ms = Some(unix_time_ms());
         }
+        result
     }
 
     pub(crate) fn authorizes_delegation(&self, capability: &str) -> bool {

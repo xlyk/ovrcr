@@ -709,6 +709,7 @@ mod tests {
             name: name.into(),
             pid: Some(100 + id as u32),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             agent: None,

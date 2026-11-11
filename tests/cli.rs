@@ -413,6 +413,24 @@ fn assert_activity_reaches_managed_session(
         .unwrap();
     assert_eq!(row["activity"], activity.replace('-', "_"));
     assert!(
+        row.as_object()
+            .is_some_and(|row| row.contains_key("last_activity_unix_ms")),
+        "terminal list JSON omitted Last activity: {row}"
+    );
+    let last_activity = row["last_activity_unix_ms"]
+        .as_u64()
+        .expect("Last activity is a Unix timestamp");
+    let table = run(&["terminal", "list"]);
+    assert!(table.status.success());
+    let table = String::from_utf8(table.stdout).unwrap();
+    assert!(
+        table.lines().any(|line| {
+            line.split('\t')
+                .any(|column| column == last_activity.to_string())
+        }),
+        "terminal list table omitted Last activity {last_activity}: {table}"
+    );
+    assert!(
         row["agent"].is_null(),
         "manual activity must not invent provider metrics"
     );

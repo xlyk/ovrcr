@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 78;
+pub const PROTOCOL_VERSION: u32 = 79;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -371,6 +371,7 @@ mod tests {
             label: "sh".into(),
             pid: Some(42),
             started_unix_ms: Some(7),
+            last_activity_unix_ms: None,
             phase: SessionPhase::Paused,
             activity: AgentActivity::Unknown,
             context_usage: None,

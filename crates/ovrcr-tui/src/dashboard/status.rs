@@ -617,6 +617,7 @@ mod tests {
             label: "claude/sonnet".into(),
             pid: Some(42),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase,
             activity: AgentActivity::Unknown,
             context_usage: None,

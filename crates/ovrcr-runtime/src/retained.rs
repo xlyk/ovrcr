@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// Non-payload assignment authority shares the registry migration/connection owner.
 pub(crate) fn create_delegation_schema(connection: &Connection) -> Result<()> {
@@ -102,6 +103,21 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
             UNIQUE (project, workspace, name)
         );",
     )?;
+    Ok(())
+}
+
+pub(crate) fn migrate_last_activity(connection: &Connection) -> Result<()> {
+    let has_column: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name='last_activity_unix_ms')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_column {
+        connection.execute_batch(
+            "ALTER TABLE retained_sessions ADD COLUMN last_activity_unix_ms INTEGER
+             CHECK (last_activity_unix_ms IS NULL OR last_activity_unix_ms >= 0);",
+        )?;
+    }
     Ok(())
 }
 
@@ -248,6 +264,9 @@ pub(crate) struct RetainedSession {
     pub run: SessionRunId,
     pub metadata: SessionMetadata,
     pub title_revision: u64,
+    pub last_activity_unix_ms: Option<u64>,
+    pub(crate) last_activity_persisted_unix_ms: Option<u64>,
+    pub(crate) last_activity_persisted_at: Option<Instant>,
     pub boot_id: Option<String>,
     pub stopped: bool,
     pub disposition: Disposition,
@@ -318,6 +337,7 @@ impl RetainedSession {
             label: self.metadata.label.clone(),
             pid: None,
             started_unix_ms: None,
+            last_activity_unix_ms: self.last_activity_unix_ms,
             phase: if self.stopped || self.disposition != Disposition::Active {
                 SessionPhase::Stopped
             } else {
@@ -362,6 +382,7 @@ impl SessionStore {
     pub(crate) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
+        migrate_last_activity(&connection).unwrap();
         create_delegation_schema(&connection).unwrap();
         cloud_creation::create_schema(&connection).unwrap();
         create_conversation_schema(&connection).unwrap();
@@ -389,6 +410,9 @@ impl SessionStore {
                 application_title: titles.application,
             },
             title_revision: titles.revision,
+            last_activity_unix_ms: session.last_activity_unix_ms(),
+            last_activity_persisted_unix_ms: session.last_activity_unix_ms(),
+            last_activity_persisted_at: None,
             boot_id: self.boot_id.clone(),
             stopped: !session.is_live(),
             failure: None,
@@ -402,14 +426,16 @@ impl SessionStore {
         self.connection.execute(
             "INSERT INTO retained_sessions
              (id, run, project, workspace, name, label, cwd, kind, pinned_title,
-              application_title, title_revision, boot_id, stopped, failure, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)
+              application_title, title_revision, boot_id, stopped, failure, scope,
+              last_activity_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
              run=excluded.run, project=excluded.project, workspace=excluded.workspace,
              name=excluded.name, label=excluded.label, cwd=excluded.cwd, kind=excluded.kind,
              pinned_title=excluded.pinned_title, application_title=excluded.application_title,
              title_revision=excluded.title_revision, boot_id=excluded.boot_id,
-             stopped=excluded.stopped, failure=NULL, scope=excluded.scope",
+             stopped=excluded.stopped, failure=NULL, scope=excluded.scope,
+             last_activity_unix_ms=excluded.last_activity_unix_ms",
             params![
                 sql_integer(record.id.0)?,
                 sql_integer(record.run.0)?,
@@ -425,6 +451,7 @@ impl SessionStore {
                 record.boot_id,
                 record.stopped,
                 serde_json::to_string(&metadata.scope)?,
+                record.last_activity_unix_ms.map(sql_integer).transpose()?,
             ],
         )?;
         self.records.insert(record.id, record);
@@ -598,6 +625,67 @@ impl SessionStore {
         self.records.values()
     }
 
+    pub(crate) fn record_last_activity(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        timestamp: u64,
+    ) -> Result<bool> {
+        let should_persist = {
+            let Some(record) = self.records.get_mut(&id) else {
+                return Ok(false);
+            };
+            if record.run != run {
+                return Ok(false);
+            }
+            record.last_activity_unix_ms = Some(timestamp);
+            record.last_activity_unix_ms != record.last_activity_persisted_unix_ms
+                && record
+                    .last_activity_persisted_at
+                    .is_none_or(|saved| saved.elapsed() >= Duration::from_secs(1))
+        };
+        if should_persist {
+            self.persist_last_activity(id, run)?;
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn flush_last_activity(&mut self) -> Result<()> {
+        let pending = self
+            .records
+            .values()
+            .filter(|record| record.last_activity_unix_ms != record.last_activity_persisted_unix_ms)
+            .map(|record| (record.id, record.run))
+            .collect::<Vec<_>>();
+        for (id, run) in pending {
+            self.persist_last_activity(id, run)?;
+        }
+        Ok(())
+    }
+
+    fn persist_last_activity(&mut self, id: SessionId, run: SessionRunId) -> Result<()> {
+        let record = self.records.get(&id).context("session not found")?;
+        if record.run != run {
+            bail!("session run changed");
+        }
+        let timestamp = record.last_activity_unix_ms;
+        let changed = self.connection.execute(
+            "UPDATE retained_sessions SET last_activity_unix_ms = ?1 WHERE id = ?2 AND run = ?3",
+            params![
+                timestamp.map(sql_integer).transpose()?,
+                sql_integer(id.0)?,
+                sql_integer(run.0)?
+            ],
+        )?;
+        if changed != 1 {
+            bail!("retained session changed while saving Last activity");
+        }
+        let record = self.records.get_mut(&id).unwrap();
+        record.last_activity_persisted_unix_ms = timestamp;
+        record.last_activity_persisted_at = Some(Instant::now());
+        Ok(())
+    }
+
     pub fn create(&mut self, metadata: SessionMetadata) -> Result<RetainedSession> {
         if metadata.scope != ovrcr_protocol::SessionScope::Workspace {
             bail!("global Operator sessions require conversation creation");
@@ -626,6 +714,9 @@ impl SessionStore {
             run: SessionRunId(0),
             metadata,
             title_revision: 0,
+            last_activity_unix_ms: None,
+            last_activity_persisted_unix_ms: None,
+            last_activity_persisted_at: None,
             boot_id: None,
             stopped: true,
             failure: None,
@@ -1063,6 +1154,16 @@ fn read_integer(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> 
         .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
 }
 
+fn read_optional_integer(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Option<u64>> {
+    let Some(value) = row.get::<_, Option<i64>>(index)? else {
+        return Ok(None);
+    };
+    value
+        .try_into()
+        .map(Some)
+        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
+}
+
 fn read_records(
     connection: &Connection,
     has_disposition: bool,
@@ -1077,9 +1178,19 @@ fn read_records(
     } else {
         "'\"Workspace\"'"
     };
+    let last_activity = if connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name='last_activity_unix_ms')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        "last_activity_unix_ms"
+    } else {
+        "NULL"
+    };
     let mut query = connection.prepare(&format!(
         "SELECT id, run, project, workspace, name, label, cwd, kind, pinned_title,
-         application_title, title_revision, boot_id, stopped, failure, {disposition}, {scope} FROM retained_sessions",
+         application_title, title_revision, boot_id, stopped, failure, {disposition}, {scope},
+         {last_activity} FROM retained_sessions",
     ))?;
     let rows = query.query_map([], |row| {
         let kind: String = row.get(7)?;
@@ -1095,6 +1206,7 @@ fn read_records(
             1 => true,
             value => return Err(rusqlite::Error::IntegralValueOutOfRange(12, value)),
         };
+        let last_activity_unix_ms = read_optional_integer(row, 16)?;
         Ok(RetainedSession {
             id: SessionId(read_integer(row, 0)?),
             run: SessionRunId(read_integer(row, 1)?),
@@ -1116,6 +1228,9 @@ fn read_records(
                 application_title: row.get(9)?,
             },
             title_revision: read_integer(row, 10)?,
+            last_activity_unix_ms,
+            last_activity_persisted_unix_ms: last_activity_unix_ms,
+            last_activity_persisted_at: None,
             boot_id: row.get(11)?,
             stopped,
             failure: row.get(13)?,
@@ -1292,6 +1407,51 @@ mod tests {
     const BOOT_B: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
     #[test]
+    fn last_activity_is_throttled_and_shutdown_flushes_latest_value() {
+        let mut store = SessionStore::in_memory();
+        let row = store
+            .create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "last-activity".into(),
+                label: "sh".into(),
+                cwd: PathBuf::from("/work"),
+                kind: SessionKind::Terminal,
+                pinned_title: None,
+                application_title: None,
+            })
+            .unwrap();
+
+        assert!(store.record_last_activity(row.id, row.run, 1_000).unwrap());
+        assert!(store.record_last_activity(row.id, row.run, 1_100).unwrap());
+        let persisted: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT last_activity_unix_ms FROM retained_sessions WHERE id=?1",
+                [sql_integer(row.id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, Some(1_000), "second write bypassed throttle");
+        assert_eq!(
+            store.get(row.id).unwrap().last_activity_unix_ms,
+            Some(1_100)
+        );
+
+        store.flush_last_activity().unwrap();
+        let persisted: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT last_activity_unix_ms FROM retained_sessions WHERE id=?1",
+                [sql_integer(row.id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, Some(1_100), "flush lost the latest value");
+    }
+
+    #[test]
     fn reusable_name_migration_preserves_high_water_when_all_rows_were_deleted() {
         let root = tempfile::tempdir().unwrap();
         let connection = crate::config::open_writable_registry(root.path()).unwrap();
@@ -1347,7 +1507,11 @@ mod tests {
         // Reconstruct schema 27, including its table-level uniqueness constraint.
         connection
             .execute_batch(
-                "CREATE TEMP TABLE saved_rows AS SELECT * FROM retained_sessions;
+                "CREATE TEMP TABLE saved_rows AS SELECT
+                    id, run, project, workspace, name, label, cwd, kind, pinned_title,
+                    application_title, title_revision, boot_id, stopped, failure,
+                    disposition, scope
+                FROM retained_sessions;
             DROP TABLE retained_sessions;",
             )
             .unwrap();
@@ -1355,7 +1519,13 @@ mod tests {
         operator::create_schema(&connection).unwrap();
         connection
             .execute_batch(
-                "INSERT INTO retained_sessions SELECT * FROM saved_rows;
+                "INSERT INTO retained_sessions
+                    (id, run, project, workspace, name, label, cwd, kind, pinned_title,
+                     application_title, title_revision, boot_id, stopped, failure,
+                     disposition, scope)
+                 SELECT id, run, project, workspace, name, label, cwd, kind, pinned_title,
+                    application_title, title_revision, boot_id, stopped, failure,
+                    disposition, scope FROM saved_rows;
             DROP TABLE saved_rows; PRAGMA user_version = 27;",
             )
             .unwrap();

@@ -1037,6 +1037,7 @@ mod layout_tests {
             label: "l".into(),
             pid: Some(1),
             started_unix_ms: Some(0),
+            last_activity_unix_ms: None,
             phase: crate::protocol::SessionPhase::Running,
             activity: crate::protocol::AgentActivity::WaitingInput,
             context_usage: None,
