@@ -224,13 +224,10 @@ impl Live {
 
     /// Explicit child-only environment for provider configuration restart cases.
     pub fn start_binary_env(&self, environment: &[(&str, &std::ffi::OsStr)]) {
-        self.spawn_server(environment, Stdio::null());
+        self.start_binary_logged(environment, &self.root.path().join("server.log"));
     }
 
-    /// Same as [`start_binary_env`](Self::start_binary_env), but keep the server's stderr.
-    ///
-    /// The default fixture discards it. A test that must read a log the server
-    /// actually writes passes a file here.
+    /// Start with Server stderr in a chosen private log instead of `server.log`.
     pub fn start_binary_logged(&self, environment: &[(&str, &std::ffi::OsStr)], log: &Path) {
         let file = std::fs::File::create(log).expect("create server log");
         self.spawn_server(environment, Stdio::from(file));
@@ -248,9 +245,10 @@ impl Live {
             .spawn()
             .expect("spawn isolated OVRCR server");
         eprintln!(
-            "LIVE_OWNED_SERVER root={} server={}",
+            "LIVE_OWNED_SERVER root={} server={} test={}",
             self.root.path().display(),
-            child.id()
+            child.id(),
+            std::thread::current().name().unwrap_or("unnamed")
         );
         *self.host.lock().unwrap() = Host::Binary(child);
         self.wait_socket();

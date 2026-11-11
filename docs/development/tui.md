@@ -186,17 +186,30 @@ Styled graphemes survive wrapping; the Working journal reserves a two-cell gutte
 before wrapping and decorates only after source-byte anchor calculation. User
 prompts have a mauve cue; assistant/tool activity shares a muted guide. Prose and
 command/output details use the available transcript width after the gutter.
-Displayable thinking deltas form a distinct muted `Thinking` paragraph ahead of
-the answer; the final thinking prefix is deduplicated per content block, and
-empty or signature-only thinking adds no row. Adjacent tool calls and outputs stay
-separate disclosures under their original ordinals, without blank rows or
-collapsed raw IDs; expanded details retain IDs.
+Displayable thinking deltas form one disclosure per adjacent same-turn run ahead
+of the answer. The body is peach and italic with a two-cell indent after the
+muted guide; its header stays muted and non-italic. Count wrapped body rows at
+the current width. Untouched current Running blocks show all rows up to six
+(`▾ Thinking · N lines`), then only the latest six
+(`▸ Thinking · showing last 6 of N lines`). Other untouched blocks collapse to
+`▸ Thinking · N lines`, independent of worker-stop proof. Explicit expansion
+shows all rows; explicit collapse hides them during streaming too. Choices
+survive completion and reopening. Empty or newline-only thinking adds no row
+or selection stop; interior blank lines count and trailing newline terminators
+do not. The final thinking prefix is deduplicated per content block.
+Adjacent tool calls and outputs stay separate disclosures under their original
+ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs.
 Expanded context prints the captured target and the fixed agent workdir separately.
 Successful completion Unread comes from the exact durable turn summary;
 `ModelSelected` updates the header without becoming a journal row.
 `Tab` cycles transcript and composer; `Ctrl-l` toggles the ordinary Projects
 sidebar and never reveals a conversation list. Transcript Up/Down selects a
-user-context/tool entry; Enter expands its full details.
+user-context, tool or thinking entry; each thinking run is one stop. Enter or a
+click on a disclosure's header/body toggles only that entry. Visible thinking
+headers keep their screen row through toggles using the top durable source
+anchor, without tail clamping or a nested scroll. If collapse removes a top body
+anchor whose header was offscreen, the header lands at the viewport top.
+PageDown and wheel scrolling rejoin the tail normally.
 The borderless composer uses `clamp(wrapped_draft_rows, 2, min(6, body_height / 3).max(2))`
 text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
 rule and muted bottom rule define the editor. `OperatorLayout` owns header,

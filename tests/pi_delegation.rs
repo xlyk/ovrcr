@@ -372,7 +372,11 @@ fn public_pi_research_assignment_launches_collects_and_fences_real_child() {
             Request::Input {
                 session: ordinary.id,
                 run: ordinary.run,
-                bytes: format!("printf ordinary > '{}'\r", marker.display()).into_bytes()
+                bytes: format!(
+                    "printf ordinary > '{0}.tmp' && mv '{0}.tmp' '{0}'\r",
+                    marker.display()
+                )
+                .into_bytes()
             }
         )
         .unwrap(),
@@ -1526,6 +1530,15 @@ impl RecoveryFixture {
                 source.display()
             );
             live.executable = private;
+            // This fixture mutates its private image; admit it before the Server wait.
+            assert!(
+                live.command()
+                    .arg("--version")
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
         }
         let fault = live.root.path().join("fault");
         let proxy = ControlProxy::new(

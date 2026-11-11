@@ -93,3 +93,10 @@ sha2 = { workspace = true }
 ratatui = { workspace = true }
 rusqlite = { workspace = true }
 tempfile = { workspace = true }
+
+# Startup fingerprints scan large debug images; optimize their byte loops too.
+[profile.dev.package.ahash]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3

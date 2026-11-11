@@ -200,6 +200,47 @@ fn mouse(column: u16, row: u16) -> MouseEvent {
     }
 }
 
+/// The production draw path, retained as cells for real hit coordinates.
+fn drawn_buffer(dashboard: &mut Dashboard, cols: u16, rows: u16) -> ratatui::buffer::Buffer {
+    dashboard.install_area(Rect::new(0, 0, cols, rows));
+    let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+    dashboard.draw(&mut terminal).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_row(buffer: &ratatui::buffer::Buffer, row: u16) -> String {
+    (0..buffer.area.width)
+        .map(|column| buffer[(column, row)].symbol())
+        .collect()
+}
+
+fn buffer_contains(buffer: &ratatui::buffer::Buffer, needle: &str) -> bool {
+    (0..buffer.area.height).any(|row| buffer_row(buffer, row).contains(needle))
+}
+
+fn buffer_row_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> u16 {
+    (0..buffer.area.height)
+        .find(|row| buffer_row(buffer, *row).contains(needle))
+        .unwrap_or_else(|| panic!("missing {needle:?} in drawn buffer"))
+}
+
+fn buffer_column_of(buffer: &ratatui::buffer::Buffer, row: u16, needle: &str) -> u16 {
+    let cells: Vec<&str> = (0..buffer.area.width)
+        .map(|column| buffer[(column, row)].symbol())
+        .collect();
+    let wanted: Vec<char> = needle.chars().collect();
+    (0..cells.len())
+        .find(|start| {
+            *start + wanted.len() <= cells.len()
+                && cells[*start..*start + wanted.len()]
+                    .iter()
+                    .zip(&wanted)
+                    .all(|(cell, ch)| cell.chars().eq(std::iter::once(*ch)))
+        })
+        .map(|column| column as u16)
+        .unwrap_or_else(|| panic!("missing {needle:?} in row {row}"))
+}
+
 /// The sidebar side of the screen row that names the singleton. The open
 /// conversation shares that row on the right of the drawn divider.
 fn dock_row(rows: &[String]) -> String {
@@ -2891,8 +2932,8 @@ fn thinking_renders_as_a_distinct_block_before_the_answer() {
     let rows: Vec<&str> = screen.lines().collect();
     let thinking_label = rows
         .iter()
-        .position(|row| row.contains("│ Thinking"))
-        .unwrap_or_else(|| panic!("missing Thinking label: {screen}"));
+        .position(|row| row.contains("│ ▾ Thinking · 1 lines"))
+        .unwrap_or_else(|| panic!("missing expanded short Thinking label: {screen}"));
     let thought = rows
         .iter()
         .position(|row| row.contains("First thought. Second thought."))
@@ -2908,6 +2949,597 @@ fn thinking_renders_as_a_distinct_block_before_the_answer() {
     assert!(
         thinking_label < thought && thought < operator_label && operator_label < answer,
         "visible order: {screen}"
+    );
+}
+
+/// Forty numbered thinking lines across four adjacent deltas of one turn.
+fn thinking_journal(turn: u64) -> Vec<OperatorMessage> {
+    let lines: Vec<String> = (1..=40)
+        .map(|number| format!("thinking line {number:02}"))
+        .collect();
+    let chunks: Vec<&[String]> = lines.chunks(10).collect();
+    let mut messages = vec![turn_message(
+        turn,
+        1,
+        OperatorMessageContent::User {
+            text: "think it through".into(),
+            context: OperatorContext::default(),
+        },
+    )];
+    for (index, chunk) in chunks.iter().enumerate() {
+        let mut text = chunk.join("\n");
+        if index + 1 < chunks.len() {
+            text.push('\n');
+        }
+        messages.push(turn_message(
+            turn,
+            index as u64 + 2,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text)),
+        ));
+    }
+    messages
+}
+
+fn ended(state: OperatorTurnState) -> OperatorConversationSummary {
+    let mut value = summary();
+    value.run = SessionRunId(2);
+    value.current_turn = Some(turn(2, state));
+    value
+}
+
+#[test]
+fn thinking_streams_a_six_line_tail_then_collapses_when_the_turn_ends() {
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(running, thinking_journal(2), None),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    // While the current turn runs, the block streams only its latest six rows.
+    let screen = draw_text(&mut dashboard, 120, 40);
+    let rows: Vec<&str> = screen.lines().collect();
+    assert!(
+        screen.contains("│ ▸ Thinking · showing last 6 of 40 lines"),
+        "capped header: {screen}"
+    );
+    let visible: Vec<usize> = (35..=40)
+        .map(|number| {
+            rows.iter()
+                .position(|row| row.contains(&format!("thinking line {number:02}")))
+                .unwrap_or_else(|| panic!("missing thinking line {number}: {screen}"))
+        })
+        .collect();
+    assert!(
+        visible.windows(2).all(|pair| pair[0] < pair[1]),
+        "the latest six rows keep their order: {screen}"
+    );
+    for hidden in 1..=34 {
+        assert!(
+            !screen.contains(&format!("thinking line {hidden:02}")),
+            "only the six latest rows stream: {screen}"
+        );
+    }
+
+    // Ending the turn through every terminal state collapses the same block.
+    for state in [
+        OperatorTurnState::Complete,
+        OperatorTurnState::Error,
+        OperatorTurnState::Interrupted,
+    ] {
+        let changed_out = changed(&mut dashboard, ended(state), Vec::new());
+        assert!(changed_out.is_empty(), "{changed_out:?}");
+        let screen = draw_text(&mut dashboard, 120, 40);
+        assert!(
+            screen.contains("│ ▸ Thinking · 40 lines"),
+            "{state:?} collapses the block: {screen}"
+        );
+        assert!(
+            !screen.contains("thinking line"),
+            "{state:?} removes every body row: {screen}"
+        );
+    }
+
+    // An older turn stays ended while a later turn runs.
+    let mut later = summary();
+    later.run = SessionRunId(3);
+    later.worker_stopped = false;
+    later.current_turn = Some(turn(3, OperatorTurnState::Running));
+    let changed_out = changed(&mut dashboard, later, Vec::new());
+    assert!(changed_out.is_empty(), "{changed_out:?}");
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(
+        screen.contains("│ ▸ Thinking · 40 lines"),
+        "an older block stays collapsed while another turn runs: {screen}"
+    );
+    assert!(!screen.contains("thinking line"), "{screen}");
+}
+
+#[test]
+fn thinking_keyboard_overrides_survive_stream_completion_and_reopen() {
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(running.clone(), thinking_journal(2), None),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    // Tab focuses the transcript, End selects the block, Enter expands it.
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::End);
+    dashboard.key(KeyCode::Enter);
+    let expanded = draw_text(&mut dashboard, 140, 70);
+    assert!(
+        expanded.contains("│ ▾ Thinking · 40 lines"),
+        "explicit expansion: {expanded}"
+    );
+    for number in 1..=40 {
+        assert!(
+            expanded.contains(&format!("thinking line {number:02}")),
+            "expanded body keeps line {number}: {expanded}"
+        );
+    }
+
+    // Enter again collapses every body row, without dropping the choice.
+    dashboard.key(KeyCode::Enter);
+    let collapsed = draw_text(&mut dashboard, 120, 40);
+    assert!(
+        collapsed.contains("│ ▸ Thinking · 40 lines"),
+        "explicit collapse: {collapsed}"
+    );
+    assert!(!collapsed.contains("thinking line"), "{collapsed}");
+
+    // A later delta in the same block does not reopen the manual collapse.
+    let out = changed(
+        &mut dashboard,
+        running.clone(),
+        vec![turn_message(
+            2,
+            6,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                "\nlate thought".into(),
+            )),
+        )],
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(
+        screen.contains("│ ▸ Thinking · 41 lines"),
+        "a delta keeps the explicit collapse: {screen}"
+    );
+    assert!(!screen.contains("late thought"), "{screen}");
+
+    // Up/Down traverse this many-delta block as one entry; Enter re-expands it.
+    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Down);
+    dashboard.key(KeyCode::Enter);
+    let expanded = draw_text(&mut dashboard, 140, 70);
+    assert!(
+        expanded.contains("│ ▾ Thinking · 41 lines"),
+        "the block stayed selected through Up/Down: {expanded}"
+    );
+    assert!(expanded.contains("late thought"), "{expanded}");
+    assert!(expanded.contains("thinking line 01"), "{expanded}");
+
+    // Explicit expansion survives the turn ending and reopening the view.
+    let out = changed(
+        &mut dashboard,
+        ended(OperatorTurnState::Complete),
+        Vec::new(),
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let completed = draw_text(&mut dashboard, 140, 70);
+    assert!(
+        completed.contains("│ ▾ Thinking · 41 lines"),
+        "completion keeps the explicit expansion: {completed}"
+    );
+    assert!(completed.contains("late thought"), "{completed}");
+
+    // Reopening goes through Browse, which is the only route that sends Open.
+    dashboard.key(KeyCode::Esc);
+    let out = opened(&mut dashboard, ended(OperatorTurnState::Complete));
+    assert!(out.is_empty(), "reopening reads no new history: {out:?}");
+    let reopened = draw_text(&mut dashboard, 140, 70);
+    assert!(
+        reopened.contains("│ ▾ Thinking · 41 lines"),
+        "reopening keeps the explicit expansion: {reopened}"
+    );
+    assert!(reopened.contains("thinking line 01"), "{reopened}");
+}
+
+#[test]
+fn thinking_short_stream_starts_expanded_and_first_enter_collapses() {
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(
+            running,
+            vec![
+                turn_message(
+                    2,
+                    1,
+                    OperatorMessageContent::User {
+                        text: "short request".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    2,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                        "short first thought\nshort second thought".into(),
+                    )),
+                ),
+            ],
+            None,
+        ),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    let screen = draw_text(&mut dashboard, 120, 40);
+    assert!(
+        screen.contains("│ ▾ Thinking · 2 lines"),
+        "an untouched short stream is open: {screen}"
+    );
+    assert!(screen.contains("short first thought"), "{screen}");
+    assert!(screen.contains("short second thought"), "{screen}");
+
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::End);
+    dashboard.key(KeyCode::Enter);
+    let collapsed = draw_text(&mut dashboard, 120, 40);
+    assert!(
+        collapsed.contains("│ ▸ Thinking · 2 lines"),
+        "the first Enter collapses the short block: {collapsed}"
+    );
+    assert!(!collapsed.contains("short first thought"), "{collapsed}");
+    assert!(!collapsed.contains("short second thought"), "{collapsed}");
+}
+
+/// Numbered thinking deltas split into chunks, concatenating back into one block.
+fn thinking_deltas(
+    turn: u64,
+    first_ordinal: u64,
+    prefix: &str,
+    count: usize,
+    chunks: usize,
+) -> Vec<OperatorMessage> {
+    let lines: Vec<String> = (1..=count)
+        .map(|number| format!("{prefix} line {number:02}"))
+        .collect();
+    let per_chunk = lines.len().div_ceil(chunks).max(1);
+    let chunks: Vec<&[String]> = lines.chunks(per_chunk).collect();
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let mut text = chunk.join("\n");
+            if index + 1 < chunks.len() {
+                text.push('\n');
+            }
+            turn_message(
+                turn,
+                first_ordinal + index as u64,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text)),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn thinking_blocks_toggle_independently_by_mouse() {
+    let context = OperatorContext::default();
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut messages = vec![
+        turn_message(
+            1,
+            1,
+            OperatorMessageContent::User {
+                text: "older request".into(),
+                context: context.clone(),
+            },
+        ),
+        turn_message(
+            1,
+            2,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
+                "older one\nolder two".into(),
+            )),
+        ),
+        turn_message(
+            1,
+            3,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+        ),
+        turn_message(
+            2,
+            4,
+            OperatorMessageContent::User {
+                text: "current request".into(),
+                context,
+            },
+        ),
+    ];
+    messages.extend(thinking_deltas(2, 5, "alpha", 40, 4));
+    messages.push(turn_message(
+        2,
+        9,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+            "between blocks".into(),
+        )),
+    ));
+    messages.extend(thinking_deltas(2, 10, "beta", 8, 2));
+    messages.push(turn_message(
+        2,
+        12,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta("final answer".into())),
+    ));
+
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 160, 80));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(running, messages, None),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    let initial = drawn_buffer(&mut dashboard, 160, 80);
+    assert!(buffer_contains(
+        &initial,
+        "▸ Thinking · showing last 6 of 40 lines"
+    ));
+    assert!(buffer_contains(
+        &initial,
+        "▸ Thinking · showing last 6 of 8 lines"
+    ));
+    assert!(buffer_contains(&initial, "▸ Thinking · 2 lines"));
+    assert!(buffer_contains(&initial, "alpha line 40"));
+    assert!(buffer_contains(&initial, "beta line 08"));
+    assert!(!buffer_contains(&initial, "alpha line 34"));
+    assert!(!buffer_contains(&initial, "beta line 02"));
+    assert!(!buffer_contains(&initial, "older one"));
+    let alpha_header_row = buffer_row_of(&initial, "showing last 6 of 40");
+    let beta_header = buffer_row(&initial, buffer_row_of(&initial, "showing last 6 of 8"));
+
+    // The capped body row belongs to a later alpha delta, but toggles this block.
+    let alpha_body_row = buffer_row_of(&initial, "alpha line 40");
+    let alpha_body_column = buffer_column_of(&initial, alpha_body_row, "alpha line 40");
+    dashboard.mouse_action(
+        mouse(alpha_body_column, alpha_body_row),
+        Rect::new(0, 0, 160, 80),
+    );
+
+    let expanded = drawn_buffer(&mut dashboard, 160, 80);
+    assert_eq!(
+        buffer_row_of(&expanded, "▾ Thinking · 40 lines"),
+        alpha_header_row,
+        "expanding keeps the header on its screen row"
+    );
+    assert!(buffer_contains(&expanded, "alpha line 01"));
+    assert!(buffer_contains(&expanded, "alpha line 40"));
+    assert!(buffer_contains(&expanded, "beta line 08"));
+    assert_eq!(
+        buffer_row(&expanded, buffer_row_of(&expanded, "showing last 6 of 8")),
+        beta_header,
+        "the second block keeps its capped display"
+    );
+    assert!(!buffer_contains(&expanded, "beta line 02"));
+    assert!(buffer_contains(&expanded, "▸ Thinking · 2 lines"));
+    assert!(!buffer_contains(&expanded, "older one"));
+
+    // Clicking a visible body row collapses the same block in place.
+    let alpha_body_row = buffer_row_of(&expanded, "alpha line 01");
+    let alpha_body_column = buffer_column_of(&expanded, alpha_body_row, "alpha line 01");
+    dashboard.mouse_action(
+        mouse(alpha_body_column, alpha_body_row),
+        Rect::new(0, 0, 160, 80),
+    );
+    let collapsed = drawn_buffer(&mut dashboard, 160, 80);
+    assert_eq!(
+        buffer_row_of(&collapsed, "▸ Thinking · 40 lines"),
+        alpha_header_row,
+        "collapsing keeps the header on its screen row"
+    );
+    assert!(!buffer_contains(&collapsed, "alpha line"));
+    assert_eq!(
+        buffer_row(&collapsed, buffer_row_of(&collapsed, "showing last 6 of 8")),
+        beta_header,
+        "the second block is untouched by the first block's collapse"
+    );
+    assert!(buffer_contains(&collapsed, "▸ Thinking · 2 lines"));
+    assert!(!buffer_contains(&collapsed, "older one"));
+}
+
+#[test]
+fn thinking_viewport_keeps_the_header_while_scrolling_and_collapsing() {
+    let context = OperatorContext::default();
+    let filler = (1..=20)
+        .map(|number| format!("filler line {number:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut running = summary();
+    running.run = SessionRunId(3);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(3, OperatorTurnState::Running));
+    let mut messages = vec![
+        turn_message(
+            1,
+            1,
+            OperatorMessageContent::User {
+                text: "older request".into(),
+                context: context.clone(),
+            },
+        ),
+        turn_message(
+            1,
+            2,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(filler)),
+        ),
+        turn_message(
+            1,
+            3,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+        ),
+        turn_message(
+            2,
+            4,
+            OperatorMessageContent::User {
+                text: "scroll request".into(),
+                context,
+            },
+        ),
+    ];
+    messages.extend(thinking_deltas(3, 5, "alpha", 40, 4));
+
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(running.clone(), messages, None),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    // The capped header sits near the bottom of the tail viewport.
+    let initial = drawn_buffer(&mut dashboard, 120, 40);
+    assert!(buffer_contains(&initial, "filler line 20"));
+    assert!(buffer_contains(&initial, "alpha line 40"));
+    let header_row = buffer_row_of(&initial, "showing last 6 of 40");
+    assert!(
+        header_row > 20,
+        "the capped header starts near the viewport bottom: {header_row}"
+    );
+
+    // Expanding taller than the viewport keeps that header on the same row.
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::End);
+    dashboard.key(KeyCode::Enter);
+    let expanded = drawn_buffer(&mut dashboard, 120, 40);
+    assert_eq!(
+        buffer_row_of(&expanded, "▾ Thinking · 40 lines"),
+        header_row,
+        "expansion keeps the header's screen row"
+    );
+    assert!(buffer_contains(&expanded, "alpha line 01"));
+    assert!(!buffer_contains(&expanded, "alpha line 40"));
+
+    // Collapsing must not snap to the tail; the header stays put.
+    dashboard.key(KeyCode::Enter);
+    let collapsed = drawn_buffer(&mut dashboard, 120, 40);
+    assert_eq!(
+        buffer_row_of(&collapsed, "▸ Thinking · 40 lines"),
+        header_row,
+        "collapse keeps the header's screen row instead of snapping"
+    );
+    assert!(!buffer_contains(&collapsed, "alpha line"));
+
+    // A later answer extends the one transcript; PageDown and the wheel reach it.
+    let answer = (1..=20)
+        .map(|number| format!("answer line {number:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let out = changed(
+        &mut dashboard,
+        running.clone(),
+        vec![turn_message(
+            3,
+            9,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(answer)),
+        )],
+    );
+    assert!(out.is_empty(), "{out:?}");
+    let answered = drawn_buffer(&mut dashboard, 120, 40);
+    assert!(!buffer_contains(&answered, "answer line 20"));
+    dashboard.key(KeyCode::PageDown);
+    let page = drawn_buffer(&mut dashboard, 120, 40);
+    assert!(!buffer_contains(&page, "answer line 20"));
+    let wheel = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 60,
+        row: 10,
+        modifiers: KeyModifiers::NONE,
+    };
+    for _ in 0..4 {
+        dashboard.mouse_action(wheel, Rect::new(0, 0, 120, 40));
+    }
+    let wheeled = drawn_buffer(&mut dashboard, 120, 40);
+    assert!(buffer_contains(&wheeled, "answer line 20"));
+
+    // Expanding again and scrolling into the body puts its header above the
+    // viewport; collapsing by a visible body row lands the header at the top.
+    dashboard.key(KeyCode::Enter);
+    for _ in 0..3 {
+        dashboard.key(KeyCode::PageDown);
+    }
+    let scrolled = drawn_buffer(&mut dashboard, 120, 40);
+    assert!(!buffer_contains(&scrolled, "▸ Thinking · 40 lines"));
+    let body_row = buffer_row_of(&scrolled, "alpha line 35");
+    let body_column = buffer_column_of(&scrolled, body_row, "alpha line 35");
+    dashboard.mouse_action(mouse(body_column, body_row), Rect::new(0, 0, 120, 40));
+    let top = drawn_buffer(&mut dashboard, 120, 40);
+    assert_eq!(
+        buffer_row_of(&top, "▸ Thinking · 40 lines"),
+        2,
+        "the collapsed header lands at the transcript's top row"
+    );
+    assert!(buffer_contains(&top, "answer line 20") || buffer_contains(&top, "Responding"));
+}
+
+#[test]
+fn thinking_capped_header_clips_with_its_count_at_a_narrow_sidebar_view() {
+    let mut running = summary();
+    running.run = SessionRunId(2);
+    running.worker_stopped = false;
+    running.current_turn = Some(turn(2, OperatorTurnState::Running));
+    let mut dashboard = dashboard_fixture();
+    let out = opened(&mut dashboard, running.clone());
+    let read = read_request(&out);
+    let out = respond(
+        &mut dashboard,
+        read.request_id,
+        history_of(running, thinking_journal(2), None),
+    );
+    assert!(out.is_empty(), "{out:?}");
+
+    // The on-demand ordinary sidebar halves the 60-column conversation.
+    dashboard.install_area(Rect::new(0, 0, 60, 16));
+    dashboard.ctrl('l');
+    let screen = draw_text(&mut dashboard, 60, 16);
+    assert!(
+        screen.contains("▸ Thinking · showing last 6…"),
+        "the clipped header keeps its partial styled count: {screen}"
     );
 }
 

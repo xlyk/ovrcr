@@ -464,14 +464,38 @@ remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
 confirm the same conversation is attached (startup `Current` creates nothing).
 Keep fresh screenshots and AX text for every changed state.
 
-For thinking-stream acceptance, start a fresh helper with no release marker and
-send `REQUEST_THINKING_HELD`. While the provider is paused, confirm a distinct
-**Thinking** block shows both thinking fragments in order and no answer yet.
-Save a screenshot and AX text before creating `operator-pi/fixture-release`.
-After release, confirm the answer appears below the thinking without repeating
-either fragment. Reopen the conversation and confirm the same journal remains.
-A text-only follow-up must add no empty Thinking block. The bundled CLI skill
-must never appear as a user message, tool result or visible journal entry.
+For thinking-block acceptance, use two fresh fixtures in both the native GUI and
+Terminal.app, with a fresh helper and no release marker for each fixture. Build
+the `operator_e2e` helper first with `--no-run --message-format=json`, retain its
+test executable path, and finish GUI builds before starting Terminal fixtures.
+Run that exact helper executable directly so Cargo cannot replace a running
+Dashboard binary. Keep HOME, XDG paths, TMPDIR, provider profiles and sockets
+private; link only existing Regular/Bold/Italic/BoldItalic JetBrains Mono Nerd
+Font faces into the GUI's private `Library/Fonts`. Do not change system fonts
+or the user's Terminal profile.
+
+1. In fixture A, open Operator and send `REQUEST_THINKING_LONG_HELD`. Before
+   toggling, confirm `▸ Thinking · showing last 6 of 40 lines`, only
+   `THINKING_LINE_35` through `THINKING_LINE_40`, a peach italic body and muted
+   non-italic header, and no answer. Save screenshot and AX evidence.
+2. Create the owned `operator-pi/fixture-release` marker. Confirm automatic
+   collapse to `▸ Thinking · 40 lines` and `THINKING_LONG_ANSWER`. Use
+   Tab/End/Enter and clicks on header/body to expand and collapse. Compare the
+   header's screen row before and after each toggle. Use the one journal scroll
+   to reach older/latest thinking and the answer, then resize and capture fresh
+   screenshots and AX text.
+3. In fresh fixture B, send the same marker, expand while running, manually
+   collapse to hide every body row, and re-expand. Capture each state and the
+   stationary header. Release while explicitly expanded and confirm expansion
+   survives completion. The fresh fixture is required because overrides and the
+   helper's release latch persist.
+
+A Terminal profile without italic must still show peach; record that limitation
+without changing its settings. Stop each helper with its owned `fixture-stop`
+marker, retain its exit result, and clean up only the owned GUI/Terminal
+instances. Reopen the conversation to confirm its journal remains. A text-only
+follow-up adds no empty Thinking block. The bundled CLI skill must never appear
+as a user message, tool result or visible journal entry.
 
 For compaction acceptance, use a separate fresh fixture and start its provider
 helper with `OVRCR_OPERATOR_GUI_COMPACTION=1`. Send `COMPACT_ONE`. Its oversized

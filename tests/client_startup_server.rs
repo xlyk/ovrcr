@@ -93,6 +93,16 @@ fn copied_fixture() -> Live {
     let copy = fixture.root.path().join("ovrcr");
     fs::copy(&fixture.executable, &copy).unwrap();
     fixture.executable = copy;
+    // Admit the copied OS image before timing application readiness.
+    assert!(
+        fixture
+            .command()
+            .arg("--version")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
     fixture.start_binary();
     let fixture = fixture.bounded();
     assert!(matches!(

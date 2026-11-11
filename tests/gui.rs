@@ -14,16 +14,6 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn private_dashboard_executable(root: &Path) -> Result<std::path::PathBuf> {
-    let directory = root.join("dashboard-client");
-    std::fs::create_dir_all(&directory)?;
-    let executable = directory.join("ovrcr");
-    if !executable.exists() {
-        std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &executable)?;
-    }
-    Ok(executable)
-}
-
 fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -1276,18 +1266,17 @@ fn real_dashboard_initial_selection_survives_quota_events_before_startup_respons
             .map_err(|_| anyhow::anyhow!("startup forwarder panicked"))??;
         result
     });
-    let mut command = portable_pty::CommandBuilder::new(private_dashboard_executable(&root)?);
-    command.env("OVRCR_HOME", &root);
-    command.env("OVRCR_SOCKET", &socket);
-    command.env("OVRCR_SERVER_EXECUTABLE", proxy_executable);
     #[cfg(target_os = "macos")]
-    {
-        let (home, path) = desktop_alert_environment(&root)?;
-        command.env("HOME", home);
-        command.env("PATH", path);
-    }
-    command.env("TERM", "xterm-256color");
-    let mut terminal = Terminal::start(command, 40, 160, Default::default())?;
+    let (home, path) = desktop_alert_environment(&root)?;
+    let mut terminal = demo.dashboard_with(40, 160, Default::default(), |command| {
+        command.env("OVRCR_SOCKET", &socket);
+        command.env("OVRCR_SERVER_EXECUTABLE", proxy_executable);
+        #[cfg(target_os = "macos")]
+        {
+            command.env("HOME", home);
+            command.env("PATH", path);
+        }
+    })?;
     wait_dashboard(&mut terminal)?;
     // The actual first session's child output proves selection, not just rows.
     wait_screen(&terminal, "local (#1)")?;
@@ -1501,18 +1490,14 @@ fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
     #[cfg(target_os = "macos")]
     let (home, path) = desktop_alert_environment(&root)?;
     let launch = || -> Result<Terminal> {
-        let mut command = portable_pty::CommandBuilder::new(private_dashboard_executable(&root)?);
-        command.env("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"));
-        command.env("OVRCR_HOME", &root);
-        command.env("OVRCR_SOCKET", root.join("server.sock"));
-        command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
-        #[cfg(target_os = "macos")]
-        {
-            command.env("HOME", &home);
-            command.env("PATH", &path);
-        }
-        command.env("TERM", "xterm-256color");
-        Terminal::start(command, 40, 160, Default::default())
+        demo.dashboard_with(40, 160, Default::default(), |command| {
+            command.env("OVRCR_DASHBOARD_CONFIG", &client_only);
+            #[cfg(target_os = "macos")]
+            {
+                command.env("HOME", &home);
+                command.env("PATH", &path);
+            }
+        })
     };
     let mut terminal = launch()?;
     wait_dashboard(&mut terminal)?;
