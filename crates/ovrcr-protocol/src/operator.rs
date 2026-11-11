@@ -345,6 +345,10 @@ pub enum OperatorMessageContent {
     },
     Worker(OperatorWorkerEvent),
     Interrupted,
+    /// A queued watched-session report admitted while the leased Pi worker was idle.
+    AsyncWakeup {
+        text: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorMessage {
@@ -459,6 +463,8 @@ pub struct OperatorWorkerStart {
     /// The last completed turn whose native session is this turn's context base.
     pub checkpoint_turn: Option<OperatorTurnId>,
     pub thinking_level: OperatorThinkingLevel,
+    /// Pi has already started this prompt through its native async input API.
+    pub async_wakeup: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
@@ -480,6 +486,11 @@ pub enum OperatorWorkerCommand {
     Stop {
         identity: OperatorTurnIdentity,
     },
+    /// Atomically claims a settled watch report as a new turn on the leased run.
+    BeginAsyncTurn {
+        identity: OperatorRunIdentity,
+        text: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerRequest {
@@ -492,6 +503,7 @@ pub enum OperatorWorkerResult {
     StartTurn(Option<Box<OperatorWorkerStart>>),
     Aborted { identity: OperatorTurnIdentity },
     Retired { identity: OperatorTurnIdentity },
+    BeginAsyncTurn(Option<Box<OperatorWorkerStart>>),
 }
 
 #[cfg(test)]

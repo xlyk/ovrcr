@@ -246,6 +246,12 @@ pub enum Step {
     Event(Value),
     /// Emit the watch extension's status snapshot.
     WatchStatus(usize),
+    /// Simulate the extension's admitted idle `sendUserMessage` and its one
+    /// native Pi turn, without issuing a second worker prompt command.
+    AsyncWakeup {
+        text: String,
+        answer: String,
+    },
     Stderr(String),
     Sleep(u64),
     WaitFile(PathBuf),
@@ -277,6 +283,13 @@ impl Step {
             status: "succeeded",
             truncated: false,
             marker: None,
+        }
+    }
+
+    pub fn async_wakeup(text: &str, answer: &str) -> Self {
+        Self::AsyncWakeup {
+            text: text.into(),
+            answer: answer.into(),
         }
     }
 
@@ -403,6 +416,11 @@ impl Step {
             }),
             Self::Event(event) => json!({"kind": "event", "event": event}),
             Self::WatchStatus(active) => json!({"kind": "watch_status", "active": active}),
+            Self::AsyncWakeup { text, answer } => json!({
+                "kind": "async_wakeup",
+                "text": text,
+                "answer": answer,
+            }),
             Self::Stderr(text) => json!({"kind": "stderr", "text": text}),
             Self::Sleep(ms) => json!({"kind": "sleep", "ms": ms}),
             Self::WaitFile(path) => {
@@ -475,12 +493,20 @@ impl FakePi {
     }
 
     pub fn clear_log(&self) {
-        let _ = fs::remove_file(&self.log);
+        let _ = fs::remove_file(self.active_log_path());
     }
 
     /// Every receipt line, in order.
     pub fn log(&self) -> Vec<Value> {
-        read_log(&self.log)
+        read_log(&self.active_log_path())
+    }
+
+    fn active_log_path(&self) -> PathBuf {
+        fs::read(&self.scenario)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|scenario| scenario["log"].as_str().map(PathBuf::from))
+            .unwrap_or_else(|| self.log.clone())
     }
 
     /// Wait until a receipt line satisfies `predicate`.

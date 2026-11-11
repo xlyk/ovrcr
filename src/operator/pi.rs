@@ -28,7 +28,7 @@ const PROFILE_DIR: &str = "operator-pi";
 const WORKDIR_DIR: &str = "operator-workdir";
 const TURNS_DIR: &str = "turns";
 const EXTENSION_FILE: &str = "pi-operator-extension.mjs";
-const TOOLS: &str = "read,bash,edit,write";
+const TOOLS: &str = "read,bash,edit,write,watch_sessions";
 const MODEL_DEADLINE: Duration = Duration::from_secs(20);
 const MODEL_LIMIT: usize = 4096;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -976,7 +976,7 @@ mod tests {
                 "--no-approve",
                 "--offline",
                 "--tools",
-                "read,bash,edit,write",
+                "read,bash,edit,write,watch_sessions",
                 "--session-dir",
                 attempt.to_str().unwrap(),
                 "--session-id",

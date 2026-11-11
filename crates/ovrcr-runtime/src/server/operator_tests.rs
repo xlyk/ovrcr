@@ -496,14 +496,14 @@ fn operator_worker_fixture() {
     )
     .unwrap();
     fs::rename(ready.with_extension("tmp"), &ready).unwrap();
-    wait_until(|| {
-        root.join(format!("complete-{}", identity.conversation.0))
-            .exists()
-    });
+    let complete = root.join(format!("complete-{}", identity.conversation.0));
+    let complete_leased = root.join(format!("complete-leased-{}", identity.conversation.0));
+    wait_until(|| complete.exists() || complete_leased.exists());
+    let leased = complete_leased.exists();
     assert!(matches!(
         worker_exchange(
             &mut stream,
-            batch(2, vec![OperatorWorkerEvent::Completed { leased: false }])
+            batch(2, vec![OperatorWorkerEvent::Completed { leased }])
         ),
         Response::OperatorExchange(_)
     ));
@@ -604,6 +604,113 @@ fn operator_worker_completes_and_retires_with_stop_proof() {
     });
     assert!(live.history(&c).conversation.worker_stopped);
     assert!(!live.state.sessions.lock().unwrap()[&c.session].is_live());
+}
+
+#[test]
+fn user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let first = live.submit(&c);
+    let auth = live.ready(&c);
+    live.command(&c, "complete-leased");
+    wait_until(|| {
+        live.history(&c)
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+    });
+
+    let owner = live.state.dashboard.snapshot().unwrap().identity;
+    let (arrived_tx, arrived_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    *live.state.operator.before_retained.lock().unwrap() = Some(Arc::new(move || {
+        arrived_tx.send(()).unwrap();
+        let _ = release_rx
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5));
+    }));
+
+    let submit_state = live.state.clone();
+    let submit_owner = owner.clone();
+    let (submit_tx, submit_rx) = mpsc::channel();
+    let submit = thread::spawn(move || {
+        let result = submit_state.operator_request(
+            &submit_owner,
+            OperatorRequest::Submit {
+                conversation: c.id,
+                expected_run: first.identity.run,
+                text: "human report follow-up".into(),
+                context: OperatorContext::default(),
+            },
+        );
+        submit_tx.send(result).unwrap();
+    });
+    arrived_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("human Submit owns mutation_lock before retained commit");
+
+    let async_state = live.state.clone();
+    let run_identity = OperatorRunIdentity {
+        conversation: c.id,
+        session: c.session,
+        run: first.identity.run,
+    };
+    let (async_tx, async_rx) = mpsc::channel();
+    let async_request = thread::spawn(move || {
+        let result = async_state.operator_worker(
+            OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::BeginAsyncTurn {
+                    identity: run_identity,
+                    text: "watched session report remains queued".into(),
+                },
+            },
+            None,
+        );
+        async_tx.send(result).unwrap();
+    });
+    assert!(
+        async_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "the async admission waits behind the already-owned human Submit"
+    );
+    release_tx.send(()).unwrap();
+
+    let submitted = submit_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    submit.join().unwrap();
+    assert!(matches!(submitted, OperatorResponse::Submitted(_)));
+    let wakeup = async_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    async_request.join().unwrap();
+    assert!(matches!(wakeup, OperatorWorkerResult::BeginAsyncTurn(None)));
+    *live.state.operator.before_retained.lock().unwrap() = None;
+
+    let history = live.history(&c);
+    let user_turn = history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(user_turn.state, OperatorTurnState::Running);
+    assert_eq!(user_turn.identity.run, first.identity.run);
+    assert!(matches!(
+        history.messages.last().map(|message| &message.content),
+        Some(OperatorMessageContent::User { text, .. }) if text == "human report follow-up"
+    ));
+    assert!(
+        !history.messages.iter().any(|message| {
+            matches!(message.content, OperatorMessageContent::AsyncWakeup { .. })
+        })
+    );
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: user_turn.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
 }
 
 #[test]

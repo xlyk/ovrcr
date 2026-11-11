@@ -1938,8 +1938,8 @@ fn rpc_child_writes_are_bounded_and_termination_reaps_the_fixture() {
 
 /// Finding 1: Pi's parallel executor prepares every admission before executing
 /// any tool, which the serial durable-admission handshake cannot satisfy. The
-/// extension must register all four native tools with `executionMode:
-/// "sequential"`; the probe also proves the timeout/cancel/timeout-result rules.
+/// extension must register all five tools with `executionMode: "sequential"`;
+/// the probe also proves watcher settlement and timeout/cancel/result rules.
 #[test]
 fn the_extension_forces_sequential_tools_and_bounds_its_bash_timeout() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))

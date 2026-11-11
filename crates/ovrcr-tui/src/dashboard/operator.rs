@@ -394,6 +394,7 @@ fn expandable(message: &OperatorMessage) -> bool {
     matches!(
         message.content,
         OperatorMessageContent::User { .. }
+            | OperatorMessageContent::AsyncWakeup { .. }
             | OperatorMessageContent::Worker(
                 OperatorWorkerEvent::ToolCall { .. }
                     | OperatorWorkerEvent::ToolOutput { .. }
@@ -2179,6 +2180,181 @@ mod tests {
         d.key(KeyCode::Backspace);
         assert_eq!(d.operator.quick.as_ref().unwrap().text, "kept tex");
         assert_eq!(d.operator.chat.as_ref().unwrap().draft, "kept tex");
+    }
+
+    #[test]
+    fn async_wakeup_attach_preserves_composer_and_quick_drafts_while_busy() {
+        for quick_origin in [false, true] {
+            let mut leased = summary();
+            leased.worker_stopped = false;
+            leased.worker_live = true;
+            leased.current_turn = Some(turn_for(1, 1, OperatorTurnState::Complete));
+            let mut d = dashboard();
+            let out = opened(&mut d, leased.clone());
+            let read = read_request(&out);
+            respond(
+                &mut d,
+                read.request_id,
+                history_of(leased.clone(), Vec::new(), None),
+            );
+
+            if quick_origin {
+                d.ctrl('o');
+                d.event_action(Event::Paste("keep this draft".into()));
+            } else {
+                d.event_action(Event::Paste("keep this draft".into()));
+            }
+            let mut async_running = leased;
+            async_running.current_turn = Some(turn_for(1, 2, OperatorTurnState::Running));
+            d.operator_changed(Id(1));
+            let changed = d.drain_outbox();
+            let read = read_request(&changed);
+            let wakeup = OperatorMessage {
+                ordinal: 1,
+                turn: OperatorTurnId(2),
+                content: OperatorMessageContent::AsyncWakeup {
+                    text: "A watched session settled.".into(),
+                },
+            };
+            respond(
+                &mut d,
+                read.request_id,
+                history_of(async_running, vec![wakeup], None),
+            );
+
+            let chat = d.operator.chat.as_ref().unwrap();
+            assert_eq!(chat.draft, "keep this draft");
+            if quick_origin {
+                assert_eq!(d.operator.quick.as_ref().unwrap().text, "keep this draft");
+            }
+            d.key(KeyCode::Enter);
+            assert!(
+                d.drain_outbox().is_empty(),
+                "a running wakeup owns the slot"
+            );
+            let chat = d.operator.chat.as_ref().unwrap();
+            assert_eq!(chat.draft, "keep this draft");
+            assert_eq!(chat.error.as_deref(), Some(BUSY_REASON));
+            if quick_origin {
+                assert_eq!(d.operator.quick.as_ref().unwrap().text, "keep this draft");
+                assert_eq!(
+                    d.operator.quick.as_ref().unwrap().error.as_deref(),
+                    Some(BUSY_REASON)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread() {
+        for outcome in ["complete", "failed", "interrupted"] {
+            let mut d = dashboard();
+            let out = opened(&mut d, summary());
+            let read = read_request(&out);
+            respond(
+                &mut d,
+                read.request_id,
+                history_of(summary(), Vec::new(), None),
+            );
+
+            let state = match outcome {
+                "complete" => OperatorTurnState::Complete,
+                "failed" => OperatorTurnState::Error,
+                "interrupted" => OperatorTurnState::Interrupted,
+                _ => unreachable!(),
+            };
+            let mut final_summary = summary();
+            final_summary.current_turn = Some(turn_for(1, 2, state));
+            let wakeup = OperatorMessage {
+                ordinal: 1,
+                turn: OperatorTurnId(2),
+                content: OperatorMessageContent::AsyncWakeup {
+                    text: "WATCH_REPORT_FOR_TRANSCRIPT".into(),
+                },
+            };
+            let answer = OperatorMessage {
+                ordinal: 2,
+                turn: OperatorTurnId(2),
+                content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                    "WATCH_WAKEUP_ANSWER".into(),
+                )),
+            };
+            let terminal = match outcome {
+                "complete" => {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
+                }
+                "failed" => OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
+                    "wake up failed".into(),
+                )),
+                "interrupted" => OperatorMessageContent::Interrupted,
+                _ => unreachable!(),
+            };
+            let finish = OperatorMessage {
+                ordinal: 3,
+                turn: OperatorTurnId(2),
+                content: terminal,
+            };
+            d.operator_changed(Id(1));
+            let changed = d.drain_outbox();
+            let read = read_request(&changed);
+            respond(
+                &mut d,
+                read.request_id,
+                history_of(final_summary.clone(), vec![wakeup, answer, finish], None),
+            );
+
+            let chat = d.operator.chat.as_ref().unwrap();
+            assert_eq!(chat.unread, Some(OperatorTurnId(2)));
+            let transcript = render::transcript_rows(chat, 140, 0)
+                .into_iter()
+                .map(|row| {
+                    row.line
+                        .spans
+                        .into_iter()
+                        .map(|span| span.content.to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                transcript
+                    .iter()
+                    .filter(|line| {
+                        line.trim_start_matches(|character| character == '│' || character == ' ')
+                            == "Operator"
+                    })
+                    .count(),
+                1,
+                "the async request and answer share one clean Operator heading"
+            );
+            assert!(
+                transcript
+                    .iter()
+                    .any(|line| line.contains("WATCH_REPORT_FOR_TRANSCRIPT"))
+            );
+            assert!(
+                !transcript.iter().any(|line| line == "You"),
+                "an async wakeup never renders as a user bubble"
+            );
+
+            d.key(KeyCode::Esc);
+            let screen = draw(&mut d, 140, 24);
+            assert!(
+                screen.contains("Reply ready · 1 unread"),
+                "one unseen terminal wakeup marks the Operator dock unread: {screen}"
+            );
+            let reopened = open(&mut d);
+            respond(
+                &mut d,
+                reopened.request_id,
+                OperatorResponse::Opened(final_summary),
+            );
+            let _ = draw(&mut d, 140, 24);
+            assert_eq!(
+                d.operator.chat.as_ref().unwrap().unread,
+                None,
+                "drawing the confirmed transcript tail marks this turn reviewed"
+            );
+        }
     }
 
     #[test]

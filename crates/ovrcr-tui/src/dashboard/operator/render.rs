@@ -654,6 +654,17 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 }
                 push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
             }
+            OperatorMessageContent::AsyncWakeup { text } => {
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    "Operator".into(),
+                    Style::default().fg(BLUE()),
+                    true,
+                );
+                push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
+            }
             OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
                 if index == 0
                     || matches!(
@@ -867,8 +878,15 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
         }
         if lines.len() > first_line
             && chat.messages.get(index + 1).is_none_or(|next| {
-                matches!(message.content, OperatorMessageContent::User { .. })
-                    || matches!(next.content, OperatorMessageContent::User { .. })
+                matches!(
+                    message.content,
+                    OperatorMessageContent::User { .. }
+                        | OperatorMessageContent::AsyncWakeup { .. }
+                ) || matches!(
+                    next.content,
+                    OperatorMessageContent::User { .. }
+                        | OperatorMessageContent::AsyncWakeup { .. }
+                )
             })
         {
             push_lines(&mut lines, ordinal, 4, String::new(), normal, true);

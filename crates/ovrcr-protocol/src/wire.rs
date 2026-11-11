@@ -2831,6 +2831,13 @@ mod wire_snapshot {
                     identity: run_identity,
                 },
             ),
+            (
+                "BeginAsyncTurn",
+                OperatorWorkerCommand::BeginAsyncTurn {
+                    identity: run_identity,
+                    text: "watch report".into(),
+                },
+            ),
             ("AbortTurn", OperatorWorkerCommand::AbortTurn { identity }),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
             ("Stop", OperatorWorkerCommand::Stop { identity }),
@@ -2893,6 +2900,7 @@ mod wire_snapshot {
                     text: "hello".into(),
                     context: context.clone(),
                     checkpoint_turn: Some(OperatorTurnId(2)),
+                    async_wakeup: false,
                 }),
             ))),
         ));
@@ -2906,6 +2914,7 @@ mod wire_snapshot {
                     text: "warm".into(),
                     context: context.clone(),
                     checkpoint_turn: Some(identity.turn),
+                    async_wakeup: false,
                 })),
             ))),
         ));
@@ -2914,6 +2923,20 @@ mod wire_snapshot {
             encode(&Response::OperatorWorker(OperatorWorkerResult::StartTurn(
                 None,
             ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::BeginAsyncTurn".into(),
+            encode(&Response::OperatorWorker(
+                OperatorWorkerResult::BeginAsyncTurn(Some(Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    text: "watch report".into(),
+                    context: context.clone(),
+                    checkpoint_turn: Some(identity.turn),
+                    async_wakeup: true,
+                }))),
+            )),
         ));
         all.push((
             "Response::OperatorWorker::Aborted".into(),
@@ -2983,6 +3006,12 @@ mod wire_snapshot {
         all.push((
             "OperatorMessageContent::Interrupted".into(),
             encode(&OperatorMessageContent::Interrupted),
+        ));
+        all.push((
+            "OperatorMessageContent::AsyncWakeup".into(),
+            encode(&OperatorMessageContent::AsyncWakeup {
+                text: "watch report".into(),
+            }),
         ));
     }
 
@@ -4653,6 +4682,10 @@ mod wire_snapshot {
             "3b03070707070707070707070707070707070707070707070707070707070707070701010304",
         ),
         (
+            "Request::OperatorWorker::BeginAsyncTurn",
+            "3b030707070707070707070707070707070707070707070707070707070707070707050103040c7761746368207265706f7274",
+        ),
+        (
             "Request::OperatorWorker::AbortTurn",
             "3b0307070707070707070707070707070707070707070707070707070707070707070201020304",
         ),
@@ -4682,13 +4715,17 @@ mod wire_snapshot {
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106010200",
+            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f770105010601020000",
         ),
         (
             "Response::OperatorWorker::StartTurn",
-            "1b01010102030400047761726d01017001056c6162656c0106737461626c6501022f7701050106010200",
+            "1b01010102030400047761726d01017001056c6162656c0106737461626c6501022f770105010601020000",
         ),
         ("Response::OperatorWorker::StartTurnNone", "1b0100"),
+        (
+            "Response::OperatorWorker::BeginAsyncTurn",
+            "1b040101020304000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f770105010601020001",
+        ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),
         ("ServerEvent::OperatorChanged", "0c01"),
@@ -4706,6 +4743,10 @@ mod wire_snapshot {
         ("OperatorMessageContent::WorkerCompactionStarted", "0107"),
         ("OperatorMessageContent::WorkerCompactionEnded", "0108"),
         ("OperatorMessageContent::Interrupted", "02"),
+        (
+            "OperatorMessageContent::AsyncWakeup",
+            "030c7761746368207265706f7274",
+        ),
     ];
 
     #[test]

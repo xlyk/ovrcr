@@ -483,6 +483,37 @@ impl ServerState {
                     })
                     .map(|start| OperatorWorkerResult::StartTurn(start.map(Box::new)))
             }
+            OperatorWorkerCommand::BeginAsyncTurn { identity, text } => {
+                // The async wakeup and human Submit share this exact admission
+                // lock. A winner durably owns the one-running-turn slot before
+                // Pi is allowed to continue its native asynchronous prompt.
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let dispatchable =
+                    self.operator_warm_dispatchable(identity.conversation, identity.run)?;
+                let result = if dispatchable {
+                    let mut retained = self.retained.lock();
+                    session.with_operator_run_authority(&request.auth, owner, identity, || {
+                        retained.begin_async_operator_turn(identity, &text)
+                    })?
+                } else {
+                    // Still authenticate the exact current worker before a
+                    // losing request receives a safe refusal.
+                    session
+                        .with_operator_run_authority(&request.auth, owner, identity, || Ok(None))?
+                };
+                if result.is_some() {
+                    self.operator_changed(identity.conversation);
+                }
+                Ok(OperatorWorkerResult::BeginAsyncTurn(result.map(Box::new)))
+            }
             OperatorWorkerCommand::AbortTurn { .. } => {
                 bail!("operator turn abort is not available in this lifecycle version")
             }

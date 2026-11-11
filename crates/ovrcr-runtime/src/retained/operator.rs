@@ -554,6 +554,77 @@ impl SessionStore {
         self.submit_operator_turn_inner(id, expected_run, text, context, settings, true)
     }
 
+    /// Persists an idle watch report as its own turn on the currently leased
+    /// run. The Server holds `mutation_lock` across this call and the native
+    /// Pi confirmation, so a competing human Submit cannot own the same slot.
+    pub(crate) fn begin_async_operator_turn(
+        &mut self,
+        identity: OperatorRunIdentity,
+        text: &str,
+    ) -> Result<Option<OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        if text.trim().is_empty() || text.len() > MAX_OPERATOR_TEXT_BYTES || text.contains('\0') {
+            bail!("invalid async wakeup text bounds");
+        }
+        self.require_current_operator(identity.conversation)?;
+        let conversation = self.operator_conversation(identity.conversation)?;
+        if conversation.session != identity.session || conversation.run != identity.run {
+            bail!("stale operator run identity");
+        }
+        let Some(previous) = conversation.current_turn else {
+            return Ok(None);
+        };
+        if previous.state != OperatorTurnState::Complete || previous.identity.run != identity.run {
+            return Ok(None);
+        }
+        let row = self
+            .records
+            .get(&identity.session)
+            .context("retained operator session missing")?;
+        if row.run != identity.run
+            || row.stopped
+            || !matches!(row.disposition, Disposition::Active | Disposition::Returned)
+        {
+            return Ok(None);
+        }
+        let leased: bool = self.connection.query_row(
+            "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2 AND state='Complete'",
+            params![sql_integer(previous.identity.turn.0)?, sql_integer(identity.conversation.0)?],
+            |row| row.get(0),
+        )?;
+        if !leased {
+            return Ok(None);
+        }
+
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO operator_turns(conversation,run,state,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4)",
+            params![
+                sql_integer(identity.conversation.0)?,
+                sql_integer(identity.run.0)?,
+                serde_json::to_string(&OperatorThinkingLevel::Default)?,
+                sql_integer(wall_clock_ms())?,
+            ],
+        )?;
+        let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
+        append_message(
+            &transaction,
+            sql_integer(identity.conversation.0)?,
+            sql_integer(turn.0)?,
+            &OperatorMessageContent::AsyncWakeup {
+                text: text.to_owned(),
+            },
+        )?;
+        transaction.commit()?;
+        self.operator_worker_start(OperatorTurnIdentity {
+            conversation: identity.conversation,
+            turn,
+            session: identity.session,
+            run: identity.run,
+        })
+        .map(Some)
+    }
+
     fn submit_operator_turn_inner(
         &mut self,
         id: OperatorConversationId,
@@ -834,8 +905,12 @@ impl SessionStore {
             [sql_integer(identity.turn.0)?],
             |r| r.get(0),
         )?;
-        let OperatorMessageContent::User { text, context } = serde_json::from_str(&raw)? else {
-            bail!("operator submission missing")
+        let (text, context, async_wakeup) = match serde_json::from_str(&raw)? {
+            OperatorMessageContent::User { text, context } => (text, context, false),
+            OperatorMessageContent::AsyncWakeup { text } => {
+                (text, OperatorContext::default(), true)
+            }
+            _ => bail!("operator submission missing"),
         };
         let checkpoint_turn = checkpoint_turn
             .map(|turn| -> Result<OperatorTurnId> {
@@ -859,6 +934,7 @@ impl SessionStore {
                 [sql_integer(identity.turn.0)?],
                 |r| r.get::<_, String>(0),
             )?)?,
+            async_wakeup,
         })
     }
 
@@ -1077,6 +1153,87 @@ mod tests {
                 )
                 .is_err(),
             "an unleased completion cannot authorize warm dispatch during teardown"
+        );
+    }
+
+    #[test]
+    fn async_wakeup_is_a_durable_turn_only_on_the_exact_leased_completed_run() {
+        let mut store = SessionStore::in_memory();
+        let conversation = open(&mut store);
+        let first = submit(&mut store, &conversation, None);
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: first.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: true }],
+            })
+            .unwrap();
+        let run = OperatorRunIdentity {
+            conversation: conversation.id,
+            session: conversation.session,
+            run: first.identity.run,
+        };
+        let wakeup = store
+            .begin_async_operator_turn(run, "watched session 23 is ready")
+            .unwrap()
+            .expect("the leased completed run owns an idle slot");
+        assert!(wakeup.async_wakeup);
+        assert_eq!(wakeup.identity.run, first.identity.run);
+        assert_eq!(wakeup.identity.session, first.identity.session);
+        assert_eq!(wakeup.text, "watched session 23 is ready");
+        assert_eq!(wakeup.context, OperatorContext::default());
+        let history = store
+            .read_operator_history(conversation.id, 0, 100)
+            .unwrap();
+        assert!(matches!(
+            history.messages.last().map(|message| &message.content),
+            Some(OperatorMessageContent::AsyncWakeup { text })
+                if text == "watched session 23 is ready"
+        ));
+        assert_eq!(
+            store.operator_worker_start(wakeup.identity).unwrap(),
+            wakeup
+        );
+        assert!(
+            store
+                .begin_async_operator_turn(run, "duplicate report")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .submit_operator_turn_warm(
+                    conversation.id,
+                    first.identity.run,
+                    "human loses the occupied slot",
+                    OperatorContext::default(),
+                    OperatorSettings::default(),
+                )
+                .is_err()
+        );
+
+        let mut unleased = SessionStore::in_memory();
+        let conversation = open(&mut unleased);
+        let completed = submit(&mut unleased, &conversation, None);
+        unleased
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: completed.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: false }],
+            })
+            .unwrap();
+        assert!(
+            unleased
+                .begin_async_operator_turn(
+                    OperatorRunIdentity {
+                        conversation: conversation.id,
+                        session: conversation.session,
+                        run: completed.identity.run,
+                    },
+                    "must not revive an unleased run",
+                )
+                .unwrap()
+                .is_none()
         );
     }
     fn checkpoint(store: &SessionStore, id: OperatorConversationId) -> Option<i64> {

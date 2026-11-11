@@ -83,7 +83,7 @@ function writeRaw(text) {
   process.stdout.write(text);
 }
 
-const tools = ["read", "bash", "edit", "write"];
+const tools = ["read", "bash", "edit", "write", "watch_sessions"];
 const expectedSession = requestedSession;
 let sessionFile = sessionDir ? join(sessionDir, `${requestedSession}.jsonl`) : undefined;
 let currentModel = scenario.default_model ?? null;
@@ -214,7 +214,7 @@ function emitContractNow() {
 const pendingDialogs = new Map();
 let dialogSequence = 0;
 
-function askConfirm(title, message) {
+function askConfirm(title, message, timeoutMs = 30_000) {
   const id = `dialog-${++dialogSequence}`;
   writeRecord({ type: "extension_ui_request", id, method: "confirm", title, message: JSON.stringify(message) });
   return new Promise((resolvePromise) => {
@@ -222,7 +222,7 @@ function askConfirm(title, message) {
     // A dialog can be cancelled by the worker; do not leak forever.
     setTimeout(() => {
       if (pendingDialogs.delete(id)) resolvePromise({ cancelled: true });
-    }, 30_000).unref?.();
+    }, timeoutMs).unref?.();
   });
 }
 
@@ -568,8 +568,61 @@ async function runSteps(promptIndex) {
         if (!(await waitForFile(step.path))) return;
         break;
       case "settle":
+        promptRunning = false;
         writeRecord({ type: "agent_settled" });
         break;
+      case "async_wakeup": {
+        const message = {
+          text: step.text,
+        };
+        // A real watcher keeps a refused report queued and offers it again on
+        // each 2.5-second poll until the worker admits it or this fixture's
+        // bounded retry budget expires.
+        const retryInterval = step.retry_interval_ms ?? 2500;
+        const deadline = Date.now() + (step.retry_budget_ms ?? 15_000);
+        let attempt = 0;
+        let granted = false;
+        while (Date.now() < deadline && !aborted && !stdinClosed) {
+          if (attempt > 0) {
+            await sleep(Math.min(retryInterval, deadline - Date.now()));
+          }
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) break;
+          const admission = await askConfirm(
+            "OVRCR Operator async wakeup admission",
+            message,
+            remaining,
+          );
+          granted = admission?.confirmed === true;
+          record({
+            event: "async_wakeup_admission",
+            confirmed: granted,
+            ...(attempt > 0 ? { retry: true } : {}),
+          });
+          if (granted) break;
+          attempt += 1;
+        }
+        if (!granted) return;
+        appendPromptHistory(step.text);
+        promptRunning = true;
+        // Pi awaits extension agent_start handlers before its public lifecycle
+        // event. The status update therefore precedes this event on RPC too.
+        writeRecord({
+          type: "extension_ui_request",
+          id: `status-${Math.random().toString(16).slice(2)}`,
+          method: "setStatus",
+          statusKey: "ovrcr_operator_watches",
+          statusText: JSON.stringify({ active: 0 }),
+        });
+        writeRecord({ type: "agent_start" });
+        emitStart();
+        emitDelta(step.answer);
+        emitEnd(step.answer, "stop");
+        promptRunning = false;
+        writeRecord({ type: "agent_settled" });
+        finalText = step.answer;
+        break;
+      }
       case "exit":
         finish(step.code ?? 0);
         return;

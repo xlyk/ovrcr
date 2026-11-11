@@ -40,13 +40,14 @@ const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was 
 /// The trusted extension's startup contract and watch-lease status keys.
 const CONTRACT_KEY: &str = "ovrcr_operator_contract";
 const WATCHES_KEY: &str = "ovrcr_operator_watches";
-const TOOLS: [&str; 4] = ["read", "bash", "edit", "write"];
+const TOOLS: [&str; 5] = ["read", "bash", "edit", "write", "watch_sessions"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
+const WAKEUP_ADMISSION_TITLE: &str = "OVRCR Operator async wakeup admission";
 
-/// Pi's extensions stay off except the OVRCR lifecycle adapter; the four tool
+/// Pi's extensions stay off except the OVRCR lifecycle adapter; the five tool
 /// definitions, validation, truncation and context management are pi's own.
-const POLICY: &str = "You are OVRCR Operator, the agent inside a user's OVRCR instance. Act only on the user's requested task. Operate the instance through bash by running the matching OVRCR CLI: \"$OVRCR_EXECUTABLE\" --json, with the inherited instance configuration and socket. Use the exact project, workspace, session and run identities captured in the context; honor refusals and never guess control authority. The captured context is fixed for this message, and a later Dashboard selection change never retargets this turn. Your process working directory stays <instance>/operator-workdir for the whole conversation and is not the selected workspace: pass the captured absolute paths to the read, edit and write tools, and put \"cd <captured cwd>\" inside a bash command when operating the selected workspace. The read, bash, edit and write tools use pi-native schemas. Do not read or upload terminal content unless the user asked for it. Do not inspect credentials, tokens or personal agent profiles. Do not start watchers, schedulers or workflow-controller authority. Stop cancels this turn only: previously accepted OVRCR operations may finish, so never claim rollback and never replay an interrupted command. Pi compacts this same conversation automatically as context fills; there is no new-conversation action.";
+const POLICY: &str = "You are OVRCR Operator, the agent inside a user's OVRCR instance. Act only on the user's requested task. Operate the instance through bash by running the matching OVRCR CLI: \"$OVRCR_EXECUTABLE\" --json, with the inherited instance configuration and socket. Use the exact project, workspace, session and run identities captured in the context; honor refusals and never guess control authority. The captured context is fixed for this message, and a later Dashboard selection change never retargets this turn. Your process working directory stays <instance>/operator-workdir for the whole conversation and is not the selected workspace: pass the captured absolute paths to the read, edit and write tools, and put \"cd <captured cwd>\" inside a bash command when operating the selected workspace. The read, bash, edit and write tools use pi-native schemas. Use watch_sessions only to add, list, or remove bounded watches for OVRCR Workspace Agent sessions; it reports lifecycle state and never reads terminal screen text. Do not read or upload terminal content unless the user asked for it. Do not inspect credentials, tokens or personal agent profiles. Do not start other watchers, schedulers or workflow-controller authority. Stop cancels this turn only: previously accepted OVRCR operations may finish, so never claim rollback and never replay an interrupted command. Pi compacts this same conversation automatically as context fills; there is no new-conversation action.";
 
 const BATCH_BYTES: usize = 64 * 1024;
 const MAX_OPERATOR_ARGUMENT_BYTES: usize = 64 * 1024;
@@ -194,30 +195,37 @@ fn attempt(
     }
     let mut turn = start.clone();
     loop {
-        // Resolve the accepted setting for every warm prompt, then stream exactly
-        // one user turn into the live Pi conversation.
-        let model = resolve_model(&mut connection, journal, &mut state, turn.model.as_deref())?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
-        }
-        journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
-        let reasoning =
-            resolve_reasoning(&mut connection, journal, &mut state, turn.thinking_level)?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
-        }
-        journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-        let prompt = prompt_text(&turn)?;
-        state.prompted = true;
-        let response = connection.request(
-            journal,
-            &mut state,
-            "prompt",
-            json!({ "message": prompt }),
-            CONTROL_DEADLINE,
-        )?;
-        if !response.success {
-            return Err(Failure::Failed(REQUEST_FAILED));
+        if turn.async_wakeup {
+            // `sendUserMessage` already started this exact Pi turn after the
+            // Server durably reserved its AsyncWakeup identity. Never issue a
+            // second prompt or alter model settings after it has started.
+            state.prompted = true;
+        } else {
+            // Resolve the accepted setting for every warm prompt, then stream
+            // exactly one user turn into the live Pi conversation.
+            let model = resolve_model(&mut connection, journal, &mut state, turn.model.as_deref())?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+            let reasoning =
+                resolve_reasoning(&mut connection, journal, &mut state, turn.thinking_level)?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+            let prompt = prompt_text(&turn)?;
+            state.prompted = true;
+            let response = connection.request(
+                journal,
+                &mut state,
+                "prompt",
+                json!({ "message": prompt }),
+                CONTROL_DEADLINE,
+            )?;
+            if !response.success {
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
         }
         connection.stream(journal, &mut state)?;
         if state.pending.is_some() || state.last_assistant_stop().as_deref() != Some("stop") {
@@ -271,7 +279,7 @@ fn attempt(
             session: turn.identity.session,
             run: turn.identity.run,
         };
-        let next = loop {
+        let (next, already_begun) = loop {
             if termination.requested() {
                 return Err(Failure::Terminated);
             }
@@ -279,14 +287,18 @@ fn attempt(
                 .reporter
                 .operator_start_turn(run, Instant::now() + REPORT_DEADLINE)
             {
-                Ok(Some(next)) => break next,
+                Ok(Some(next)) => break (next, false),
                 Ok(None) => {}
                 Err(_) => return Err(Failure::ReportFailed),
             }
-            connection.poll_idle(&mut state)?;
+            if let Some(next) = connection.poll_idle(journal, &mut state)? {
+                break (next, true);
+            }
         };
-        journal.begin_turn(next.identity)?;
-        state.reset_turn();
+        if !already_begun {
+            journal.begin_turn(next.identity)?;
+            state.reset_turn();
+        }
         let attempt_dir = paths.attempt_dir(next.identity.turn);
         create_attempt(&paths, &attempt_dir)?;
         // Pi already owns the same live conversation. The turn's checkpoint is
@@ -687,14 +699,18 @@ impl Connection {
         Ok(())
     }
 
-    fn poll_idle(&mut self, state: &mut TurnState) -> std::result::Result<(), Failure> {
+    fn poll_idle(
+        &mut self,
+        journal: &mut Journal<'_>,
+        state: &mut TurnState,
+    ) -> std::result::Result<Option<OperatorWorkerStart>, Failure> {
         let message = self
             .child
             .as_mut()
             .ok_or(Failure::Failed(REQUEST_FAILED))?
             .next_message(Some(IDLE_POLL_INTERVAL));
         match message {
-            Err(error) if error.timed_out_error() => Ok(()),
+            Err(error) if error.timed_out_error() => Ok(None),
             Err(_) => Err(Failure::Failed(REQUEST_FAILED)),
             Ok(RpcMessage::Response(_)) => Err(Failure::Failed(REQUEST_FAILED)),
             Ok(RpcMessage::Event(event)) => match event["type"].as_str() {
@@ -702,15 +718,91 @@ impl Connection {
                     if event["method"] == "setStatus"
                         && event["statusKey"].as_str() == Some(WATCHES_KEY) =>
                 {
-                    self.read_watch_status(state, &event)
+                    self.read_watch_status(state, &event).map(|()| None)
                 }
-                Some("extension_ui_request") if event["method"] == "setStatus" => Ok(()),
-                // The asynchronous-turn owner is added in the next lifecycle step.
+                Some("extension_ui_request") if event["method"] == "setStatus" => Ok(None),
+                Some("extension_ui_request")
+                    if event["method"] == "confirm" && event["title"] == WAKEUP_ADMISSION_TITLE =>
+                {
+                    self.begin_async_wakeup(journal, state, &event)
+                }
                 Some("agent_start") => Err(Failure::Failed(REQUEST_FAILED)),
                 Some("extension_error") => Err(Failure::Failed(REQUEST_FAILED)),
-                _ => Ok(()),
+                _ => Ok(None),
             },
         }
+    }
+
+    fn begin_async_wakeup(
+        &mut self,
+        journal: &mut Journal<'_>,
+        state: &mut TurnState,
+        event: &Value,
+    ) -> std::result::Result<Option<OperatorWorkerStart>, Failure> {
+        let Some(dialog) = event["id"].as_str() else {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        };
+        let text = event["message"]
+            .as_str()
+            .and_then(|message| serde_json::from_str::<Value>(message).ok())
+            .and_then(|payload| payload["text"].as_str().map(str::to_owned));
+        let Some(text) = text.filter(|text| {
+            !text.trim().is_empty()
+                && text.len() <= ovrcr_protocol::operator::MAX_OPERATOR_TEXT_BYTES
+                && !text.contains('\0')
+        }) else {
+            self.send(&json!({
+                "type": "extension_ui_response",
+                "id": dialog,
+                "confirmed": false,
+            }))
+            .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+            return Ok(None);
+        };
+
+        journal.flush()?;
+        let run = OperatorRunIdentity {
+            conversation: journal.identity.conversation,
+            session: journal.identity.session,
+            run: journal.identity.run,
+        };
+        let start = match journal.reporter.operator_begin_async_turn(
+            run,
+            text,
+            Instant::now() + REPORT_DEADLINE,
+        ) {
+            Ok(start) => start,
+            Err(_) => {
+                let _ = self.send(&json!({
+                    "type": "extension_ui_response",
+                    "id": dialog,
+                    "confirmed": false,
+                }));
+                return Err(Failure::ReportFailed);
+            }
+        };
+        let Some(start) = start else {
+            self.send(&json!({
+                "type": "extension_ui_response",
+                "id": dialog,
+                "confirmed": false,
+            }))
+            .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+            return Ok(None);
+        };
+
+        // The Server has durably claimed this exact turn. Change journal
+        // authority before Pi can emit agent_start or any assistant event.
+        journal.begin_turn(start.identity)?;
+        state.reset_turn();
+        state.prompted = true;
+        self.send(&json!({
+            "type": "extension_ui_response",
+            "id": dialog,
+            "confirmed": true,
+        }))
+        .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+        Ok(Some(start))
     }
 
     fn flush_admission(
@@ -943,6 +1035,21 @@ impl Connection {
         }
         if method == "confirm" {
             match event["title"].as_str() {
+                Some(WAKEUP_ADMISSION_TITLE) => {
+                    // A stale or concurrent pre-send dialog can surface while a
+                    // real turn already owns the Pi session. Refuse it safely;
+                    // the extension keeps those reports queued for the next idle.
+                    if let Some(dialog) = event["id"].as_str() {
+                        self.send(&json!({
+                            "type": "extension_ui_response",
+                            "id": dialog,
+                            "confirmed": false,
+                        }))
+                        .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+                        return Ok(());
+                    }
+                    return Err(Failure::Failed(REQUEST_FAILED));
+                }
                 Some(ADMISSION_TITLE) => {
                     return self.flush_admission(journal, state, event.clone());
                 }
@@ -2111,7 +2218,7 @@ fn validate_contract(text: &str, expected_session: &str) -> std::result::Result<
     let tools = contract["tools"]
         .as_array()
         .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
-    // Exactly the four native tools, each once.
+    // Exactly the five native tools, each once.
     if tools.len() != TOOLS.len() {
         return Err(Failure::Failed(INTEGRATION_UNAVAILABLE));
     }
@@ -2512,12 +2619,24 @@ mod tests {
     }
 
     #[test]
-    fn contract_requires_the_exact_four_tools_and_session() {
+    fn contract_requires_the_exact_five_tools_and_session() {
         let text = |tools: &str, session: &str| {
             format!("{{\"version\":1,\"sessionId\":\"{session}\",\"tools\":{tools}}}")
         };
-        assert!(validate_contract(&text(r#"["read","bash","edit","write"]"#, "s"), "s").is_ok());
-        assert!(validate_contract(&text(r#"["write","edit","bash","read"]"#, "s"), "s").is_ok());
+        assert!(
+            validate_contract(
+                &text(r#"["read","bash","edit","write","watch_sessions"]"#, "s"),
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_contract(
+                &text(r#"["watch_sessions","write","edit","bash","read"]"#, "s"),
+                "s"
+            )
+            .is_ok()
+        );
         for (tools, session) in [
             (r#"["read","bash","edit"]"#, "s"),
             (r#"["read","bash","edit","write","grep"]"#, "s"),
@@ -2634,6 +2753,7 @@ mod tests {
             text: "/new".into(),
             context: ovrcr_protocol::OperatorContext::default(),
             checkpoint_turn: None,
+            async_wakeup: false,
         };
         let prompt = prompt_text(&start).unwrap();
         assert!(prompt.starts_with("Captured OVRCR context"));

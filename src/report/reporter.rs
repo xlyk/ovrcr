@@ -217,6 +217,41 @@ impl Reporter {
         }
     }
 
+    /// Reserve a settled watch report as an async turn on the exact leased run.
+    /// `None` means a user Submit or another lifecycle transition already owns
+    /// the turn slot; the Pi extension must leave the report queued.
+    pub fn operator_begin_async_turn(
+        &mut self,
+        identity: ovrcr_protocol::OperatorRunIdentity,
+        text: String,
+        deadline: Instant,
+    ) -> anyhow::Result<Option<ovrcr_protocol::OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::BeginAsyncTurn { identity, text },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::BeginAsyncTurn(
+                start,
+            )) => {
+                if start.as_ref().is_some_and(|start| {
+                    start.identity.conversation != identity.conversation
+                        || start.identity.session != identity.session
+                        || start.identity.run != identity.run
+                        || !start.async_wakeup
+                }) {
+                    anyhow::bail!("async turn bootstrap identity changed");
+                }
+                Ok(start.map(|start| *start))
+            }
+            _ => anyhow::bail!("async turn admission refused"),
+        }
+    }
+
     pub fn operator_abort_turn(
         &mut self,
         identity: ovrcr_protocol::OperatorTurnIdentity,

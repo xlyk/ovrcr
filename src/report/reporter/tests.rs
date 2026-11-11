@@ -632,6 +632,7 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                                     text: "prompt".into(),
                                     context: Default::default(),
                                     checkpoint_turn: None,
+                                    async_wakeup: false,
                                 },
                             )))
                         }
@@ -641,6 +642,9 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                         },
                         OperatorWorkerCommand::StartTurn { .. } => {
                             Response::OperatorWorker(OperatorWorkerResult::StartTurn(None))
+                        }
+                        OperatorWorkerCommand::BeginAsyncTurn { .. } => {
+                            Response::OperatorWorker(OperatorWorkerResult::BeginAsyncTurn(None))
                         }
                         OperatorWorkerCommand::AbortTurn { .. } => Response::Error {
                             code: ovrcr_protocol::ErrorCode::Conflict,

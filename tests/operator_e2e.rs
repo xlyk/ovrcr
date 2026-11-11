@@ -164,6 +164,96 @@ fn operator_cli_is_the_native_profile_entry_point() {
 }
 
 #[test]
+fn an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly() {
+    let event_log = PathBuf::from("/private/tmp/ovrcr-468-async-wakeup-fake-pi-retry.log");
+    let _ = std::fs::remove_file(&event_log);
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::WatchStatus(1),
+        Step::assistant("initial turn"),
+        Step::Settle,
+        Step::async_wakeup(
+            "A watched Workspace Agent finished.",
+            "I reviewed the completed session.",
+        ),
+    ]);
+    scenario.set("log", event_log.display().to_string());
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "start watcher");
+    assert_eq!(first.identity.run, SessionRunId(1));
+
+    let final_history = client.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "A watched Workspace Agent finished."
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != first.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    client.wait_stopped(opened.id);
+
+    let wakeups: Vec<_> = final_history
+        .messages
+        .iter()
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::AsyncWakeup { text } => Some((message.turn, text)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        wakeups.len(),
+        1,
+        "the settled batch creates one journal row"
+    );
+    let turn = final_history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(wakeups[0].0, turn.identity.turn);
+    assert_eq!(turn.identity.session, first.identity.session);
+    assert_eq!(turn.identity.run, first.identity.run);
+    assert!(has_assistant(
+        &final_history,
+        "I reviewed the completed session."
+    ));
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|line| line["event"] == "prompt")
+            .count(),
+        1,
+        "the wakeup is the already-started native Pi request, not a second RPC prompt"
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn.identity.turn.0 as i64),
+        "the accepted wakeup becomes the next durable native-session checkpoint"
+    );
+    let admissions: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "async_wakeup_admission")
+        .collect();
+    assert!(
+        admissions.len() >= 2,
+        "the pre-settle offer is retried at idle: {admissions:?}"
+    );
+    assert_eq!(admissions[0]["confirmed"], false);
+    for retry in &admissions[1..admissions.len() - 1] {
+        assert_eq!(retry["confirmed"], false);
+        assert_eq!(retry["retry"], true);
+    }
+    assert_eq!(admissions.last().unwrap()["confirmed"], true);
+    assert_eq!(admissions.last().unwrap()["retry"], true);
+}
+
+#[test]
 fn current_never_creates_and_open_yields_one_durable_conversation() {
     let scenario = Scenario::new();
     let (live, _fake, mut client) = fixture(&scenario);
@@ -2728,7 +2818,7 @@ mod installed_pi {
 
         // Turn six: one assistant message with two tool calls. Pi prepares every
         // admission before executing anything unless the tools are sequential,
-        // so this fails the turn unless the extension registered all four.
+        // so this fails the turn unless the extension registered every tool sequentially.
         let fifth_turn = fifth
             .conversation
             .current_turn
