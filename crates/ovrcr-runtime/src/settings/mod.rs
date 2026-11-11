@@ -10,7 +10,7 @@
 use ovrcr_protocol::{
     AgentModelPolicy, AgentOverride, AutomaticLocalTerminals, DelegationHarness,
     DelegationSettings, LaunchChoice, NativeCommand, ReadySoundChoice, SettingRow, Settings,
-    SettingsFinding, SettingsReport, ThemeId,
+    SettingsFinding, SettingsReport, SidebarView, ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -195,6 +195,15 @@ impl Loader<'_> {
                 None => self.finding(
                     ThemeId::KEY,
                     format!("unknown value {raw:?}; expected {}", ThemeId::EXPECTED),
+                ),
+            }
+        }
+        if let Some(raw) = self.take::<String>(table, SidebarView::KEY) {
+            match SidebarView::parse(&raw) {
+                Some(view) => self.accept(SidebarView::KEY, &mut settings.sidebar_view, view),
+                None => self.finding(
+                    SidebarView::KEY,
+                    format!("unknown value {raw:?}; expected \"tree\" or \"recent\""),
                 ),
             }
         }
@@ -968,6 +977,7 @@ mod tests {
 ready_sound = true
 iterm_focus = true
 theme = "light"
+sidebar_view = "recent"
 save_uncommitted_work = true
 automatic_local_terminals = "off"
 title_model = "pi/test"
@@ -1061,6 +1071,7 @@ login = "owner@example.com"
         assert_eq!(settings.ready_sound_choice, Some(ReadySoundChoice::Chime));
         assert!(settings.iterm_focus);
         assert_eq!(settings.theme, ThemeId::Light);
+        assert_eq!(settings.sidebar_view, SidebarView::Recent);
         assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,
@@ -1214,6 +1225,7 @@ login = "owner@example.com"
                 "ready_sound_choice",
                 "iterm_focus",
                 "theme",
+                "sidebar_view",
                 "automatic_local_terminals",
                 "save_uncommitted_work",
                 "branch_prefix",
@@ -1270,7 +1282,7 @@ login = "owner@example.com"
         let text = FULL.replace("command = \"/opt/codex\"", "command = 7");
         let report = read(&text);
         assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
-        finding("quota.codex.command", 27, "expected path", &report);
+        finding("quota.codex.command", 28, "expected path", &report);
         assert_eq!(report.settings.quota.codex.command, PathBuf::from("codex"));
         assert_eq!(
             report.settings.quota.codex.home,

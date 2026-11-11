@@ -473,8 +473,9 @@ impl ServerState {
         if result.is_ok() {
             if !bytes.is_empty() {
                 self.record_user_activity(&session);
+            } else {
+                super::super::dispatch::publish_session_changed(self, id);
             }
-            super::super::dispatch::publish_session_changed(self, id);
         }
         result
     }

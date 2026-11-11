@@ -1922,6 +1922,27 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
             )
             .with_context(|| format!("waiting for the focused {name} pane view"))
     };
+    let enter_focused_terminal = |dashboard: &mut OuterDashboard| -> Result<()> {
+        let deadline = Instant::now() + wait_deadline();
+        loop {
+            dashboard.send(b"\r")?;
+            if dashboard
+                .wait_until(
+                    |screen| screen.contains("Terminal mode"),
+                    Duration::from_millis(200),
+                )
+                .is_ok()
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "focused session did not become ready for terminal input: {}",
+                    dashboard.rendered()
+                );
+            }
+        }
+    };
     dashboard.click_visible_text("waiting")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"v\r")?;
@@ -1943,12 +1964,17 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         ratatui::layout::Rect::new(80, 3, 40, 16),
         ratatui::layout::Rect::new(80, 22, 40, 17),
     ];
-    let ready = |screen: &str| {
+    let restored = |screen: &str| {
         ["waiting", "fourth", "mouse", "third"]
             .iter()
             .all(|name| screen.contains(name))
+            && screen
+                .lines()
+                .map(|line| line.matches("pid ").count())
+                .sum::<usize>()
+                == 4
     };
-    dashboard.wait_until(ready, wait_deadline())?;
+    dashboard.wait_until(restored, wait_deadline())?;
     anyhow::ensure!(
         dashboard
             .rendered()
@@ -1986,6 +2012,82 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
             }
         }
     }
+
+    // Browse z zooms the focused pane and sends the new full terminal geometry
+    // through the real Server view handshake to the child PTY.
+    dashboard.send(b"\x07")?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    dashboard.send(b"z")?;
+    dashboard.wait_until(
+        |screen| {
+            screen.contains("zoomed")
+                && screen
+                    .lines()
+                    .map(|line| line.matches("pid ").count())
+                    .sum::<usize>()
+                    == 1
+        },
+        wait_deadline(),
+    )?;
+    enter_focused_terminal(&mut dashboard)?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard.wait_for(b"THIRD_SIZE_ACK_36 80", wait_deadline())?;
+    dashboard.find_text_in_rect(
+        ratatui::layout::Rect::new(40, 3, 80, 36),
+        "THIRD_SIZE_ACK_36 80",
+    )?;
+    dashboard.send(b"\x07\x1b")?;
+    dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
+
+    // Tab keeps zoom active while moving to another pane. The Panes popup can
+    // then restore the original tree through its own z action.
+    dashboard.send(b"\t")?;
+    wait_focused_ready(&mut dashboard, "waiting")?;
+    assert!(dashboard.rendered().contains("zoomed"));
+    dashboard.send(b" s")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Panes: 4 of 4") && screen.contains("Unzoom"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"z")?;
+    let restored = |screen: &str| {
+        ["waiting", "fourth", "mouse", "third"]
+            .iter()
+            .all(|name| screen.contains(name))
+            && screen
+                .lines()
+                .map(|line| line.matches("pid ").count())
+                .sum::<usize>()
+                == 4
+    };
+    dashboard.wait_until(restored, wait_deadline())?;
+    assert_eq!(
+        dashboard
+            .rendered()
+            .lines()
+            .map(|line| line.matches("pid ").count())
+            .sum::<usize>(),
+        4,
+        "unzoom should restore all four panes"
+    );
+
+    // Directional focus and swap use the same path in the real Dashboard. The
+    // selected session remains focused after its pane changes position.
+    dashboard.send(b" sj")?;
+    wait_focused_ready(&mut dashboard, "fourth")?;
+    dashboard.send(b" sL")?;
+    wait_focused_ready(&mut dashboard, "fourth")?;
+    enter_focused_terminal(&mut dashboard)?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard.wait_for(b"FOURTH_SIZE_ACK_17 40", wait_deadline())?;
+    dashboard.find_text_in_rect(rects[3], "FOURTH_SIZE_ACK_17 40")?;
+    assert!(
+        dashboard
+            .find_text_in_rect(rects[1], "FOURTH_SIZE_ACK_17 40")
+            .is_err(),
+        "the swapped session output must follow the session to the right pane"
+    );
 
     // Closing the focused pane only removes its view. Its Server session and PID
     // remain available, as do all other task-owned sessions.

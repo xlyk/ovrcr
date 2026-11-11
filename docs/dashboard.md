@@ -130,8 +130,10 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
 | `i` | Select the next session that [needs you](#sidebar-and-status), in the focused pane |
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
+| `m` | Switch between the project tree and recent Agent activity; the Dashboard saves the choice through the Server |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `z` | Zoom the focused pane to fill the pane area, or restore the layout |
 | `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
 | `n` | Open New agent session |
@@ -147,7 +149,7 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `Ctrl-g` | Label at most the first nine visible running or retained Agent rows. Then press a shown digit `1`–`9` to select immediately. Press `Ctrl-g` again or `Esc` to close without choosing; any other key closes the labels and keeps its ordinary handling. Further visible rows stay unlabelled; scroll and press `Ctrl-g` again, or use `s` Agents search. `Ctrl-g` never reveals a hidden sidebar. |
 | `u` | Open [provider allowance details](provider-quota.md), including when the sidebar is hidden |
 | `:` | Open the command palette (footer `: Commands`) |
-| `Space` | Show contextual groups, then choose an action |
+| `Space` | Show contextual groups, then choose an action; `Space s` opens pane actions |
 | `?` | Browse the same popup with arrows and `Enter` |
 | `N` | Toggle the Server-saved desktop notification setting; also in Settings |
 | `O` | Check unresolved macOS notification permission or open Settings when denied |
@@ -430,6 +432,18 @@ widening the window restores the full layout. A new attachment starts with one
 pane. Each pane is capped at 1000 rows and 1000 columns; a `SetView` requesting
 a larger pane is rejected before any PTY resize.
 
+`Space s` opens the **Panes** group. `h`, `j`, `k`, and `l` focus the pane to
+the left, below, above, or right; when several panes are in that direction,
+the one with the greatest shared edge is chosen, then the nearer pane breaks a
+tie. `H`, `J`, `K`, and `L` swap with that neighbour while focus follows the
+same session. These directional keys work in the group; in Browse, arrows and
+`j` / `k` continue to navigate the sidebar. `z` in Browse or in the Panes group
+shows only the focused pane and marks its header `zoomed`; the tree and other
+assignments stay in place. Press `z` again to restore the tree. `Tab` and
+`Shift-Tab` change the focused pane without ending zoom, while splitting or
+closing a pane restores the tree. The group also lists the resize keys, dimmed
+with `not available yet` until pane resizing is implemented.
+
 ## Sidebar and status
 
 The attention line leads when any session needs you. The three-row **OPERATOR**
@@ -471,6 +485,15 @@ unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.
+
+Press `m` to switch to **Recent activity**; press it again to return to the tree.
+The saved `sidebar_view` setting defaults to `tree`. Recent activity lists only
+projects with Agents and only their Agent sessions, sorted newest first within
+each alphabetically ordered project. The age uses Last activity and falls back
+to the session start time. Each row always takes two lines: status, title and age,
+then the branch and harness name. Both lines keep the same selection, hover,
+close button and click behavior as one row. Project folds hide the Agent rows
+and retain their Input and Unread counts; hovering a project still shows `[+]`.
 
 `b` hides the sidebar and the panes take the full width; `b` again shows it at
 the width it had before. The choice lasts for the attachment and is not saved.
@@ -663,7 +686,10 @@ the hook-owned activity state.
 ## Key popup
 
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
-and `v` View. Only groups relevant to the selected row appear. Terminal rows
+`v` View, and `s` Panes. Only groups relevant to the selected row appear. The
+Panes group lists split, directional focus, swap, next pane, zoom and close;
+resize entries remain visible with `not available yet` until that action is
+implemented. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
 `q` detaches from the top level, including when the hierarchy is empty. Nothing
 else sits beside the groups: desktop notifications and the ready sound are

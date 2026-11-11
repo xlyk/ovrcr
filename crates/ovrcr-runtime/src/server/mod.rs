@@ -596,6 +596,7 @@ impl ServerState {
     pub(crate) fn record_user_activity(&self, session: &Session) {
         let timestamp = session.record_user_activity();
         self.persist_last_activity(session.id(), session.run(), timestamp);
+        dispatch::publish_session_changed(self, session.id());
     }
 
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {

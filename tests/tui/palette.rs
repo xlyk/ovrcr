@@ -2104,7 +2104,7 @@ fn browse_footer_lists_only_menu_commands_and_help() {
         .collect();
     assert_eq!(
         footer.trim_end(),
-        "BROWSE  Space Menu  : Commands  ? Help",
+        "BROWSE  Space Menu  : Commands  ? Help  m Recent activity",
         "{footer}"
     );
 }
@@ -2675,7 +2675,7 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
 #[test]
 fn ux_browse_footer_is_stable_across_widths_and_state() {
     let mut dashboard = dashboard_fixture();
-    let full = "BROWSE  Space Menu  : Commands  ? Help";
+    let full = "BROWSE  Space Menu  : Commands  ? Help  m Recent activity";
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
     for width in [20, 40, 80, 120] {
         let text = rendered_footer(&dashboard, width);
@@ -2690,6 +2690,21 @@ fn ux_browse_footer_is_stable_across_widths_and_state() {
         projects: vec![],
     });
     assert_eq!(rendered_footer(&dashboard, 120).trim_end(), full);
+}
+
+#[test]
+fn recent_sidebar_toggle_is_in_browse_footer_view_popup_and_palette() {
+    let mut dashboard = dashboard_fixture();
+    assert!(rendered_footer(&dashboard, 120).contains("m Recent activity"));
+
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('v'));
+    let menu = whichkey_menu_text(&dashboard);
+    assert!(menu.contains("Recent activity"), "View popup: {menu}");
+    dashboard.key(KeyCode::Esc);
+
+    palette_search(&mut dashboard, "Recent activity");
+    assert!(palette_text(&dashboard).contains("Recent activity"));
 }
 
 #[test]

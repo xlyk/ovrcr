@@ -58,7 +58,7 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     let priority: &[&str] = if dashboard.operator_is_editing() {
         &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x"]
     } else if dashboard.mode == InputMode::Browse {
-        &["Space", ":", "?", "i"]
+        &["Space", ":", "?", "i", "m"]
     } else {
         &[
             "?", "Esc", "v", "y", "h/Left", "j/Down", "k/Up", "l/Right", "PageUp", "PageDown",

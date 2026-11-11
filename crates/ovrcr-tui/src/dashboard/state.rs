@@ -671,6 +671,7 @@ impl Dashboard {
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
             pane_layout: super::PaneLayout::Pane(0),
+            zoomed: false,
             handshake: Default::default(),
             navigation: Default::default(),
             agent_typing: None,
@@ -755,8 +756,12 @@ impl Dashboard {
     }
 
     pub fn install_settings(&mut self, settings: Settings) {
+        let sidebar_view_changed = self.settings.sidebar_view != settings.sidebar_view;
         self.theme = crate::theme::ThemeTokens::for_id(settings.theme);
         self.settings = settings;
+        if sidebar_view_changed {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
     }
 
     /// Active Design tokens for the current settings theme.
@@ -783,6 +788,9 @@ impl Dashboard {
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
         self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
+        if before.sidebar_view != self.settings.sidebar_view {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
         self.settings_editor.report_published(&report);
         if self.settings_editor.preview_request.is_some()
             && self.settings_editor.preview_theme == Some(self.settings.theme)
@@ -1395,6 +1403,7 @@ impl Dashboard {
             self.set_error("No other visible session to split");
             return false;
         };
+        self.zoomed = false;
         self.retarget(PaneChange::Split);
         let size = self.focused_size();
         let mut pane = super::PaneState::new(size);
@@ -1493,6 +1502,35 @@ impl Dashboard {
             .find(|session| *session != current && !already_shown.contains(session))
     }
 
+    pub(super) fn toggle_pane_zoom(&mut self) -> DashboardAction {
+        if self.action_session().is_none() || self.panes.len() < 2 {
+            return DashboardAction::Redraw;
+        }
+        self.zoomed = !self.zoomed;
+        self.apply_pane_sizes(self.outer_area);
+        DashboardAction::Redraw
+    }
+
+    pub(super) fn swap_focused_pane(&mut self, direction: super::PaneDirection) -> bool {
+        let Some(other) = self.pane_neighbor(direction) else {
+            return false;
+        };
+        if !self.pane_layout.swap_indices(self.focused_pane, other) {
+            return false;
+        }
+        for rect in self.pane_rects(self.outer_area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+            }
+        }
+        self.selected_container = None;
+        self.retarget(PaneChange::Focus);
+        true
+    }
+
     pub(crate) fn focus_pane(&mut self, index: usize) -> bool {
         if index >= self.panes.len() || index == self.focused_pane {
             return false;
@@ -1509,6 +1547,7 @@ impl Dashboard {
         }
         let removed = self.focused_pane;
         let sibling = self.pane_layout.sibling_first(removed).unwrap_or(removed);
+        self.zoomed = false;
         self.retarget(PaneChange::Close);
         let layout = std::mem::replace(&mut self.pane_layout, super::PaneLayout::Pane(0));
         self.pane_layout = layout.remove(removed).unwrap_or(super::PaneLayout::Pane(0));
@@ -1719,7 +1758,53 @@ impl Dashboard {
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<TreeRow> {
-        self.hierarchy_rows(false)
+        match self.settings.sidebar_view {
+            crate::protocol::SidebarView::Tree => self.hierarchy_rows(false),
+            crate::protocol::SidebarView::Recent => self.recent_activity_rows(),
+        }
+    }
+
+    fn recent_activity_rows(&self) -> Vec<TreeRow> {
+        let mut projects = self.hierarchy.projects.iter().collect::<Vec<_>>();
+        projects.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut rows = Vec::new();
+        for project in projects {
+            let mut sessions = project
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.sessions)
+                .filter(|session| {
+                    matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
+                })
+                .collect::<Vec<_>>();
+            if sessions.is_empty() {
+                continue;
+            }
+            sessions.sort_by(|left, right| {
+                right
+                    .last_activity_unix_ms
+                    .or(right.started_unix_ms)
+                    .unwrap_or(0)
+                    .cmp(
+                        &left
+                            .last_activity_unix_ms
+                            .or(left.started_unix_ms)
+                            .unwrap_or(0),
+                    )
+            });
+            rows.push(TreeRow::Project {
+                name: project.name.clone(),
+            });
+            if self.collapsed_projects.contains(&project.name) {
+                continue;
+            }
+            rows.extend(
+                sessions
+                    .into_iter()
+                    .map(|session| TreeRow::Session { id: session.id }),
+            );
+        }
+        rows
     }
 
     pub(super) fn hierarchy_rows(&self, include_collapsed: bool) -> Vec<TreeRow> {
@@ -3032,6 +3117,19 @@ impl Dashboard {
     }
 
     pub(super) fn pane_layout_rects(&self, area: Rect) -> super::PaneLayoutRects {
+        if self.zoomed {
+            return super::pane_layout_rects(
+                area,
+                &super::PaneLayout::Pane(self.focused_pane),
+                self.panes.len(),
+                self.focused_pane,
+                self.sidebar_preference(),
+            );
+        }
+        self.pane_layout_rects_unzoomed(area)
+    }
+
+    fn pane_layout_rects_unzoomed(&self, area: Rect) -> super::PaneLayoutRects {
         super::pane_layout_rects(
             area,
             &self.pane_layout,
@@ -3039,6 +3137,83 @@ impl Dashboard {
             self.focused_pane,
             self.sidebar_preference(),
         )
+    }
+
+    pub(super) fn pane_direction_refusal(
+        &self,
+        direction: super::PaneDirection,
+    ) -> Option<&'static str> {
+        if self.action_session().is_none() {
+            return Some("no session selected");
+        }
+        self.pane_neighbor(direction)
+            .is_none()
+            .then_some(match direction {
+                super::PaneDirection::Left => "no pane to the left",
+                super::PaneDirection::Down => "no pane below",
+                super::PaneDirection::Up => "no pane above",
+                super::PaneDirection::Right => "no pane to the right",
+            })
+    }
+
+    pub(super) fn pane_neighbor(&self, direction: super::PaneDirection) -> Option<usize> {
+        let layout = self.pane_layout_rects_unzoomed(self.outer_area);
+        let source = layout
+            .panes
+            .iter()
+            .find(|pane| pane.pane_index == self.focused_pane)
+            .copied()?;
+        let source = pane_bounds(source);
+        let mut candidates = layout
+            .panes
+            .into_iter()
+            .filter(|pane| pane.pane_index != self.focused_pane)
+            .filter_map(|pane| {
+                let rect = pane_bounds(pane);
+                let (overlap, distance) = match direction {
+                    super::PaneDirection::Left if rect.right() <= source.x => (
+                        source
+                            .bottom()
+                            .min(rect.bottom())
+                            .saturating_sub(source.y.max(rect.y)),
+                        source.x.saturating_sub(rect.right()),
+                    ),
+                    super::PaneDirection::Right if rect.x >= source.right() => (
+                        source
+                            .bottom()
+                            .min(rect.bottom())
+                            .saturating_sub(source.y.max(rect.y)),
+                        rect.x.saturating_sub(source.right()),
+                    ),
+                    super::PaneDirection::Up if rect.bottom() <= source.y => (
+                        source
+                            .right()
+                            .min(rect.right())
+                            .saturating_sub(source.x.max(rect.x)),
+                        source.y.saturating_sub(rect.bottom()),
+                    ),
+                    super::PaneDirection::Down if rect.y >= source.bottom() => (
+                        source
+                            .right()
+                            .min(rect.right())
+                            .saturating_sub(source.x.max(rect.x)),
+                        rect.y.saturating_sub(source.bottom()),
+                    ),
+                    _ => return None,
+                };
+                (overlap > 0).then_some((pane.pane_index, overlap, distance))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(
+            |(left_index, left_overlap, left_distance),
+             (right_index, right_overlap, right_distance)| {
+                right_overlap
+                    .cmp(left_overlap)
+                    .then_with(|| left_distance.cmp(right_distance))
+                    .then_with(|| left_index.cmp(right_index))
+            },
+        );
+        candidates.first().map(|(index, _, _)| *index)
     }
 
     pub(super) fn row_shows_close_mark(&self, row: &TreeRow) -> bool {
@@ -4480,6 +4655,9 @@ impl Dashboard {
                     let summary = *summary;
                     let previous_live =
                         find_session(self, summary.id).map(|session| session.phase.is_live());
+                    let recent_rows = (self.settings.sidebar_view
+                        == crate::protocol::SidebarView::Recent)
+                        .then(|| self.visible_rows());
                     let tree = self.sidebar_rects(self.outer_area).tree;
                     for session in self
                         .hierarchy
@@ -4493,13 +4671,20 @@ impl Dashboard {
                             break;
                         }
                     }
+                    if recent_rows.is_some_and(|rows| rows != self.visible_rows()) {
+                        // The mouse location belongs to a screen row, so an activity re-sort
+                        // must not carry its old row identity to a different screen location.
+                        self.mouse.hovered = None;
+                    }
                     if self.transcript.session == Some(summary.id)
                         && self.transcript.run != Some(summary.run)
                     {
                         self.close_transcript();
                     }
                     // The attention strip comes and goes with sessions; keep the selection shown.
-                    if tree != self.sidebar_rects(self.outer_area).tree {
+                    if tree != self.sidebar_rects(self.outer_area).tree
+                        || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
+                    {
                         self.ensure_selection_visible(&self.visible_rows());
                     }
                     if self.resync_session_run(&summary, previous_live) {
@@ -4696,7 +4881,9 @@ impl Dashboard {
         }) {
             self.close_transcript();
         }
-        if tree != self.sidebar_rects(self.outer_area).tree {
+        if tree != self.sidebar_rects(self.outer_area).tree
+            || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
+        {
             self.ensure_selection_visible(&self.visible_rows());
         }
         self.sync_palette_workspace_identity();
