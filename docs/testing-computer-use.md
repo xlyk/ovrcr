@@ -151,7 +151,7 @@ absent while they cannot run. Press `v`; confirm the second pane opens behind a
 left pane's session. Type part of another session's branch, press Return, and
 confirm the new pane shows it. Press `o`, then `Ctrl-g`; confirm the one
 Operator conversation closes at once, the terminal panes return and the footer
-reads `BROWSE  Space Menu  : Commands  ? Help`; press `o`, confirm the same
+reads `BROWSE  Space Menu  : Commands  ? Help  m Recent activity`; press `o`, confirm the same
 history and draft remain, and press `Ctrl-g` again. Click another application, then click a running
 terminal pane once: the footer must stay BROWSE; a second click focuses the pane
 for typing.

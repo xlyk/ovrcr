@@ -2,6 +2,57 @@
 
 use crate::*;
 
+fn recent_sidebar_dashboard() -> Dashboard {
+    let mut hierarchy = fixture_hierarchy();
+    for session in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+        .flat_map(|workspace| &mut workspace.sessions)
+        .filter(|session| matches!(session.id.0, 1 | 2))
+    {
+        session.kind = ovrcr::protocol::SessionKind::Agent {
+            name: "codex".into(),
+        };
+        session.label = "codex".into();
+        session.phase = SessionPhase::Running;
+        session.last_activity_unix_ms = Some(if session.id == SessionId(1) { 10 } else { 20 });
+    }
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let mut settings = ovrcr::tui::Settings::default();
+    settings.sidebar_view = ovrcr::protocol::SidebarView::Recent;
+    dashboard.install_settings(settings);
+    dashboard
+}
+
+fn sidebar_lines(dashboard: &Dashboard) -> Vec<String> {
+    rendered_rows(dashboard, 120, 40)
+        .into_iter()
+        .map(|line| line.split('│').next().unwrap_or(&line).to_owned())
+        .collect()
+}
+
+fn sidebar_cell(line: &str, needle: &str) -> u16 {
+    let byte = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} is missing from sidebar row {line:?}"));
+    line[..byte].chars().count() as u16
+}
+
+fn hover_sidebar(dashboard: &mut Dashboard, column: u16, row: u16) {
+    dashboard.mouse_action(
+        mouse_event(MouseEventKind::Moved, column, row, KeyModifiers::NONE),
+        Rect::new(0, 0, 120, 40),
+    );
+}
+
 #[test]
 fn mouse_encode_sgr_events() {
     let event = mouse_event(
@@ -131,6 +182,164 @@ fn mouse_encode_sgr_events() {
         ),
         Some(b"\x1b[<92;3;4M".to_vec())
     );
+}
+
+#[test]
+fn recent_sidebar_project_menu_fold_and_agent_rows_use_rendered_hitboxes() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = recent_sidebar_dashboard();
+    let before = sidebar_lines(&dashboard);
+    let implement_row = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("initially newest Agent title row") as u16;
+    hover_sidebar(&mut dashboard, 5, implement_row);
+
+    let mut updated = fixture_hierarchy()
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == SessionId(1))
+        .expect("review Agent summary");
+    updated.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "codex".into(),
+    };
+    updated.label = "codex".into();
+    updated.phase = SessionPhase::Running;
+    updated.last_activity_unix_ms = Some(30);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        updated,
+    ))));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(2)),
+        "activity re-sort preserves selection by session identity"
+    );
+    let reordered = sidebar_lines(&dashboard);
+    let review_row = reordered
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("review moved to newest position");
+    let implement_row = reordered
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("implement row moved after review");
+    assert!(review_row < implement_row, "rows re-sort by activity");
+    assert!(
+        reordered[implement_row].contains("[x]"),
+        "the hovered SessionId(2) close mark follows that session after it moves"
+    );
+    let close = sidebar_cell(&reordered[implement_row], "[x]");
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                close + 1,
+                implement_row as u16,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        palette_text(&dashboard).contains("(#2)"),
+        "clicking the currently drawn close mark targets the moved session"
+    );
+    dashboard.key(KeyCode::Esc);
+
+    let project_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("rendered project row") as u16;
+
+    hover_sidebar(&mut dashboard, 5, project_row);
+    let project = sidebar_lines(&dashboard);
+    let plus = sidebar_cell(&project[project_row as usize], "[+]");
+    let action = dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            plus + 1,
+            project_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert_eq!(
+        action,
+        DashboardAction::Redraw,
+        "project row={project_row}, plus cell={plus}, rendered={:?}",
+        project[project_row as usize]
+    );
+    assert!(palette_text(&dashboard).contains("New agent session"));
+    dashboard.key(KeyCode::Esc);
+
+    let project_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("rendered project row after activity re-sort") as u16;
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                project_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        !sidebar_lines(&dashboard)
+            .iter()
+            .any(|line| line.contains("review")),
+        "folding the project hides its Agent rows"
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            0,
+            project_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+
+    let review_row = sidebar_lines(&dashboard)
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("unfolded Agent title row") as u16;
+    hover_sidebar(&mut dashboard, 5, review_row + 1);
+    let rows = sidebar_lines(&dashboard);
+    assert!(rows[review_row as usize].contains("[x]"));
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                15,
+                review_row + 1,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+
+    hover_sidebar(&mut dashboard, 5, review_row);
+    let close = sidebar_cell(&sidebar_lines(&dashboard)[review_row as usize], "[x]");
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            close + 1,
+            review_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&dashboard).contains("Close terminal?"));
 }
 
 #[test]

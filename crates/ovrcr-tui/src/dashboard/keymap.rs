@@ -53,6 +53,7 @@ pub(super) enum Action {
     ToggleSound,
     CycleLocalTerminals,
     ToggleSidebar,
+    ToggleSidebarView,
     QuotaDetails,
     /// The Settings editor. Reached from the menu and the palette
     /// only; it has no Browse key of its own.
@@ -396,6 +397,7 @@ impl Dashboard {
             Action::ToggleSound => self.toggle_ready_sound(),
             Action::CycleLocalTerminals => self.cycle_automatic_local_terminals(),
             Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::ToggleSidebarView => self.toggle_sidebar_view(),
             Action::QuotaDetails => self.open_quota_details(),
             Action::Settings => self.open_details(super::quota::Details::Settings),
             Action::Events => self.open_events(),
@@ -949,6 +951,20 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .once()
         .group('v', "b"),
+        key_binding(
+            "m",
+            if dashboard.settings.sidebar_view == ovrcr_protocol::SidebarView::Tree {
+                "Recent activity"
+            } else {
+                "Tree sidebar"
+            },
+            "Switch between the project tree and Agents ordered by recent activity; save the choice through the Server"
+                .into(),
+            Char('m'),
+            Action::ToggleSidebarView,
+        )
+        .once()
+        .group('v', "m"),
         {
             let next = dashboard.next_attention();
             key_binding(

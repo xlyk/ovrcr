@@ -254,6 +254,52 @@ fn first_nine_labels_follow_drawn_title_rows_in_wide_and_narrow_frames() {
 }
 
 #[test]
+fn recent_activity_jump_labels_follow_visible_activity_order() {
+    let mut hierarchy = jump_hierarchy(10);
+    for session in &mut hierarchy.projects[0].workspaces[0].sessions {
+        session.last_activity_unix_ms = Some(match session.id.0 {
+            1 => 10,
+            2 => 100,
+            3 => 90,
+            id => 80 - id,
+        });
+    }
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    let mut settings = ovrcr::tui::Settings::default();
+    settings.sidebar_view = ovrcr::protocol::SidebarView::Recent;
+    dashboard.install_settings(settings);
+
+    ctrl_g(&mut dashboard);
+    let rows = rendered(&dashboard, 120, 40);
+    let newest = rows
+        .iter()
+        .map(|row| sidebar(row))
+        .find(|row| row.contains("jump-title-02"))
+        .expect("newest session row");
+    let next = rows
+        .iter()
+        .map(|row| sidebar(row))
+        .find(|row| row.contains("jump-title-03"))
+        .expect("second-newest session row");
+    assert!(
+        newest.contains("[1]"),
+        "activity leader gets first label: {newest}"
+    );
+    assert!(
+        next.contains("[2]"),
+        "next activity gets second label: {next}"
+    );
+    digit(&mut dashboard, '1');
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+}
+
+#[test]
 fn fifty_agents_label_first_nine_and_scroll_to_new_first_nine() {
     let mut dashboard = jump_dashboard_at(50, 60, 24);
     let before = rendered(&dashboard, 60, 24);

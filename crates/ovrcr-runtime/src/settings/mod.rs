@@ -10,7 +10,7 @@
 use ovrcr_protocol::{
     AgentModelPolicy, AgentOverride, AutomaticLocalTerminals, DelegationHarness,
     DelegationSettings, LaunchChoice, NativeCommand, ReadySoundChoice, SettingRow, Settings,
-    SettingsFinding, SettingsReport, ThemeId,
+    SettingsFinding, SettingsReport, SidebarView, ThemeId,
 };
 #[cfg(test)]
 use ovrcr_protocol::{SettingOwner, SettingSource};
@@ -195,6 +195,15 @@ impl Loader<'_> {
                 None => self.finding(
                     ThemeId::KEY,
                     format!("unknown value {raw:?}; expected {}", ThemeId::EXPECTED),
+                ),
+            }
+        }
+        if let Some(raw) = self.take::<String>(table, SidebarView::KEY) {
+            match SidebarView::parse(&raw) {
+                Some(view) => self.accept(SidebarView::KEY, &mut settings.sidebar_view, view),
+                None => self.finding(
+                    SidebarView::KEY,
+                    format!("unknown value {raw:?}; expected \"tree\" or \"recent\""),
                 ),
             }
         }

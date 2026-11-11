@@ -736,8 +736,12 @@ impl Dashboard {
     }
 
     pub fn install_settings(&mut self, settings: Settings) {
+        let sidebar_view_changed = self.settings.sidebar_view != settings.sidebar_view;
         self.theme = crate::theme::ThemeTokens::for_id(settings.theme);
         self.settings = settings;
+        if sidebar_view_changed {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
     }
 
     /// Active Design tokens for the current settings theme.
@@ -764,6 +768,9 @@ impl Dashboard {
         let count = report.findings.len();
         let before = std::mem::replace(&mut self.settings, report.settings.clone());
         self.theme = crate::theme::ThemeTokens::for_id(self.settings.theme);
+        if before.sidebar_view != self.settings.sidebar_view {
+            self.ensure_selection_visible(&self.visible_rows());
+        }
         self.settings_editor.report_published(&report);
         if self.settings_editor.preview_request.is_some()
             && self.settings_editor.preview_theme == Some(self.settings.theme)
@@ -1618,7 +1625,53 @@ impl Dashboard {
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<TreeRow> {
-        self.hierarchy_rows(false)
+        match self.settings.sidebar_view {
+            crate::protocol::SidebarView::Tree => self.hierarchy_rows(false),
+            crate::protocol::SidebarView::Recent => self.recent_activity_rows(),
+        }
+    }
+
+    fn recent_activity_rows(&self) -> Vec<TreeRow> {
+        let mut projects = self.hierarchy.projects.iter().collect::<Vec<_>>();
+        projects.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut rows = Vec::new();
+        for project in projects {
+            let mut sessions = project
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.sessions)
+                .filter(|session| {
+                    matches!(session.kind, crate::protocol::SessionKind::Agent { .. })
+                })
+                .collect::<Vec<_>>();
+            if sessions.is_empty() {
+                continue;
+            }
+            sessions.sort_by(|left, right| {
+                right
+                    .last_activity_unix_ms
+                    .or(right.started_unix_ms)
+                    .unwrap_or(0)
+                    .cmp(
+                        &left
+                            .last_activity_unix_ms
+                            .or(left.started_unix_ms)
+                            .unwrap_or(0),
+                    )
+            });
+            rows.push(TreeRow::Project {
+                name: project.name.clone(),
+            });
+            if self.collapsed_projects.contains(&project.name) {
+                continue;
+            }
+            rows.extend(
+                sessions
+                    .into_iter()
+                    .map(|session| TreeRow::Session { id: session.id }),
+            );
+        }
+        rows
     }
 
     pub(super) fn hierarchy_rows(&self, include_collapsed: bool) -> Vec<TreeRow> {
@@ -4361,7 +4414,9 @@ impl Dashboard {
                         self.close_transcript();
                     }
                     // The attention strip comes and goes with sessions; keep the selection shown.
-                    if tree != self.sidebar_rects(self.outer_area).tree {
+                    if tree != self.sidebar_rects(self.outer_area).tree
+                        || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
+                    {
                         self.ensure_selection_visible(&self.visible_rows());
                     }
                     if self.resync_session_run(&summary, previous_live) {
@@ -4557,7 +4612,9 @@ impl Dashboard {
         }) {
             self.close_transcript();
         }
-        if tree != self.sidebar_rects(self.outer_area).tree {
+        if tree != self.sidebar_rects(self.outer_area).tree
+            || self.settings.sidebar_view == crate::protocol::SidebarView::Recent
+        {
             self.ensure_selection_visible(&self.visible_rows());
         }
         self.sync_palette_workspace_identity();
