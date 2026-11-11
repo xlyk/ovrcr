@@ -19,7 +19,7 @@ use ovrcr_protocol::{
     BRIDGE_SCHEMA_VERSION, BridgeOperation, BridgeReply, BridgeRequest, BridgeSoundFailure,
     BridgeStatus, MAX_FRAME_BYTES, PROTOCOL_VERSION, ReadySoundChoice,
 };
-use ovrcr_protocol::{ClientMessage, Request};
+use ovrcr_protocol::{ClientMessage, Request, SidebarView};
 use std::collections::VecDeque;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -200,6 +200,11 @@ impl Dashboard {
             AutomaticLocalTerminals::KEY,
             format!("\"{}\"", next.as_str()),
         )
+    }
+
+    pub(super) fn toggle_sidebar_view(&mut self) -> DashboardAction {
+        let next = self.settings.sidebar_view.next();
+        self.set_setting(SidebarView::KEY, format!("\"{}\"", next.as_str()))
     }
 
     fn toggle_alert_setting(&mut self, key: &str, enabled: bool) -> DashboardAction {
