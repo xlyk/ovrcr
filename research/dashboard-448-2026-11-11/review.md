@@ -1,6 +1,6 @@
 # Final review for #448
 
-Two independent reviewers examined the integration diff against the repository standards and originating spec. Corrections were implemented by one worker and merged into the integration branch; both reviewers rechecked the raised findings. Final code: `0ce4ca2c8f5b091eecb55eb4280925a26e8df6b7`, identical to the reviewed `1869f446` tree.
+Two independent reviewers examined the integration diff against the repository standards and originating spec. Corrections were implemented by one worker and merged into the integration branch; both reviewers rechecked the raised findings. The reviewed behavior tree is `0ce4ca2c8f5b091eecb55eb4280925a26e8df6b7`, identical to the reviewed `1869f446` tree. The current code includes a subsequent Linux cfg/visibility correction after evidence commit `fb7cd309`: it exposes parser helpers to sibling Linux tests and limits a mutable settings-row binding to macOS. It also makes the typed-branch live test use its actual private Server settings and waits for the initial settings report, fixing a test fixture race. Neither follow-up changes production behavior or native evidence. Verification records that hosted Linux and macOS shard checks are pending on the corrected source.
 
 ## Standards
 

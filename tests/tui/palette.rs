@@ -2189,7 +2189,14 @@ fn live_dashboard_creates_typed_branch_before_starting_agent() {
         }
     }
 
-    let live = Live::binary();
+    let live = Live::idle().bounded();
+    std::fs::write(
+        live.config.join("dashboard.toml"),
+        "agents = [{ name = \"fixture-agent\", argv = [\"/bin/sh\", \"-c\", \"exit 0\"] }]\n\
+         [launch_choices.fixture]\nkind = \"Agent\"\npreset = \"fixture-agent\"\nmodel_policy = \"HarnessDefault\"\n",
+    )
+    .unwrap();
+    live.start_binary();
     live.ready("feature/live-seed");
     let mut stream = p::connect_server(&live.socket).expect("connect to private Server");
     stream
@@ -2204,20 +2211,41 @@ fn live_dashboard_creates_typed_branch_before_starting_agent() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
     dashboard.install_area(Rect::new(0, 0, 80, 24));
     dashboard.install_hierarchy(hierarchy);
-    let mut settings = ovrcr::tui::Settings::default();
-    settings.agents.push(ovrcr::protocol::AgentOverride {
-        name: "fixture-agent".into(),
-        argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
-    });
-    settings.launch_choices.insert(
-        PROJECT.into(),
-        ovrcr::protocol::LaunchChoice::Agent {
-            preset: "fixture-agent".into(),
-            model_policy: ovrcr::protocol::AgentModelPolicy::HarnessDefault,
-        },
-    );
-    dashboard.install_settings(settings);
-
+    let settings_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            Instant::now() < settings_deadline,
+            "DashboardHello did not publish the initial Server settings"
+        );
+        let server =
+            p::read_frame::<p::ServerMessage>(&mut stream).expect("read initial Dashboard events");
+        let is_settings = matches!(
+            &server,
+            p::ServerMessage::Event(p::ServerEvent::SettingsChanged(_))
+        );
+        if let p::ServerMessage::Event(p::ServerEvent::SettingsChanged(report)) = &server {
+            assert!(
+                report
+                    .settings
+                    .agents
+                    .iter()
+                    .any(|agent| agent.name == "fixture-agent"),
+                "live fixture must publish its configured test launcher: {:?}",
+                report.settings.agents
+            );
+            assert_eq!(
+                report.settings.launch_choices.get(PROJECT),
+                Some(&p::LaunchChoice::Agent {
+                    preset: "fixture-agent".into(),
+                    model_policy: p::AgentModelPolicy::HarnessDefault,
+                })
+            );
+        }
+        dashboard.handle_server_message(server);
+        if is_settings {
+            break;
+        }
+    }
     dashboard.key(KeyCode::Char('n'));
     let initial = dashboard.drain_outbox();
     exchange_dashboard_requests(&mut dashboard, &mut stream, initial);
@@ -2232,10 +2260,14 @@ fn live_dashboard_creates_typed_branch_before_starting_agent() {
     assert!(form.contains("feature-live-agent"), "{form}");
     assert!(form.contains("From main"), "{form}");
 
-    dashboard.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    let form_before_submit = palette_text(&dashboard);
+    let action = dashboard.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    let form_after_submit = palette_text(&dashboard);
     let requests = dashboard.drain_outbox();
     let [create] = requests.as_slice() else {
-        panic!("typed branch should issue one live workspace request: {requests:?}");
+        panic!(
+            "typed branch should issue one live workspace request: {requests:?}; action={action:?}; form before submit:\n{form_before_submit}\nform after submit:\n{form_after_submit}"
+        );
     };
     let (workspace_id, token) = match &create.request {
         Request::CreateWorkspaceWithLaunch {
