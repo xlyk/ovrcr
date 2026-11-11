@@ -54,6 +54,14 @@ pub struct PendingHistoryBegin {
     pub at_tail: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct SidebarTreeLayout {
+    viewport: Rect,
+    rows: Vec<TreeRow>,
+    heights: Vec<usize>,
+    offset: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryPage {
     pub request_id: u64,
@@ -1765,6 +1773,25 @@ impl Dashboard {
         match self.settings.sidebar_view {
             crate::protocol::SidebarView::Tree => self.hierarchy_rows(false),
             crate::protocol::SidebarView::Recent => self.recent_activity_rows(),
+        }
+    }
+
+    fn sidebar_tree_layout(&self) -> SidebarTreeLayout {
+        let viewport = self.sidebar_rects(self.outer_area).tree;
+        let rows = self.visible_rows();
+        let heights = tree_row_heights(self, &rows, usize::from(viewport.width));
+        SidebarTreeLayout {
+            viewport,
+            rows,
+            heights,
+            offset: self.tree_offset,
+        }
+    }
+
+    fn clear_stale_sidebar_hover(&mut self, before: &SidebarTreeLayout) {
+        if *before != self.sidebar_tree_layout() {
+            // Hover is attached to a screen row, so any changed layout requires fresh motion.
+            self.mouse.hovered = None;
         }
     }
 
@@ -4851,10 +4878,8 @@ impl Dashboard {
                     let summary = *summary;
                     let previous_live =
                         find_session(self, summary.id).map(|session| session.phase.is_live());
-                    let recent_rows = (self.settings.sidebar_view
-                        == crate::protocol::SidebarView::Recent)
-                        .then(|| self.visible_rows());
-                    let tree = self.sidebar_rects(self.outer_area).tree;
+                    let sidebar_layout = self.sidebar_tree_layout();
+                    let tree = sidebar_layout.viewport;
                     for session in self
                         .hierarchy
                         .projects
@@ -4868,13 +4893,6 @@ impl Dashboard {
                         }
                     }
                     let tree_changed = tree != self.sidebar_rects(self.outer_area).tree;
-                    let rows_changed = recent_rows.is_some_and(|rows| rows != self.visible_rows());
-                    if tree_changed || rows_changed {
-                        // The mouse location belongs to a screen row, so an activity re-sort
-                        // or sidebar geometry shift must not carry its old row identity to a
-                        // different screen location.
-                        self.mouse.hovered = None;
-                    }
                     if self.transcript.session == Some(summary.id)
                         && self.transcript.run != Some(summary.run)
                     {
@@ -4886,6 +4904,7 @@ impl Dashboard {
                     {
                         self.ensure_selection_visible(&self.visible_rows());
                     }
+                    self.clear_stale_sidebar_hover(&sidebar_layout);
                     if self.resync_session_run(&summary, previous_live) {
                         let _ = self.request_view_at(self.outer_area);
                     }
@@ -5072,18 +5091,11 @@ impl Dashboard {
             self.assignment_control_changed(&summary);
         }
         self.observe_desktop_responses(&hierarchy);
-        let recent_rows = (self.settings.sidebar_view == crate::protocol::SidebarView::Recent)
-            .then(|| self.visible_rows());
-        let tree = self.sidebar_rects(self.outer_area).tree;
+        let sidebar_layout = self.sidebar_tree_layout();
+        let tree = sidebar_layout.viewport;
         self.install_usage_snapshot(hierarchy.usage);
         self.hierarchy = hierarchy;
         let tree_changed = tree != self.sidebar_rects(self.outer_area).tree;
-        let rows_changed = recent_rows.is_some_and(|rows| rows != self.visible_rows());
-        if tree_changed || rows_changed {
-            // A pointer identifies a screen row. Do not carry that identity to
-            // another row after a snapshot moves or reorders the tree.
-            self.mouse.hovered = None;
-        }
         if self.transcript.session.is_some_and(|id| {
             !find_session(self, id).is_some_and(|summary| Some(summary.run) == self.transcript.run)
         }) {
@@ -5092,6 +5104,7 @@ impl Dashboard {
         if tree_changed || self.settings.sidebar_view == crate::protocol::SidebarView::Recent {
             self.ensure_selection_visible(&self.visible_rows());
         }
+        self.clear_stale_sidebar_hover(&sidebar_layout);
         self.sync_palette_workspace_identity();
 
         self.selected_container = self.selected_container.take().filter(|row| match row {
