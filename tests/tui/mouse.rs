@@ -566,6 +566,189 @@ fn split_ready(area: Rect) -> Dashboard {
     dashboard
 }
 
+#[test]
+fn pane_header_double_click_zooms_and_a_third_click_does_not_toggle() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let target = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index != 1)
+        .expect("other pane header");
+    let column = target.metadata.x + 1;
+    let row = target.metadata.y;
+    let click = || {
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+    };
+
+    assert_eq!(
+        dashboard.mouse_action(click(), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(click(), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.pane_rects(area).len(), 1);
+
+    dashboard.mouse_action(click(), area);
+    assert_eq!(
+        dashboard.pane_rects(area).len(),
+        1,
+        "third click is the start of a new pair"
+    );
+
+    dashboard.mouse_action(click(), area);
+    assert_eq!(
+        dashboard.pane_rects(area).len(),
+        2,
+        "the next double-click unzooms"
+    );
+}
+
+#[test]
+fn divider_double_click_sets_an_even_ratio_in_one_view_request() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let divider = dashboard.pane_rects(area)[0].metadata.right();
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            divider,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            divider - 9,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            divider - 9,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    pump_view(&mut dashboard, ovrcr::tui::DashboardAction::Redraw);
+
+    let moved_divider = dashboard.pane_rects(area)[0].metadata.right();
+    let click = || {
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            moved_divider,
+            10,
+            KeyModifiers::NONE,
+        )
+    };
+    dashboard.mouse_action(click(), area);
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            moved_divider,
+            10,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    dashboard.mouse_action(click(), area);
+
+    let widths = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .map(|pane| pane.terminal.width)
+        .collect::<Vec<_>>();
+    assert_eq!(widths, [39, 40]);
+    dashboard.install_terminal_input();
+    assert!(
+        dashboard
+            .input_request(b"wait for even split".to_vec(), 9300)
+            .is_none()
+    );
+    let request = dashboard
+        .request_view_at(area)
+        .expect("even split sends SetView");
+    let outgoing = dashboard.drain_outbox();
+    assert_eq!(outgoing.len(), 1);
+    let view = match request.request {
+        Request::SetView { view } => view,
+        other => panic!("expected SetView, got {other:?}"),
+    };
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        widths
+    );
+    acknowledge_all_view_targets(
+        &mut dashboard,
+        ClientMessage {
+            request_id: outgoing[0].request_id,
+            request: Request::SetView { view },
+        },
+    );
+}
+
+#[test]
+fn right_click_focuses_a_pane_and_opens_its_group() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let other = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("other pane");
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(
+                other.terminal,
+                MouseEventKind::Down(MouseButton::Right),
+                2,
+                3
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("Panes:"),
+        "right-click should open the Panes group"
+    );
+}
+
+#[test]
+fn terminal_right_click_remains_forwarded_to_the_focused_program() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
+    let action = dashboard.mouse_action(
+        click_in(inner, MouseEventKind::Down(MouseButton::Right), 2, 3),
+        area,
+    );
+    assert_eq!(
+        action,
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
+    );
+}
+
 fn terminal_rect(dashboard: &Dashboard, area: Rect) -> Rect {
     let mut rects = dashboard.pane_rects(area);
     if rects.len() == 1 {

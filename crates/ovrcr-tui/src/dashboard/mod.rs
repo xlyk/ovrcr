@@ -169,6 +169,14 @@ pub(super) enum PaneDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneResize {
+    Narrower,
+    Wider,
+    Shorter,
+    Taller,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SplitRatio {
     pub(super) first: u16,
     pub(super) available: u16,
@@ -285,6 +293,45 @@ impl PaneLayout {
             Self::Pane(existing) => *existing == index,
             Self::Split { first, second, .. } => first.contains(index) || second.contains(index),
         }
+    }
+
+    pub(super) fn nearest_split(
+        &self,
+        index: usize,
+        direction: SplitDirection,
+    ) -> Option<(Vec<bool>, bool)> {
+        fn find(
+            layout: &PaneLayout,
+            index: usize,
+            direction: SplitDirection,
+            path: &mut Vec<bool>,
+        ) -> Option<(Vec<bool>, bool)> {
+            match layout {
+                PaneLayout::Pane(_) => None,
+                PaneLayout::Split {
+                    direction: split_direction,
+                    first,
+                    second,
+                    ..
+                } => {
+                    let (child, first_side) = if first.contains(index) {
+                        (first.as_ref(), true)
+                    } else if second.contains(index) {
+                        (second.as_ref(), false)
+                    } else {
+                        return None;
+                    };
+                    path.push(!first_side);
+                    let nested = find(child, index, direction, path);
+                    path.pop();
+                    nested.or_else(|| {
+                        (*split_direction == direction).then(|| (path.clone(), first_side))
+                    })
+                }
+            }
+        }
+
+        find(self, index, direction, &mut Vec::new())
     }
 
     fn first(&self) -> usize {
@@ -555,8 +602,23 @@ pub(super) struct MouseForwarding {
     pub(super) last_motion: Option<MouseEvent>,
     pub(super) split_dragging: Option<Vec<bool>>,
     pub(super) sidebar_dragging: bool,
+    pub(super) last_pane_click: Option<PaneClick>,
     /// Row under the pointer. Drawing reads it; motion that stays on the same row does not redraw.
     pub(super) hovered: Option<HoveredRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PaneClickTarget {
+    Header(usize),
+    Divider(Vec<bool>),
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PaneClick {
+    pub(super) target: PaneClickTarget,
+    pub(super) column: u16,
+    pub(super) row: u16,
+    pub(super) at: std::time::Instant,
 }
 
 #[derive(Clone, PartialEq, Eq)]

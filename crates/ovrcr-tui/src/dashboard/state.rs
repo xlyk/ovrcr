@@ -2032,6 +2032,9 @@ impl Dashboard {
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.kind == KeyEventKind::Press {
+            self.mouse.last_pane_click = None;
+        }
         // A failure has been seen once a key is pressed while it shows.
         if key.kind == KeyEventKind::Press && self.error.is_some() && self.error_since.is_none() {
             self.error_since = Some(Instant::now());
@@ -3150,6 +3153,87 @@ impl Dashboard {
             })
     }
 
+    pub(super) fn pane_resize_refusal(
+        &self,
+        direction: super::SplitDirection,
+    ) -> Option<&'static str> {
+        if self.action_session().is_none() {
+            return Some("no session selected");
+        }
+        let layout = self.pane_layout_rects(self.outer_area);
+        let has_divider = self
+            .pane_layout
+            .nearest_split(self.focused_pane, direction)
+            .is_some_and(|(path, _)| {
+                layout
+                    .boundaries
+                    .iter()
+                    .any(|boundary| boundary.path == path)
+            });
+        (!has_divider).then_some(match direction {
+            super::SplitDirection::Right => "no left-right divider to resize",
+            super::SplitDirection::Down => "no top-bottom divider to resize",
+        })
+    }
+
+    pub(super) fn resize_focused_pane(&mut self, resize: super::PaneResize) -> bool {
+        let (direction, grows, amount) = match resize {
+            super::PaneResize::Narrower => (super::SplitDirection::Right, false, 2),
+            super::PaneResize::Wider => (super::SplitDirection::Right, true, 2),
+            super::PaneResize::Shorter => (super::SplitDirection::Down, false, 1),
+            super::PaneResize::Taller => (super::SplitDirection::Down, true, 1),
+        };
+        if let Some(reason) = self.pane_resize_refusal(direction) {
+            self.set_limit(reason);
+            return false;
+        }
+        let layout = self.pane_layout_rects(self.outer_area);
+        let Some((path, focused_is_first)) =
+            self.pane_layout.nearest_split(self.focused_pane, direction)
+        else {
+            return false;
+        };
+        let Some(boundary) = layout
+            .boundaries
+            .into_iter()
+            .find(|boundary| boundary.path == path)
+        else {
+            return false;
+        };
+        let (current_first, available, minimum) = match direction {
+            super::SplitDirection::Right => (
+                boundary.divider.x.saturating_sub(boundary.area.x),
+                boundary.area.width.saturating_sub(1),
+                super::MIN_PANE_WIDTH,
+            ),
+            super::SplitDirection::Down => (
+                boundary.divider.y.saturating_sub(boundary.area.y),
+                boundary.area.height.saturating_sub(1),
+                super::MIN_PANE_HEIGHT,
+            ),
+        };
+        let next_first = if grows == focused_is_first {
+            current_first.saturating_add(amount)
+        } else {
+            current_first.saturating_sub(amount)
+        }
+        .clamp(minimum, available.saturating_sub(minimum));
+        if next_first == current_first {
+            return false;
+        }
+        if !self.pane_layout.set_ratio(
+            &path,
+            super::SplitRatio {
+                first: next_first,
+                available,
+            },
+        ) {
+            return false;
+        }
+        self.apply_pane_sizes(self.outer_area);
+        true
+    }
+
     pub(super) fn pane_neighbor(&self, direction: super::PaneDirection) -> Option<usize> {
         let layout = self.pane_layout_rects_unzoomed(self.outer_area);
         let source = layout
@@ -3425,6 +3509,47 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
             return None;
         }
+        if matches!(mouse.kind, MouseEventKind::Drag(_)) {
+            self.mouse.last_pane_click = None;
+        }
+        let sidebar = super::render::sidebar_area(area, self.sidebar_preference());
+        let layout = self.pane_layout_rects(area);
+        let rects = &layout.panes;
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some(boundary) = layout
+                .boundaries
+                .iter()
+                .find(|boundary| point_in_rect(mouse, boundary.divider))
+            {
+                let path = boundary.path.clone();
+                if self.record_pane_click(super::PaneClickTarget::Divider(path.clone()), mouse) {
+                    self.mouse.split_dragging = None;
+                    self.even_split(area, &path);
+                    return Some(DashboardAction::Redraw);
+                }
+            } else if let Some(pane) = rects
+                .iter()
+                .find(|pane| point_in_rect(mouse, pane.metadata))
+            {
+                let index = pane.pane_index;
+                if self.record_pane_click(super::PaneClickTarget::Header(index), mouse) {
+                    self.mouse.split_dragging = None;
+                    if self
+                        .panes
+                        .get(index)
+                        .is_some_and(|state| state.session.is_some())
+                    {
+                        if index != self.focused_pane {
+                            self.focus_pane(index);
+                        }
+                        self.toggle_pane_zoom();
+                    }
+                    return Some(DashboardAction::Redraw);
+                }
+            } else {
+                self.mouse.last_pane_click = None;
+            }
+        }
         if let Some(path) = self.mouse.split_dragging.clone() {
             return match mouse.kind {
                 MouseEventKind::Drag(MouseButton::Left) => {
@@ -3457,10 +3582,20 @@ impl Dashboard {
                 _ => Some(DashboardAction::None),
             };
         }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+            && self.mode == InputMode::Browse
+            && let Some(pane) = rects
+                .iter()
+                .find(|pane| point_in_rect(mouse, pane_bounds(**pane)))
+        {
+            if pane.pane_index != self.focused_pane {
+                self.focus_pane(pane.pane_index);
+            }
+            self.open_whichkey(false);
+            self.open_group('s');
+            return Some(DashboardAction::Redraw);
+        }
 
-        let sidebar = super::render::sidebar_area(area, self.sidebar_preference());
-        let layout = self.pane_layout_rects(area);
-        let rects = &layout.panes;
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && mouse.row >= sidebar.y
             && mouse.row < sidebar.bottom()
@@ -3510,6 +3645,63 @@ impl Dashboard {
             }
         }
         None
+    }
+
+    fn record_pane_click(&mut self, target: super::PaneClickTarget, mouse: MouseEvent) -> bool {
+        let now = Instant::now();
+        let matched = self.mouse.last_pane_click.as_ref().is_some_and(|previous| {
+            previous.target == target
+                && previous.column == mouse.column
+                && previous.row == mouse.row
+                && now.duration_since(previous.at) <= Duration::from_millis(400)
+        });
+        self.mouse.last_pane_click = if matched {
+            None
+        } else {
+            Some(super::PaneClick {
+                target,
+                column: mouse.column,
+                row: mouse.row,
+                at: now,
+            })
+        };
+        matched
+    }
+
+    fn even_split(&mut self, area: Rect, path: &[bool]) -> bool {
+        let Some(boundary) = self
+            .pane_layout_rects(area)
+            .boundaries
+            .into_iter()
+            .find(|boundary| boundary.path == path)
+        else {
+            return false;
+        };
+        let (first, available) = match boundary.direction {
+            super::SplitDirection::Right => (
+                boundary.divider.x.saturating_sub(boundary.area.x),
+                boundary.area.width.saturating_sub(1),
+            ),
+            super::SplitDirection::Down => (
+                boundary.divider.y.saturating_sub(boundary.area.y),
+                boundary.area.height.saturating_sub(1),
+            ),
+        };
+        let evenly_split = available / 2;
+        if first == evenly_split {
+            return false;
+        }
+        if !self.pane_layout.set_ratio(
+            path,
+            super::SplitRatio {
+                first: evenly_split,
+                available,
+            },
+        ) {
+            return false;
+        }
+        self.apply_pane_sizes(area);
+        true
     }
 
     /// Drag the sidebar border to `column`; the panes take the remaining width.

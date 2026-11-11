@@ -55,6 +55,16 @@ focus on the same session. Zoom draws and sizes one focused leaf while keeping
 the tree unchanged; zoom, focus, swap, split, and close still use `retarget` so
 input permission follows the acknowledged visible view.
 
+Browse and `Space s` share the `<`, `>`, `-`, `+`, and `=` resize bindings.
+Width keys move the nearest left-right divider around the focused pane by two
+columns; height keys move its nearest top-bottom divider by one row. Each key
+repeat is one step, and split ratios clamp to the 20-column and 8-row pane
+minimums. A missing divider reports a reason. Each real resize retargets once
+with all changed pane sizes; a clamp no-op keeps input readiness. Header
+double-click toggles zoom, divider double-click makes its ratio even, and a
+Browse right-click focuses the pane and opens the Panes group. Right-clicks in
+Terminal mode continue through normal PTY mouse forwarding.
+
 Sidebar session-jump labels are derived from the currently drawn sidebar order
 (tree order or recent-activity order), viewport,
 row heights, and exact Agent session/run identities. Draw them inside the existing
