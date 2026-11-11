@@ -325,20 +325,26 @@ fn the_five_sidebar_states_show_timing_activity_and_the_last_reply() {
         assert!(rows[3].contains("run ovrcr operator setup"), "setup action is clear: {rows:?}");
     }
 
-    let mut not_setup = operator_dashboard_fixture();
-    not_setup.install_area(area);
-    not_setup.key(KeyCode::Char('o'));
-    let open = not_setup.drain_outbox().into_iter().next().expect("Open");
-    not_setup.handle_server_message(ServerMessage::Response {
-        request_id: open.request_id,
-        response: Response::Error {
-            code: ErrorCode::Internal,
-            message: "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.".into(),
-        },
-    });
-    let rows = rendered_rows(&not_setup, 120, 40);
-    assert!(rows[2].contains("Not set up"), "setup failure is named: {rows:?}");
-    assert!(rows[3].contains("run ovrcr operator setup"), "setup action is clear: {rows:?}");
+    for failure in [
+        "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+        "No Pi model selected; run ovrcr operator setup.",
+        "Configured Operator model is unavailable in the dedicated Pi profile.",
+    ] {
+        let mut not_setup = operator_dashboard_fixture();
+        not_setup.install_area(area);
+        not_setup.key(KeyCode::Char('o'));
+        let open = not_setup.drain_outbox().into_iter().next().expect("Open");
+        not_setup.handle_server_message(ServerMessage::Response {
+            request_id: open.request_id,
+            response: Response::Error {
+                code: ErrorCode::Internal,
+                message: failure.into(),
+            },
+        });
+        let rows = rendered_rows(&not_setup, 120, 40);
+        assert!(rows[2].contains("Not set up"), "{failure}: {rows:?}");
+        assert!(rows[3].contains("run ovrcr operator setup"), "{failure}: {rows:?}");
+    }
 
     let mut working = operator_dashboard_fixture();
     working.install_area(area);

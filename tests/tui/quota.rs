@@ -372,18 +372,20 @@ fn quota_block_shows_a_stale_value_with_its_age() {
 
 #[test]
 fn quota_block_ladder_gives_four_lines_then_one_then_none() {
-    let mut dashboard = dashboard_fixture();
+    // This case isolates Quota's own ladder; combined Operator + Quota
+    // shrinking is covered with the production default in operator_dock.
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects.clear();
     dashboard.install_hierarchy(hierarchy);
     publish_quota(&mut dashboard, mixed_snapshot());
-    let full = rows_at(&dashboard, 12, NOW);
+    let full = rows_at(&dashboard, 16, NOW);
     assert!(
         full.iter().any(|row| row.contains("QUOTA LEFT")),
         "{full:?}"
     );
     let mut seen = Vec::new();
-    for height in (3..12).rev() {
+    for height in (3..16).rev() {
         let rows = rows_at(&dashboard, height, NOW);
         let compact = [
             "Claude · checking",

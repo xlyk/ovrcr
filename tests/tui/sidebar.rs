@@ -20,6 +20,12 @@ fn sidebar_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
+fn sidebar_row_with(terminal: &Terminal<TestBackend>, text: &str) -> u16 {
+    (0..terminal.backend().buffer().area.height)
+        .find(|row| sidebar_row(terminal, *row).contains(text))
+        .unwrap_or_else(|| panic!("missing sidebar row containing {text:?}"))
+}
+
 fn set_attention(session: &mut SessionSummary, state: AgentActivity, input: bool, unread: bool) {
     use ovrcr::protocol::{
         ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputKind,
@@ -88,7 +94,7 @@ fn hover(dashboard: &mut Dashboard, column: u16, row: u16, area: Rect) {
 
 #[test]
 fn dashboard_layout() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -148,7 +154,7 @@ fn dashboard_layout() {
 
 #[test]
 fn sidebar_glyphs_and_columns_match_the_reference_tree() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -241,7 +247,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReporterHealth,
         SampleQuality,
     };
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut review = review_session(&fixture_hierarchy()).clone();
     review.activity = AgentActivity::ResponseReady;
     review.unread = Some(ovrcr::protocol::ReadyObservation {
@@ -291,7 +297,8 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 4)];
+        let review_row = sidebar_row_with(&terminal, "review");
+        let cell = &terminal.backend().buffer()[(5, review_row)];
         assert_eq!(cell.symbol(), "✓", "{health:?}");
         assert_eq!(cell.fg, color, "{health:?}");
     }
@@ -299,7 +306,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
 
 #[test]
 fn sidebar_animates_only_explicitly_busy_sessions() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let mut review = review_session(&fixture_hierarchy()).clone();
@@ -311,12 +318,13 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), marker);
+        let review_row = sidebar_row_with(&terminal, "review");
+        assert_eq!(terminal.backend().buffer()[(5, review_row)].symbol(), marker);
         assert_eq!(
-            terminal.backend().buffer()[(5, 4)].fg,
+            terminal.backend().buffer()[(5, review_row)].fg,
             Color::Rgb(166, 227, 161)
         );
-        assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
+        assert_eq!(terminal.backend().buffer()[(5, review_row - 1)].symbol(), "$");
     }
     review.activity = AgentActivity::Idle;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
@@ -325,7 +333,8 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1100))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), " ");
+    let review_row = sidebar_row_with(&terminal, "review");
+    assert_eq!(terminal.backend().buffer()[(5, review_row)].symbol(), " ");
     // An exited process cannot remain busy, even if an old signal is retained.
     let mut implement = fixture_hierarchy().projects[1].workspaces[0].sessions[0].clone();
     implement.activity = AgentActivity::Busy;
@@ -335,12 +344,13 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
+    let implement_row = sidebar_row_with(&terminal, "implement");
+    assert_eq!(terminal.backend().buffer()[(5, implement_row)].symbol(), "·");
 }
 
 #[test]
 fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(1));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let metadata = |terminal: &Terminal<TestBackend>| {
@@ -408,7 +418,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
 
 #[test]
 fn agent_hook_sidebar_states_are_literal() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let muted = Color::Rgb(108, 112, 134);
     for (activity, phase, glyph, color) in [
@@ -448,7 +458,8 @@ fn agent_hook_sidebar_states_are_literal() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        let cell = &terminal.backend().buffer()[(5, 4)];
+        let review_row = sidebar_row_with(&terminal, "review");
+        let cell = &terminal.backend().buffer()[(5, review_row)];
         assert_eq!(cell.symbol(), glyph, "{activity:?}");
         assert_eq!(cell.fg, color, "{activity:?}");
     }
@@ -461,8 +472,9 @@ fn agent_hook_sidebar_states_are_literal() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
-    assert_eq!(terminal.backend().buffer()[(5, 7)].fg, muted);
+    let implement_row = sidebar_row_with(&terminal, "implement");
+    assert_eq!(terminal.backend().buffer()[(5, implement_row)].symbol(), "·");
+    assert_eq!(terminal.backend().buffer()[(5, implement_row)].fg, muted);
     // A local shell stays quiet until a hook reports real activity inside it.
     let mut progress = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
     progress.activity = AgentActivity::Error;
@@ -472,7 +484,8 @@ fn agent_hook_sidebar_states_are_literal() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(5, 11)].symbol(), "!");
+    let progress_row = sidebar_row_with(&terminal, "progress") + 1;
+    assert_eq!(terminal.backend().buffer()[(5, progress_row)].symbol(), "!");
     assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 }
 
@@ -518,7 +531,7 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
             Box::new(session),
         )));
     };
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut review = review_session(&fixture_hierarchy()).clone();
     review.activity = AgentActivity::ResponseReady;
     review.agent = Some(snapshot("one"));
@@ -582,7 +595,7 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
     assert_eq!(glyph(&sidebar(&terminal), "review"), '\u{2713}');
     assert!(header(&terminal).contains("unread reply"));
 
-    let mut split_dashboard = dashboard_fixture();
+    let mut split_dashboard = tree_dashboard_fixture();
     publish(&mut split_dashboard, review.clone());
     assert!(split_dashboard.split_pane());
     draw(&split_dashboard, &mut terminal);
@@ -623,7 +636,7 @@ fn reviewed_ready_hides_the_checkmark_and_the_sidebar_draws_no_unread_circle() {
 
 #[test]
 fn agent_hook_summary_updates_drive_animation() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     dashboard.install_screen(SessionId(5), &[]);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -685,7 +698,7 @@ fn agent_hook_summary_updates_drive_animation() {
 
 #[test]
 fn selected_session_uses_a_soft_bar_on_one_line() {
-    let dashboard = dashboard_fixture();
+    let dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -725,7 +738,7 @@ fn selected_session_uses_a_soft_bar_on_one_line() {
 
 #[test]
 fn context_updates_leave_the_compact_sidebar_unchanged() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -786,7 +799,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         modifiers: KeyModifiers::NONE,
     };
     for (row, id) in [(3, 5), (4, 1), (6, 4), (7, 2), (11, 3)] {
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = tree_dashboard_fixture();
         dashboard.mouse_action(click(7, row), area);
         assert_eq!(
             dashboard.focused_session(),
@@ -794,11 +807,11 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
             "row {row}"
         );
         // Anywhere on the row selects, including the right-aligned agent.
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = tree_dashboard_fixture();
         dashboard.mouse_action(click(36, row), area);
         assert_eq!(dashboard.focused_session(), Some(SessionId(id)));
     }
-    let mut workspace = dashboard_fixture();
+    let mut workspace = tree_dashboard_fixture();
     assert_eq!(
         workspace.mouse_action(click(2, 5), area),
         ovrcr::tui::DashboardAction::Redraw
@@ -811,7 +824,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         sidebar_row(&terminal, 5).contains("▸"),
         "workspace click on the disclosure column should fold the group"
     );
-    let mut project = dashboard_fixture();
+    let mut project = tree_dashboard_fixture();
     assert_eq!(
         project.mouse_action(click(0, 9), area),
         ovrcr::tui::DashboardAction::Redraw
@@ -824,7 +837,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         "project disclosure should fold the section"
     );
     for row in [8, 13] {
-        let mut blank = dashboard_fixture();
+        let mut blank = tree_dashboard_fixture();
         assert_eq!(
             blank.mouse_action(click(7, row), area),
             ovrcr::tui::DashboardAction::None,
@@ -836,7 +849,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
 
 #[test]
 fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     let mut hierarchy = fixture_hierarchy();
     review_session_mut(&mut hierarchy).label = "claude / sonnet-4".into();
@@ -865,7 +878,7 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
         Measurement, MetricsSample, MetricsSnapshot, ReporterHealth, SampleQuality, UsageCoverage,
         UsageScope, UsageTotals,
     };
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     review_session_mut(&mut hierarchy).phase = SessionPhase::Exited {
@@ -1005,7 +1018,7 @@ fn sidebar_shows_the_agent_and_current_model_on_one_row() {
 
 #[test]
 fn narrow_session_row_keeps_its_model_on_a_second_line() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     dashboard.install_hierarchy(hierarchy);
@@ -1096,7 +1109,7 @@ fn narrow_session_row_keeps_its_model_on_a_second_line() {
 fn sidebar_stacks_every_agent_label_or_none() {
     // At 29 cells `claude` fits beside a twelve-cell name and `pi:grok-4.7` does not.
     let draw = |review_label: &str| {
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = tree_dashboard_fixture();
         let mut hierarchy = fixture_hierarchy();
         review_session_mut(&mut hierarchy).label = review_label.into();
         implement_session_mut(&mut hierarchy).label = "claude".into();
@@ -1136,7 +1149,7 @@ fn sidebar_stacks_every_agent_label_or_none() {
 
 #[test]
 fn wide_session_row_keeps_the_agent_and_model_on_one_line() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     review_session_mut(&mut hierarchy).label = "pi / grok-4.7".into();
     dashboard.install_hierarchy(hierarchy);
@@ -1151,7 +1164,7 @@ fn wide_session_row_keeps_the_agent_and_model_on_one_line() {
     );
     assert_eq!(sidebar_row(&terminal, 5).trim_end(), "  󰘬 lifecycle");
     let area = Rect::new(0, 0, 120, 40);
-    let mut clicked = dashboard_fixture();
+    let mut clicked = tree_dashboard_fixture();
     clicked.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -1174,7 +1187,7 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
             (agent.to_string(), false),
             (format!(" {agent} / shared-model "), true),
         ] {
-            let mut dashboard = dashboard_fixture();
+            let mut dashboard = tree_dashboard_fixture();
             let mut hierarchy = fixture_hierarchy();
             review_session_mut(&mut hierarchy).label = label;
             dashboard.install_hierarchy(hierarchy);
@@ -1212,7 +1225,7 @@ fn sidebar_shows_each_agent_with_or_without_its_model() {
 
 #[test]
 fn long_sidebar_names_clip_to_one_screen_line() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].name = "consigint-界界界界界界界界界界界界界界".into();
     review_session_mut(&mut hierarchy).name =
@@ -1257,7 +1270,7 @@ fn dashboard_geometry_remains_drawable_at_target_and_tiny_sizes() {
     for (width, height, terminal_width, terminal_height) in
         [(180, 72, 140, 68), (120, 40, 80, 36), (80, 24, 40, 20)]
     {
-        let mut dashboard = dashboard_fixture();
+        let mut dashboard = tree_dashboard_fixture();
         let area = Rect::new(0, 0, width, height);
         dashboard.install_area(area);
         let terminal_rect = dashboard.pane_rects(area)[0].terminal;
@@ -1271,7 +1284,7 @@ fn dashboard_geometry_remains_drawable_at_target_and_tiny_sizes() {
             .unwrap();
     }
 
-    let dashboard = dashboard_fixture();
+    let dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(1, 1)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -1280,7 +1293,7 @@ fn dashboard_geometry_remains_drawable_at_target_and_tiny_sizes() {
 
 #[test]
 fn collapse_and_mouse_hits_use_current_visible_tree() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     let mouse = |column, row| MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -1350,7 +1363,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
-    let mut project = dashboard_fixture();
+    let mut project = tree_dashboard_fixture();
     enter_terminal(&mut project);
     assert_eq!(
         project.mouse_action(click(5, 1), area),
@@ -1365,7 +1378,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
         "label click must not fold the project"
     );
 
-    let mut project_disclosure = dashboard_fixture();
+    let mut project_disclosure = tree_dashboard_fixture();
     enter_terminal(&mut project_disclosure);
     assert_eq!(
         project_disclosure.mouse_action(click(0, 1), area),
@@ -1377,7 +1390,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
     assert!(sidebar_row(&terminal, 1).contains("▸"));
     assert_eq!(project_disclosure.focused_session(), Some(SessionId(1)));
 
-    let mut workspace = dashboard_fixture();
+    let mut workspace = tree_dashboard_fixture();
     enter_terminal(&mut workspace);
     assert_eq!(
         workspace.mouse_action(click(5, 2), area),
@@ -1392,7 +1405,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
         "workspace label click must not fold"
     );
 
-    let mut session = dashboard_fixture();
+    let mut session = tree_dashboard_fixture();
     enter_terminal(&mut session);
     assert!({
         let _ = session.mouse_action(click(6, 3), area);
@@ -1404,7 +1417,7 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
 #[test]
 fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
     // `v` offers a session for the new pane; Esc keeps the suggestion.
@@ -1500,7 +1513,7 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
 #[test]
 fn empty_pane_click_preserves_the_assigned_wire_focus() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
     // `v` offers a session for the new pane; Esc keeps the suggestion.
@@ -1608,7 +1621,7 @@ fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
         path: PathBuf::from("/tmp/empty"),
         sessions: Vec::new(),
     });
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
@@ -1708,16 +1721,16 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rendered[31],
+        rendered[32],
         format!("▌    - session-50{}sh ", " ".repeat(19))
     );
     assert_eq!(
-        rendered[32].trim_end(),
+        rendered[33].trim_end(),
         " QUOTA LEFT ───────────────────────────",
         "the quota section"
     );
     // The last tree row remains selectable; the quota section cannot select/close a session.
-    for (index, row) in [31, 32].into_iter().enumerate() {
+    for (index, row) in [32, 33].into_iter().enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -1763,17 +1776,23 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    for (row, expected) in [(1, "session-4"), (2, "session-5"), (3, "session-6")] {
-        let text = (0..39)
-            .map(|col| terminal.backend().buffer()[(col, row)].symbol())
-            .collect::<String>();
-        assert_eq!(text[..17].trim_end(), format!("     - {expected}"));
-    }
+    let session_rows: Vec<_> = ["session-4", "session-5", "session-6"]
+        .into_iter()
+        .map(|name| {
+            (0..40)
+                .find(|row| sidebar_row(&terminal, *row).contains(name))
+                .unwrap_or_else(|| panic!("missing visible {name} row"))
+        })
+        .collect();
+    assert!(
+        session_rows.windows(2).all(|rows| rows[1] == rows[0] + 1),
+        "scrolled tree rows stay consecutive: {session_rows:?}"
+    );
     let action = dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 3,
+            row: session_rows[2],
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 120, 40),
@@ -1823,7 +1842,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
             0,
         ));
     }
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_hierarchy(hierarchy);
     dashboard.install_focus(SessionId(50));
     assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
@@ -1846,7 +1865,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
 
 #[test]
 fn ux_live_metadata_is_readable_and_preserves_selection() {
-    let dashboard = dashboard_fixture();
+    let dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -1871,7 +1890,7 @@ fn selection_bar_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
 
 #[test]
 fn browse_jk_moves_across_project_workspace_and_session_rows() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -1930,7 +1949,7 @@ fn browse_jk_moves_across_project_workspace_and_session_rows() {
 
 #[test]
 fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
     // Climb to the auth workspace row, then fold and expand with Enter.
@@ -1999,7 +2018,7 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
 
 #[test]
 fn browse_jk_requests_a_view_only_for_session_rows() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let to_session = dashboard.key(KeyCode::Char('k'));
     assert_eq!(to_session, DashboardAction::Redraw);
     let request = only_request(dashboard.drain_outbox());
@@ -2016,7 +2035,7 @@ fn browse_jk_requests_a_view_only_for_session_rows() {
 
 #[test]
 fn enter_on_an_unready_session_refuses_and_stays_in_browse() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_unready(SessionId(1));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     // A loading pane is an expected limit: it says so plainly, without an error marker.
@@ -2057,7 +2076,7 @@ fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts()
         .unwrap();
     set_attention(&mut lifecycle.sessions[0], AgentActivity::Busy, false, true);
 
-    let mut workspace_dashboard = dashboard_fixture();
+    let mut workspace_dashboard = tree_dashboard_fixture();
     workspace_dashboard.install_hierarchy(hierarchy.clone());
     let area = Rect::new(0, 0, 120, 40);
     let click = |dashboard: &mut Dashboard, column, row| {
@@ -2071,42 +2090,64 @@ fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts()
             area,
         )
     };
+    let sidebar_position = |rows: &[String], needle: &str| {
+        rows.iter()
+            .position(|row| {
+                row.split('│')
+                    .next()
+                    .unwrap_or(row)
+                    .contains(needle)
+            })
+            .unwrap_or_else(|| panic!("missing sidebar row containing {needle:?}: {rows:?}"))
+    };
+    let auth_row = sidebar_position(&rendered_rows(&workspace_dashboard, 120, 40), " auth");
     assert_eq!(
-        click(&mut workspace_dashboard, 2, 2),
+        click(&mut workspace_dashboard, 2, auth_row as u16),
         ovrcr::tui::DashboardAction::Redraw
     );
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
         .unwrap();
+    let workspace_row =
+        sidebar_position(&rendered_rows(&workspace_dashboard, 120, 40), " auth") as u16;
     assert!(
-        sidebar_row(&terminal, 2).contains("?1 ✓1 ▸ 2"),
+        sidebar_row(&terminal, workspace_row).contains("?1 ✓1 ▸ 2"),
         "folded workspace shows each active kind once: {}",
-        sidebar_row(&terminal, 2)
+        sidebar_row(&terminal, workspace_row)
     );
     let buffer = terminal.backend().buffer();
     let input_glyph = (0..39)
-        .find(|x| buffer[(*x, 2)].symbol() == "?")
+        .find(|x| buffer[(*x, workspace_row)].symbol() == "?")
         .expect("Input count glyph");
     let ready_glyph = (0..39)
-        .find(|x| buffer[(*x, 2)].symbol() == "✓")
+        .find(|x| buffer[(*x, workspace_row)].symbol() == "✓")
         .expect("Ready count glyph");
-    assert_eq!(buffer[(input_glyph, 2)].fg, Color::Rgb(249, 226, 175));
-    assert_eq!(buffer[(ready_glyph, 2)].fg, Color::Rgb(148, 226, 213));
-
-    let mut project_dashboard = dashboard_fixture();
-    project_dashboard.install_hierarchy(hierarchy);
     assert_eq!(
-        click(&mut project_dashboard, 0, 1),
+        buffer[(input_glyph, workspace_row)].fg,
+        Color::Rgb(249, 226, 175)
+    );
+    assert_eq!(
+        buffer[(ready_glyph, workspace_row)].fg,
+        Color::Rgb(148, 226, 213)
+    );
+
+    let mut project_dashboard = tree_dashboard_fixture();
+    project_dashboard.install_hierarchy(hierarchy);
+    let project_row = sidebar_position(&rendered_rows(&project_dashboard, 120, 40), "CONSIGINT");
+    assert_eq!(
+        click(&mut project_dashboard, 0, project_row as u16),
         ovrcr::tui::DashboardAction::Redraw
     );
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project_dashboard, 0))
         .unwrap();
+    let folded_project_row =
+        sidebar_position(&rendered_rows(&project_dashboard, 120, 40), "CONSIGINT") as u16;
     assert!(
-        sidebar_row(&terminal, 1).contains("?1 ✓1 ▸ 2 ws"),
+        sidebar_row(&terminal, folded_project_row).contains("?1 ✓1 ▸ 2 ws"),
         "folded project counts all descendant sessions: {}",
-        sidebar_row(&terminal, 1)
+        sidebar_row(&terminal, folded_project_row)
     );
 
     ready.unread = None;
@@ -2116,7 +2157,9 @@ fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts()
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
         .unwrap();
-    let row = sidebar_row(&terminal, 2);
+    let workspace_row =
+        sidebar_position(&rendered_rows(&workspace_dashboard, 120, 40), " auth") as u16;
+    let row = sidebar_row(&terminal, workspace_row);
     assert!(row.contains("?1"), "open Input remains counted: {row}");
     assert!(!row.contains("✓1"), "reviewed Ready disappears: {row}");
 
@@ -2135,7 +2178,9 @@ fn folded_workspace_and_project_show_hidden_attention_and_drop_reviewed_counts()
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace_dashboard, 0))
         .unwrap();
-    let row = sidebar_row(&terminal, 2);
+    let workspace_row =
+        sidebar_position(&rendered_rows(&workspace_dashboard, 120, 40), " auth") as u16;
+    let row = sidebar_row(&terminal, workspace_row);
     assert!(
         !row.contains("?1") && !row.contains("✓1"),
         "closing the last request removes folded counts: {row}"
@@ -2366,7 +2411,7 @@ fn live_server_dashboard_renders_reported_unread_input_and_folded_counts() {
 
 #[test]
 fn j_from_a_folded_workspace_skips_hidden_sessions() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.key(KeyCode::Char('k'));
     dashboard.key(KeyCode::Char('k'));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
@@ -2385,7 +2430,7 @@ fn j_from_a_folded_workspace_skips_hidden_sessions() {
 
 #[test]
 fn jk_from_a_hidden_session_steps_off_the_folded_header() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -2461,14 +2506,16 @@ fn keyboard_selecting_a_project_scrolls_it_into_view() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(selection_bar_row(&terminal), Some(1));
-    assert!(sidebar_row(&terminal, 1).contains("PROJECT"));
+    let project_row = (0..40)
+        .find(|row| sidebar_row(&terminal, *row).contains("PROJECT"))
+        .expect("project is visible in the tree viewport");
+    assert_eq!(selection_bar_row(&terminal), Some(project_row));
 }
 
 #[test]
 fn container_selection_does_not_close_or_switch_a_split() {
     let area = Rect::new(0, 0, 120, 40);
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
     // `v` offers a session for the new pane; Esc keeps the suggestion.
@@ -2516,7 +2563,7 @@ fn container_selection_does_not_close_or_switch_a_split() {
 
 #[test]
 fn removing_a_project_drops_its_container_selection() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.key(KeyCode::Char('k'));
     dashboard.key(KeyCode::Char('k'));
     dashboard.key(KeyCode::Char('k'));
@@ -2539,7 +2586,7 @@ fn removing_a_project_drops_its_container_selection() {
 
 #[test]
 fn container_click_in_terminal_mode_returns_to_browse() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     enter_terminal(&mut dashboard);
     dashboard.mouse_action(
         MouseEvent {
@@ -2560,7 +2607,7 @@ fn container_click_in_terminal_mode_returns_to_browse() {
 
 #[test]
 fn highlighted_session_row_shows_close_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -2607,7 +2654,7 @@ fn highlighted_session_row_shows_close_mark() {
 
 #[test]
 fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     hover(&mut dashboard, 10, 4, area);
     let action = dashboard.mouse_action(
@@ -2643,7 +2690,7 @@ fn clicking_the_close_mark_confirms_archive_of_the_highlighted_session() {
 
 #[test]
 fn dismissing_the_close_mark_confirm_archives_nothing() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     hover(&mut dashboard, 10, 4, area);
     dashboard.mouse_action(
@@ -2662,7 +2709,7 @@ fn dismissing_the_close_mark_confirm_archives_nothing() {
 
 #[test]
 fn close_mark_from_terminal_mode_returns_to_browse() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     enter_terminal(&mut dashboard);
     hover(&mut dashboard, 10, 4, area);
@@ -2685,7 +2732,7 @@ fn close_mark_from_terminal_mode_returns_to_browse() {
 
 #[test]
 fn pointer_over_another_session_shows_its_close_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     let moved = |column, row| MouseEvent {
         kind: MouseEventKind::Moved,
@@ -2717,7 +2764,7 @@ fn pointer_over_another_session_shows_its_close_mark() {
 
 #[test]
 fn clicking_a_hovered_close_mark_archives_that_row_without_switching_the_pane() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -2753,7 +2800,7 @@ fn clicking_a_hovered_close_mark_archives_that_row_without_switching_the_pane() 
 
 #[test]
 fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -2802,7 +2849,7 @@ fn close_confirm_highlights_only_the_clicked_row_until_dismissed() {
 
 #[test]
 fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     let split = dashboard.key(KeyCode::Char('v'));
     // `v` offers a session for the new pane; Esc keeps the suggestion.
@@ -2837,7 +2884,7 @@ fn hovered_close_mark_does_not_focus_the_pane_already_showing_that_session() {
 
 #[test]
 fn pointer_on_a_workspace_row_clears_the_hover_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -2872,7 +2919,7 @@ fn pointer_on_a_workspace_row_clears_the_hover_mark() {
 
 #[test]
 fn palette_keeps_the_mouse_from_a_second_close_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     hover(&mut dashboard, 10, 4, area);
     dashboard.mouse_action(
@@ -2909,7 +2956,7 @@ fn palette_keeps_the_mouse_from_a_second_close_mark() {
 
 #[test]
 fn losing_mouse_capture_clears_a_hover_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -2939,14 +2986,14 @@ fn sidebar_contains_close_mark(dashboard: &Dashboard) -> bool {
 
 #[test]
 fn history_and_copy_hide_the_session_close_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.key(KeyCode::Char('['));
     assert!(
         !sidebar_contains_close_mark(&dashboard),
         "Copy must not show the session close mark"
     );
 
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     assert_eq!(
         dashboard.key(KeyCode::PageUp),
         ovrcr::tui::DashboardAction::Redraw
@@ -2971,7 +3018,7 @@ fn history_and_copy_hide_the_session_close_mark() {
 
 #[test]
 fn clicking_the_close_mark_confirms_a_paused_session() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let mut hierarchy = fixture_hierarchy();
     review_session_mut(&mut hierarchy).phase = SessionPhase::Paused;
     dashboard.install_hierarchy(hierarchy);
@@ -2998,7 +3045,7 @@ fn clicking_the_close_mark_confirms_a_paused_session() {
 
 #[test]
 fn clicking_the_close_mark_archives_an_exited_session_immediately() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(2));
     hover(&mut dashboard, 10, 7, Rect::new(0, 0, 120, 40));
     assert_eq!(
@@ -3026,7 +3073,7 @@ fn clicking_the_close_mark_archives_an_exited_session_immediately() {
 
 #[test]
 fn clicking_beside_the_close_mark_still_opens_the_session() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.install_focus(SessionId(5));
     let action = dashboard.mouse_action(
         MouseEvent {
@@ -3059,7 +3106,7 @@ fn clicking_beside_the_close_mark_still_opens_the_session() {
 
 #[test]
 fn close_mark_is_absent_until_hover_and_inert_without_mouse_capture() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     assert!(!sidebar_contains_close_mark(&dashboard));
     dashboard.event_action(Event::FocusLost);
     assert_eq!(
@@ -3079,7 +3126,7 @@ fn close_mark_is_absent_until_hover_and_inert_without_mouse_capture() {
 
 #[test]
 fn close_mark_is_omitted_when_the_row_is_narrower_than_three_cells() {
-    let dashboard = dashboard_fixture();
+    let dashboard = tree_dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(6, 12)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -3096,7 +3143,7 @@ fn close_mark_is_omitted_when_the_row_is_narrower_than_three_cells() {
 
 #[test]
 fn selected_project_row_hides_the_session_close_mark() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -3114,7 +3161,7 @@ fn selected_project_row_hides_the_session_close_mark() {
 
 #[test]
 fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     dashboard.mouse_action(
         MouseEvent {
@@ -3148,7 +3195,7 @@ fn a_selected_workspace_still_shows_the_close_mark_on_the_hovered_session() {
 
 #[test]
 fn hovering_a_workspace_shows_close_mark_and_click_opens_remove() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = tree_dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
     hover(&mut dashboard, 10, 2, area);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

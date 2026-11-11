@@ -761,6 +761,9 @@ mod tests {
                 },
             )
             .unwrap();
+        let running = store.operator_conversation(conversation.id).unwrap();
+        assert!(running.current_turn_started_unix_ms.is_some());
+        assert_eq!(running.last_reply_unix_ms, None);
         assert_eq!(
             store
                 .operator_worker_start(turn.identity)
@@ -782,22 +785,19 @@ mod tests {
             ],
         };
         store.apply_operator_batch(&batch).unwrap();
+        let completed = store.operator_conversation(conversation.id).unwrap();
+        assert!(completed.current_turn_started_unix_ms.is_some());
+        assert!(completed.last_reply_unix_ms.is_some());
         assert_eq!(
-            store
-                .operator_conversation(conversation.id)
-                .unwrap()
-                .reasoning,
+            completed.reasoning,
             Some(reasoning.clone())
         );
         drop(store);
         let store = SessionStore::open(root.path()).unwrap();
-        assert_eq!(
-            store
-                .operator_conversation(conversation.id)
-                .unwrap()
-                .reasoning,
-            Some(reasoning)
-        );
+        let reopened = store.operator_conversation(conversation.id).unwrap();
+        assert_eq!(reopened.reasoning, Some(reasoning));
+        assert!(reopened.current_turn_started_unix_ms.is_some());
+        assert!(reopened.last_reply_unix_ms.is_some());
         // Recreate the previous writer's column shape, preserving the journal.
         store
             .connection

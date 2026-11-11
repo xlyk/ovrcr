@@ -57,6 +57,7 @@ fn format_age(timestamp: Option<u64>, now: u64) -> String {
 fn setup_failure(error: Option<&str>) -> bool {
     error.is_some_and(|error| {
         error.starts_with("Pi is unavailable;")
+            || error.starts_with("No Pi model selected;")
             || error.starts_with("Configured Operator model is unavailable")
     })
 }

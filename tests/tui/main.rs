@@ -172,15 +172,20 @@ fn fixture_hierarchy() -> HierarchySnapshot {
 fn dashboard_fixture() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
     dashboard.install_area(Rect::new(0, 0, 88, 38));
-    // Most existing fixtures exercise tree navigation and rendering. Keep
-    // that baseline tree-only; Operator-section behavior has its own screen
-    // cases with the production default enabled.
-    let mut settings = ovrcr::tui::Settings::default();
-    settings.operator.sidebar = false;
-    dashboard.install_settings(settings);
     dashboard.install_hierarchy(fixture_hierarchy());
     dashboard.install_focus(SessionId(1));
     dashboard.install_screen(SessionId(1), &[]);
+    dashboard
+}
+
+/// Sidebar tree tests use this when their assertions concern tree geometry or
+/// row behavior in isolation; combined section layout is covered with the
+/// production default in `operator_dock` and the shared Dashboard fixtures.
+fn tree_dashboard_fixture() -> Dashboard {
+    let mut dashboard = dashboard_fixture();
+    let mut settings = ovrcr::tui::Settings::default();
+    settings.operator.sidebar = false;
+    dashboard.install_settings(settings);
     dashboard
 }
 
