@@ -282,6 +282,15 @@ mod tests {
         dashboard
     }
 
+    fn clear_attention(dashboard: &mut Dashboard) {
+        for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
+            for session in &mut workspace.sessions {
+                session.unread = None;
+                session.agent.as_mut().unwrap().input_requests.clear();
+            }
+        }
+    }
+
     #[test]
     fn input_outranks_unread_and_only_a_running_session_waits() {
         let mut waiting = session(1, "a", true, true);
@@ -574,12 +583,7 @@ mod tests {
     #[test]
     fn hierarchy_attention_geometry_shift_clears_stale_hover_and_keeps_selection() {
         let mut dashboard = dashboard();
-        for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
-            for session in &mut workspace.sessions {
-                session.unread = None;
-                session.agent.as_mut().unwrap().input_requests.clear();
-            }
-        }
+        clear_attention(&mut dashboard);
         let area = Rect::new(0, 0, 120, 40);
         let before = screen_at(&dashboard, area.height);
         let hovered_row = before
@@ -621,6 +625,156 @@ mod tests {
         assert_eq!(
             after[usize::from(rects.attention.y)].trim_end(),
             " ✓ 1 ready"
+        );
+    }
+
+    #[test]
+    fn hierarchy_tree_row_reorder_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let workspace = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == "c")
+            .expect("workspace c");
+        workspace.sessions.swap(0, 1);
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        assert_eq!(dashboard.sidebar_rects(area).tree, tree_before);
+        assert_ne!(dashboard.visible_rows(), rows_before);
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row reorder preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            after[hovered_row].contains("agent-7"),
+            "the stationary pointer now sits on agent-7: {after:?}"
+        );
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row reorder: {after:?}"
+        );
+    }
+
+    #[test]
+    fn hierarchy_tree_row_height_change_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+        let heights_before = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_before,
+            usize::from(tree_before.width),
+        );
+
+        let mut hierarchy = dashboard.hierarchy.clone();
+        let target = hierarchy.projects[0]
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.sessions.iter_mut())
+            .find(|session| session.id == SessionId(1))
+            .expect("session 1");
+        target.kind = ovrcr_protocol::SessionKind::Agent {
+            name: "an agent label too long to fit beside session names".into(),
+        };
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::HierarchyChanged(hierarchy),
+        ));
+
+        let tree_after = dashboard.sidebar_rects(area).tree;
+        let rows_after = dashboard.visible_rows();
+        let heights_after = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_after,
+            usize::from(tree_after.width),
+        );
+        assert_eq!(tree_after, tree_before);
+        assert_eq!(rows_after, rows_before, "row identities stay the same");
+        assert_ne!(heights_after, heights_before, "the tree rows grow taller");
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row-height change preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row heights change: {after:?}"
+        );
+    }
+
+    #[test]
+    fn session_change_tree_row_height_change_clears_hover_and_keeps_selection() {
+        let mut dashboard = dashboard();
+        clear_attention(&mut dashboard);
+        let area = Rect::new(0, 0, 120, 40);
+        let before = screen_at(&dashboard, area.height);
+        let hovered_row = before
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 row");
+        dashboard.mouse_action(move_to(8, hovered_row as u16), area);
+        assert!(screen_at(&dashboard, area.height)[hovered_row].contains("[x]"));
+        let rows_before = dashboard.visible_rows();
+        let tree_before = dashboard.sidebar_rects(area).tree;
+        let heights_before = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_before,
+            usize::from(tree_before.width),
+        );
+
+        let mut updated = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+        updated.kind = ovrcr_protocol::SessionKind::Agent {
+            name: "an agent label too long to fit beside session names".into(),
+        };
+        dashboard.handle_server_message(crate::protocol::ServerMessage::Event(
+            crate::protocol::ServerEvent::SessionChanged(Box::new(updated)),
+        ));
+
+        let tree_after = dashboard.sidebar_rects(area).tree;
+        let rows_after = dashboard.visible_rows();
+        let heights_after = super::super::render::tree_row_heights(
+            &dashboard,
+            &rows_after,
+            usize::from(tree_after.width),
+        );
+        assert_eq!(tree_after, tree_before);
+        assert_eq!(rows_after, rows_before, "row identities stay the same");
+        assert_ne!(heights_after, heights_before, "the tree rows grow taller");
+        assert_eq!(
+            dashboard.focused_session(),
+            Some(SessionId(1)),
+            "a row-height change preserves logical selection"
+        );
+        let after = screen_at(&dashboard, area.height);
+        assert!(
+            !after.iter().any(|row| row.contains("[x]")),
+            "the old hover identity is cleared after row heights change: {after:?}"
         );
     }
 
