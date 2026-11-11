@@ -2324,14 +2324,17 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         });
     }
     for width in [80, 100, 120] {
+        let area = Rect::new(0, 0, width, 24);
+        let sidebar = dashboard.sidebar_rects(area);
+        let background_session_y = sidebar.tree.y + 2;
         let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
         terminal
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
         // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
         // the literal state and health text live on the metadata line. The attention
-        // strip above the quota section counts it without moving the tree.
-        let cell = &terminal.backend().buffer()[(5, 3)];
+        // strip leads the Operator section and tree when it has counts.
+        let cell = &terminal.backend().buffer()[(5, background_session_y)];
         assert_eq!(
             cell.symbol(),
             "✓",
@@ -2343,17 +2346,21 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect()
         };
-        assert_eq!(row(15).trim_end(), " ✓ 1 ready", "width {width}");
+        assert_eq!(
+            row(sidebar.attention.y).trim_end(),
+            " ✓ 1 ready",
+            "width {width}"
+        );
         // A label too long to share the name's line is kept on the line under it.
         assert!(
-            row(4).contains("long Codex label"),
+            row(background_session_y + 1).contains("long Codex label"),
             "the background label follows its name: {}",
-            row(4)
+            row(background_session_y + 1)
         );
         assert!(
-            row(5).contains(&original.name),
+            row(background_session_y + 2).contains(&original.name),
             "the next session follows the background row: {}",
-            row(5)
+            row(background_session_y + 2)
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
@@ -2542,20 +2549,20 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         metrics.cost_received_unix_ms = 1;
     }
     let pane_widths: Vec<_> = super::pane_rects(
-        Rect::new(0, 0, 166, 24),
+        Rect::new(0, 0, 240, 24),
         dashboard.panes.len(),
         dashboard.focused_pane,
     )
     .into_iter()
     .map(|pane| pane.metadata.width)
     .collect();
-    assert_eq!(pane_widths, [62, 63]);
-    let text = drawn(&dashboard, now, 166);
+    assert_eq!(pane_widths, [99, 100]);
+    let text = drawn(&dashboard, now, 240);
     assert_eq!(
         text.matches("ctx 50% · 712k tokens (6m ago) · ~$0.47 (6m ago)")
             .count(),
         2,
-        "split metrics must preserve both ages: {text}"
+        "split metrics preserve both ages when the pane can fit them: {text}"
     );
     for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
         let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
@@ -3137,6 +3144,7 @@ fn history_end_survives_split_and_leave_history() {
     // never drained and leave_history overwrote.
     let mut dashboard = staged_history_copy_dashboard();
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
     assert!(dashboard.split_pane());
     // Deliberately undrained: re-open history on the new pane and leave it, so the split's
     // release and `leave_history`'s end compete for the one slot the old code parked in.
@@ -3444,7 +3452,16 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     for mode in [InputMode::Browse, InputMode::Copy, InputMode::History] {
         dashboard.mode = mode;
         let groups = keymap(&dashboard);
-        let bindings: Vec<&KeyBinding> = groups.iter().flat_map(|group| &group.keys).collect();
+        let bindings: Vec<&KeyBinding> = groups
+            .iter()
+            .flat_map(|group| &group.keys)
+            // Match the production dispatch scope: pane direction and swap
+            // rows run only after opening the Panes group.
+            .filter(|binding| {
+                mode != InputMode::Browse
+                    || !matches!(binding.action, Action::FocusPane(_) | Action::SwapPane(_))
+            })
+            .collect();
         assert!(!bindings.is_empty(), "{mode:?} lists no keys");
         for binding in &bindings {
             let matched: Vec<_> = bindings
@@ -3477,7 +3494,7 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
         ),
         (
             KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
-            Action::OtherPane,
+            Action::PreviousPane,
         ),
         (
             KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
@@ -3546,7 +3563,8 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
     assert_eq!(reason(&dashboard, "r"), Some("not paused"));
     assert_eq!(reason(&dashboard, "R"), Some("no unread response"));
     assert_eq!(reason(&dashboard, "x"), Some("only one pane"));
-    assert_eq!(reason(&dashboard, "Tab/Shift-Tab"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "Tab"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "Shift-Tab"), Some("only one pane"));
     assert_eq!(reason(&dashboard, "v"), Some("no other visible session"));
 
     dashboard.install_unready(SessionId(12));
@@ -3577,7 +3595,8 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
     split.key(KeyCode::Char('k'));
     assert!(split.action_session().is_none());
     assert_eq!(reason(&split, "x"), Some("no session selected"));
-    assert_eq!(reason(&split, "Tab/Shift-Tab"), Some("no session selected"));
+    assert_eq!(reason(&split, "Tab"), Some("no session selected"));
+    assert_eq!(reason(&split, "Shift-Tab"), Some("no session selected"));
     assert_eq!(reason(&split, "Enter"), None);
 
     let empty = Dashboard::new(TerminalSize {
@@ -3617,7 +3636,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
         ('p', "n", Action::CreateWorkspace),
         ('p', "a", Action::RegisterProject),
         ('v', "t/Ctrl-t", Action::Tasks),
-        ('v', "x", Action::ClosePane),
+        ('s', "x", Action::ClosePane),
     ] {
         assert!(
             slots.contains(&expected),
@@ -4166,6 +4185,7 @@ fn old_run_packets_are_ignored_after_same_row_replacement() {
 #[test]
 fn inactive_to_live_clears_prior_view_state_and_keeps_the_row() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].title = Some("Pinned".into());
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Stopped;
@@ -4280,6 +4300,9 @@ fn root_workspace_sorts_first_regardless_of_name() {
 fn browse_footer_lists_only_the_menu_commands_and_help_keys() {
     use crate::protocol::SessionPhase;
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    // Repeatedly splitting the rightmost pane needs 164 content columns so
+    // each nested child can still fit two 20-column panes and a divider.
+    dashboard.install_area(Rect::new(0, 0, 240, 40));
     assert_eq!(
         super::hints::footer(&dashboard, 120),
         "BROWSE  Space Menu  : Commands  ? Help"

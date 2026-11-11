@@ -1,7 +1,7 @@
 󰚩 OVRCR                                                                            [Commands] [Menu]
-                                       │Operator · pi · openai/gpt-6.1-sol · ready
-                                       │                                    [Reasoning — ▾ Ctrl-t]
-                                       │❯ You
+ OPERATOR ─────────────────────────────│Operator · pi · openai/gpt-6.1-sol · ready
+▌ · Idle                               │                                    [Reasoning — ▾ Ctrl-t]
+↳ No replies yet                       │❯ You
                                        │  ▸ Context · global
                                        │  Review this workspace.
                                        │
@@ -14,11 +14,11 @@
                                        │
                                        │
                                        │
- QUOTA LEFT ───────────────────────────│
-Claude · checking                      │
-Codex · usage off                      │ Managing global
-Grok · usage off                       │ ──────────────────────────────────────────────────────────
-Cursor · usage off                     │ > ▏
                                        │
-▌ Operator                             │ ──────────────────────────────────────────────────────────
+ QUOTA LEFT ───────────────────────────│
+Claude · checking                      │ Managing global
+Codex · usage off                      │ ──────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ──────────────────────────────────────────────────────────
 OPERATOR  Shift-Enter Newline  Ctrl-g Browse

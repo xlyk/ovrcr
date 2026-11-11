@@ -44,10 +44,9 @@ pub(super) enum Action {
     SplitDown,
     FocusPane(super::PaneDirection),
     SwapPane(super::PaneDirection),
+    ResizePane(super::PaneResize),
     ZoomPane,
     ClosePane,
-    /// A disabled placeholder used for keys owned by a later ticket.
-    Unavailable,
     OtherPane,
     PreviousPane,
     NextSession,
@@ -266,6 +265,9 @@ impl KeyBinding {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return false;
         }
+        if self.action == Action::ResizePane(super::PaneResize::Taller) {
+            return matches!(key.code, KeyCode::Char('+' | '='));
+        }
         if self.key.chars().count() == 1 {
             return key.code == self.code;
         }
@@ -284,11 +286,7 @@ impl Dashboard {
             // Pane-direction and placeholder rows only run inside the popup;
             // direct Browse lookup must keep j/k and arrows on the sidebar.
             .filter(|binding| {
-                !browse
-                    || !matches!(
-                        binding.action,
-                        Action::FocusPane(_) | Action::SwapPane(_) | Action::Unavailable
-                    )
+                !browse || !matches!(binding.action, Action::FocusPane(_) | Action::SwapPane(_))
             })
             .find(|binding| {
                 binding.matches(
@@ -392,6 +390,10 @@ impl Dashboard {
                 self.swap_focused_pane(direction);
                 DashboardAction::Redraw
             }
+            Action::ResizePane(resize) => {
+                self.resize_focused_pane(resize);
+                DashboardAction::Redraw
+            }
             Action::ZoomPane => self.toggle_pane_zoom(),
             Action::ClosePane => {
                 if self.action_session().is_some() {
@@ -399,7 +401,6 @@ impl Dashboard {
                 }
                 DashboardAction::Redraw
             }
-            Action::Unavailable => DashboardAction::Redraw,
             // Dispatch runs a disabled binding's action so it can refuse in its
             // own words, so every action holds its own bound: this one keeps the
             // pane count the "only one pane" reason reports.
@@ -1063,37 +1064,37 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             "Narrower",
             "Shrink the focused pane by 2 columns".into(),
             Char('<'),
-            Action::Unavailable,
+            Action::ResizePane(super::PaneResize::Narrower),
         )
-        .unless(Some("not available yet"))
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Right))
         .group('s', "<"),
         key_binding(
             ">",
             "Wider",
             "Grow the focused pane by 2 columns".into(),
             Char('>'),
-            Action::Unavailable,
+            Action::ResizePane(super::PaneResize::Wider),
         )
-        .unless(Some("not available yet"))
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Right))
         .group('s', ">"),
         key_binding(
             "-",
             "Shorter",
             "Shrink the focused pane by 1 row".into(),
             Char('-'),
-            Action::Unavailable,
+            Action::ResizePane(super::PaneResize::Shorter),
         )
-        .unless(Some("not available yet"))
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Down))
         .group('s', "-"),
         key_binding(
-            "+",
+            "+/=",
             "Taller",
-            "Grow the focused pane by 1 row".into(),
+            "Grow the focused pane by 1 row (+ or =)".into(),
             Char('+'),
-            Action::Unavailable,
+            Action::ResizePane(super::PaneResize::Taller),
         )
-        .unless(Some("not available yet"))
-        .group('s', "+"),
+        .unless(dashboard.pane_resize_refusal(super::SplitDirection::Down))
+        .group('s', "+/="),
         key_binding(
             "j/Down",
             "Next row",

@@ -469,22 +469,39 @@ mod tests {
     fn strip_sits_above_the_quota_section_and_a_click_jumps_like_the_key() {
         let mut dashboard = dashboard();
         let rows = screen(&dashboard);
-        // The tree leads; the strip sits directly above the six-row quota
-        // section, and the Operator dock keeps the sidebar's last row.
-        assert!(rows[1].trim_end().starts_with(" P"), "{}", rows[1]);
-        assert_eq!(rows[21].trim_end(), " ? 2 need input · ✓ 2 ready");
-        assert!(rows[22].contains("QUOTA LEFT"), "{}", rows[22]);
-        assert!(rows[28].contains("Operator"), "{}", rows[28]);
-        assert!(!rows[28].contains("[+]") && !rows[28].contains("▸"));
+        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
+        assert_eq!(rects.attention.height, 1);
         assert_eq!(
-            dashboard.mouse_action(click(21), Rect::new(0, 0, 120, 30)),
+            rows[usize::from(rects.attention.y)].trim_end(),
+            " ? 2 need input · ✓ 2 ready"
+        );
+        assert!(
+            rows[usize::from(rects.operator.y)].contains("OPERATOR"),
+            "{}",
+            rows[rects.operator.y as usize]
+        );
+        assert!(
+            rows[usize::from(rects.tree.y)].trim_end().starts_with(" P"),
+            "{}",
+            rows[rects.tree.y as usize]
+        );
+        assert!(
+            rows[usize::from(rects.quota.y)].contains("QUOTA LEFT"),
+            "{}",
+            rows[rects.quota.y as usize]
+        );
+        let operator_rows =
+            rows[usize::from(rects.operator.y)..usize::from(rects.operator.bottom())].join("\n");
+        assert!(!operator_rows.contains("[+]") && !operator_rows.contains("▸"));
+        assert_eq!(
+            dashboard.mouse_action(click(rects.attention.y), Rect::new(0, 0, 120, 30)),
             DashboardAction::Redraw
         );
         assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
     }
 
     #[test]
-    fn a_new_unread_moves_no_row_under_the_pointer() {
+    fn a_new_attention_strip_precedes_the_tree_and_click_uses_the_rendered_target_row() {
         let mut dashboard = dashboard();
         for workspace in &mut dashboard.hierarchy.projects[0].workspaces {
             for session in &mut workspace.sessions {
@@ -508,21 +525,32 @@ mod tests {
             crate::protocol::ServerEvent::SessionChanged(Box::new(ready)),
         ));
         let after = screen(&dashboard);
+        let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, 30));
         assert!(
-            after.iter().any(|row| row.trim_end() == " ✓ 1 ready"),
+            after[usize::from(rects.attention.y)].trim_end() == " ✓ 1 ready",
             "{after:?}"
         );
+        assert_eq!(rects.attention.height, 1, "the first count shows the strip");
         assert_eq!(
-            after[..y],
-            before[..y],
-            "the rows above the target stay put"
+            rects.attention.y + rects.attention.height + 1,
+            rects.operator.y,
+            "the strip's blank row precedes Operator"
+        );
+        let new_y = after
+            .iter()
+            .position(|row| row.contains("agent-6"))
+            .expect("agent-6 stays visible");
+        assert_eq!(
+            new_y,
+            y + 2,
+            "the attention line and its blank row shift the tree down"
         );
         assert!(
-            after[y].contains("✓ agent-6"),
+            after[new_y].contains("✓ agent-6"),
             "the target keeps its line: {}",
-            after[y]
+            after[new_y]
         );
-        dashboard.mouse_action(click(y as u16), Rect::new(0, 0, 120, 30));
+        dashboard.mouse_action(click(new_y as u16), Rect::new(0, 0, 120, 30));
         assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
     }
 

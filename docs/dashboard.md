@@ -121,6 +121,8 @@ change when the Server republishes. The Claude probe is a separate consent,
 | `b` | Hide or show the sidebar; the panes take its width, and `j` / `k` still move the selection |
 | `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` / `V` | Split the focused pane to the right / down, then choose its session; `Esc` keeps the suggestion |
+| `<` / `>` | Make the focused pane two columns narrower / wider; the neighboring pane changes by the same amount |
+| `-` / `+` / `=` | Make the focused pane one row shorter / taller; `+` and `=` are aliases |
 | `z` | Zoom the focused pane to fill the pane area, or restore the layout |
 | `Tab` / `Shift-Tab` | Focus the next / previous pane |
 | `x` | Close the focused pane; its session keeps running |
@@ -411,6 +413,14 @@ already assigned to another pane. A layout can contain up to four panes, each
 at least 20 columns wide and 8 rows tall including its header. The footer gives
 the reason when another split cannot fit or the four-pane limit is reached.
 Drag any divider to resize its neighboring panes; click a pane to focus it.
+In Browse, `<` and `>` move the nearest left-right divider around the focused
+pane by two columns, and `-`, `+`, or `=` move its nearest top-bottom divider
+by one row. Repeated key events repeat that step. A pane stays at least 20
+columns wide and 8 rows tall including its header; the key does nothing at the
+minimum, and the Panes group explains when no matching divider exists. These
+keys are also available in `Space s`. Double-click a pane header to zoom or
+restore the layout, double-click a divider to make that split even, or
+right-click a pane to focus it and open the Panes group.
 `Tab` and `Shift-Tab` cycle through panes. Sidebar navigation replaces the
 focused pane's session; selecting a session already shown elsewhere moves focus
 to that pane instead. `x` closes the focused pane and gives its space to its
@@ -429,8 +439,7 @@ same session. These directional keys work in the group; in Browse, arrows and
 shows only the focused pane and marks its header `zoomed`; the tree and other
 assignments stay in place. Press `z` again to restore the tree. `Tab` and
 `Shift-Tab` change the focused pane without ending zoom, while splitting or
-closing a pane restores the tree. The group also lists the resize keys, dimmed
-with `not available yet` until pane resizing is implemented.
+closing a pane restores the tree.
 
 ## Sidebar and status
 
@@ -588,6 +597,10 @@ In Browse and Terminal modes:
   clicking the quota section at the bottom opens the quota details, as `u` does.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
+- Double-clicking a pane header zooms or restores that pane; double-clicking a
+  divider sets its split to an even ratio. Right-clicking a pane focuses it and
+  opens the Panes group in Browse. Terminal mouse input remains forwarded to
+  programs that request it.
 - Dragging the divider between two panes changes their widths. Each visible pane
   keeps at least 20 columns. The split proportion survives window resizing and
   the temporary single-pane layout used in narrow windows.
@@ -666,9 +679,9 @@ the hook-owned activity state.
 
 In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
 `v` View, and `s` Panes. Only groups relevant to the selected row appear. The
-Panes group lists split, directional focus, swap, next pane, zoom and close;
-resize entries remain visible with `not available yet` until that action is
-implemented. Terminal rows
+Panes group lists split, directional focus, swap, resize, next pane, zoom and
+close. A resize action explains when the focused pane has no divider in that
+direction. Terminal rows
 also expose their parent workspace and project. `a` registers a project and
 `q` detaches from the top level, including when the hierarchy is empty. Nothing
 else sits beside the groups: desktop notifications and the ready sound are

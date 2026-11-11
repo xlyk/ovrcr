@@ -231,7 +231,7 @@ impl Dashboard {
             if group == 's' {
                 const ORDER: [&str; 17] = [
                     "v", "s", "h", "j", "k", "l", "H", "J", "K", "L", "Tab", "z", "<", ">", "-",
-                    "+", "x",
+                    "+/=", "x",
                 ];
                 hints.sort_by_key(|hint| {
                     ORDER
@@ -298,6 +298,7 @@ impl Dashboard {
     /// Open the popup: `leader` waits for the next key, otherwise it starts browsable.
     pub(super) fn open_whichkey(&mut self, leader: bool) -> DashboardAction {
         self.agent_typing = None;
+        self.mouse.last_pane_click = None;
         self.cancel_mouse_gesture();
         self.whichkey = Some(WhichKey {
             pending_leader: leader,
