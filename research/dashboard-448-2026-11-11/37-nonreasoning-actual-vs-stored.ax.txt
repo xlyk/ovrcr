@@ -1,0 +1,60 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │Operator · pi · fixture/operator-fixture-no-thinking · complete
+                                       │                                             [Reasoning off (set: medium) ▾ Ctrl-t]
+ OPERATOR ─────────────────────────────│❯ You
+▌ · Idl
+		3 text (settable) 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+		4 text (settable)  ? 1 needs input                       │Operator · pi · fixture/operator-fixture-no-thinking · complete
+		5 text (settable)                                        │                                             [Reasoning off (set: medium) ▾ Ctrl-t]
+		6 text (settable)  OPERATOR ─────────────────────────────│❯ You
+		7 text (settable) ▌ · Idle                last reply 24s │  ▸ Context · consigint / main
+		8 text (settable) ↳ “FIXTURE_FOLLOWUP_DONE”              │  REQUEST_THINKING_LONG_HELD
+		9 text (settable)                                        │
+		10 text (settable)  CONSIGINT ────────────────────────────││ ▸ Thinking · 40 lines
+		11 text (settable)      ? plan snapshot restore         6m││ Operator
+		12 text (settable)        └ 󰘬 gui-consigint-worktree-lif… ││ THINKING_LONG_ANSWER
+		13 text (settable)      - review auth handoff          13m│
+		14 text (settable)        └ 󰘬 gui-consigint-auth-handoff… │❯ You
+		15 text (settable)      - review websocket shutdown    13m│  REQUEST_THINKING_HELD
+		16 text (settable)        └ 󰘬 gui-consigint-worktree-lif… │
+		17 text (settable)      - implement lifecycle cleanup  13m││ ▾ Thinking · 1 lines
+		18 text (settable)        └ 󰘬 gui-consigint-worktree-lif… ││   THINKING_DELTA_ONETHINKING_DELTA_TWO
+		19 text (settable)                                        ││ Operator
+		20 text (settable)  SPACELIFT-AGENT ─────────────────┌ Reasoning · operator-fixture-no-thinking ────────────┐
+		21 text (settable)      · cua-native-448             │  default (Pi's choice)                               │
+		22 text (settable)        └ 󰘬 cua-native-448 · claude│✓ off                                                 │
+		23 text (settable)      - review scope quality       │not offered: minimal, low, medium, high, xhigh, max   │
+		24 text (settable)        └ 󰘬 gui-spacelift-agent-sco│↑↓ Enter pick · Esc close                             │
+		25 text (settable)      - build pipeline progress    └──────────────────────────────────────────────────────┘
+		26 text (settable)        └ 󰘬 gui-spacelift-agent-pipeli… ││ FIXTURE_FOLLOWUP_DONE
+		27 text (settable) USAGE · 0 tokens · 13m                 │
+		28 text (settable) ⠹ 0 working  ? 1 input  ✓ 0 ready      │
+		29 text (settable) · 0 idle  ! 0 error  P 0 paused        │
+		30 text (settable) · 1 exited  - 11 unknown               │
+		31 text (settable)                                        │
+		32 text (settable)  RESOURCES ────────────────────────────│
+		33 text (settable)  cpu       ━━━━━━━━──────────────  37% │
+		34 text (settable)  mem       ━━━━━━━━━━━━━━──── 37.7/48G │
+		35 text (settable)                                        │
+		36 text (settable)  QUOTA LEFT ───────────────────────────│
+		37 text (settable) Claude · not signed in                 │ Managing consigint / main
+		38 text (settable) Codex · unavailable · retry 6m         │ ───────────────────────────────────────────────────────────────────────────────────
+		39 text (settable) Grok · not signed in · retry 7m        │ > ▏
+		40 text (settable) Cursor · usage off                     │
+		41 text (settable)                                        │ ───────────────────────────────────────────────────────────────────────────────────
+		42 text (settable) OPERATOR  Enter Pick
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text OVRCR GUI
+47 menu bar
+	48 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │Operator · pi · fixture/operator-fixture-no-thinking · complete
+                                       │                                             [Reasoning off (set: medium) ▾ Ctrl-t]
+ OPERATOR ─────────────────────────────│❯ You
+▌ · Idl

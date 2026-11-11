@@ -1,0 +1,60 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │  plan snapshot restore  Waiting for input│  review auth handoff  grok  status off
+                                       │──────────────────────────────────────────│──────────────────────────────────────────
+ OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───                      │╭─ grok / grok-4.6 ─
+  · Idl
+		3 text (settable) 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+		4 text (settable)  ? 1 needs input                       │  plan snapshot restore  Waiting for input│  review auth handoff  grok  status off
+		5 text (settable)                                        │──────────────────────────────────────────│──────────────────────────────────────────
+		6 text (settable)  OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───                      │╭─ grok / grok-4.6 ─
+		7 text (settable)   · Idle                 last reply 1m ││ fixture: snapshot                       ││ fixture: authentic
+		8 text (settable) ↳ “FIXTURE_FOLLOWUP_DONE”              │╰───────────────────                      │╰───────────────────
+		9 text (settable)                                        │                                          │
+		10 text (settable)  CONSIGINT ────────────────────────────│✓ deterministic loca                      │✓ deterministic loca
+		11 text (settable)      ? plan snapshot restore         8m│sh-3.2$ '/private/tm                      │sh-3.2$
+		12 text (settable)        └ 󰘬 gui-consigint-worktree-lif… │' report activity --                      │
+		13 text (settable)      - review auth handoff          15m│_%s\n' "$?"                               │
+		14 text (settable)        └ 󰘬 gui-consigint-auth-handoff… │CUA_448_ACTIVITY_REP                      │
+		15 text (settable) ▌    - review websocket shutdown    15m│sh-3.2$                                   │
+		16 text (settable) ▌      └ 󰘬 gui-consigint-worktree-lif… │                                          │
+		17 text (settable)      - implement lifecycle cleanup  15m│                                          │
+		18 text (settable)        └ 󰘬 gui-consigint-worktree-lif… │                                          │
+		19 text (settable)                                        │                                          │
+		20 text (settable)  SPACELIFT-AGENT ──────────────────────│                                          │
+		21 text (settable)      · cua-native-448                6m│                                          │
+		22 text (settable)        └ 󰘬 cua-native-448 · claude     │                                          │──────────────────────────────────────────
+		23 text (settable)      - review scope quality         15m│                                          │> review websocket shutdown  status off
+		24 text (settable)        └ 󰘬 gui-spacelift-agent-scope-… │                                          │──────────────────────────────────────────
+		25 text (settable)      - build pipeline progress      15m│                                          │╭─ codex / gpt-5.4 ─
+		26 text (settable)        └ 󰘬 gui-spacelift-agent-pipeli… │                                          ││ fixture: websocket
+		27 text (settable) USAGE · 0 tokens · 15m                 │                                          │╰───────────────────
+		28 text (settable) ⠹ 0 working  ? 1 input  ✓ 0 ready      │                                          │
+		29 text (settable) · 0 idle  ! 0 error  P 0 paused        │                                          │✓ deterministic loca
+		30 text (settable) · 1 exited  - 11 unknown               │                                          │sh-3.2$
+		31 text (settable)                                        │                                          │
+		32 text (settable)  RESOURCES ────────────────────────────│                                          │
+		33 text (settable)  cpu       ━━━━━━━───────────────  30% │                                          │
+		34 text (settable)  mem       ━━━━━━━━━━━━━━──── 37.6/48G │                                          │
+		35 text (settable)                                        │                                          │
+		36 text (settable)  QUOTA LEFT ───────────────────────────│                                          │
+		37 text (settable) Claude · not signed in                 │                                          │
+		38 text (settable) Codex · unavailable · retry 5m         │                                          │
+		39 text (settable) Grok · not signed in · retry 6m        │                                          │
+		40 text (settable) Cursor · usage off                     │                                          │
+		41 text (settable)                                        │                                          │
+		42 text (settable) BROWSE  Space Menu  : Commands  ? Help  i Next input needed  m Tree sidebar
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text OVRCR GUI
+47 menu bar
+	48 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │  plan snapshot restore  Waiting for input│  review auth handoff  grok  status off
+                                       │──────────────────────────────────────────│──────────────────────────────────────────
+ OPERATOR ─────────────────────────────│╭─ pi / grok-4.6 ───                      │╭─ grok / grok-4.6 ─
+  · Idl

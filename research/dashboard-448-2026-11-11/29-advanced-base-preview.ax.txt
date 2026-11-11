@@ -1,0 +1,60 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │cua-native-448  claude  Exited · confirm previous processes stopped · 1m
+                                       │─────────────────────────────────────────────────────────────────────────────────────
+ OPERATOR ─────────────────────────────│agent awaiting certified startup
+  · Off
+		3 text (settable) 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+		4 text (settable)  ? 1 needs input                       │cua-native-448  claude  Exited · confirm previous processes stopped · 1m
+		5 text (settable)                                        │─────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)  OPERATOR ─────────────────────────────│agent awaiting certified startup
+		7 text (settable)   · Off                                │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-UUpjGo/agent-bin/claude: -
+		8 text (settable) o opens Operator · Ctrl-o quick message│-session-id: invalid option
+		9 text (settable)                                        │Usage:  /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-UUpjGo/agent-bin/c
+		10 text (settable)  CONSIGINT ───────────────── ?1 ▸ 2 ws │laude [GNU long option] [option] ...
+		11 text (settable)                                        │        /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-UUpjGo/agent-bin/c
+		12 text (settable)  SPACELIFT-AGENT ──────────────────────│laude [GNU long option] [option] script-file ...
+		13 text (settable) ▌    · cua-native-448                1m│GNU long options:
+		14 text (settable) ▌      └ 󰘬 cua-native-448 ┌ New agent session ───────────────────────────────────────────────────┐
+		15 text (settable)      - review scope qualit│spacelift-agent/cua-advanced-preview                                  │
+		16 text (settable)        └ 󰘬 gui-spacelift-a│Branch base: From main                                                │
+		17 text (settable)      - build pipeline prog│Agent harness                       Model                             │
+		18 text (settable)        └ 󰘬 gui-spacelift-a│  claude                              Harness default                 │
+		19 text (settable)                           │Prompt (optional)                                                     │
+		20 text (settable)                           │  What should the agent work on?                                      │
+		21 text (settable)                           │                                                                      │
+		22 text (settable)                           │                                                                      │
+		23 text (settable)                           │▾ Advanced options                                                    │
+		24 text (settable)                           │Base                                                                  │
+		25 text (settable)                           │› main▏                                                               │
+		26 text (settable)                           │Ctrl-u clear · Tab/Shift-Tab fields · Enter continue · Alt-Enter start│
+		27 text (settable) USAGE · 0 tokens · 9m     │· Esc cancel                                                          │
+		28 text (settable) ⠹ 0 working  ? 1 input  ✓ │                                                                      │
+		29 text (settable) · 0 idle  ! 0 error  P 0 p│[Start agent] [Cancel]                                                │
+		30 text (settable) · 1 exited  - 11 unknown  └──────────────────────────────────────────────────────────────────────┘
+		31 text (settable)                                        │Shell options:
+		32 text (settable)  RESOURCES ────────────────────────────│        -irsD or -c command or -O shopt_option          (invocation only)
+		33 text (settable)  cpu       ━━━━━━━━──────────────  36% │        -abefhkmnptuvxBCHP or -o option
+		34 text (settable)  mem       ━━━━━━━━━━━━━━──── 37.9/48G │
+		35 text (settable)                                        │
+		36 text (settable)  QUOTA LEFT ───────────────────────────│
+		37 text (settable) Claude · not signed in                 │
+		38 text (settable) Codex · unavailable · retry 10m        │
+		39 text (settable) Grok · not signed in · retry 1m        │
+		40 text (settable) Cursor · usage off                     │
+		41 text (settable)                                        │
+		42 text (settable) BROWSE  Space Menu  : Commands  ? Help  i Next input needed  m Tree sidebar
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text OVRCR GUI
+47 menu bar
+	48 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ ? 1 needs input                       │cua-native-448  claude  Exited · confirm previous processes stopped · 1m
+                                       │─────────────────────────────────────────────────────────────────────────────────────
+ OPERATOR ─────────────────────────────│agent awaiting certified startup
+  · Off
