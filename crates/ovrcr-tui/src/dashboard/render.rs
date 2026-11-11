@@ -698,6 +698,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_whichkey(frame);
     dashboard.draw_details(frame, now_unix_ms);
     dashboard.draw_operator_quick_message(frame);
+    dashboard.draw_sidebar_create_menu(frame);
 }
 
 pub(super) fn clipped_session_title(
@@ -1040,6 +1041,13 @@ fn tree_line_text(
     let close_mark = dashboard.row_shows_close_mark(row)
         && width >= 3
         && !matches!(dashboard.mode, InputMode::History | InputMode::Copy);
+    let create_mark = dashboard.row_shows_create_mark(row)
+        && match row {
+            TreeRow::Workspace { .. } => width >= 6,
+            TreeRow::Project { .. } => width >= 3,
+            _ => false,
+        };
+    let create = Span::styled("[+]", Style::default().fg(MAUVE()));
     let mark = Span::styled("[x]", Style::default().fg(MAUVE()));
     let (left, fill, right) = match row {
         TreeRow::Project { name } => {
@@ -1071,6 +1079,12 @@ fn tree_line_text(
                     muted,
                 ));
             }
+            if create_mark {
+                right.push(create.clone());
+            }
+            let right_width = right.iter().map(Span::width).sum::<usize>();
+            let title_width = width.saturating_sub(right_width);
+            let title = clip_text(&full_title, title_width);
             (
                 vec![Span::styled(
                     title,
@@ -1124,10 +1138,20 @@ fn tree_line_text(
                 right.push(Span::styled(format!("▸ {count} "), muted));
             }
             if close_mark {
-                right = vec![mark.clone()];
+                right.clear();
             }
-            let available =
-                width.saturating_sub(WORKSPACE_INDENT.len() + 1 + usize::from(close_mark) * 3);
+            if create_mark {
+                right.push(create.clone());
+            }
+            if close_mark {
+                right.push(mark.clone());
+            }
+            let available = width.saturating_sub(
+                WORKSPACE_INDENT.len()
+                    + 1
+                    + usize::from(create_mark) * 3
+                    + usize::from(close_mark) * 3,
+            );
             let label = match workspace {
                 Some(workspace) => fit_workspace_sidebar_label(
                     &workspace.name,

@@ -424,6 +424,14 @@ checkout is not on the default branch. Duplicate visible names include the
 worktree path. A branch change updates the label in place; selection and panes
 stay on that workspace. Folded project and workspace rows show counts before
 their fold marker: `?N` sessions needing input and `✓N` ready Unread responses.
+A project row shows `[+]` at its right edge while hovered. A hovered workspace row
+shows `[+]` just before `[x]`. The project menu offers **New workspace** and
+**New agent session**; the workspace menu offers **New agent session** and
+**New terminal**. Each opens its existing form with that row's context. Use Up
+and Down to move, Enter to choose, or click an entry; Esc closes the menu. A
+launch action that cannot run is dimmed with its reason. The root workspace can
+still open the Agent branch picker, where its unavailable branch remains
+guarded.
 A session row starts with a status
 glyph and the session name, with the agent harness (from session kind for agents, else the label) right-aligned in the
 provider colour. When a model is known, it follows a colon in the quiet gray,
@@ -542,6 +550,8 @@ for provider reporting behavior.
 
 In Browse and Terminal modes:
 
+- Hovering a project or workspace row shows `[+]`; the workspace keeps `[x]`
+  immediately to its right. Click `[+]` for that row's creation menu.
 - Clicking a session row selects it. `[x]` shows only while the pointer is over a session or workspace row. On a session it replaces the agent label and archives that session, the same as `X`, without switching the pane. A live or paused session asks first. An exited session archives immediately. On a workspace it opens Remove workspace for that row and does not clear the pane. A root workspace refuses, as the key does.
 - Clicking a project or workspace name selects it. Clicking the first cell of a
   project header, or the branch glyph of a workspace, folds or unfolds it. The

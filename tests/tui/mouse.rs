@@ -804,3 +804,100 @@ fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;5;6m".to_vec())
     );
 }
+
+#[test]
+fn sidebar_create_buttons_open_row_menus_without_stealing_fold_or_close() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut project = dashboard_fixture();
+    let rows = rendered_rows(&project, area.width, area.height);
+    let project_row = rows
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("project row") as u16;
+    let workspace_row = rows
+        .iter()
+        .position(|line| line.contains("auth"))
+        .expect("workspace row") as u16;
+    project.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, project_row, KeyModifiers::NONE),
+        area,
+    );
+    assert_eq!(
+        project.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                36,
+                project_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let menu = rendered_rows(&project, area.width, area.height).join("\n");
+    assert!(menu.contains("New workspace"), "{menu}");
+    assert!(menu.contains("New agent session"), "{menu}");
+
+    assert_eq!(project.key(KeyCode::Esc), DashboardAction::Redraw);
+    let mut workspace = dashboard_fixture();
+    workspace.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    assert_eq!(
+        workspace.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                33,
+                workspace_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let menu = rendered_rows(&workspace, area.width, area.height).join("\n");
+    assert!(menu.contains("New agent session"), "{menu}");
+    assert!(menu.contains("New terminal"), "{menu}");
+    assert!(!menu.contains("New workspace"), "{menu}");
+
+    assert_eq!(workspace.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert_eq!(
+        workspace.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                2,
+                workspace_row,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    workspace.mouse_action(
+        mouse_event(MouseEventKind::Moved, 80, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    let sidebar =
+        rendered_rows(&workspace, area.width, area.height)[usize::from(workspace_row)].clone();
+    assert!(
+        sidebar.contains("▸"),
+        "workspace disclosure still folds: {sidebar}"
+    );
+
+    let mut close = dashboard_fixture();
+    close.mouse_action(
+        mouse_event(MouseEventKind::Moved, 5, workspace_row, KeyModifiers::NONE),
+        area,
+    );
+    close.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            36,
+            workspace_row,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&close).contains("Remove workspace"));
+}

@@ -21,6 +21,7 @@ pub(crate) mod picker;
 mod quota;
 mod ready;
 mod render;
+mod row_menu;
 mod settings;
 mod settings_editor;
 mod state;
@@ -259,6 +260,7 @@ pub(super) struct MouseForwarding {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum HoveredRow {
     Session(SessionId),
+    Project(String),
     Workspace { project: String, id: String },
 }
 
@@ -331,6 +333,7 @@ pub struct Dashboard {
     #[cfg(test)]
     model_agent_entries: Option<Vec<agents::AgentEntry>>,
     whichkey: Option<whichkey::WhichKey>,
+    sidebar_create_menu: Option<row_menu::SidebarCreateMenu>,
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     /// Set while startup left agent status off: the palette offers Connect agent status,

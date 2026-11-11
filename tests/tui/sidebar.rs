@@ -20,6 +20,66 @@ fn sidebar_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
+fn rendered_cell_sequence(
+    terminal: &Terminal<TestBackend>,
+    needle: &str,
+    width: u16,
+    height: u16,
+) -> Option<(u16, u16)> {
+    let symbols: Vec<_> = needle.chars().map(|ch| ch.to_string()).collect();
+    (0..height).find_map(|row| {
+        (0..=width.saturating_sub(symbols.len() as u16)).find_map(|column| {
+            symbols
+                .iter()
+                .enumerate()
+                .all(|(offset, symbol)| {
+                    terminal.backend().buffer()[(column + offset as u16, row)].symbol() == symbol
+                })
+                .then_some((column, row))
+        })
+    })
+}
+
+#[test]
+fn row_create_buttons_render_only_on_hover_for_projects_and_workspaces() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    let rows = rendered_rows(&dashboard, area.width, area.height);
+    let project_row = rows
+        .iter()
+        .position(|line| line.contains("CONSIGINT"))
+        .expect("project row");
+    let workspace_row = rows
+        .iter()
+        .position(|line| line.contains("auth"))
+        .expect("workspace row");
+    assert!(!rows[project_row].contains("[+]"));
+    assert!(!rows[workspace_row].contains("[+]"));
+
+    hover(&mut dashboard, 5, project_row as u16, area);
+    let rows = rendered_rows(&dashboard, area.width, area.height);
+    assert!(
+        rows[project_row].contains("[+]"),
+        "project row should show its create button on hover: {}",
+        rows[project_row]
+    );
+    assert!(!rows[workspace_row].contains("[+]"));
+
+    hover(&mut dashboard, 5, workspace_row as u16, area);
+    let rows = rendered_rows(&dashboard, area.width, area.height);
+    let plus = rows[workspace_row]
+        .find("[+]")
+        .expect("hovered workspace create button");
+    let close = rows[workspace_row]
+        .find("[x]")
+        .expect("hovered workspace close button");
+    assert!(
+        plus < close,
+        "workspace buttons must be [+][x]: {}",
+        rows[workspace_row]
+    );
+}
+
 fn set_attention(session: &mut SessionSummary, state: AgentActivity, input: bool, unread: bool) {
     use ovrcr::protocol::{
         ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputKind,
@@ -2361,6 +2421,111 @@ fn live_server_dashboard_renders_reported_unread_input_and_folded_counts() {
         sidebar_row(&terminal, workspace_row).contains("?1 ✓1 ▸ 3"),
         "live folded workspace includes Server-reported states: {}",
         sidebar_row(&terminal, workspace_row)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_server_dashboard_workspace_menu_opens_agent_form_for_that_workspace() {
+    use crate::live::Live;
+    use ovrcr::protocol as p;
+
+    let live = Live::binary();
+    live.ready("feature/sidebar-create-menu");
+    let mut stream = p::connect_server(&live.socket).unwrap();
+    let Response::Hierarchy(hierarchy) =
+        p::client::request(&mut stream, 900_000, Request::DashboardHello).unwrap()
+    else {
+        panic!("live Dashboard handshake did not return hierarchy");
+    };
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(hierarchy.clone());
+    if let Some(session) = hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| &project.workspaces)
+        .flat_map(|workspace| &workspace.sessions)
+        .next()
+    {
+        dashboard.install_focus(session.id);
+    }
+
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let workspace_row = (0..area.height)
+        .find(|row| sidebar_row(&terminal, *row).contains("feature/sidebar-create-menu"))
+        .expect("live workspace row");
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 5,
+            row: workspace_row,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let (plus_column, plus_row) = rendered_cell_sequence(&terminal, "[+]", area.width, area.height)
+        .expect("hovered live [+]");
+    assert_eq!(plus_row, workspace_row);
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: plus_column + 1,
+                row: plus_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let (agent_column, agent_row) =
+        rendered_cell_sequence(&terminal, "New agent session", area.width, area.height)
+            .expect("workspace menu action rendered");
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: agent_column,
+                row: agent_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+
+    for message in dashboard.drain_outbox() {
+        let request_id = message.request_id;
+        let request = message.request;
+        if matches!(&request, Request::Inspect | Request::List) {
+            let response = p::client::request(&mut stream, request_id, request)
+                .expect("live Server answers Dashboard form requests");
+            dashboard.handle_server_message(ServerMessage::Response {
+                request_id,
+                response,
+            });
+        }
+    }
+    let form = rendered_rows(&dashboard, area.width, area.height).join("\n");
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("fixture / feature/sidebar-create-menu"),
+        "live project and workspace context did not fill the existing form: {form}"
     );
 }
 

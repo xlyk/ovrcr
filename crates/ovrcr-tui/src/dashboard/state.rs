@@ -689,6 +689,7 @@ impl Dashboard {
             #[cfg(test)]
             model_agent_entries: None,
             whichkey: None,
+            sidebar_create_menu: None,
             selected_container: None,
             configuration_paths: None,
             connect_status: None,
@@ -1883,6 +1884,11 @@ impl Dashboard {
             // Keystrokes and must never be encoded into a child PTY.
             return DashboardAction::None;
         }
+        if self.sidebar_create_menu.is_some() {
+            return self
+                .sidebar_create_menu_key(key)
+                .unwrap_or(DashboardAction::None);
+        }
         if self.sidebar_jump.is_some()
             && (self.sidebar_jump_modal_priority_open() || self.opens_operator_quick(key))
         {
@@ -2730,6 +2736,7 @@ impl Dashboard {
                 self.events_paste(&text)
             }
             Event::Paste(_) if self.details.is_some() => DashboardAction::None,
+            Event::Paste(_) if self.sidebar_create_menu.is_some() => DashboardAction::None,
             Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
@@ -2762,6 +2769,7 @@ impl Dashboard {
             }
             Event::FocusLost => {
                 self.cancel_sidebar_jump();
+                self.sidebar_create_menu = None;
                 self.agent_typing = None;
                 self.cancel_mouse_gesture();
                 self.mouse.hovered = None;
@@ -2787,6 +2795,9 @@ impl Dashboard {
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         if self.sidebar_jump.is_some() && mouse.kind != MouseEventKind::Moved {
             self.cancel_sidebar_jump();
+        }
+        if self.sidebar_create_menu.is_some() {
+            return self.sidebar_create_menu_mouse(mouse, area);
         }
         if let Some(action) = self.operator_quick_mouse(mouse, area) {
             return action;
@@ -2859,6 +2870,9 @@ impl Dashboard {
 
     pub(crate) fn mouse_capture_required(&self) -> bool {
         if self.operator.visible || self.operator_quick_visible() {
+            return true;
+        }
+        if self.sidebar_create_menu.is_some() {
             return true;
         }
         if self.details.is_some() {
@@ -2936,24 +2950,55 @@ impl Dashboard {
         }
     }
 
+    pub(super) fn row_shows_create_mark(&self, row: &TreeRow) -> bool {
+        if matches!(self.mode, InputMode::History | InputMode::Copy) {
+            return false;
+        }
+        match (&self.mouse.hovered, row) {
+            (Some(super::HoveredRow::Project(name)), TreeRow::Project { name: row_name }) => {
+                name == row_name
+            }
+            (
+                Some(super::HoveredRow::Workspace { project, id }),
+                TreeRow::Workspace {
+                    project: row_project,
+                    id: row_id,
+                },
+            ) => project == row_project && id == row_id,
+            _ => false,
+        }
+    }
+
     fn hovered_row_at(&self, sidebar: Rect, row: u16) -> Option<super::HoveredRow> {
         let row_index = self.tree_offset + usize::from(row.saturating_sub(sidebar.y));
         let rows = self.visible_rows();
         let heights = tree_row_heights(self, &rows, usize::from(sidebar.width));
         match tree_line_at(&rows, &heights, row_index)?.0 {
             TreeRow::Session { id } => Some(super::HoveredRow::Session(*id)),
+            TreeRow::Project { name } => Some(super::HoveredRow::Project(name.clone())),
             TreeRow::Workspace { project, id } | TreeRow::ProvisionalWorkspace { project, id } => {
                 Some(super::HoveredRow::Workspace {
                     project: project.clone(),
                     id: id.clone(),
                 })
             }
-            TreeRow::Project { .. } | TreeRow::ProvisionalSession { .. } => None,
+            TreeRow::ProvisionalSession { .. } => None,
         }
     }
 
     fn close_mark_hit(&self, column: u16, width: u16) -> bool {
         width >= 3 && column >= width - 3
+    }
+
+    fn create_mark_hit(&self, column: u16, width: u16, row: &TreeRow) -> bool {
+        if !self.row_shows_create_mark(row) {
+            return false;
+        }
+        match row {
+            TreeRow::Project { .. } => width >= 3 && column >= width - 3,
+            TreeRow::Workspace { .. } => width >= 6 && (width - 6..width - 3).contains(&column),
+            _ => false,
+        }
     }
 
     fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
@@ -3029,10 +3074,43 @@ impl Dashboard {
                         self.select_session(id);
                         Some(self.request_selected())
                     }
+                    TreeRow::Project { name }
+                        if self.create_mark_hit(
+                            column,
+                            sidebar.width,
+                            &TreeRow::Project { name: name.clone() },
+                        ) =>
+                    {
+                        Some(self.open_sidebar_create_menu(
+                            TreeRow::Project { name },
+                            ratatui::layout::Position::new(
+                                sidebar.x + sidebar.width.saturating_sub(3),
+                                mouse.row,
+                            ),
+                        ))
+                    }
                     TreeRow::Project { name } if column == 0 => {
                         self.toggle_row_collapse(&TreeRow::Project { name });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
+                    }
+                    TreeRow::Workspace { project, id }
+                        if self.create_mark_hit(
+                            column,
+                            sidebar.width,
+                            &TreeRow::Workspace {
+                                project: project.clone(),
+                                id: id.clone(),
+                            },
+                        ) =>
+                    {
+                        Some(self.open_sidebar_create_menu(
+                            TreeRow::Workspace { project, id },
+                            ratatui::layout::Position::new(
+                                sidebar.x + sidebar.width.saturating_sub(6),
+                                mouse.row,
+                            ),
+                        ))
                     }
                     TreeRow::Workspace { project, id }
                         if self.close_mark_hit(column, sidebar.width)
