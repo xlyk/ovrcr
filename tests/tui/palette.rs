@@ -61,6 +61,78 @@ fn stopped_fixture() -> Dashboard {
     dashboard
 }
 
+fn sidebar_row_for(dashboard: &Dashboard, needle: &str) -> u16 {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..40)
+        .find(|y| {
+            (0..39)
+                .map(|x| terminal.backend().buffer()[(x, *y)].symbol())
+                .collect::<String>()
+                .contains(needle)
+        })
+        .unwrap_or_else(|| panic!("sidebar row {needle:?} was not rendered"))
+}
+
+fn rendered_sequence(dashboard: &Dashboard, needle: &str) -> Position {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    let symbols: Vec<_> = needle.chars().map(|ch| ch.to_string()).collect();
+    for y in 0..40 {
+        for x in 0..=120_u16.saturating_sub(symbols.len() as u16) {
+            if symbols.iter().enumerate().all(|(offset, symbol)| {
+                terminal.backend().buffer()[(x + offset as u16, y)].symbol() == symbol
+            }) {
+                return Position::new(x, y);
+            }
+        }
+    }
+    panic!("rendered text {needle:?} was not visible");
+}
+
+fn open_sidebar_create_menu(dashboard: &mut Dashboard, row_needle: &str) {
+    let area = Rect::new(0, 0, 120, 40);
+    let row = sidebar_row_for(dashboard, row_needle);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 5,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    let button = rendered_sequence(dashboard, "[+]");
+    assert_eq!(button.y, row, "create button belongs to {row_needle}");
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: button.x + 1,
+            row: button.y,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+}
+
+fn click_rendered_menu_item(dashboard: &mut Dashboard, label: &str) {
+    let area = Rect::new(0, 0, 120, 40);
+    let position = rendered_sequence(dashboard, label);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: position.x,
+            row: position.y,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+}
+
 fn open_new_terminal_from_menu(dashboard: &mut Dashboard) {
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('w'));
@@ -1838,6 +1910,139 @@ fn n_opens_new_agent_form_prefilled_for_selected_workspace() {
     assert!(text.contains("consigint / auth"));
     assert!(text.contains("Agent harness"), "{text}");
     assert!(text.contains("Model"), "{text}");
+}
+
+#[test]
+fn row_create_menu_entries_open_existing_forms_with_the_row_context() {
+    let mut create_workspace = dashboard_fixture();
+    open_sidebar_create_menu(&mut create_workspace, "CONSIGINT");
+    click_rendered_menu_item(&mut create_workspace, "New workspace");
+    let form = palette_text(&create_workspace);
+    assert!(form.contains("Create branch"), "{form}");
+    assert!(form.contains("Project"), "{form}");
+    assert!(
+        form.contains("consigint"),
+        "project context missing: {form}"
+    );
+
+    let mut project_agent = dashboard_fixture();
+    open_sidebar_create_menu(&mut project_agent, "CONSIGINT");
+    click_rendered_menu_item(&mut project_agent, "New agent session");
+    let form = palette_text(&project_agent);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("consigint"),
+        "project context missing: {form}"
+    );
+
+    let mut workspace_agent = dashboard_fixture();
+    open_sidebar_create_menu(&mut workspace_agent, "auth");
+    click_rendered_menu_item(&mut workspace_agent, "New agent session");
+    let form = palette_text(&workspace_agent);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("consigint / auth"),
+        "workspace context missing: {form}"
+    );
+
+    let mut workspace_terminal = dashboard_fixture();
+    open_sidebar_create_menu(&mut workspace_terminal, "auth");
+    click_rendered_menu_item(&mut workspace_terminal, "New terminal");
+    let form = palette_text(&workspace_terminal);
+    assert!(form.contains("Create terminal"), "{form}");
+    assert!(
+        form.contains("consigint / auth"),
+        "workspace context missing: {form}"
+    );
+}
+
+#[test]
+fn root_workspace_menu_reuses_launch_reason_without_blocking_agent_setup() {
+    let mut hierarchy = fixture_hierarchy();
+    let root = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap()
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "auth")
+        .unwrap();
+    root.root = true;
+    root.name = "feature/x".into();
+    root.warning = Some("root is on feature/x; check out main".into());
+    let registry = registry_from_hierarchy(&hierarchy);
+
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    open_sidebar_create_menu(&mut dashboard, "feature/x");
+    let menu_rows = rendered_rows(&dashboard, 120, 40);
+    let agent = menu_rows
+        .iter()
+        .find(|line| line.contains("New agent session"))
+        .expect("agent setup entry");
+    assert!(!agent.contains("root workspace is not on the default branch"));
+    let terminal = menu_rows
+        .iter()
+        .find(|line| line.contains("New terminal"))
+        .expect("terminal entry");
+    assert!(
+        terminal.contains("New terminal · root workspace is not on the default branch"),
+        "{terminal}"
+    );
+    let disabled = rendered_sequence(&dashboard, "New terminal");
+    let mut screen = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    screen
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        screen.backend().buffer()[(disabled.x, disabled.y)]
+            .modifier
+            .contains(Modifier::DIM),
+        "unavailable entry is visibly dimmed"
+    );
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: disabled.x,
+                row: disabled.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 120, 40),
+        ),
+        DashboardAction::None
+    );
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("New terminal")
+    );
+
+    dashboard.drain_outbox();
+    assert_eq!(dashboard.key(KeyCode::Down), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::None);
+    assert!(dashboard.drain_outbox().is_empty());
+    assert!(
+        rendered_rows(&dashboard, 120, 40)
+            .join("\n")
+            .contains("New terminal")
+    );
+
+    assert_eq!(dashboard.key(KeyCode::Up), DashboardAction::Redraw);
+    let action = dashboard.key(KeyCode::Enter);
+    assert_eq!(action, DashboardAction::Redraw);
+    answer_palette_inspect_with_registry(&mut dashboard, action, registry);
+    let form = palette_text(&dashboard);
+    assert!(form.contains("New agent session"), "{form}");
+    assert!(
+        form.contains("launch blocked"),
+        "root target should retain its form guard: {form}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Char('n')), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("New agent session"));
 }
 
 #[test]
