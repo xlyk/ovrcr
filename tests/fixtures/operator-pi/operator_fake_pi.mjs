@@ -23,6 +23,7 @@
  *   hang_command     command type that is never answered
  *   hang_flood       keep stdout full of harmless notifications while it hangs
  *   steps            events/dialogs executed after `prompt` is accepted
+ *   prompt_steps      optional per-prompt step lists for one warm process
  *   exit_after_steps exit once the step list completes
  *   log              append-only JSONL record path
  *                     (default $PI_CODING_AGENT_DIR/fake-pi.log)
@@ -99,6 +100,7 @@ function clampThinkingLevel(level) {
     ?? thinkingLevels.slice(0, index).reverse().find((item) => available.includes(item));
 }
 let promptRunning = false;
+let promptCount = 0;
 let aborted = false;
 let exited = false;
 let stdinClosed = false;
@@ -360,9 +362,13 @@ async function runTool(step, execute) {
   return result?.confirmed === true;
 }
 
-async function runSteps() {
+async function runSteps(promptIndex) {
+  const promptSteps = scenario.prompt_steps;
+  const steps = Array.isArray(promptSteps)
+    ? (promptSteps[promptIndex] ?? promptSteps.at(-1) ?? [])
+    : (scenario.steps ?? []);
   let finalText;
-  for (const step of scenario.steps ?? []) {
+  for (const step of steps) {
     if (aborted || exited) return;
     if (step.kind === "assistant" || step.kind === "message_end" || step.kind === "thinking_message_end") {
       finalText = step.text;
@@ -540,6 +546,15 @@ async function runSteps() {
       case "event":
         writeRecord(step.event);
         break;
+      case "watch_status":
+        writeRecord({
+          type: "extension_ui_request",
+          id: `status-${Math.random().toString(16).slice(2)}`,
+          method: "setStatus",
+          statusKey: "ovrcr_operator_watches",
+          statusText: JSON.stringify({ active: step.active }),
+        });
+        break;
       case "extension_error":
         writeRecord({ type: "extension_error", message: step.message ?? "fixture" });
         break;
@@ -667,9 +682,12 @@ function handleCommand(command) {
         respond("set_model", id, undefined, false);
         break;
       }
+      const sameModel = currentModel?.provider === match.provider && currentModel?.id === match.id;
       currentModel = match;
-      thinkingLevel = clampThinkingLevel(scenario.model_default_thinking?.[`${match.provider}/${match.id}`]
-        ?? scenario.thinking_level ?? thinkingLevel);
+      if (!sameModel) {
+        thinkingLevel = clampThinkingLevel(scenario.model_default_thinking?.[`${match.provider}/${match.id}`]
+          ?? scenario.thinking_level ?? thinkingLevel);
+      }
       appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       respond("set_model", id, { provider: match.provider, id: match.id, name: match.name ?? match.id });
       break;
@@ -720,8 +738,10 @@ function handleCommand(command) {
       respond("prompt", id);
       promptRunning = true;
       appendPromptHistory(command.message);
+      {
+        const promptIndex = promptCount++;
       setTimeout(() => {
-        runSteps()
+        runSteps(promptIndex)
           .then((text) => {
             appendAssistantHistory(text, "stop");
             promptRunning = false;
@@ -731,6 +751,7 @@ function handleCommand(command) {
             finish(4);
           });
       }, 0);
+      }
       break;
     case "clear_queue":
       record({ event: "command", command: "clear_queue", id });

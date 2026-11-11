@@ -5177,6 +5177,7 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
                         session: SessionId(99),
                         run: ovrcr_protocol::SessionRunId(0),
                         worker_stopped: true,
+                        worker_live: false,
                         model: None,
                         title: "Operator".into(),
                         current_turn: None,

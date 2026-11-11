@@ -698,8 +698,8 @@ fn a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoi
     assert_eq!(
         switch_path.parent().unwrap(),
         live.config
-            .join("operator-pi/turns")
-            .join(turn_two.identity.turn.0.to_string())
+            .join("operator-pi/runs")
+            .join(turn_two.identity.run.0.to_string())
             .as_path()
     );
     let copied = std::fs::read_to_string(switch_path).unwrap();

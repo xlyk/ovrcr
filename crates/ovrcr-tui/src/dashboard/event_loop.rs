@@ -1856,6 +1856,7 @@ mod operator_loop_tests {
             reasoning: None,
             run: SessionRunId(run),
             worker_stopped: true,
+            worker_live: false,
             id: OperatorConversationId(1),
             session: SessionId(11),
             model: None,

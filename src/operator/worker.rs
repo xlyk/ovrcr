@@ -1,9 +1,9 @@
 //! Blocking native pi RPC Operator worker. The Server alone certifies termination.
 //!
-//! One managed same-executable worker drives one turn: authenticated Start, an exclusive
-//! attempt directory, a fresh native pi session in it, the optional completed-context
-//! checkpoint copy, exact model resolution, one prompt, ordered journal batches, and an
-//! authenticated Retire. Pi owns the agent loop; there is no second scheduler.
+//! One managed same-executable worker owns one Operator run: authenticated run-scoped Start
+//! resolves the first turn, then leased idle periods multiplex warm StartTurn with pi RPC.
+//! Each turn has an exclusive attempt directory and checkpoint copy. Pi owns the agent loop;
+//! there is no second scheduler.
 use super::{
     pi::{self, PiPaths},
     rpc::{RpcChild, RpcMessage, RpcResponse},
@@ -11,8 +11,8 @@ use super::{
 use crate::report::{reporter::Reporter, reserve_invocation_for};
 use anyhow::{Result, anyhow};
 use ovrcr_protocol::{
-    AgentProvider, OperatorEventBatch, OperatorModel, OperatorToolStatus, OperatorTurnId,
-    OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart,
+    AgentProvider, OperatorEventBatch, OperatorModel, OperatorRunIdentity, OperatorToolStatus,
+    OperatorTurnId, OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart, SessionRunId,
 };
 use serde_json::{Value, json};
 use std::{
@@ -37,8 +37,9 @@ const INTEGRATION_UNAVAILABLE: &str = "Pi Operator integration is unavailable; n
 const REQUEST_FAILED: &str = "Pi request failed; inspect the partial journal before retrying.";
 const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was stopped.";
 
-/// The trusted extension's contract status key and the only four admitted tools.
+/// The trusted extension's startup contract and watch-lease status keys.
 const CONTRACT_KEY: &str = "ovrcr_operator_contract";
+const WATCHES_KEY: &str = "ovrcr_operator_watches";
 const TOOLS: [&str; 4] = ["read", "bash", "edit", "write"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
@@ -64,6 +65,7 @@ const MAX_CONTENT_BLOCKS: usize = 1024;
 const MAX_DEFERRED_BYTES: usize = 16 * 1024 * 1024;
 const TEXT_CADENCE: Duration = Duration::from_millis(50);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(20);
 const CONTRACT_DEADLINE: Duration = Duration::from_secs(20);
 const REPORT_DEADLINE: Duration = Duration::from_secs(5);
@@ -76,14 +78,14 @@ const TERMINATING_GRACE: Duration = Duration::from_millis(750);
 /// Fallback exit after a termination signal, inside the Server's five-second grace.
 const WATCHDOG_DELAY: Duration = Duration::from_millis(2000);
 
-pub fn run(identity: OperatorTurnIdentity) -> Result<()> {
-    identity.validate().map_err(anyhow::Error::msg)?;
+pub fn run(run_identity: OperatorRunIdentity) -> Result<()> {
+    run_identity.validate().map_err(anyhow::Error::msg)?;
     let termination = Termination::install();
     let lease = reserve_invocation_for(AgentProvider::Operator)?
         .ok_or_else(|| anyhow!("managed operator reservation required"))?;
     let mut reporter = Reporter::new(AgentProvider::Operator, Some(lease), None);
     // Authenticated Start precedes every pi resource: a refused Start creates nothing.
-    let start = match reporter.operator_start(identity, Instant::now() + REPORT_DEADLINE) {
+    let start = match reporter.operator_start(run_identity, Instant::now() + REPORT_DEADLINE) {
         Ok(start) => start,
         Err(_) => {
             if termination.requested() {
@@ -93,6 +95,7 @@ pub fn run(identity: OperatorTurnIdentity) -> Result<()> {
             hold();
         }
     };
+    let identity = start.identity;
     let mut journal = Journal::new(&mut reporter, identity);
     match attempt(&mut journal, &start, &termination) {
         Ok(()) => {}
@@ -153,13 +156,14 @@ fn attempt(
     let paths = pi::paths(&instance).map_err(pi_failure)?;
     let attempt_dir = paths.attempt_dir(start.identity.turn);
     create_attempt(&paths, &attempt_dir)?;
+    let run_dir = create_run_dir(&paths, start.identity.run)?;
     let _extension = pi::materialize_extension(&paths).map_err(pi_failure)?;
     let expected_session = pi::conversation_session_id(start.identity.conversation);
-    let mut command = pi::rpc_command(&paths, &attempt_dir, start.identity.conversation, POLICY)
+    let mut command = pi::rpc_command(&paths, &run_dir, start.identity.conversation, POLICY)
         .map_err(pi_failure)?;
     let child = RpcChild::spawn(&mut command, false).map_err(pi_failure)?;
     let mut connection = Connection::new(child, termination.clone());
-    let mut state = TurnState::new(expected_session, paths.workdir.clone());
+    let mut state = TurnState::new(expected_session, paths.workdir.clone(), run_dir);
 
     // Step 2: a fresh empty session resolves the profile's current defaults.
     let response = connection.request(
@@ -184,79 +188,112 @@ fn attempt(
             journal,
             &mut state,
             &paths,
-            &attempt_dir,
             start,
             previous,
         )?;
     }
+    let mut turn = start.clone();
+    loop {
+        // Resolve the accepted setting for every warm prompt, then stream exactly
+        // one user turn into the live Pi conversation.
+        let model = resolve_model(&mut connection, journal, &mut state, turn.model.as_deref())?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
+        journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+        let reasoning =
+            resolve_reasoning(&mut connection, journal, &mut state, turn.thinking_level)?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
+        journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+        let prompt = prompt_text(&turn)?;
+        state.prompted = true;
+        let response = connection.request(
+            journal,
+            &mut state,
+            "prompt",
+            json!({ "message": prompt }),
+            CONTROL_DEADLINE,
+        )?;
+        if !response.success {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
+        connection.stream(journal, &mut state)?;
+        if state.pending.is_some() || state.last_assistant_stop().as_deref() != Some("stop") {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
 
-    // Step 4: exact model resolution, then the accepted reasoning choice.
-    let model = resolve_model(&mut connection, journal, &mut state, start.model.as_deref())?;
-    if termination.requested() {
-        return Err(Failure::Terminated);
-    }
-    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
-    let reasoning = resolve_reasoning(&mut connection, journal, &mut state, start.thinking_level)?;
+        let response = connection.request(
+            journal,
+            &mut state,
+            "get_state",
+            json!({}),
+            CONTROL_DEADLINE,
+        )?;
+        require_success(&response)?;
+        state.capture(&response.data)?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
+        let leased = state.active_watches > 0;
+        // A clean, unleased retirement must settle Pi before snapshotting so its
+        // last native writes are included. The leased process remains attached
+        // to its active session file and is never switched between user turns.
+        if !leased {
+            connection.settle(journal, &mut state, SHUTDOWN_GRACE)?;
+        }
+        let attempt_dir = paths.attempt_dir(turn.identity.turn);
+        let native = state
+            .session_file
+            .clone()
+            .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        snapshot_session(
+            &attempt_dir,
+            &state.session_root,
+            &native,
+            &state.session_id,
+            &state.workdir,
+        )?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
 
-    // Step 5: one prompt carrying the captured context ahead of the user text.
-    if termination.requested() {
-        return Err(Failure::Terminated);
-    }
-    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-    let prompt = prompt_text(start)?;
-    state.prompted = true;
-    let response = connection.request(
-        journal,
-        &mut state,
-        "prompt",
-        json!({ "message": prompt }),
-        CONTROL_DEADLINE,
-    )?;
-    // `prompt.success` is acceptance only.
-    if !response.success {
-        return Err(Failure::Failed(REQUEST_FAILED));
-    }
+        journal.commit(OperatorWorkerEvent::Completed { leased })?;
+        delete_previous_checkpoint(&paths, &turn, &native);
+        if !leased {
+            let _ = journal.retire(RETIRE_DEADLINE, false);
+            return Ok(());
+        }
 
-    // Step 6: stream until pi has no remaining automatic work.
-    connection.stream(journal, &mut state)?;
-    if state.pending.is_some() {
-        return Err(Failure::Failed(REQUEST_FAILED));
+        let run = ovrcr_protocol::OperatorRunIdentity {
+            conversation: turn.identity.conversation,
+            session: turn.identity.session,
+            run: turn.identity.run,
+        };
+        let next = loop {
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            match journal
+                .reporter
+                .operator_start_turn(run, Instant::now() + REPORT_DEADLINE)
+            {
+                Ok(Some(next)) => break next,
+                Ok(None) => {}
+                Err(_) => return Err(Failure::ReportFailed),
+            }
+            connection.poll_idle(&mut state)?;
+        };
+        journal.begin_turn(next.identity)?;
+        state.reset_turn();
+        let attempt_dir = paths.attempt_dir(next.identity.turn);
+        create_attempt(&paths, &attempt_dir)?;
+        // Pi already owns the same live conversation. The turn's checkpoint is
+        // a durable copy for a later cold run or rollback, not a reason to
+        // switch the active session and reload the extension during normal chat.
+        turn = next;
     }
-    if state.last_assistant_stop().as_deref() != Some("stop") {
-        return Err(Failure::Failed(REQUEST_FAILED));
-    }
-
-    // Step 7: settle, drain and reap pi, then promote the native session file at
-    // the path the final native state reports.
-    let response = connection.request(
-        journal,
-        &mut state,
-        "get_state",
-        json!({}),
-        CONTROL_DEADLINE,
-    )?;
-    require_success(&response)?;
-    state.capture(&response.data)?;
-    if termination.requested() {
-        return Err(Failure::Terminated);
-    }
-    connection.settle(journal, &mut state, SHUTDOWN_GRACE)?;
-    let native = state
-        .session_file
-        .clone()
-        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    promote_session(&attempt_dir, &native, &state.session_id, &state.workdir)?;
-    if termination.requested() {
-        return Err(Failure::Terminated);
-    }
-
-    // Only an acknowledged Completed transaction promotes the checkpoint turn.
-    journal.commit(OperatorWorkerEvent::Completed)?;
-    // Step 9: the superseded copy is disposable only after that acknowledgement.
-    delete_previous_checkpoint(&paths, start);
-    // Step 7 (continued): an authenticated Retire hands ownership back to the Server.
-    let _ = journal.retire(RETIRE_DEADLINE, false);
-    Ok(())
 }
 
 // ---------------------------------------------------------------- journal
@@ -324,6 +361,16 @@ impl<'a> Journal<'a> {
                 Err(Failure::ReportFailed)
             }
         }
+    }
+
+    fn begin_turn(&mut self, identity: OperatorTurnIdentity) -> std::result::Result<(), Failure> {
+        if !self.pending.is_empty() || self.pending_kind.is_some() {
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
+        self.identity = identity;
+        self.sequence = 1;
+        self.poisoned = false;
+        Ok(())
     }
 
     fn retire(&mut self, deadline: Duration, stop: bool) -> Result<()> {
@@ -640,6 +687,32 @@ impl Connection {
         Ok(())
     }
 
+    fn poll_idle(&mut self, state: &mut TurnState) -> std::result::Result<(), Failure> {
+        let message = self
+            .child
+            .as_mut()
+            .ok_or(Failure::Failed(REQUEST_FAILED))?
+            .next_message(Some(IDLE_POLL_INTERVAL));
+        match message {
+            Err(error) if error.timed_out_error() => Ok(()),
+            Err(_) => Err(Failure::Failed(REQUEST_FAILED)),
+            Ok(RpcMessage::Response(_)) => Err(Failure::Failed(REQUEST_FAILED)),
+            Ok(RpcMessage::Event(event)) => match event["type"].as_str() {
+                Some("extension_ui_request")
+                    if event["method"] == "setStatus"
+                        && event["statusKey"].as_str() == Some(WATCHES_KEY) =>
+                {
+                    self.read_watch_status(state, &event)
+                }
+                Some("extension_ui_request") if event["method"] == "setStatus" => Ok(()),
+                // The asynchronous-turn owner is added in the next lifecycle step.
+                Some("agent_start") => Err(Failure::Failed(REQUEST_FAILED)),
+                Some("extension_error") => Err(Failure::Failed(REQUEST_FAILED)),
+                _ => Ok(()),
+            },
+        }
+    }
+
     fn flush_admission(
         &mut self,
         journal: &mut Journal<'_>,
@@ -858,6 +931,8 @@ impl Connection {
                     .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
                 validate_contract(text, &state.session_id)?;
                 state.ready_count += 1;
+            } else if event["statusKey"].as_str() == Some(WATCHES_KEY) {
+                self.read_watch_status(state, event)?;
             }
             // A duplicate binding is harmless; unrelated status entries are display only.
             return Ok(());
@@ -886,6 +961,25 @@ impl Connection {
             }));
         }
         Err(Failure::Failed(UNSUPPORTED_INTERACTION))
+    }
+
+    fn read_watch_status(
+        &self,
+        state: &mut TurnState,
+        event: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let text = event["statusText"]
+            .as_str()
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let status: Value =
+            serde_json::from_str(text).map_err(|_| Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let active = status["active"]
+            .as_u64()
+            .and_then(|active| usize::try_from(active).ok())
+            .filter(|active| *active <= 50)
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        state.active_watches = active;
+        Ok(())
     }
 
     /// Stream until `agent_settled`. Prompt execution has no added wall-clock deadline.
@@ -925,11 +1019,15 @@ struct PendingCall {
 struct TurnState {
     session_id: String,
     workdir: PathBuf,
+    /// The private attempt directory where Pi's live session file remains attached.
+    session_root: PathBuf,
     /// Trusted-extension binding notifications seen (a switch binds again).
     ready_count: usize,
     default_model: Option<OperatorModel>,
     current_model: Option<OperatorModel>,
     session_file: Option<PathBuf>,
+    current_thinking_level: Option<ovrcr_protocol::OperatorThinkingLevel>,
+    model_default_thinking: BTreeMap<String, ovrcr_protocol::OperatorThinkingLevel>,
     /// Display text already streamed for the current assistant message, keyed by
     /// pi's content index. One content block has exactly one display kind.
     stream_blocks: BTreeMap<usize, StreamBlock>,
@@ -952,6 +1050,7 @@ struct TurnState {
     /// Admitted tool-call ids whose ordinary execution end has not arrived yet.
     admitted: Vec<String>,
     pending: Option<PendingCall>,
+    active_watches: usize,
     settled: bool,
     prompted: bool,
 }
@@ -983,14 +1082,17 @@ struct StreamBlock {
 }
 
 impl TurnState {
-    fn new(session_id: String, workdir: PathBuf) -> Self {
+    fn new(session_id: String, workdir: PathBuf, session_root: PathBuf) -> Self {
         Self {
             session_id,
             workdir,
+            session_root,
             ready_count: 0,
             default_model: None,
             current_model: None,
             session_file: None,
+            current_thinking_level: None,
+            model_default_thinking: BTreeMap::new(),
             stream_blocks: BTreeMap::new(),
             last_stream_index: None,
             max_display_index: None,
@@ -1001,6 +1103,7 @@ impl TurnState {
             last_assistant: None,
             admitted: Vec::new(),
             pending: None,
+            active_watches: 0,
             settled: false,
             prompted: false,
         }
@@ -1013,6 +1116,16 @@ impl TurnState {
         self.deferred_display = false;
         self.deferred_runs.clear();
         self.deferred_bytes = 0;
+    }
+
+    fn reset_turn(&mut self) {
+        self.reset_stream();
+        self.last_assistant = None;
+        self.admitted.clear();
+        self.pending = None;
+        self.settled = false;
+        self.prompted = false;
+        self.compacting = false;
     }
 
     fn note_display(&mut self, index: usize) {
@@ -1409,6 +1522,7 @@ impl TurnState {
         }
         self.session_file = data["sessionFile"].as_str().map(PathBuf::from);
         self.current_model = operator_model(&data["model"]);
+        self.current_thinking_level = serde_json::from_value(data["thinkingLevel"].clone()).ok();
         Ok(())
     }
 
@@ -1416,6 +1530,11 @@ impl TurnState {
     fn capture_fresh(&mut self, data: &Value) -> std::result::Result<(), Failure> {
         self.capture(data)?;
         self.default_model = self.current_model.clone();
+        if let (Some(model), Some(level)) =
+            (self.current_model.as_ref(), self.current_thinking_level)
+        {
+            self.model_default_thinking.insert(model_key(model), level);
+        }
         Ok(())
     }
 
@@ -1509,20 +1628,37 @@ fn create_attempt(paths: &PiPaths, attempt: &Path) -> std::result::Result<(), Fa
     }
 }
 
+fn create_run_dir(paths: &PiPaths, run: SessionRunId) -> std::result::Result<PathBuf, Failure> {
+    let directory = paths.run_dir(run);
+    match DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => Ok(directory),
+        // Reusing a run directory could restore an unverified native session.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Err(Failure::Failed(CONTEXT_UNAVAILABLE))
+        }
+        Err(_) => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+    }
+}
+
 fn restore_checkpoint(
     connection: &mut Connection,
     journal: &mut Journal<'_>,
     state: &mut TurnState,
     paths: &PiPaths,
-    attempt_dir: &Path,
     start: &OperatorWorkerStart,
     previous: OperatorTurnId,
 ) -> std::result::Result<(), Failure> {
     if previous == start.identity.turn || previous.0 == 0 {
         return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
     }
-    let source = paths.attempt_dir(previous).join("session.jsonl");
-    let target = attempt_dir.join("session.jsonl");
+    let previous_dir = paths.attempt_dir(previous);
+    let canonical = previous_dir.join("session.jsonl");
+    let source = if canonical.exists() {
+        canonical
+    } else {
+        previous_dir.join("checkpoint.jsonl")
+    };
+    let target = state.session_root.join("session.jsonl");
     copy_checkpoint(&source, &target, &state.session_id, &state.workdir)?;
     let before = state.ready_count;
     let response = connection.request(
@@ -1663,6 +1799,12 @@ fn resolve_model(
     if state.current_model.as_ref() != Some(&desired) {
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
     }
+    if let Some(level) = state.current_thinking_level {
+        state
+            .model_default_thinking
+            .entry(model_key(&desired))
+            .or_insert(level);
+    }
     Ok(desired)
 }
 
@@ -1672,12 +1814,24 @@ fn resolve_reasoning(
     state: &mut TurnState,
     requested: ovrcr_protocol::OperatorThinkingLevel,
 ) -> std::result::Result<ovrcr_protocol::OperatorReasoning, Failure> {
-    if requested != ovrcr_protocol::OperatorThinkingLevel::Default {
+    let requested_level = if requested == ovrcr_protocol::OperatorThinkingLevel::Default {
+        let model = state
+            .current_model
+            .as_ref()
+            .ok_or(Failure::Failed(REQUEST_FAILED))?;
+        *state
+            .model_default_thinking
+            .get(&model_key(model))
+            .ok_or(Failure::Failed(REQUEST_FAILED))?
+    } else {
+        requested
+    };
+    if state.current_thinking_level != Some(requested_level) {
         require_success(&connection.request(
             journal,
             state,
             "set_thinking_level",
-            json!({ "level": requested.as_str() }),
+            json!({ "level": requested_level.as_str() }),
             CONTROL_DEADLINE,
         )?)?;
     }
@@ -1708,7 +1862,11 @@ fn resolve_reasoning(
     Ok(reasoning)
 }
 
-fn delete_previous_checkpoint(paths: &PiPaths, start: &OperatorWorkerStart) {
+fn model_key(model: &OperatorModel) -> String {
+    format!("{}/{}", model.provider, model.id)
+}
+
+fn delete_previous_checkpoint(paths: &PiPaths, start: &OperatorWorkerStart, active_session: &Path) {
     let Some(previous) = start.checkpoint_turn else {
         return;
     };
@@ -1716,7 +1874,12 @@ fn delete_previous_checkpoint(paths: &PiPaths, start: &OperatorWorkerStart) {
         return;
     }
     let directory = paths.attempt_dir(previous);
-    let _ = fs::remove_file(directory.join("session.jsonl"));
+    for name in ["session.jsonl", "checkpoint.jsonl"] {
+        let checkpoint = directory.join(name);
+        if checkpoint != active_session {
+            let _ = fs::remove_file(checkpoint);
+        }
+    }
     // Only an empty superseded attempt directory is removed.
     let _ = fs::remove_dir(&directory);
 }
@@ -2004,6 +2167,12 @@ fn copy_checkpoint(
     }
     fs::set_permissions(target, fs::Permissions::from_mode(0o600))
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(target)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     Ok(())
 }
 
@@ -2060,8 +2229,9 @@ fn validate_record(line: &[u8]) -> std::result::Result<(), Failure> {
     }
 }
 
-fn promote_session(
-    attempt: &Path,
+fn snapshot_session(
+    checkpoint_attempt: &Path,
+    active_attempt: &Path,
     native: &Path,
     expected_session: &str,
     workdir: &Path,
@@ -2074,15 +2244,7 @@ fn promote_session(
     {
         return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
     }
-    let input = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(native)
-        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    let mut reader = BufReader::new(input);
-    let header = read_header(&mut reader)?;
-    validate_header(&header, expected_session, workdir)?;
-    let root = attempt
+    let root = active_attempt
         .canonicalize()
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     let native = native
@@ -2091,14 +2253,15 @@ fn promote_session(
     if !native.starts_with(&root) {
         return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
     }
-    let target = attempt.join("session.jsonl");
-    if native != target {
-        fs::rename(&native, &target).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    }
-    File::open(&target)
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&native)
         .and_then(|file| file.sync_all())
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    File::open(attempt)
+    let target = checkpoint_attempt.join("session.jsonl");
+    copy_checkpoint(&native, &target, expected_session, workdir)?;
+    File::open(checkpoint_attempt)
         .and_then(|file| file.sync_all())
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     Ok(())
@@ -2368,7 +2531,11 @@ mod tests {
     #[test]
     fn admission_requires_a_matching_completed_assistant_call() {
         let call = json!({"id":"call-1","name":"bash","arguments":{"command":"true"}});
-        let mut state = TurnState::new("session".into(), PathBuf::from("/tmp"));
+        let mut state = TurnState::new(
+            "session".into(),
+            PathBuf::from("/tmp"),
+            PathBuf::from("/tmp"),
+        );
         let payload = json!({"toolCallId":"call-1","toolName":"bash","input":{"command":"true"}});
         assert!(admit(&payload, &state).is_err());
         state.last_assistant = Some(AssistantTurn {
@@ -2407,7 +2574,11 @@ mod tests {
         };
         let mut reporter = reporter;
         let mut journal = Journal::new(&mut reporter, identity);
-        let mut state = TurnState::new("session".into(), PathBuf::from("/tmp"));
+        let mut state = TurnState::new(
+            "session".into(),
+            PathBuf::from("/tmp"),
+            PathBuf::from("/tmp"),
+        );
         state.stream_blocks.insert(
             0,
             StreamBlock {

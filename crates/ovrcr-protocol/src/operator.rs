@@ -148,6 +148,23 @@ pub struct OperatorTurnIdentity {
     pub session: SessionId,
     pub run: SessionRunId,
 }
+
+/// Stable identity for one live Operator worker, shared across its turns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperatorRunIdentity {
+    pub conversation: OperatorConversationId,
+    pub session: SessionId,
+    pub run: SessionRunId,
+}
+impl OperatorRunIdentity {
+    pub fn validate(&self) -> Result<(), String> {
+        if [self.conversation.0, self.session.0, self.run.0].contains(&0) {
+            Err("zero operator run identity".into())
+        } else {
+            Ok(())
+        }
+    }
+}
 impl OperatorTurnIdentity {
     pub fn validate(&self) -> Result<(), String> {
         if [self.conversation.0, self.turn.0, self.session.0, self.run.0].contains(&0) {
@@ -176,6 +193,8 @@ pub struct OperatorConversationSummary {
     pub run: SessionRunId,
     /// Derived only from the retained exact-run controlled-stop proof.
     pub worker_stopped: bool,
+    /// True only while the exact retained worker run is live in this Server.
+    pub worker_live: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
     /// The last pi model the worker selected; `None` before the first selection.
@@ -209,7 +228,9 @@ pub enum OperatorWorkerEvent {
         status: OperatorToolStatus,
     },
     ModelSelected(OperatorModel),
-    Completed,
+    Completed {
+        leased: bool,
+    },
     Failed(String),
     /// Displayable incremental thinking text; provider signatures are never carried.
     ThinkingDelta(String),
@@ -223,7 +244,7 @@ pub enum OperatorWorkerEvent {
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Completed | Self::Failed(_))
+        matches!(self, Self::Completed { .. } | Self::Failed(_))
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,7 +270,7 @@ impl OperatorEventBatch {
             match event {
                 OperatorWorkerEvent::ReasoningSelected(reasoning) => reasoning.validate()?,
                 OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
-                OperatorWorkerEvent::Completed
+                OperatorWorkerEvent::Completed { .. }
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded => {}
                 OperatorWorkerEvent::AssistantDelta(text)
@@ -442,6 +463,14 @@ pub struct OperatorWorkerStart {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
     Start {
+        identity: OperatorRunIdentity,
+    },
+    /// Claims the next submitted user turn for an already leased worker run.
+    StartTurn {
+        identity: OperatorRunIdentity,
+    },
+    /// Prepared for serialized foreground cancellation by the next lifecycle step.
+    AbortTurn {
         identity: OperatorTurnIdentity,
     },
     Retire {
@@ -460,6 +489,8 @@ pub struct OperatorWorkerRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerResult {
     Start(Box<OperatorWorkerStart>),
+    StartTurn(Option<Box<OperatorWorkerStart>>),
+    Aborted { identity: OperatorTurnIdentity },
     Retired { identity: OperatorTurnIdentity },
 }
 
@@ -510,7 +541,7 @@ mod tests {
             "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
         )];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::Completed];
+        batch.events = vec![OperatorWorkerEvent::Completed { leased: false }];
         assert!(batch.validate().is_ok());
         batch.events = vec![
             OperatorWorkerEvent::Failed("failed".into()),
@@ -518,7 +549,7 @@ mod tests {
         ];
         assert!(batch.validate().is_err());
         batch.events = vec![
-            OperatorWorkerEvent::Completed,
+            OperatorWorkerEvent::Completed { leased: false },
             OperatorWorkerEvent::AssistantDelta("late".into()),
         ];
         assert!(batch.validate().is_err());
@@ -574,7 +605,7 @@ mod tests {
         batch.events = vec![
             OperatorWorkerEvent::CompactionStarted,
             OperatorWorkerEvent::CompactionEnded,
-            OperatorWorkerEvent::Completed,
+            OperatorWorkerEvent::Completed { leased: false },
         ];
         assert!(batch.validate().is_ok());
         batch.events = vec![OperatorWorkerEvent::ToolOutput {

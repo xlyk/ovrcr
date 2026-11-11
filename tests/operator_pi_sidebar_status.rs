@@ -75,6 +75,7 @@ fn conversation() -> OperatorConversationSummary {
         current_turn_started_unix_ms: None,
         last_reply_unix_ms: None,
         worker_stopped: true,
+        worker_live: false,
     }
 }
 

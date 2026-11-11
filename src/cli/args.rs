@@ -177,8 +177,6 @@ pub(super) enum OperatorCommand {
         #[arg(long)]
         conversation: u64,
         #[arg(long)]
-        turn: u64,
-        #[arg(long)]
         session: u64,
         #[arg(long)]
         run: u64,
@@ -575,6 +573,40 @@ mod launch_cli_tests {
                 "/bin/sh",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn hidden_operator_worker_uses_run_identity_without_a_turn_argument() {
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "operator",
+                "worker",
+                "--conversation",
+                "1",
+                "--session",
+                "2",
+                "--run",
+                "3",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "operator",
+                "worker",
+                "--conversation",
+                "1",
+                "--turn",
+                "4",
+                "--session",
+                "2",
+                "--run",
+                "3",
+            ])
+            .is_err()
         );
     }
 

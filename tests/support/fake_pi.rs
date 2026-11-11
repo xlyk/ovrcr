@@ -112,6 +112,20 @@ impl Scenario {
         )
     }
 
+    /// A separate scripted step list for each prompt accepted by one warm Pi
+    /// process. Any later prompt uses the final list, matching a stable script.
+    pub fn prompt_steps(&mut self, prompts: Vec<Vec<Step>>) -> &mut Self {
+        self.set(
+            "prompt_steps",
+            Value::Array(
+                prompts
+                    .into_iter()
+                    .map(|steps| Value::Array(steps.into_iter().map(Step::into_value).collect()))
+                    .collect(),
+            ),
+        )
+    }
+
     pub fn exit_after_steps(&mut self) -> &mut Self {
         self.set("exit_after_steps", Value::Bool(true))
     }
@@ -230,6 +244,8 @@ pub enum Step {
     /// Receipt for a further model request (must never follow a timeout).
     ModelRequest,
     Event(Value),
+    /// Emit the watch extension's status snapshot.
+    WatchStatus(usize),
     Stderr(String),
     Sleep(u64),
     WaitFile(PathBuf),
@@ -386,6 +402,7 @@ impl Step {
                 },
             }),
             Self::Event(event) => json!({"kind": "event", "event": event}),
+            Self::WatchStatus(active) => json!({"kind": "watch_status", "active": active}),
             Self::Stderr(text) => json!({"kind": "stderr", "text": text}),
             Self::Sleep(ms) => json!({"kind": "sleep", "ms": ms}),
             Self::WaitFile(path) => {

@@ -25,7 +25,7 @@ use live::Live;
 use operator_harness::{OperatorClient, Registry, has_assistant, tool_calls, tool_outputs};
 use ovrcr::protocol::{
     OperatorMessageContent, OperatorRequest, OperatorTurnState, OperatorWorkerEvent, Request,
-    Response, SessionId,
+    Response, SessionId, SessionRunId,
 };
 use serde_json::json;
 use std::{
@@ -218,6 +218,340 @@ fn current_never_creates_and_open_yields_one_durable_conversation() {
 }
 
 #[test]
+fn leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires() {
+    let mut scenario = Scenario::new();
+    scenario.set(
+        "model_default_thinking",
+        json!({"fixture/default": "medium", "fixture/alternate": "low"}),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("first leased answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("second leased answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("final unleased answer"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    for (key, value) in [
+        ("operator.model", "fixture/alternate"),
+        ("operator.thinking_level", "high"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", key, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "launch watched work");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+
+    assert_eq!(first.identity.run, SessionRunId(1));
+    assert_eq!(
+        leased.conversation.current_turn.as_ref().unwrap().identity,
+        first.identity
+    );
+    assert!(!leased.conversation.worker_stopped);
+    assert!(client.session(opened.session).pid.is_some());
+    let first_checkpoint = checkpoint_file(&live, first.identity.turn.0);
+    assert!(
+        first_checkpoint.is_file(),
+        "leased turns publish a separate checkpoint copy"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&first_checkpoint).unwrap().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        std::fs::read_to_string(&first_checkpoint)
+            .unwrap()
+            .starts_with("{\"type\":\"session\""),
+        "the copied checkpoint starts with the validated native header"
+    );
+    assert!(matches!(
+        live.request(Request::Shutdown { kill: false }),
+        Response::Error {
+            code: ovrcr::protocol::ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.model".into(),
+            value: None,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'high'".into()),
+        }),
+        Response::Ok
+    );
+    let second = client.submit_turn(&leased.conversation, "continue while watched");
+    assert_eq!(
+        second.identity.run, first.identity.run,
+        "warm Submit keeps the worker run"
+    );
+    assert!(second.identity.turn.0 > first.identity.turn.0);
+
+    let second_leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == second.identity)
+    });
+    assert_eq!(
+        second_leased.conversation.model,
+        Some(ovrcr::protocol::OperatorModel {
+            provider: "fixture".into(),
+            id: "default".into(),
+        }),
+        "clearing an explicit model applies the Pi profile default on a warm turn"
+    );
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'default'".into()),
+        }),
+        Response::Ok
+    );
+    let third = client.submit_turn(&second_leased.conversation, "restore profile reasoning");
+    assert_eq!(third.identity.run, first.identity.run);
+    assert!(third.identity.turn.0 > second.identity.turn.0);
+
+    let final_history = client.wait_stopped(opened.id);
+    assert_eq!(state(&final_history), OperatorTurnState::Complete);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity,
+        third.identity
+    );
+    assert!(!final_history.conversation.worker_live);
+    assert!(final_history.conversation.worker_stopped);
+    assert!(client.session(opened.session).pid.is_none());
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(third.identity.turn.0 as i64)
+    );
+    assert!(
+        !first_checkpoint.exists(),
+        "the new checkpoint replaces the old copy"
+    );
+
+    let starts = fake.events("start");
+    let prompts = fake.events("prompt");
+    assert_eq!(
+        starts.len(),
+        1,
+        "the leased follow-up reused one Pi process"
+    );
+    assert_eq!(prompts.len(), 3);
+    assert!(
+        prompts[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("launch watched work")
+    );
+    assert!(
+        prompts[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("continue while watched")
+    );
+    assert!(
+        prompts[2]["message"]
+            .as_str()
+            .unwrap()
+            .contains("restore profile reasoning")
+    );
+    let selected_models: Vec<_> = fake
+        .events("command")
+        .into_iter()
+        .filter(|event| event["command"] == "set_model")
+        .map(|event| event["modelId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(selected_models, ["alternate", "default", "default"]);
+    let selected_levels: Vec<_> = fake
+        .events("command")
+        .into_iter()
+        .filter(|event| event["command"] == "set_thinking_level")
+        .map(|event| event["level"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        selected_levels,
+        ["high", "high", "medium"],
+        "Default restores the captured profile level after an explicit warm level"
+    );
+    assert_eq!(
+        final_history.conversation.reasoning.as_ref().unwrap().level,
+        ovrcr::protocol::OperatorThinkingLevel::Medium
+    );
+    assert_eq!(
+        live.request(Request::Shutdown { kill: false }),
+        Response::Ok,
+        "clean unleased retirement leaves non-kill shutdown available"
+    );
+    assert!(matches!(
+        live.join_within(Duration::from_secs(10)),
+        live::Stop::Finished
+    ));
+}
+
+#[test]
+fn cold_resumed_leased_worker_keeps_its_active_session_across_warm_turns() {
+    let mut cold = Scenario::new();
+    cold.steps(vec![Step::assistant("cold checkpoint base"), Step::Settle]);
+    let (live, fake, mut client) = fixture(&cold);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "make a cold checkpoint");
+    complete(&mut client, opened.id);
+
+    let mut resumed = Scenario::new();
+    resumed.prompt_steps(vec![
+        vec![
+            Step::assistant("cold resumed answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("first warm answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("second warm answer"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&resumed);
+    let current = client.current().unwrap();
+    let second = client.submit_turn(&current, "resume and lease");
+    assert_ne!(second.identity.run, first.identity.run);
+    let second_history = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == second.identity)
+    });
+    let active_session = live
+        .config
+        .join("operator-pi/runs")
+        .join(second.identity.run.0.to_string())
+        .join("session.jsonl");
+    let second_checkpoint = checkpoint_file(&live, second.identity.turn.0);
+    assert!(
+        active_session.is_file(),
+        "cold resume creates the session file Pi keeps active for this worker"
+    );
+    assert!(
+        second_checkpoint.is_file(),
+        "leased completion promotes a canonical per-turn session.jsonl copy"
+    );
+
+    let third = client.submit_turn(&second_history.conversation, "first warm turn");
+    let third_history = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == third.identity)
+    });
+    assert!(
+        active_session.is_file(),
+        "warm cleanup must preserve Pi's live file"
+    );
+
+    let fourth = client.submit_turn(&third_history.conversation, "second warm turn");
+    let final_history = client.wait_stopped(opened.id);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity,
+        fourth.identity
+    );
+    assert!(
+        active_session.is_file(),
+        "retirement keeps the worker's source file"
+    );
+    let promoted = checkpoint_file(&live, fourth.identity.turn.0);
+    let contents = std::fs::read_to_string(promoted).unwrap();
+    for expected in [
+        "cold checkpoint base",
+        "cold resumed answer",
+        "first warm answer",
+        "second warm answer",
+    ] {
+        assert!(
+            contents.contains(expected),
+            "checkpoint lost {expected}: {contents}"
+        );
+    }
+    assert!(has_assistant(&final_history, "second warm answer"));
+}
+
+#[test]
+fn kill_shutdown_terminates_a_leased_worker_and_its_pi_group() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![vec![
+        Step::assistant("leased before kill"),
+        Step::WatchStatus(1),
+        Step::Settle,
+    ]]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "start leased worker");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    assert!(leased.conversation.worker_live);
+    assert_eq!(fake.events("start").len(), 1);
+
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    operator_harness::assert_group_absent(&live, pgid);
+    assert!(matches!(
+        live.join_within(Duration::from_secs(10)),
+        live::Stop::Finished
+    ));
+}
+
+#[test]
 fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption() {
     let marker_dir = tempfile::tempdir().unwrap();
     let marker = marker_dir.path().join("fixture-marker");
@@ -285,12 +619,17 @@ fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption()
         attempt_two.is_dir(),
         "failed attempt evidence must be preserved"
     );
-    // The resumed attempt holds only the copied base context plus this attempt's
-    // own writes; it is never adopted as the checkpoint.
+    // The run-owned active session holds only the copied base context plus this
+    // attempt's own writes; it is never adopted as a checkpoint on failure.
     assert!(
-        std::fs::read_to_string(attempt_two.join("session.jsonl"))
-            .unwrap()
-            .contains("first answer"),
+        std::fs::read_to_string(
+            live.config
+                .join("operator-pi/runs")
+                .join(turn_two.identity.run.0.to_string())
+                .join("session.jsonl")
+        )
+        .unwrap()
+        .contains("first answer"),
         "a resumed attempt starts from the completed checkpoint copy"
     );
     let registry = Registry::of(&live);
@@ -339,9 +678,14 @@ fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption()
         "an interrupted turn is not a context checkpoint"
     );
     assert!(
-        std::fs::read_to_string(checkpoint_file(&live, turn_three.identity.turn.0))
-            .unwrap()
-            .contains("first answer"),
+        std::fs::read_to_string(
+            live.config
+                .join("operator-pi/runs")
+                .join(turn_three.identity.run.0.to_string())
+                .join("session.jsonl")
+        )
+        .unwrap()
+        .contains("first answer"),
         "the interrupted attempt kept only its checkpoint copy"
     );
 
@@ -1680,7 +2024,7 @@ mod installed_pi {
         history.messages.iter().any(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
             )
         })
     }
@@ -2483,14 +2827,13 @@ mod installed_pi {
                     .iter()
                     .any(|name| name == "bash")
         });
-        let timeout_turn = pending_timeout
+        let timeout_identity = pending_timeout
             .conversation
             .current_turn
             .as_ref()
             .unwrap()
-            .identity
-            .turn
-            .0;
+            .identity;
+        let timeout_turn = timeout_identity.turn.0;
         let pid = driver
             .session(opened.session)
             .pid
@@ -2629,7 +2972,11 @@ mod installed_pi {
             "the attempt evidence is preserved"
         );
         assert!(
-            timeout_attempt.join("session.jsonl").is_file(),
+            live.config
+                .join("operator-pi/runs")
+                .join(timeout_identity.run.0.to_string())
+                .join("session.jsonl")
+                .is_file(),
             "the timed-out native session is preserved: {timeout_attempt:?}"
         );
         eprintln!(

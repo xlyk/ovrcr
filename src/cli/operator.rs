@@ -2,8 +2,7 @@
 use super::{AppResult, RuntimeError, args::OperatorCommand, output::print_json};
 use ovrcr::operator::pi;
 use ovrcr::protocol::{
-    ErrorCode, OperatorConversationId, OperatorTurnId, OperatorTurnIdentity, SessionId,
-    SessionRunId,
+    ErrorCode, OperatorConversationId, OperatorRunIdentity, SessionId, SessionRunId,
 };
 use serde_json::json;
 use std::io::IsTerminal;
@@ -12,12 +11,10 @@ pub(super) fn run(command: OperatorCommand, json_output: bool) -> AppResult<()> 
     match command {
         OperatorCommand::Worker {
             conversation,
-            turn,
             session,
             run,
-        } => ovrcr::operator::worker::run(OperatorTurnIdentity {
+        } => ovrcr::operator::worker::run(OperatorRunIdentity {
             conversation: OperatorConversationId(conversation),
-            turn: OperatorTurnId(turn),
             session: SessionId(session),
             run: SessionRunId(run),
         })

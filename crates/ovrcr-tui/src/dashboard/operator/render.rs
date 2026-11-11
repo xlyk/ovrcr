@@ -92,7 +92,7 @@ fn latest_completed_turn(chat: &Chat) -> Option<ovrcr_protocol::OperatorTurnId> 
         .find(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
             )
         })
         .map(|message| message.turn)
@@ -150,7 +150,7 @@ fn activity(chat: &Chat) -> AgentActivity {
     }
     match chat.summary.current_turn.as_ref().map(|turn| turn.state) {
         Some(OperatorTurnState::Running) => AgentActivity::Busy,
-        Some(_) if !chat.summary.worker_stopped => AgentActivity::Busy,
+        Some(_) if !chat.summary.worker_live && !chat.summary.worker_stopped => AgentActivity::Busy,
         Some(OperatorTurnState::Error) => AgentActivity::Error,
         Some(OperatorTurnState::Interrupted) => AgentActivity::WaitingInput,
         Some(OperatorTurnState::Complete) => AgentActivity::ResponseReady,
@@ -820,7 +820,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
             ) => {}
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed) => {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. }) => {
                 push_lines(
                     &mut lines,
                     ordinal,
@@ -1266,7 +1266,7 @@ impl Dashboard {
         now_unix_ms: u64,
     ) {
         let layout = self.operator_layout(frame.area());
-        let stop = !chat.summary.worker_stopped
+        let stop = (!chat.summary.worker_live && !chat.summary.worker_stopped)
             || chat
                 .summary
                 .current_turn

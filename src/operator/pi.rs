@@ -4,11 +4,12 @@
 //! The profile at `<instance>/operator-pi` is the only Pi configuration the
 //! Operator uses; the personal `~/.pi/agent` profile and OVRCR credentials are
 //! never copied. The instance-wide agent working directory is
-//! `<instance>/operator-workdir`. Every child gets umask 077, its own Pi
-//! session directory per attempt, and an environment stripped of private
+//! `<instance>/operator-workdir`. Every worker run gets a private Pi session
+//! directory, and every turn gets a separate checkpoint attempt directory.
+//! Children use umask 077 and an environment stripped of private
 //! OVRCR authority and inherited provider credentials.
 use crate::operator::rpc::{RpcChild, RpcMessage};
-use crate::protocol::{OperatorConversationId, OperatorTurnId};
+use crate::protocol::{OperatorConversationId, OperatorTurnId, SessionRunId};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -169,12 +170,18 @@ pub struct PiPaths {
     pub profile: PathBuf,
     pub workdir: PathBuf,
     pub turns: PathBuf,
+    pub runs: PathBuf,
 }
 
 impl PiPaths {
     /// Per-attempt session directory. Callers create it exclusively.
     pub fn attempt_dir(&self, turn: OperatorTurnId) -> PathBuf {
         self.turns.join(turn.0.to_string())
+    }
+
+    /// One native Pi session directory owned by a worker run.
+    pub fn run_dir(&self, run: SessionRunId) -> PathBuf {
+        self.runs.join(run.0.to_string())
     }
 }
 
@@ -189,7 +196,8 @@ pub fn conversation_session_id(conversation: OperatorConversationId) -> String {
 }
 
 /// Resolve and validate the instance profile. Creates `operator-pi`,
-/// `operator-pi/turns`, and `operator-workdir` with mode 0700. Existing paths
+/// `operator-pi/turns`, `operator-pi/runs`, and `operator-workdir` with mode
+/// 0700. Existing paths
 /// that are symlinks, non-directories, foreign-owned, or group/world-writable
 /// are refused rather than replaced.
 pub fn paths(instance: &Path) -> Result<PiPaths, PiError> {
@@ -197,14 +205,17 @@ pub fn paths(instance: &Path) -> Result<PiPaths, PiError> {
     let profile = instance.join(PROFILE_DIR);
     let workdir = instance.join(WORKDIR_DIR);
     let turns = profile.join(TURNS_DIR);
+    let runs = profile.join("runs");
     prepare_private_dir(&profile)?;
     prepare_private_dir(&turns)?;
+    prepare_private_dir(&runs)?;
     prepare_private_dir(&workdir)?;
     Ok(PiPaths {
         root: instance,
         profile,
         workdir,
         turns,
+        runs,
     })
 }
 
@@ -298,11 +309,12 @@ pub fn materialize_extension(paths: &PiPaths) -> Result<PathBuf, PiError> {
     Ok(target)
 }
 
-/// Managed-turn launcher. The caller materializes the extension first. Pi stays
-/// in the caller's process group so the lifetime Session owns it and its tools.
+/// Managed-run launcher. `session_dir` is private and owned by one worker run.
+/// The caller materializes the extension first. Pi stays in the caller's
+/// process group so the lifetime Session owns it and its tools.
 pub fn rpc_command(
     paths: &PiPaths,
-    attempt: &Path,
+    session_dir: &Path,
     conversation: OperatorConversationId,
     policy: &str,
 ) -> Result<Command, PiError> {
@@ -326,7 +338,7 @@ pub fn rpc_command(
         TOOLS,
         "--session-dir",
     ]);
-    command.arg(attempt);
+    command.arg(session_dir);
     command
         .arg("--session-id")
         .arg(conversation_session_id(conversation))
@@ -886,7 +898,8 @@ mod tests {
         assert_eq!(paths.profile, instance.path().join("operator-pi"));
         assert_eq!(paths.workdir, instance.path().join("operator-workdir"));
         assert_eq!(paths.turns, instance.path().join("operator-pi/turns"));
-        for directory in [&paths.profile, &paths.turns, &paths.workdir] {
+        assert_eq!(paths.runs, instance.path().join("operator-pi/runs"));
+        for directory in [&paths.profile, &paths.turns, &paths.runs, &paths.workdir] {
             let metadata = fs::symlink_metadata(directory).unwrap();
             assert!(metadata.is_dir());
             assert_eq!(metadata.mode() & 0o777, 0o700);

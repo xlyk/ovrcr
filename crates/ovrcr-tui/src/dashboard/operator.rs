@@ -135,7 +135,7 @@ impl Chat {
     }
     fn can_submit(&self) -> bool {
         !self.submitting
-            && self.summary.worker_stopped
+            && (self.summary.worker_stopped || self.summary.worker_live)
             && self
                 .summary
                 .current_turn
@@ -186,6 +186,7 @@ enum Pending {
         text: String,
         session: SessionId,
         expected_run: SessionRunId,
+        warm: bool,
         origin: SubmitOrigin,
     },
     Stop {
@@ -264,13 +265,19 @@ fn status(chat: &Chat) -> &'static str {
     }
     match chat.summary.current_turn.as_ref().map(|turn| turn.state) {
         Some(OperatorTurnState::Running) => "running",
-        Some(OperatorTurnState::Complete) if !chat.summary.worker_stopped => {
+        Some(OperatorTurnState::Complete)
+            if !chat.summary.worker_live && !chat.summary.worker_stopped =>
+        {
             "finishing · stop unconfirmed"
         }
-        Some(OperatorTurnState::Interrupted) if !chat.summary.worker_stopped => {
+        Some(OperatorTurnState::Interrupted)
+            if !chat.summary.worker_live && !chat.summary.worker_stopped =>
+        {
             "interrupted · stop unconfirmed"
         }
-        Some(OperatorTurnState::Error) if !chat.summary.worker_stopped => {
+        Some(OperatorTurnState::Error)
+            if !chat.summary.worker_live && !chat.summary.worker_stopped =>
+        {
             "error · stop unconfirmed"
         }
         Some(OperatorTurnState::Complete) => "complete",
@@ -305,9 +312,11 @@ fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
     } else {
         let turn = chat.summary.current_turn.as_ref()?;
         if turn.state != OperatorTurnState::Running {
-            return (!chat.summary.worker_stopped).then(|| ConversationActivity {
-                label: "Stop unconfirmed".into(),
-                animated: false,
+            return (!chat.summary.worker_live && !chat.summary.worker_stopped).then(|| {
+                ConversationActivity {
+                    label: "Stop unconfirmed".into(),
+                    animated: false,
+                }
             });
         }
         let caught_up = !chat.reading && !chat.dirty && chat.confirmed_tail == Some(chat.ordinal);
@@ -752,6 +761,7 @@ impl Dashboard {
         let expected_run = chat.summary.run;
         let session = chat.summary.session;
         let id = chat.summary.id;
+        let warm = chat.summary.worker_live;
         chat.submitting = true;
         chat.context = context.clone();
         chat.error = None;
@@ -761,6 +771,7 @@ impl Dashboard {
                 text: text.clone(),
                 session,
                 expected_run,
+                warm,
                 origin,
             },
             OperatorRequest::Submit {
@@ -1274,12 +1285,14 @@ impl Dashboard {
                     text,
                     session,
                     expected_run,
+                    warm,
                     origin,
                 },
                 Response::Operator(OperatorResponse::Submitted(turn)),
             ) if turn.identity.conversation == id
                 && turn.identity.session == session
-                && turn.identity.run.0 == expected_run.0.saturating_add(1)
+                && (turn.identity.run == expected_run
+                    || (!warm && turn.identity.run.0 == expected_run.0.saturating_add(1)))
                 && turn.identity.validate().is_ok() =>
             {
                 let clear_draft = match origin {
@@ -1302,6 +1315,8 @@ impl Dashboard {
                     if chat.summary.run.0 <= turn.identity.run.0
                         && current.is_none_or(|current| {
                             current.identity.run.0 < turn.identity.run.0
+                                || (current.identity.run == turn.identity.run
+                                    && current.identity.turn.0 < turn.identity.turn.0)
                                 || (current.identity == turn.identity
                                     && current.sequence <= turn.sequence
                                     && !chat.summary.worker_stopped)
@@ -1416,14 +1431,16 @@ impl Dashboard {
         if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
             return false;
         }
-        if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn)
-            && (new.identity.run.0 < old.identity.run.0
-                || (new.identity.run == old.identity.run && new.identity != old.identity)
-                || (new.identity == old.identity
-                    && (new.sequence < old.sequence
-                        || (chat.summary.worker_stopped && !summary.worker_stopped))))
-        {
-            return false;
+        if let (Some(old), Some(new)) = (&chat.summary.current_turn, &summary.current_turn) {
+            if new.identity.run.0 < old.identity.run.0
+                || (new.identity.run == old.identity.run
+                    && (new.identity.turn.0 < old.identity.turn.0
+                        || (new.identity.turn == old.identity.turn
+                            && (new.sequence < old.sequence
+                                || (chat.summary.worker_stopped && !summary.worker_stopped)))))
+            {
+                return false;
+            }
         }
         if chat.summary.model != summary.model || chat.summary.reasoning != summary.reasoning {
             self.operator.reasoning_picker = None;
@@ -1475,7 +1492,7 @@ impl Dashboard {
                     chat.summary.model = Some(model.clone());
                 }
                 OperatorMessageContent::Worker(
-                    OperatorWorkerEvent::Completed | OperatorWorkerEvent::Failed(_),
+                    OperatorWorkerEvent::Completed { .. } | OperatorWorkerEvent::Failed(_),
                 )
                 | OperatorMessageContent::Interrupted
                     if chat.reviewed != Some(message.turn) =>
@@ -1596,6 +1613,7 @@ mod tests {
             reasoning: None,
             run: SessionRunId(1),
             worker_stopped: true,
+            worker_live: false,
             id: Id(1),
             session: SessionId(11),
             model: None,
@@ -1613,10 +1631,13 @@ mod tests {
         value
     }
     fn turn(run: u64, state: OperatorTurnState) -> OperatorTurn {
+        turn_for(run, run, state)
+    }
+    fn turn_for(run: u64, turn: u64, state: OperatorTurnState) -> OperatorTurn {
         OperatorTurn {
             identity: OperatorTurnIdentity {
                 conversation: Id(1),
-                turn: OperatorTurnId(run),
+                turn: OperatorTurnId(turn),
                 session: SessionId(11),
                 run: SessionRunId(run),
             },
@@ -1718,7 +1739,7 @@ mod tests {
     fn completed(ordinal: u64) -> OperatorMessage {
         message(
             ordinal,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
         )
     }
     fn draw(d: &mut Dashboard, cols: u16, rows: u16) -> String {
@@ -2303,6 +2324,54 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn leased_idle_worker_accepts_a_followup_on_the_same_run_without_stop_control() {
+        let mut leased = summary();
+        leased.worker_stopped = false;
+        leased.worker_live = true;
+        leased.current_turn = Some(turn_for(1, 1, OperatorTurnState::Complete));
+        let mut d = dashboard();
+        let out = opened(&mut d, leased);
+        d.drain_outbox();
+        d.operator.chat.as_mut().unwrap().draft = "follow up".into();
+        assert!(d.operator_submit_available());
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(!screen.contains("[Stop Ctrl-x]"), "{screen}");
+
+        d.key(KeyCode::Enter);
+        let submit = d.drain_outbox().remove(0);
+        assert!(matches!(
+            submit.request,
+            Request::Operator(OperatorRequest::Submit {
+                expected_run: SessionRunId(1),
+                ..
+            })
+        ));
+        respond(
+            &mut d,
+            submit.request_id,
+            OperatorResponse::Submitted(turn_for(1, 2, OperatorTurnState::Running)),
+        );
+        assert_eq!(d.operator.chat.as_ref().unwrap().draft, "");
+        assert_eq!(
+            d.operator
+                .chat
+                .as_ref()
+                .unwrap()
+                .summary
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .identity,
+            turn_for(1, 2, OperatorTurnState::Running).identity
+        );
+        assert_eq!(
+            out.len(),
+            1,
+            "opening the existing conversation stays read-only"
+        );
     }
 
     #[test]

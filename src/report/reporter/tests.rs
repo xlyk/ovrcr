@@ -584,9 +584,9 @@ fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
 fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     use ovrcr_protocol::{
         AgentSecret, ClientMessage, OperatorConversationId, OperatorEventBatch,
-        OperatorExchangeResult, OperatorTurnId, OperatorTurnIdentity, OperatorWorkerCommand,
-        OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId, SessionRunId,
-        SupervisorAuth, read_frame, write_frame,
+        OperatorExchangeResult, OperatorRunIdentity, OperatorTurnId, OperatorTurnIdentity,
+        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId,
+        SessionRunId, SupervisorAuth, read_frame, write_frame,
     };
     use std::os::unix::net::UnixStream;
     let identity = OperatorTurnIdentity {
@@ -594,6 +594,11 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
         turn: OperatorTurnId(3),
         session: SessionId(4),
         run: SessionRunId(5),
+    };
+    let run_identity = OperatorRunIdentity {
+        conversation: identity.conversation,
+        session: identity.session,
+        run: identity.run,
     };
     let auth = SupervisorAuth {
         session: identity.session,
@@ -618,7 +623,7 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                     observed.push(request.command.clone());
                     match request.command {
                         OperatorWorkerCommand::Start { identity: i } => {
-                            assert_eq!(i, identity);
+                            assert_eq!(i, run_identity);
                             Response::OperatorWorker(OperatorWorkerResult::Start(Box::new(
                                 OperatorWorkerStart {
                                     thinking_level: Default::default(),
@@ -631,6 +636,13 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                             )))
                         }
                         OperatorWorkerCommand::Retire { .. } => Response::Error {
+                            code: ovrcr_protocol::ErrorCode::Conflict,
+                            message: "refused".into(),
+                        },
+                        OperatorWorkerCommand::StartTurn { .. } => {
+                            Response::OperatorWorker(OperatorWorkerResult::StartTurn(None))
+                        }
+                        OperatorWorkerCommand::AbortTurn { .. } => Response::Error {
                             code: ovrcr_protocol::ErrorCode::Conflict,
                             message: "refused".into(),
                         },
@@ -673,7 +685,7 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     let mut reporter = Reporter::new(AgentProvider::Operator, Some(lease), None);
     assert_eq!(
         reporter
-            .operator_start(identity, deadline())
+            .operator_start(run_identity, deadline())
             .unwrap()
             .identity,
         identity
@@ -706,7 +718,9 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     assert_eq!(
         thread.join().unwrap(),
         vec![
-            OperatorWorkerCommand::Start { identity },
+            OperatorWorkerCommand::Start {
+                identity: run_identity,
+            },
             OperatorWorkerCommand::Retire { identity },
             OperatorWorkerCommand::Stop { identity }
         ]

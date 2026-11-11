@@ -1,6 +1,35 @@
 use super::*;
 use crate::retained::Disposition;
+use crate::server::operator::operator_worker_argv;
 use ovrcr_protocol::*;
+
+#[test]
+fn worker_argv_carries_run_identity_without_turn_identity() {
+    let argv = operator_worker_argv(
+        Path::new("/tmp/ovrcr-worker"),
+        OperatorRunIdentity {
+            conversation: OperatorConversationId(1),
+            session: SessionId(2),
+            run: SessionRunId(3),
+        },
+    );
+    let args: Vec<_> = argv.iter().map(|value| value.to_string_lossy()).collect();
+    assert_eq!(
+        args,
+        [
+            "/tmp/ovrcr-worker",
+            "operator",
+            "worker",
+            "--conversation",
+            "1",
+            "--session",
+            "2",
+            "--run",
+            "3",
+        ]
+    );
+    assert!(!args.iter().any(|arg| arg == "--turn"));
+}
 
 #[test]
 fn operator_current_and_open_require_the_current_dashboard() {
@@ -152,7 +181,7 @@ impl LiveOperator {
             &script,
             format!(
                 r#"#!/bin/sh
-export OVRCR_TEST_OPERATOR_IDENT="$4,$6,$8,${{10}}"
+export OVRCR_TEST_OPERATOR_IDENT="$4,$6,$8"
 export OVRCR_TEST_OPERATOR_ROOT='{}'
 exec '{}' --exact server::operator_tests::operator_worker_fixture --ignored --nocapture
 "#,
@@ -369,11 +398,10 @@ fn operator_worker_fixture() {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect();
-    let identity = OperatorTurnIdentity {
+    let run_identity = OperatorRunIdentity {
         conversation: OperatorConversationId(ids[0]),
-        turn: OperatorTurnId(ids[1]),
-        session: SessionId(ids[2]),
-        run: SessionRunId(ids[3]),
+        session: SessionId(ids[1]),
+        run: SessionRunId(ids[2]),
     };
     let root = PathBuf::from(std::env::var_os("OVRCR_TEST_OPERATOR_ROOT").unwrap());
     let socket = std::env::var_os("OVRCR_HOOK_SOCKET").unwrap();
@@ -387,7 +415,7 @@ fn operator_worker_fixture() {
     let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = worker_exchange(
         &mut stream,
         Request::ReserveAgent(ReserveAgent {
-            session: identity.session,
+            session: run_identity.session,
             capability: AgentSecret(bytes),
             operation: "reserve".into(),
             invocation: "fixture".into(),
@@ -399,19 +427,24 @@ fn operator_worker_fixture() {
         panic!("reserve")
     };
     let auth = SupervisorAuth {
-        session: identity.session,
+        session: run_identity.session,
         lease: reservation.lease,
     };
     let Response::OperatorWorker(OperatorWorkerResult::Start(start)) = worker_exchange(
         &mut stream,
         Request::OperatorWorker(OperatorWorkerRequest {
             auth: auth.clone(),
-            command: OperatorWorkerCommand::Start { identity },
+            command: OperatorWorkerCommand::Start {
+                identity: run_identity,
+            },
         }),
     ) else {
         panic!("start")
     };
-    assert_eq!(start.identity, identity);
+    let identity = start.identity;
+    assert_eq!(identity.conversation, run_identity.conversation);
+    assert_eq!(identity.session, run_identity.session);
+    assert_eq!(identity.run, run_identity.run);
     assert_eq!(start.text, "fixture prompt");
     assert!(
         start.model.is_none(),
@@ -468,7 +501,10 @@ fn operator_worker_fixture() {
             .exists()
     });
     assert!(matches!(
-        worker_exchange(&mut stream, batch(2, vec![OperatorWorkerEvent::Completed])),
+        worker_exchange(
+            &mut stream,
+            batch(2, vec![OperatorWorkerEvent::Completed { leased: false }])
+        ),
         Response::OperatorExchange(_)
     ));
     fs::write(

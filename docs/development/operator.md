@@ -7,7 +7,8 @@ installed [pi](https://github.com/earendil-works/pi) coding agent 0.87.1 through
 its RPC protocol. There is no embedded model client, no Rig agent and no custom
 OAuth: pi owns authentication, model catalog, the agent loop, tool definitions,
 inference and context management. The Server stays synchronous; a managed
-same-executable worker owns each turn's pi process.
+same-executable worker owns pi for a cold run. When a completed turn carries a
+work lease, that process stays live across warm user turns on the same run.
 
 ## Package layout
 
@@ -16,12 +17,14 @@ same-executable worker owns each turn's pi process.
   bounded model listing.
 - `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
   worker and `ovrcr operator models`.
-- `src/operator/worker.rs` — one turn: authenticated Start, attempt directory,
-  fresh native session, checkpoint restore, exact model resolution, one prompt,
-  ordered journal batches, session promotion, Completed and authenticated Retire.
+- `src/operator/worker.rs` — cold Start and run-scoped warm StartTurn, one live
+  pi conversation, per-turn checkpoint copies, exact model resolution for each
+  prompt, ordered journal batches, lease-aware Completed and authenticated Retire.
 - `src/pi-operator-extension.mjs` — the only custom code loaded into pi. It
   publishes the readiness contract, overrides `bash` with an attached execution
   adapter, and turns pi's tool callbacks into the durable admission handshake.
+  The worker consumes the bounded `ovrcr_operator_watches` status as its work
+  lease count; the separate watch tool owns producing that status.
 
 `OVRCR_PI_EXECUTABLE`, when set and nonempty, names the pi executable; otherwise
 `pi` is resolved on `PATH`. A missing executable is reported as
@@ -36,16 +39,19 @@ All Operator state lives inside the instance directory (`RegistryPath::resolve`)
 | --- | --- | --- |
 | `<instance>/operator-pi` | 0700 | Pi's `PI_CODING_AGENT_DIR`: native auth, models and settings |
 | `<instance>/operator-pi/turns` | 0700 | One attempt directory per turn id |
+| `<instance>/operator-pi/runs/<run-id>` | 0700 | Live Pi session files for one worker run |
 | `<instance>/operator-workdir` | 0700 | Fixed pi process cwd for the whole conversation |
 
 Existing paths that are symlinks, non-directories, owned by another user, or
 group/world-writable are refused rather than replaced. The personal pi profile
 and OVRCR credentials are never copied. Every child runs with umask `077`.
 
-Each attempt is `operator-pi/turns/<turn-id>`, created exclusively with 0700; an
-existing directory is an uncertain prior attempt and refuses the turn instead of
-replaying it. The deterministic native session id is
-`operator-<conversation-id>`, so every attempt resumes the same pi conversation.
+Each turn attempt is `operator-pi/turns/<turn-id>`, created exclusively with
+0700; an existing directory is an uncertain prior attempt and refuses the turn
+instead of replaying it. The worker's native Pi session lives in its
+`operator-pi/runs/<run-id>` directory. The deterministic native session id is
+`operator-<conversation-id>`, so cold worker runs can resume the same Pi
+conversation from the last completed per-turn `session.jsonl` checkpoint.
 
 Environment for every child: `PI_CODING_AGENT_DIR=<instance>/operator-pi`,
 `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK=1`, `OVRCR_EXECUTABLE` pointing at the
@@ -63,7 +69,8 @@ Managed turn (`pi.rs::rpc_command`):
 pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --no-themes --no-context-files --no-approve --offline
    --tools read,bash,edit,write
-   --session-dir <attempt> --session-id operator-<conversation-id>
+   --session-dir <operator-pi>/runs/<run-id>
+   --session-id operator-<conversation-id>
    --append-system-prompt <policy + bundled CLI skill>
    --extension <operator-pi>/pi-operator-extension.mjs
 ```
@@ -89,22 +96,26 @@ Interactive setup (`ovrcr operator setup`) execs native pi with `--no-session
 `/logout` can use the network. It requires a TTY, refuses `--json`, and starts no
 Server.
 
-## One turn
+## Turn lifecycle
 
-1. Authenticated `Reporter::operator_start` from the Server. A refused Start
-   creates no pi resources. The returned `OperatorWorkerStart` carries the identity, the
-   turn's captured `model` override, text, context and `checkpoint_turn`.
-2. Create the exclusive attempt directory, materialize the extension, and launch
-   pi. `get_state` resolves the fresh profile's model and thinking level; the
+1. A cold worker starts with `OperatorRunIdentity { conversation, session, run }`.
+   Authenticated `Start` resolves the current Running turn from retained state;
+   no turn identity comes from argv, and a refused Start creates no pi resources.
+   Warm dispatch uses the same run identity; authenticated
+   `StartTurn` returns the next accepted user turn without changing that run.
+   The returned `OperatorWorkerStart` carries the turn's captured `model`
+   override, text, context and `checkpoint_turn`.
+2. Create the exclusive turn attempt and run directory, materialize the
+   extension, and launch pi. `get_state` resolves the fresh profile's model and thinking level; the
    session id must equal `operator-<conversation-id>`; the trusted extension must
    bind before anything else happens.
-3. If `checkpoint_turn` is set, copy
-   `<instance>/operator-pi/turns/<checkpoint-turn>/session.jsonl` into the
-   attempt as a private 0600 file (regular, non-symlink, owned), validate its
-   session header (type `session`, id, version 1–3, absolute cwd equal to the
-   agent workdir), then `switch_session` pointing at the copy. `switch_session`
-   must report success with `cancelled:false`, bind the extension again, and the
-   following `get_state` must report exactly that file.
+3. On a cold start, if `checkpoint_turn` is set, copy its private
+   `session.jsonl` checkpoint into the new run directory,
+   validate the regular file and session header (type `session`, id, version
+   1–3, absolute cwd equal to the agent workdir), then `switch_session` to that
+   file. A warm turn keeps the already-running Pi session attached; its separate
+   checkpoint copy is stored as this turn's `session.jsonl`, so normal chat does
+   not reload the extension or overwrite the active run session.
 4. Resolve the model: split the captured override at the first `/`, otherwise use
    the fresh profile default (never the resumed session's old model). The exact
    provider/id must appear in `get_available_models`; `set_model` must return the
@@ -126,15 +137,19 @@ Server.
    one after compaction, carries the policy and bundled CLI skill only in its
    system prompt; the compaction conversation payload and the durable
    conversation journal never contain that guidance.
-7. Final `get_state`, bounded `clear_queue` and `abort`, then close stdin and
-   drain/reap pi within two seconds. The native session at the reported path,
-   confined to the attempt directory, is renamed to `session.jsonl` when needed
-   and fsynced with its directory.
-8. Commit unit `Completed`. That transaction atomically promotes
-   `pi_checkpoint_turn` to this turn. Only after the acknowledgement is the
-   superseded checkpoint's `session.jsonl` and its now-empty attempt directory
-   removed.
-9. Authenticated `Reporter::operator_retire` returns ownership to the Server.
+7. Read the bounded `ovrcr_operator_watches` status. With an active lease, copy
+   the live session into this turn's private `session.jsonl`, validate the
+   session header, and fsync the copy and directory. Commit
+   `Completed { leased: true }`; the Server promotes `pi_checkpoint_turn` and
+   the worker enters a short idle loop alternating authenticated `StartTurn`
+   checks with Pi RPC output polling. A warm Submit keeps the `SessionRunId`,
+   advances the `OperatorTurnId`, resolves the current model and reasoning
+   settings, and prompts the same Pi process.
+8. With no active lease, successfully settle Pi (`clear_queue`, `abort`, clean
+   exit and reap) before copying the final session snapshot. After validating
+   and fsyncing it, commit `Completed { leased: false }`. This clears Server
+   warm-dispatch eligibility before authenticated `Retire` returns ownership.
+   The prior checkpoint copy is removed only after the completion receipt.
 
 A failed, interrupted or uncertain turn keeps its partial journal and its attempt
 files as evidence and never becomes the checkpoint. The next explicit turn
@@ -143,8 +158,21 @@ No prompt is ever replayed automatically. With no prior completed turn the next
 attempt starts empty with the same deterministic session id.
 
 `OperatorWorkerStart.model` is the `operator.model` override captured when Submit
-was durably accepted, not the setting's value when the worker starts; a settings
-edit cannot change an accepted turn.
+was durably accepted. A settings edit cannot change an accepted turn; the next
+warm turn captures the new value and applies it to the still-live Pi conversation.
+
+The Dashboard's `worker_live` means the exact Operator process is live on the
+current run and has a running turn or a completed leased turn. A leased idle
+conversation can accept Submit on the same run and hides Stop. `worker_stopped`
+continues to mean the Server has controlled-stop proof; neither Pi exit nor an
+unconfirmed teardown sets it.
+
+Registry schema 33 allows several completed Operator turns on one run while
+retaining the one-Running-turn-per-conversation index. Its migration rebuilds
+the turn table with foreign keys disabled and verifies dependent journal rows
+and IDs afterward. Wire protocol 85 carries `OperatorRunIdentity`,
+`worker_live`, warm `StartTurn`, prepared `AbortTurn`, and leased completion.
+`Open` and `Current` remain read-only and never create a worker.
 
 ## Standard pi tools and durable admission
 
