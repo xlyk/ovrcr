@@ -178,17 +178,6 @@ fn dashboard_fixture() -> Dashboard {
     dashboard
 }
 
-/// Sidebar tree tests use this when their assertions concern tree geometry or
-/// row behavior in isolation; combined section layout is covered with the
-/// production default in `operator_dock` and the shared Dashboard fixtures.
-fn tree_dashboard_fixture() -> Dashboard {
-    let mut dashboard = dashboard_fixture();
-    let mut settings = ovrcr::tui::Settings::default();
-    settings.operator.sidebar = false;
-    dashboard.install_settings(settings);
-    dashboard
-}
-
 fn registry_from_hierarchy(hierarchy: &HierarchySnapshot) -> ovrcr::config::Registry {
     use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
     let projects = hierarchy
