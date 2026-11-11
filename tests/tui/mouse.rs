@@ -55,6 +55,59 @@ fn hover_sidebar(dashboard: &mut Dashboard, column: u16, row: u16) {
     );
 }
 
+fn ready_agent_summary(id: SessionId) -> SessionSummary {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReadyObservation,
+        ReporterHealth, SampleQuality,
+    };
+
+    let mut summary = fixture_hierarchy()
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == id)
+        .expect("fixture session exists");
+    let binding = AgentBinding {
+        provider: AgentProvider::Codex,
+        invocation: format!("fixture-{}", id.0),
+        conversation: format!("conversation-{}", id.0),
+        generation: 1,
+    };
+    summary.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "codex".into(),
+    };
+    summary.label = "codex".into();
+    summary.phase = SessionPhase::Running;
+    summary.activity = AgentActivity::Idle;
+    summary.agent = Some(AgentSnapshot {
+        binding: binding.clone(),
+        activity: Some(ActivitySample {
+            state: AgentActivity::Idle,
+            quality: SampleQuality::Observed,
+            turn: Some("fixture-turn".into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 0,
+        health_revision: 1,
+        input_requests: Vec::new(),
+        input_revision: 0,
+        native_control: None,
+        native_control_revision: 0,
+    });
+    summary.unread = Some(ReadyObservation {
+        binding,
+        turn: Some("fixture-turn".into()),
+        activity_revision: 1,
+    });
+    summary
+}
+
 #[test]
 fn mouse_encode_sgr_events() {
     let event = mouse_event(
@@ -352,6 +405,134 @@ fn recent_sidebar_project_menu_fold_and_agent_rows_use_rendered_hitboxes() {
         area,
     );
     assert!(palette_text(&dashboard).contains("Close terminal?"));
+}
+
+#[test]
+fn attention_geometry_change_clears_hover_and_fresh_mouse_targets_the_drawn_row() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: area.height,
+        cols: area.width,
+    });
+    dashboard.install_area(area);
+    dashboard.install_hierarchy(fixture_hierarchy());
+    dashboard.install_focus(SessionId(2));
+    dashboard.install_settings(ovrcr::tui::Settings {
+        sidebar_view: ovrcr::protocol::SidebarView::Tree,
+        ..Default::default()
+    });
+
+    let before = sidebar_lines(&dashboard);
+    let target_before = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("selected session is drawn in the tree");
+    hover_sidebar(&mut dashboard, 5, target_before as u16);
+    assert!(
+        sidebar_lines(&dashboard)[target_before].contains("[x]"),
+        "hover draws the close mark on the session under the pointer"
+    );
+
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        ready_agent_summary(SessionId(1)),
+    ))));
+    assert_eq!(
+        dashboard.focused_session(),
+        Some(SessionId(2)),
+        "the attention update preserves the selected session"
+    );
+    let shifted = sidebar_lines(&dashboard);
+    let target_after = shifted
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("selected session remains drawn");
+    assert_eq!(
+        target_after,
+        target_before + 2,
+        "attention adds its strip and gap"
+    );
+    assert!(
+        !shifted[target_after].contains("[x]"),
+        "a hover from before the tree moved must not follow its old session identity"
+    );
+
+    hover_sidebar(&mut dashboard, 5, target_after as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(
+        hovered[target_after].contains("[x]"),
+        "fresh motion marks the currently drawn session"
+    );
+    let close = sidebar_cell(&hovered[target_after], "[x]");
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                close + 1,
+                target_after as u16,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert!(
+        palette_text(&dashboard).contains("(#2)"),
+        "the drawn close mark still targets the selected session"
+    );
+}
+
+#[test]
+fn attention_geometry_change_clears_recent_hover_when_row_order_is_stable() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = recent_sidebar_dashboard();
+    let before = sidebar_lines(&dashboard);
+    let implement_before = before
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("the selected Agent is drawn in Recent");
+    hover_sidebar(&mut dashboard, 5, implement_before as u16);
+    assert!(sidebar_lines(&dashboard)[implement_before].contains("[x]"));
+
+    let mut updated = ready_agent_summary(SessionId(1));
+    updated.last_activity_unix_ms = Some(10);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        updated,
+    ))));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+
+    let shifted = sidebar_lines(&dashboard);
+    let review_after = shifted
+        .iter()
+        .position(|line| line.contains("review"))
+        .expect("the existing Agent stays visible");
+    let implement_after = shifted
+        .iter()
+        .position(|line| line.contains("implement"))
+        .expect("the selected Agent stays visible");
+    assert!(
+        review_after > implement_after,
+        "Recent order stays unchanged"
+    );
+    assert_eq!(implement_after, implement_before + 2);
+    assert!(
+        !shifted[implement_after].contains("[x]"),
+        "tree geometry changes invalidate hover even when Recent row order is stable"
+    );
+
+    hover_sidebar(&mut dashboard, 5, implement_after as u16);
+    let hovered = sidebar_lines(&dashboard);
+    assert!(hovered[implement_after].contains("[x]"));
+    let close = sidebar_cell(&hovered[implement_after], "[x]");
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            close + 1,
+            implement_after as u16,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert!(palette_text(&dashboard).contains("(#2)"));
 }
 
 #[test]
