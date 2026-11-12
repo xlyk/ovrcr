@@ -45,8 +45,8 @@ const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
 const WAKEUP_ADMISSION_TITLE: &str = "OVRCR Operator async wakeup admission";
 
-/// Pi's extensions stay off except the OVRCR lifecycle adapter; the five tool
-/// definitions, validation, truncation and context management are pi's own.
+/// Pi's extensions stay off except the OVRCR lifecycle adapter. Pi supplies the four
+/// native tool factories; this adapter adds the custom watch_sessions tool.
 const POLICY: &str = concat!(
     "You are OVRCR Operator, the agent inside a user's OVRCR instance. Act only on the user's requested task. ",
     "Operate the instance through bash by running the matching OVRCR CLI: \"$OVRCR_EXECUTABLE\" --json, with the inherited instance configuration and socket. ",

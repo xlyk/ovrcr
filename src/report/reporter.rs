@@ -180,9 +180,7 @@ impl Reporter {
             deadline,
         )? {
             Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Start(start))
-                if start.identity.conversation == identity.conversation
-                    && start.identity.session == identity.session
-                    && start.identity.run == identity.run =>
+                if identity.matches_turn(&start.identity) =>
             {
                 Ok(*start)
             }
@@ -204,11 +202,10 @@ impl Reporter {
             deadline,
         )? {
             Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::StartTurn(start)) => {
-                if start.as_ref().is_some_and(|start| {
-                    start.identity.conversation != identity.conversation
-                        || start.identity.session != identity.session
-                        || start.identity.run != identity.run
-                }) {
+                if start
+                    .as_ref()
+                    .is_some_and(|start| !identity.matches_turn(&start.identity))
+                {
                     anyhow::bail!("operator turn bootstrap identity changed");
                 }
                 Ok(start.map(|start| *start))
@@ -239,10 +236,7 @@ impl Reporter {
                 start,
             )) => {
                 if start.as_ref().is_some_and(|start| {
-                    start.identity.conversation != identity.conversation
-                        || start.identity.session != identity.session
-                        || start.identity.run != identity.run
-                        || !start.async_wakeup
+                    !identity.matches_turn(&start.identity) || !start.async_wakeup
                 }) {
                     anyhow::bail!("async turn bootstrap identity changed");
                 }

@@ -1,9 +1,10 @@
 /**
  * OVRCR lifecycle adapter for the dedicated Operator Pi profile.
  *
- * This is the only custom code loaded into that profile: Pi supplies the
- * read/bash/edit/write/watch_sessions tool definitions, validation, truncation, inference and
- * context management. This file registers those same definitions with
+ * This is the only custom code loaded into that profile: Pi supplies the four
+ * native tool factories (read/bash/edit/write) and their validation and truncation,
+ * inference and context management; OVRCR defines watch_sessions. This file registers
+ * the four native tools and the custom watch_sessions tool with
  * `executionMode: "sequential"` (the durable admission handshake is serial),
  * overrides just `bash` so commands stay attached to the worker's process
  * group and stream its output through Pi's native Bash definition, and turns

@@ -164,6 +164,12 @@ impl OperatorRunIdentity {
             Ok(())
         }
     }
+
+    pub fn matches_turn(&self, turn: &OperatorTurnIdentity) -> bool {
+        self.conversation == turn.conversation
+            && self.session == turn.session
+            && self.run == turn.run
+    }
 }
 impl OperatorTurnIdentity {
     pub fn validate(&self) -> Result<(), String> {

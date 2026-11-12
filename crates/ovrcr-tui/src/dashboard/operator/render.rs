@@ -856,7 +856,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     &mut lines,
                     ordinal,
                     0,
-                    "Interrupted · accepted operations may finish; no rollback.".into(),
+                    "Interrupted · operations may finish; file changes remain.".into(),
                     error,
                     true,
                 );

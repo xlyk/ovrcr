@@ -511,10 +511,15 @@ impl SessionStore {
                 break;
             }
             bytes += raw.len();
+            let content = if raw == r#"{"Worker":"Completed"}"# {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
+            } else {
+                serde_json::from_str(&raw)?
+            };
             messages.push(OperatorMessage {
                 ordinal,
                 turn: OperatorTurnId(turn),
-                content: serde_json::from_str(&raw)?,
+                content,
             });
         }
         let next_after = if more {
@@ -2687,10 +2692,13 @@ mod tests {
     }
 
     #[test]
-    fn schema_32_migration_preserves_operator_turn_dependents_and_id_sequence() {
+    fn schema_32_migration_preserves_legacy_completion_and_turn_dependents() {
         let root = tempfile::tempdir().unwrap();
         let conversation_id;
         let first_turn;
+        let original_messages;
+        let original_receipt;
+        let old_completed = r#"{"Worker":"Completed"}"#;
         {
             let mut store = SessionStore::open(root.path()).unwrap();
             let conversation = open(&mut store);
@@ -2698,6 +2706,26 @@ mod tests {
             store.apply_operator_batch(&completed(&turn, 1)).unwrap();
             conversation_id = conversation.id;
             first_turn = turn.identity.turn;
+            store
+                .connection
+                .execute(
+                    "INSERT INTO operator_messages(conversation,turn,content) VALUES(?1,?2,?3)",
+                    params![
+                        sql_integer(conversation_id.0).unwrap(),
+                        sql_integer(first_turn.0).unwrap(),
+                        old_completed
+                    ],
+                )
+                .unwrap();
+            original_messages = raw_messages(&store, conversation_id);
+            original_receipt = store
+                .connection
+                .query_row(
+                    "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                    [sql_integer(first_turn.0).unwrap()],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap();
             store
                 .connection
                 .execute(
@@ -2787,7 +2815,11 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(message_count, 1);
+        assert_eq!(message_count, 2);
+        assert_eq!(
+            raw_messages_on(&connection, conversation_id),
+            original_messages
+        );
         let receipt_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM operator_batches WHERE turn=?1",
@@ -2796,6 +2828,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(receipt_count, 1);
+        let receipt: String = connection
+            .query_row(
+                "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt, original_receipt);
 
         // Both a second turn on the same run and the existing running-turn fence work.
         connection
@@ -2819,6 +2859,29 @@ mod tests {
                 .exists([])
                 .unwrap()
         );
+        drop(connection);
+
+        let store = SessionStore::open(root.path()).unwrap();
+        let history = store
+            .read_operator_history(conversation_id, 0, 100)
+            .unwrap();
+        assert_eq!(
+            history.messages[1].content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
+        );
+        assert!(
+            raw_messages(&store, conversation_id).starts_with(&original_messages),
+            "opening after migration preserves the original journal payloads"
+        );
+        let receipt: String = store
+            .connection
+            .query_row(
+                "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt, original_receipt);
     }
 
     #[test]
