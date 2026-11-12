@@ -2218,14 +2218,14 @@ mod installed_pi {
         scenario
     }
 
-    /// The real Server/worker/Dashboard path with fake Pi: the running preview,
-    /// completion collapse, keyboard and mouse disclosure, and an explicit
-    /// expansion that survives a second held turn's completion.
+    /// The real Server/worker/Dashboard path with fake Pi: a running request
+    /// shows one live thought, completion hides thinking, keyboard and mouse
+    /// collapse and reopen the request, and a collapse chosen while a second
+    /// held turn runs survives its completion.
     #[test]
-    fn thinking_block_disclosure_through_live_server() {
-        const CAPPED: &str = "▸ Thinking · showing last 6 of 40 lines";
-        const ENDED: &str = "▸ Thinking · 40 lines";
-        const EXPANDED: &str = "▾ Thinking · 40 lines";
+    fn request_feed_through_live_server() {
+        const FIRST: &str = "first held thinking turn";
+        const SECOND: &str = "second held thinking turn";
         let release_dir = tempfile::tempdir().unwrap();
         let first_release = release_dir.path().join("release-first");
         let second_release = release_dir.path().join("release-second");
@@ -2234,6 +2234,7 @@ mod installed_pi {
             .collect::<Vec<_>>();
         let thinking = lines.join("\n");
         let answer = "THINKING_ANSWER_AFTER_RELEASE";
+        let reply = format!("▌   {answer}");
         let area = Rect::new(0, 0, 160, 50);
 
         let (live, fake, client) =
@@ -2244,9 +2245,9 @@ mod installed_pi {
         let mut driver = DashboardDriver::connect(&live);
         driver.open();
         let opened = driver.conversation();
-        driver.submit("first held thinking turn");
+        driver.submit(FIRST);
 
-        // The held turn's preview is a durable history fact, not a delay.
+        // The held turn's thinking is a durable history fact, not a delay.
         let running = driver.wait_history(opened.id, |history| {
             history
                 .conversation
@@ -2273,17 +2274,14 @@ mod installed_pi {
 
         let preview = driver.screen_buffer();
         let preview_text = buffer_text(&preview);
-        assert!(preview_text.contains(CAPPED), "{preview_text}");
-        for line in 35..=40 {
-            let marker = format!("THINKING_LINE_{line:02}");
-            assert!(
-                preview_text.contains(&marker),
-                "missing {marker}: {preview_text}"
-            );
-        }
         assert!(
-            !preview_text.contains("THINKING_LINE_34"),
-            "the running preview shows only its latest six body rows: {preview_text}"
+            find_row(&preview, &format!("▌ ● {FIRST}")) < find_row(&preview, "THINKING_LINE_40"),
+            "the live thought sits under the running request: {preview_text}"
+        );
+        assert_eq!(
+            preview_text.matches("THINKING_LINE_").count(),
+            1,
+            "a running request shows only its latest thought: {preview_text}"
         );
 
         std::fs::write(&first_release, "go").unwrap();
@@ -2307,104 +2305,52 @@ mod installed_pi {
             "completion waits for controlled-stop proof"
         );
 
+        let finished = driver.screen_buffer();
+        let finished_text = buffer_text(&finished);
+        assert!(
+            !finished_text.contains("THINKING_LINE_"),
+            "a finished request hides its thinking: {finished_text}"
+        );
+        assert!(
+            find_row(&finished, &format!("▌ ✓ {FIRST}")) < find_row(&finished, &reply),
+            "the reply sits under the finished request: {finished_text}"
+        );
+
+        // Keyboard: Tab focuses the transcript, Home selects the request and
+        // Enter collapses it to its one row; Enter again reopens it.
+        driver.dashboard.key(KeyCode::Tab);
+        driver.dashboard.key(KeyCode::Home);
+        driver.dashboard.key(KeyCode::Enter);
         let collapsed = driver.screen_buffer();
         let collapsed_text = buffer_text(&collapsed);
-        assert!(collapsed_text.contains(ENDED), "{collapsed_text}");
-        assert!(
-            !collapsed_text.contains("THINKING_LINE_"),
-            "completion collapses the automatic block: {collapsed_text}"
-        );
-        assert!(collapsed_text.contains(answer), "{collapsed_text}");
-        let header_before = find_row(&collapsed, ENDED);
-
-        // Keyboard disclosure: one stop for the many-delta block.
-        driver.dashboard.key(KeyCode::Tab);
-        driver.dashboard.key(KeyCode::End);
+        find_row(&collapsed, &format!("▌ ✓ {FIRST}"));
+        assert!(!collapsed_text.contains(&reply), "{collapsed_text}");
         driver.dashboard.key(KeyCode::Enter);
-        let expanded = driver.screen_buffer();
-        let expanded_text = buffer_text(&expanded);
-        assert!(expanded_text.contains(EXPANDED), "{expanded_text}");
-        assert!(
-            expanded_text.contains("THINKING_LINE_01"),
-            "expansion shows the first body row: {expanded_text}"
-        );
-        let header_expanded = find_row(&expanded, EXPANDED);
-        assert_eq!(
-            header_before, header_expanded,
-            "the toggled header keeps its screen row"
-        );
+        let reopened = driver.screen_buffer();
+        find_row(&reopened, &reply);
 
-        // A body row collapses the whole block through the public mouse path.
-        let body_row = find_row(&expanded, "THINKING_LINE_");
-        let body_column = cell_column(&expanded, body_row, "THINKING_LINE_");
-        driver
-            .dashboard
-            .mouse_action(click(body_column, body_row), area);
+        // Mouse: the request row toggles through the public mouse path.
+        let row = find_row(&reopened, &format!("▌ ✓ {FIRST}"));
+        let column = cell_column(&reopened, row, FIRST);
+        driver.dashboard.mouse_action(click(column, row), area);
         let mouse_collapsed = driver.screen_buffer();
-        let mouse_collapsed_text = buffer_text(&mouse_collapsed);
         assert!(
-            mouse_collapsed_text.contains(ENDED),
-            "{mouse_collapsed_text}"
+            !buffer_text(&mouse_collapsed).contains(&reply),
+            "a click on the request collapses it: {}",
+            buffer_text(&mouse_collapsed)
         );
-        assert!(
-            !mouse_collapsed_text.contains("THINKING_LINE_"),
-            "a body click collapses every body row: {mouse_collapsed_text}"
-        );
-        assert_eq!(
-            header_before,
-            find_row(&mouse_collapsed, ENDED),
-            "a body click leaves the header on the same screen row"
-        );
+        // The short feed sits against the composer, so the row has moved.
+        let row = find_row(&mouse_collapsed, &format!("▌ ✓ {FIRST}"));
+        driver.dashboard.mouse_action(click(column, row), area);
+        let mouse_opened = driver.screen_buffer();
+        find_row(&mouse_opened, &reply);
+        let row = find_row(&mouse_opened, &format!("▌ ✓ {FIRST}"));
+        driver.dashboard.mouse_action(click(column, row), area);
 
-        // The header itself expands it again, still at the same row.
-        let mouse_header_column = cell_column(&mouse_collapsed, header_before, ENDED);
-        driver
-            .dashboard
-            .mouse_action(click(mouse_header_column, header_before), area);
-        let mouse_expanded = driver.screen_buffer();
-        assert!(
-            buffer_text(&mouse_expanded).contains(EXPANDED),
-            "the header click expands the block: {}",
-            buffer_text(&mouse_expanded)
-        );
-        assert_eq!(
-            header_before,
-            find_row(&mouse_expanded, EXPANDED),
-            "the header click leaves the disclosure header on the same row"
-        );
-
-        // One transcript scroll reaches the body's tail and the answer.
-        for _ in 0..4 {
-            driver.dashboard.key(KeyCode::PageDown);
-        }
-        let scrolled = driver.screen_buffer();
-        let scrolled_text = buffer_text(&scrolled);
-        assert!(
-            scrolled_text.contains("THINKING_LINE_40"),
-            "{scrolled_text}"
-        );
-        assert!(scrolled_text.contains(answer), "{scrolled_text}");
-        let tail_body_row = find_row(&scrolled, "THINKING_LINE_40");
-        let tail_body_column = cell_column(&scrolled, tail_body_row, "THINKING_LINE_40");
-        driver
-            .dashboard
-            .mouse_action(click(tail_body_column, tail_body_row), area);
-        let recovered = driver.screen_buffer();
-        let recovered_text = buffer_text(&recovered);
-        assert!(recovered_text.contains(ENDED), "{recovered_text}");
-        assert!(
-            !recovered_text.contains("THINKING_LINE_"),
-            "a body click below a scrolled-past header still collapses: {recovered_text}"
-        );
-        assert!(
-            find_row(&recovered, ENDED) < tail_body_row,
-            "the collapsed header lands above the clicked body row"
-        );
-
-        // Second held turn: an explicit expansion before completion survives it.
+        // Second held turn: the first request stays collapsed while it runs.
         driver.dashboard.key(KeyCode::Tab);
         fake.script(&held_thinking_scenario(&thinking, &second_release, answer));
-        driver.submit("second held thinking turn");
+        driver.submit(SECOND);
         let second_running = driver.wait_history(opened.id, |history| {
             history
                 .conversation
@@ -2431,29 +2377,31 @@ mod installed_pi {
         );
         let second_preview = driver.screen_buffer();
         let second_preview_text = buffer_text(&second_preview);
-        assert!(
-            second_preview_text.contains(CAPPED),
-            "{second_preview_text}"
+        find_row(&second_preview, &format!("▌ ● {SECOND}"));
+        assert_eq!(
+            second_preview_text.matches("THINKING_LINE_").count(),
+            1,
+            "only the running request shows a thought: {second_preview_text}"
         );
-        let second_header_before = find_row(&second_preview, CAPPED);
+        assert!(
+            !second_preview_text.contains(&reply),
+            "the first request stays collapsed: {second_preview_text}"
+        );
 
+        // An explicit collapse of the running request hides its thought.
         driver.dashboard.key(KeyCode::Tab);
         driver.dashboard.key(KeyCode::End);
         driver.dashboard.key(KeyCode::Enter);
-        let second_expanded = driver.screen_buffer();
-        let second_expanded_text = buffer_text(&second_expanded);
+        let second_collapsed = driver.screen_buffer();
+        let second_collapsed_text = buffer_text(&second_collapsed);
+        let row = find_row(&second_collapsed, &format!("▌ ● {SECOND}"));
         assert!(
-            second_expanded_text.contains(EXPANDED),
-            "{second_expanded_text}"
+            buffer_row(&second_collapsed, row).contains("working"),
+            "{second_collapsed_text}"
         );
         assert!(
-            second_expanded_text.contains("THINKING_LINE_01"),
-            "the second block expands before completion: {second_expanded_text}"
-        );
-        let second_header_row = find_row(&second_expanded, EXPANDED);
-        assert_eq!(
-            second_header_before, second_header_row,
-            "the running block keeps its header row on expansion"
+            !second_collapsed_text.contains("THINKING_LINE_"),
+            "{second_collapsed_text}"
         );
 
         std::fs::write(&second_release, "go").unwrap();
@@ -2479,31 +2427,18 @@ mod installed_pi {
         );
         let survived = driver.screen_buffer();
         let survived_text = buffer_text(&survived);
+        find_row(&survived, &format!("▌ ✓ {SECOND}"));
         assert!(
-            survived_text.contains(EXPANDED),
-            "an explicit expansion survives completion: {survived_text}"
+            !survived_text.contains(&reply),
+            "an explicit collapse survives completion: {survived_text}"
         );
+        // Enter reopens the still-selected request with its reply.
+        driver.dashboard.key(KeyCode::Enter);
+        let second_opened = driver.screen_buffer();
         assert!(
-            survived_text.contains("THINKING_LINE_01"),
-            "the body remains expanded after completion: {survived_text}"
-        );
-        assert_eq!(
-            second_header_row,
-            find_row(&survived, EXPANDED),
-            "completion does not move an explicitly expanded header"
-        );
-        for _ in 0..4 {
-            driver.dashboard.key(KeyCode::PageDown);
-        }
-        let second_scrolled = driver.screen_buffer();
-        let second_scrolled_text = buffer_text(&second_scrolled);
-        assert!(
-            second_scrolled_text.contains("THINKING_LINE_40"),
-            "the retained expansion still reaches its final body row: {second_scrolled_text}"
-        );
-        assert!(
-            second_scrolled_text.contains(answer),
-            "the transcript scroll reaches the completion answer: {second_scrolled_text}"
+            find_row(&second_opened, &format!("▌ ✓ {SECOND}")) < find_row(&second_opened, &reply),
+            "{}",
+            buffer_text(&second_opened)
         );
     }
 

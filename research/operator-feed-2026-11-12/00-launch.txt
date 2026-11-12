@@ -1,0 +1,11 @@
+ OVRCR · startup
+  Connect agent status
+  Lets OVRCR show when your Claude and Codex sessions are working, need you or are done.
+  Adds or updates OVRCR hooks in:
+    <scratch>/gui-home/.cla
+ude/settings.json
+    <scratch>/gui-home/.cod
+ex/config.toml
+  Your other settings, status line and approvals stay as they are.
+  Codex asks you to trust the new hooks the next time it starts.
+  [y] Connect  [n] Not now  ›

@@ -175,7 +175,7 @@ editing actions; `Ctrl+X` is the explicit Stop shortcut.
 Send is offered only for a nonempty draft when the conversation can accept it.
 Running, sending and unconfirmed-worker-stop states keep the draft.
 
-A single activity row follows the latest message or tool receipt in the journal.
+A single activity row follows the newest entry in the feed.
 It shows `Sending` while submission acceptance is pending, then `Responding` while
 the turn is running, including quiet periods. `Waiting for <tool> result` (or a
 count) means a recorded call has no matching result in the current turn's
@@ -186,37 +186,54 @@ clears when the next model request resumes. Paging history falls back to
 scroll to the tail. Stopping has its own label, and `Stop unconfirmed` is static
 until stop proof arrives.
 
-Displayable provider thinking streams into a distinct **Thinking** block in the
-order it arrives. Its body is peach and italic; the header stays muted and upright.
-While its turn runs, an untouched block shows all wrapped lines up to six, then
-only the latest six with `▸ Thinking · showing last 6 of N lines`. Short blocks
-show `▾ Thinking · N lines`. When the turn ends, untouched blocks collapse to
-`▸ Thinking · N lines`, including failed, interrupted and older turns. Empty
-thinking adds no block. Counts include interior blank lines but exclude trailing
-newline terminators, and change with the available width.
+The conversation is drawn as a feed with one entry per request, or per wake-up
+from a watched session. A coloured bar and a glyph give each entry's state:
+`●` running, `✓` done, `✕` failed, `■` interrupted and `◆` a wake-up.
 
-Enter on a selected block or a click on its header or body toggles that block.
-Manual expansion shows all lines and survives completion and reopening. Manual
-collapse hides the body even while more thinking arrives. Other blocks keep their
-own choices. Toggling keeps a visible header at the same screen row; blank space
-below a collapsed block is intentional. The journal has one scroll, so PageDown
-or the wheel reaches the answer below an expanded block.
+An open entry shows, in order:
 
-`PageUp` and `PageDown` scroll the journal. User prompts are marked, and assistant
-and tool activity share a fine guide. Tool call and output receipts stay
-independently expandable: adjacent rows keep their own details and raw IDs appear
-only when expanded. Failures, timeouts, truncation and empty output remain
-explicit. Expanded details retain the full IDs, captured context, captured
-directory and output. Control characters in model or tool text are escaped before
-rendering.
+- your request, in full;
+- `→ project / workspace` when the captured target differs from the previous
+  request's; Enter on it lists the captured cwd, the workspace id, the session
+  and run, and the agent's fixed working directory;
+- one row per command, named by what it ran. `cd` prefixes, `echo` banners
+  between chained commands, `2>&1` and `"$OVRCR_EXECUTABLE" --json` are left
+  out. A command that changes something is marked `+` (creates), `−` (removes)
+  or `›` (any other change); a lookup is dimmed. A command that is not
+  recognised is shown in the ordinary text colour and is never dimmed. The row
+  ends with `running`, `exit N`, `failed`, `timed out` or `no result` when the
+  command did not simply succeed;
+- the reply, wrapped at word boundaries;
+- a failure message or the interruption notice.
+
+Enter or a click on a command shows the whole shell command after `$` (another
+tool's arguments as they were sent) and then its output; truncation at 64 KiB and empty output are stated. A request with more
+than eight commands folds each run of two or more finished lookups into
+`▸ N lookups`, which opens the same way. A failed or unfinished lookup is never
+folded.
+
+Thinking is not kept on screen. While a request runs, the last line of its
+latest thinking is shown in italics under its commands; it disappears when a
+reply or command follows and when the request ends.
+
+The newest entry, a running entry and a reply you have not seen are open. Every
+other entry is one row: the request, then its outcome on the right (the failure,
+`interrupted`, or counts such as `1 change · 8 commands`). Enter or a click on an
+entry's request opens or collapses it, and that choice then holds through
+completion and reopening. Collapsed neighbours sit together, and a feed shorter
+than the pane sits against the composer.
+
+`PageUp` and `PageDown` scroll the feed, as does the wheel; a scrolled view keeps
+its row while a reply streams. Control characters in model or tool text are
+escaped before rendering.
 
 `Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping the
 draft; `o` returns to the same conversation, history and draft. Completed replies
 stay Unread until the loaded tail is actually drawn.
 
-`Tab` cycles the transcript and composer. With the transcript focused, Up/Down
-select a context, tool or thinking entry and Enter toggles it. A thinking block
-is one entry even when it arrives in many deltas. `Ctrl-l` shows or hides the
+`Tab` cycles the feed and the composer. With the feed focused, Up/Down select
+an entry, its captured target, a fold or a command; Home and End reach the first
+and last, and Enter toggles the selection. `Ctrl-l` shows or hides the
 ordinary Projects sidebar; it never opens a conversation list. At widths below 100
 columns the conversation uses the full width by default. Below 60×16, resize
 guidance preserves drafts and active work.
@@ -226,7 +243,7 @@ The header reads `Operator · pi · provider/id` once a model has been selected,
 catalog. The row above the composer shows the target the next message will carry:
 the workspace/session selection captured when the composer opened, not an older
 message's target. The agent's working directory is fixed for the life of the
-conversation and is shown separately in a user message's expanded context, so it
+conversation and is shown separately in a request's expanded target, so it
 never silently follows the Dashboard selection.
 
 ## Model, compaction and checkpoints

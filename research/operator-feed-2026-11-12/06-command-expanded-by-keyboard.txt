@@ -1,0 +1,70 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                last reply 41s │
+↳ “TURN_TWO_DONE”                      │
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │▌ ✓ REQUEST_ONE_REAL_TOOLS
+                                       │▌   → consigint / main / #1 run 1
+                                       │▌   › write /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌     read /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌   › edit /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌     printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n' "${ANTHROPIC_API_KE…
+                                       │▌       $ cd '/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target' && printf
+                                       │▌       'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n'
+                                       │▌       "${ANTHROPIC_API_KEY:+SET}" "${OPENAI_API_KEY:+SET}" "${AWS_CONTAINER_AUTHORIZATION_TOKEN:+SET}"
+                                       │▌       "${PI_SESSION_ID:+SET}" "${PI_CODING_AGENT_SESSION_DIR:+SET}" "${GITHUB_TOKEN:+SET}" && printf
+                                       │▌       'ANTHROPIC_API_KEY=%s\nOPENAI_API_KEY=%s\nAWS_CONTAINER_AUTHORIZATION_TOKEN=%s\nPI_SESSION_ID=%s\nPI_CODING_AGENT_SESS
+                                       │▌       ION_DIR=%s\nGITHUB_TOKEN=%s\n' "$ANTHROPIC_API_KEY" "$OPENAI_API_KEY" "$AWS_CONTAINER_AUTHORIZATION_TOKEN"
+                                       │▌       "$PI_SESSION_ID" "$PI_CODING_AGENT_SESSION_DIR" "$GITHUB_TOKEN" > credential-probe.env && printf 'BASH_' &&
+                                       │▌       "$OVRCR_EXECUTABLE" --json project list
+                                       │▌       CREDENTIAL_PROBE anthropic= openai= aws= pi_session= pi_session_dir= github=
+                                       │▌       BASH_[{"name":"consigint","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/repositori
+USAGE · 0 tokens · 4m                  │▌       es/consigint","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui
+⠹ 0 working  ? 0 input  ✓ 0 ready      │▌       -izLl55/workspaces/consigint"},{"name":"spacelift-agent","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000g
+· 0 idle  ! 0 error  P 0 paused        │▌       n/T/ovrcr-gui-izLl55/repositories/spacelift-agent","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlf
+· 0 exited  - 12 unknown               │▌       fxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/workspaces/spacelift-agent"}]
+                                       │▌
+ RESOURCES ────────────────────────────│▌   TURN_ONE_DONE
+ cpu       ━━━━──────────────────  17% │
+ mem       ━━━━━━━━━───────── 24.1/48G │▌ ✓ REQUEST_TWO_RESUME
+                                       │▌   TURN_TWO_DONE
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │ Managing consigint / main / #1 run 1
+Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ ·
+Cursor · usage off                     │
+                                       │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Enter Expand details  Ctrl-g Browse

@@ -233,43 +233,60 @@ an active composer remain ordinary text.
 scroll/follow-tail and completion Unread state. Selecting a terminal does not
 change a message that is already being composed or sent; the captured target
 travels with each message, and reopening either composer captures the current
-selection for the next one. Scrolled transcripts keep a durable message ordinal,
-logical part and byte anchor across streaming, receipt expansion and resize.
-Styled graphemes survive wrapping; the Working journal reserves a two-cell gutter
-before wrapping and decorates only after source-byte anchor calculation. User
-prompts have a mauve cue; assistant/tool activity shares a muted guide. Prose and
-command/output details use the available transcript width after the gutter.
-Displayable thinking deltas form one disclosure per adjacent same-turn run ahead
-of the answer. The body is peach and italic with a two-cell indent after the
-muted guide; its header stays muted and non-italic. Count wrapped body rows at
-the current width. Untouched current Running blocks show all rows up to six
-(`▾ Thinking · N lines`), then only the latest six
-(`▸ Thinking · showing last 6 of N lines`). Other untouched blocks collapse to
-`▸ Thinking · N lines`, independent of worker-stop proof. Explicit expansion
-shows all rows; explicit collapse hides them during streaming too. Choices
-survive completion and reopening. Empty or newline-only thinking adds no row
-or selection stop; interior blank lines count and trailing newline terminators
-do not. The final thinking prefix is deduplicated per content block.
-Adjacent tool calls and outputs stay separate disclosures under their original
-ordinals, without blank rows or collapsed raw IDs; expanded details retain IDs.
-Expanded context prints the captured target and the fixed agent workdir separately.
-Successful completion Unread comes from the exact durable turn summary;
-`ModelSelected` updates the header without becoming a journal row.
+selection for the next one. `operator::feed` draws the journal as one entry per `User` or `AsyncWakeup`
+message, with the worker events of that turn folded into it; worker events with
+no opener (a legacy journal) form an `Operator` entry. Row anchors are
+`(entry owner ordinal, part, offset)`, with parts in draw order (request, target,
+target detail, commands, reply, outcome, gap) and offsets that only grow under
+append (a command's index, a reply's byte offset), so a scrolled viewport keeps
+its row across streaming, disclosure and resize, and anchors stay strictly
+ascending for the offset search.
+Each durable row starts with a `▌` bar in the entry's state colour (blue Running,
+green done, red failed, peach interrupted or wake-up) and the request row carries
+the state glyph. State comes from a journaled `Failed`/`Interrupted`, then the
+summary's current turn, and otherwise is done, because a successful turn journals
+no row. The newest entry, a Running entry and the Unread turn's entry are open;
+`Chat::expanded` holds explicit choices and always wins. A collapsed entry is one
+clipped row with its outcome right-aligned (failure text, `interrupted`, or
+change and command counts) and no gap between collapsed neighbours.
+An open entry draws the wrapped request, `→ target` when the captured context
+differs from the previous request's (its disclosure key is the owner ordinal with
+`feed::CONTEXT_KEY` set, and its detail prints the captured target and the fixed
+agent workdir separately), one clipped row per `ToolCall` paired with its
+`ToolOutput` by call id, then the reply word-wrapped by `feed::wrap_words`, then
+any failure or interruption text. `feed::summarize` names a command: it drops
+`cd` segments, `echo` banners, `2>&1` and `"$OVRCR_EXECUTABLE" --json`, and
+classifies by leading words outside quotes into Add (`+`), Remove (`−`), Change
+(`›`), Lookup (dimmed) or Other; an unrecognised command or one that redirects to
+a file is Other, never Lookup. A command row ends with `running`, `exit N`,
+`failed`, `timed out` or `no result`; its disclosure key is the call's ordinal and
+its detail is `$ command` for a shell call, or the arguments as sent, then the
+escaped output. Above eight commands, each run
+of two or more succeeded lookups folds into `▸ N lookups`, keyed by the run's
+first call ordinal with `feed::FOLD_KEY` set.
+Thinking deltas are not rows. Only the last non-empty line of the thinking that
+trails a Running entry is drawn, italic and muted, clipped to one row.
+`ModelSelected`, `ReasoningSelected` and compaction events are never rows.
+Successful completion Unread comes from the exact durable turn summary.
+`render::transcript_rows` caches the feed rows on the chat under `RowsKey`
+(width, journal length and tail ordinal, explicit choices, agent workdir, current
+turn and state, Unread turn, theme); key and mouse handlers enter the Dashboard
+theme so they share the draw's rows. A feed shorter than its viewport is padded
+above (`transcript_pad`), so it sits against the composer; hit-testing subtracts
+the same pad.
 `Tab` cycles transcript and composer; `Ctrl-l` toggles the ordinary Projects
-sidebar and never reveals a conversation list. Transcript Up/Down selects a
-user-context, tool or thinking entry; each thinking run is one stop. Enter or a
-click on a disclosure's header/body toggles only that entry. Visible thinking
-headers keep their screen row through toggles using the top durable source
-anchor, without tail clamping or a nested scroll. If collapse removes a top body
-anchor whose header was offscreen, the header lands at the viewport top.
+sidebar and never reveals a conversation list. Transcript Up/Down selects an
+entry's request, its target row, a fold or a command, and Home/End the first and
+last; a selection outside the viewport scrolls to it. Enter or a click on a stop's
+rows toggles only that stop and leaves the scroll position alone.
 PageDown and wheel scrolling rejoin the tail normally.
 The borderless composer uses `clamp(wrapped_draft_rows, 2, min(6, body_height / 3).max(2))`
 text rows and scrolls around the real cursor. One-cell edge padding, a mauve top
 rule and muted bottom rule define the editor. `OperatorLayout` owns header,
 transcript, context, writable composer and both rule rectangles for rendering,
 hit-testing and review. The captured target uses the context row above the top rule.
-A single transient journal row follows the latest durable message or receipt,
-aligned after the same two-cell gutter: Sending before submission acceptance,
+A single transient row follows the newest entry, under a blue bar while it
+animates: Sending before submission acceptance,
 Responding throughout Running (including silence), Waiting for a recorded
 current-turn tool result, or Compacting context… while the current turn's last
 durable compaction phase is started. Compaction phase events are durable phase

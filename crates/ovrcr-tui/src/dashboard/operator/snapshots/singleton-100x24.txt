@@ -1,20 +1,20 @@
 󰚩 OVRCR                                                                            [Commands] [Menu]
  OPERATOR ─────────────────────────────│Operator · pi · openai/gpt-6.1-sol · ready
 ▌ · Idle                               │                                    [Reasoning — ▾ Ctrl-t]
-↳ No replies yet                       │❯ You
-                                       │  ▸ Context · global
-                                       │  Review this workspace.
-                                       │
-                                       ││ Operator
-                                       ││ I will inspect its sessions.
-                                       ││ ▸ succeeded · (no output) · Output
+↳ No replies yet                       │
                                        │
                                        │
-Usage · 0 sessions · 0 tokens          │
- RESOURCES ────────────────────────────│
- cpu       ──────────────────────    … │
- mem       …                           │
                                        │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+Usage · 0 sessions · 0 tokens          │▌ ✓ Review this workspace.
+ RESOURCES ────────────────────────────│▌   → global
+ cpu       ──────────────────────    … │▌     tool
+ mem       …                           │▌
+                                       │▌   I will inspect its sessions.
  QUOTA LEFT ───────────────────────────│
 Claude · checking                      │ Managing global
 Codex · usage off                      │ ──────────────────────────────────────────────────────────

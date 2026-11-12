@@ -1,0 +1,13 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running tests/operator_e2e.rs (<home>/Code/ovrcr/target/debug/deps/operator_e2e-15f5085f33007f35)
+
+running 1 test
+OPERATOR_PI_GUI_READY base=http://127.0.0.1:59558 root=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55 compaction=false coordinator=false
+OPERATOR_PI_GUI_PROVIDER root=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55 workspace=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target marker=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+test installed_pi::operator_pi_gui_provider has been running for over 60 seconds
+OPERATOR_PI_GUI_PROVIDER exit root_exists=true stop_marker=true requests=8 evidence=/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-pi/fixture-requests.jsonl
+test installed_pi::operator_pi_gui_provider ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 410.96s
+
+provider exit 0
