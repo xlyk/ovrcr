@@ -1136,8 +1136,8 @@ fn operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty() -> Result<()
         }
         let failed = terminal.screen().contents();
         assert!(
-            failed.contains("Error: "),
-            "the failure must be a durable Operator journal row:\n{failed}"
+            failed.contains("▌ ✕ "),
+            "the failure must mark its durable Operator feed entry:\n{failed}"
         );
         let database = rusqlite::Connection::open_with_flags(
             root.join("registry.sqlite3"),
