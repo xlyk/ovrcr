@@ -246,15 +246,13 @@ No other dialog is answered: the worker cancels it and fails with
 `Unsupported Pi interaction; the turn was stopped.` Display-only notifications,
 partial tool updates and duplicate execution notifications are ignored.
 Displayable thinking is journaled as its own `ThinkingDelta` stream in content
-order; provider thinking signatures are never carried. Adjacent same-turn deltas
-form one disclosure keyed by their first ordinal. Its peach, italic body wraps
-before counting: untouched Running blocks show all lines up to six, then the
-latest six; untouched ended or older-turn blocks collapse. An explicit expansion
-or collapse overrides that default across streaming, completion and reopening.
-Empty or newline-only thinking adds no block. The muted, upright header reports
-the wrapped count and, for a capped preview, `showing last 6 of N lines`.
-Disclosure identity stays separate from each body's durable source anchor;
-keyboard and mouse toggles share the single transcript viewport.
+order; provider thinking signatures are never carried. The Dashboard does not
+keep it on screen: the feed shows only the last non-empty line of the thinking
+that trails a Running turn's journal, and nothing once the turn ends. A
+successful turn journals no row of its own (`Completed` only updates the turn
+record), so the feed takes a request's state from a journaled `Failed` or
+`Interrupted`, then from the summary's current turn, and otherwise treats it as
+done.
 
 A compaction summary's stream is never journaled as assistant text:
 `compaction_start`/`compaction_end` are durable control events, and the activity
