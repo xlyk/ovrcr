@@ -2536,10 +2536,43 @@ mod installed_pi {
             .collect()
     }
 
-    /// The bundled CLI skill is present exactly once, and only as instruction
-    /// text. Pi's OpenAI adapter may use `developer` instead of `system`.
-    fn assert_skill_only_in_system(label: &str, body: &Value) {
+    /// The CLI guide stays in instruction text; Pi advertises the private
+    /// coordinator file by metadata. Its body is read on demand. Pi's OpenAI
+    /// adapter may use `developer` instead of `system`.
+    fn assert_skill_only_in_system(label: &str, body: &Value, operator_profile: &Path) {
         let system = operator_provider::system_text(body);
+        for instruction in [
+            "Use the read tool to load a skill's file when the task matches its description.",
+            "Use the bundled coordinator skill for multi-session work.",
+            "watch_sessions only to add, list, or remove bounded watches",
+            "opaque unread.turn (string or null)",
+            "Claude Code and Codex via terminal transcript --json",
+            "Leave finished Retained sessions open unless asked to close or archive them.",
+        ] {
+            assert!(
+                system.contains(instruction),
+                "{label}: Operator policy omitted {instruction:?}"
+            );
+        }
+        assert!(
+            system.contains("<name>ovrcr-coordinator</name>"),
+            "{label}: Pi did not advertise the explicitly loaded coordinator skill"
+        );
+        assert!(
+            system.contains(
+                "<description>Coordinate parallel coding or research through visible OVRCR Workspace Agent sessions, register watches, and verify asynchronous results.</description>"
+            ),
+            "{label}: Pi omitted the coordinator skill description"
+        );
+        let coordinator_skill = operator_profile.join("ovrcr-coordinator/SKILL.md");
+        assert!(
+            system.contains(&format!(
+                "<location>{}</location>",
+                coordinator_skill.display()
+            )),
+            "{label}: Pi did not advertise the exact private coordinator skill path {}",
+            coordinator_skill.display()
+        );
         assert_eq!(
             system.matches(BUNDLED_SKILL).count(),
             1,
@@ -2547,6 +2580,15 @@ mod installed_pi {
             request_shape(body)
         );
         let conversation = operator_provider::non_system_text(body);
+        assert!(
+            !system.contains(PERSONAL_SKILL_SENTINEL),
+            "{label}: a personal skill was discovered despite --no-skills"
+        );
+        assert!(
+            !system.contains("<name>personal-operator-sentinel</name>")
+                && !system.contains("<description>fixture personal skill</description>"),
+            "{label}: personal skill metadata was discovered despite --no-skills"
+        );
         assert!(
             !conversation.contains(BUNDLED_SKILL),
             "{label}: the bundled CLI skill leaked into the conversation payload"
@@ -2918,6 +2960,8 @@ mod installed_pi {
         /// Make the first COMPACT turn's answer large enough that the next
         /// prompt crosses the seeded threshold in a manual GUI run.
         inflate_compaction_turn: bool,
+        /// Script the private local-provider Operator coordinator walkthrough.
+        coordinator: bool,
     }
 
     /// Scripted operator/tool scenario shared by the installed-pi test and the
@@ -2959,6 +3003,11 @@ mod installed_pi {
                 "REQUEST_SKILL_QUICK",
                 "REQUEST_SKILL_CLI",
                 "REQUEST_SKILL_RESUME",
+                "REQUEST_COORDINATOR_DISPATCH",
+                "REQUEST_COORDINATOR_WARM_CHAT",
+                "OVRCR_GUI_COORDINATOR_ALPHA",
+                "OVRCR_GUI_COORDINATOR_BETA",
+                "These watched OVRCR Workspace Agent sessions settled:",
                 "REQUEST_THINKING_HELD",
                 "REQUEST_THINKING_LONG_HELD",
                 "COMPACT_ONE",
@@ -3015,6 +3064,117 @@ mod installed_pi {
                 ("REQUEST_ONE_REAL_TOOLS", 4) => Plan::text("TURN_ONE_DONE"),
                 ("REQUEST_TWO_RESUME", 0) => Plan::text("TURN_TWO_DONE"),
                 ("REQUEST_THREE_HELD", 0) => Plan::text("HELD_BEFORE_RELEASE").holding(),
+                ("REQUEST_COORDINATOR_DISPATCH", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-skill-read",
+                    "read",
+                    json!({
+                        "path": workspace
+                            .parent()
+                            .expect("GUI workspace has an instance root")
+                            .join("operator-pi/ovrcr-coordinator/SKILL.md")
+                    }),
+                ),
+                ("REQUEST_COORDINATOR_DISPATCH", 1) if mode.coordinator => {
+                    let readback = operator_provider::tool_result_texts(body).join("\n");
+                    assert!(
+                        readback.contains(
+                            "Use this workflow for work that needs multiple Workspace Agent sessions."
+                        ),
+                        "Pi's read tool returned the bundled coordinator skill"
+                    );
+                    Plan::tool(
+                        "coordinator-dispatch",
+                        "bash",
+                        json!({"command": coordinator_dispatch_script()}),
+                    )
+                }
+                ("REQUEST_COORDINATOR_DISPATCH", 2) if mode.coordinator => Plan::tool(
+                    "coordinator-watch",
+                    "watch_sessions",
+                    coordinator_watch_input(body),
+                ),
+                ("REQUEST_COORDINATOR_DISPATCH", 3) if mode.coordinator => {
+                    Plan::text(&coordinator_dispatch_result(body))
+                }
+                ("REQUEST_COORDINATOR_WARM_CHAT", 0) if mode.coordinator => {
+                    assert!(
+                        !operator_provider::non_system_text(body).contains("REQUEST_THREE_HELD")
+                            && !operator_provider::non_system_text(body)
+                                .contains("HELD_BEFORE_RELEASE"),
+                        "the interrupted Operator turn was rolled back before warm chat"
+                    );
+                    Plan::text("COORDINATOR_WARM_CHAT_DONE while both Workspace replies remain held")
+                }
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-alpha-edit",
+                    "edit",
+                    json!({
+                        "path": coordinator_workspace(&workspace, GUI_COORD_ALPHA_WORKSPACE).join("README"),
+                        "edits": [{
+                            "oldText": "Disposable OVRCR GUI fixture for consigint\n",
+                            "newText": "Disposable OVRCR GUI fixture for consigint\n\nCoordinator alpha native evidence.\n"
+                        }]
+                    }),
+                ),
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 1) if mode.coordinator => Plan::tool(
+                    "coordinator-alpha-check",
+                    "bash",
+                    json!({"command": "git diff --check"}),
+                ),
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 2) if mode.coordinator => Plan::new(vec![
+                    Chunk::Text("OVRCR_ALPHA_PARTIAL".into()),
+                ])
+                .holding()
+                .then_text_after_release(
+                    "\nOVRCR_WORKER_DONE\nsummary: appended the alpha fixture note\nfiles: README\nchecks: git diff --check exit 0",
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-beta-edit",
+                    "edit",
+                    json!({
+                        "path": coordinator_workspace(&workspace, GUI_COORD_BETA_WORKSPACE).join("README"),
+                        "edits": [{
+                            "oldText": "Disposable OVRCR GUI fixture for consigint\n",
+                            "newText": "Disposable OVRCR GUI fixture for consigint\n\nCoordinator beta native evidence.\n"
+                        }]
+                    }),
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 1) if mode.coordinator => Plan::tool(
+                    "coordinator-beta-check",
+                    "bash",
+                    json!({"command": "git diff --check"}),
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 2) if mode.coordinator => Plan::new(vec![
+                    Chunk::Text("OVRCR_BETA_PARTIAL".into()),
+                ])
+                .holding()
+                .then_text_after_release(
+                    "\nOVRCR_WORKER_DONE\nsummary: appended the beta fixture note\nfiles: README\nchecks: git diff --check exit 0",
+                ),
+                ("These watched OVRCR Workspace Agent sessions settled:", 0)
+                    if mode.coordinator => Plan::tool(
+                        "coordinator-read-verify",
+                        "bash",
+                        json!({"command": coordinator_wakeup_script(&workspace, &user)}),
+                    ),
+                ("These watched OVRCR Workspace Agent sessions settled:", 1)
+                    if mode.coordinator => {
+                        let verification = operator_provider::tool_result_texts(body).join("\n");
+                        for evidence in [
+                            "GIT_STATUS_ALPHA",
+                            "DIFF_STAT_ALPHA",
+                            "CHECK_ALPHA exit=0",
+                            "GIT_STATUS_BETA",
+                            "DIFF_STAT_BETA",
+                            "CHECK_BETA exit=0",
+                        ] {
+                            assert!(
+                                verification.contains(evidence),
+                                "Workspace verification returned {evidence:?}"
+                            );
+                        }
+                        Plan::text(&coordinator_wakeup_result(&user))
+                    }
                 ("REQUEST_FOUR_BACKGROUND", 0) => Plan::tool(
                     "call-background",
                     "bash",
@@ -3116,6 +3276,183 @@ mod installed_pi {
                 _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
             }
         })
+    }
+
+    const GUI_COORD_ALPHA_WORKSPACE: &str = "gui-consigint-worktree-lifecycle";
+    const GUI_COORD_BETA_WORKSPACE: &str = "gui-consigint-auth-handoff";
+    const GUI_COORD_ALPHA_SESSION: &str = "coordinator-alpha";
+    const GUI_COORD_BETA_SESSION: &str = "coordinator-beta";
+
+    fn coordinator_workspace(operator_workspace: &Path, branch: &str) -> PathBuf {
+        operator_workspace
+            .parent()
+            .expect("GUI operator workspace has a fixture root")
+            .join("workspaces/consigint")
+            .join(branch)
+    }
+
+    fn coordinator_dispatch_script() -> &'static str {
+        r#"python3 - <<'PY'
+import json
+import os
+import subprocess
+
+cli = os.environ["OVRCR_EXECUTABLE"]
+rows = json.loads(subprocess.check_output([cli, "terminal", "list", "--json"], text=True))
+wanted = [
+    ("coordinator-alpha", "gui-consigint-worktree-lifecycle", "OVRCR_GUI_COORDINATOR_ALPHA"),
+    ("coordinator-beta", "gui-consigint-auth-handoff", "OVRCR_GUI_COORDINATOR_BETA"),
+]
+sessions = []
+for name, branch, marker in wanted:
+    matches = [row for row in rows if row.get("name") == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected exactly one {name} session, found {len(matches)}")
+    row = matches[0]
+    agent = row.get("agent") or {}
+    kind = row.get("kind")
+    if row.get("scope") != "Workspace" or not isinstance(kind, dict) or kind.get("agent") != "pi" or row.get("phase") != "running":
+        raise SystemExit(f"{name} is not a running Workspace Pi Agent")
+    if row.get("workspace") != branch:
+        raise SystemExit(f"{name} is in unexpected Workspace {row.get('workspace')!r}")
+    revision = agent.get("activity_revision")
+    if not isinstance(revision, int) or isinstance(revision, bool):
+        raise SystemExit(f"{name} has no numeric Reporter activity_revision")
+    run = row.get("run")
+    if not isinstance(run, int) or isinstance(run, bool):
+        raise SystemExit(f"{name} has no numeric run identity")
+    unread = row.get("unread")
+    unread_turn = unread.get("turn") if isinstance(unread, dict) else None
+    if unread_turn is not None and not isinstance(unread_turn, str):
+        raise SystemExit(f"{name} unread.turn is not an opaque string or null")
+    sessions.append((row, {
+        "run": run,
+        "activity_revision": revision,
+        "unread_turn": unread_turn,
+    }, marker))
+
+for row, baseline, marker in sessions:
+    task = (
+        f"{marker}\nAppend exactly one sentence to the existing README in this Workspace: "
+        f"Coordinator {'alpha' if marker.endswith('ALPHA') else 'beta'} native evidence. "
+        "Change no other files. Run git diff --check and report its actual exit code. "
+        "Finish with OVRCR_WORKER_DONE (summary, files, checks) or "
+        "OVRCR_WORKER_BLOCKED (reason, need)."
+    )
+    subprocess.run([cli, "terminal", "send", str(row["id"]), "--text", task], check=True)
+
+watch = {
+    "action": "add",
+    "sessions": [
+        {
+            "session_id": row["id"],
+            "project": row["project"],
+            "label": row["name"],
+            "baseline": baseline,
+        }
+        for row, baseline, _ in sessions
+    ],
+}
+table = [
+    {"task": marker.rsplit("_", 1)[-1].title(), "workspace": row["workspace"], "session_id": row["id"], "name": row["name"]}
+    for row, _, marker in sessions
+]
+print("OVRCR_WATCH_INPUT=" + json.dumps(watch, separators=(",", ":")))
+print("OVRCR_SESSION_TABLE=" + json.dumps(table, separators=(",", ":")))
+PY"#
+    }
+
+    fn marked_tool_json(body: &Value, prefix: &str) -> Value {
+        operator_provider::tool_result_texts(body)
+            .iter()
+            .rev()
+            .flat_map(|text| text.lines())
+            .find_map(|line| {
+                line.strip_prefix(prefix)
+                    .and_then(|value| serde_json::from_str(value).ok())
+            })
+            .unwrap_or_else(|| panic!("fixture tool result did not include {prefix}"))
+    }
+
+    fn coordinator_watch_input(body: &Value) -> Value {
+        marked_tool_json(body, "OVRCR_WATCH_INPUT=")
+    }
+
+    fn coordinator_table(body: &Value) -> Vec<Value> {
+        marked_tool_json(body, "OVRCR_SESSION_TABLE=")
+            .as_array()
+            .cloned()
+            .expect("fixture dispatch table is an array")
+    }
+
+    fn coordinator_dispatch_result(body: &Value) -> String {
+        let rows = coordinator_table(body);
+        assert_eq!(rows.len(), 2, "both coding tasks are dispatched");
+        let mut result = String::from(
+            "Dispatched both tasks and registered their session watches.\n\n| Task | Workspace | Session |\n|---|---|---|\n",
+        );
+        for row in rows {
+            result.push_str(&format!(
+                "| {} | {} | {} ({}) |\n",
+                row["task"].as_str().unwrap_or("task"),
+                row["workspace"].as_str().unwrap_or("unknown"),
+                row["name"].as_str().unwrap_or("session"),
+                row["session_id"].as_u64().unwrap_or_default(),
+            ));
+        }
+        result.push_str("Operator is ready for another message while both Agents work.");
+        result
+    }
+
+    fn coordinator_wakeup_rows(user: &str) -> Vec<(String, u64)> {
+        user.lines()
+            .filter_map(|line| {
+                let tail = line.strip_prefix("- session ")?;
+                let (id, label) = tail.split_once(' ')?;
+                let label = label.strip_prefix('(')?.split_once(')')?.0;
+                Some((label.to_owned(), id.parse().ok()?))
+            })
+            .collect()
+    }
+
+    fn coordinator_wakeup_script(workspace: &Path, user: &str) -> String {
+        let rows = coordinator_wakeup_rows(user);
+        assert_eq!(rows.len(), 2, "one wakeup batches both settled sessions");
+        let alpha = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_ALPHA_SESSION)
+            .unwrap()
+            .1;
+        let beta = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_BETA_SESSION)
+            .unwrap()
+            .1;
+        let alpha_path = coordinator_workspace(workspace, GUI_COORD_ALPHA_WORKSPACE);
+        let beta_path = coordinator_workspace(workspace, GUI_COORD_BETA_WORKSPACE);
+        format!(
+            "set +e\nprintf 'PI_SESSION_ALPHA %s\\n' '{alpha}'\n\"$OVRCR_EXECUTABLE\" terminal read '{alpha}' --max-lines 30 || exit $?\nprintf 'PI_SESSION_BETA %s\\n' '{beta}'\n\"$OVRCR_EXECUTABLE\" terminal read '{beta}' --max-lines 30 || exit $?\n( cd '{}' || exit 90; printf 'GIT_STATUS_ALPHA\\n'; git status --short --branch || exit $?; printf 'DIFF_STAT_ALPHA\\n'; git diff --stat || exit $?; git diff --check; code=$?; printf 'CHECK_ALPHA exit=%s\\n' \"$code\"; exit \"$code\" ) || exit $?\n( cd '{}' || exit 90; printf 'GIT_STATUS_BETA\\n'; git status --short --branch || exit $?; printf 'DIFF_STAT_BETA\\n'; git diff --stat || exit $?; git diff --check; code=$?; printf 'CHECK_BETA exit=%s\\n' \"$code\"; exit \"$code\" )",
+            alpha_path.display(),
+            beta_path.display()
+        )
+    }
+
+    fn coordinator_wakeup_result(user: &str) -> String {
+        let rows = coordinator_wakeup_rows(user);
+        assert_eq!(rows.len(), 2, "one wakeup contains both sessions");
+        let alpha = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_ALPHA_SESSION)
+            .unwrap()
+            .1;
+        let beta = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_BETA_SESSION)
+            .unwrap()
+            .1;
+        format!(
+            "Both Pi sessions completed their requested README change.\n\n| Task | Workspace | Session |\n|---|---|---|\n| Alpha | {GUI_COORD_ALPHA_WORKSPACE} | coordinator-alpha ({alpha}) |\n| Beta | {GUI_COORD_BETA_WORKSPACE} | coordinator-beta ({beta}) |\n\nVerified `git status`, `git diff --stat`, and `git diff --check` (exit 0) in both Workspaces. Both Retained sessions remain open for review."
+        )
     }
 
     #[test]
@@ -3757,6 +4094,7 @@ mod installed_pi {
             ScenarioMode {
                 hold_compaction: true,
                 inflate_compaction_turn: true,
+                coordinator: false,
             },
         ));
         provider.seed_profile_with(
@@ -3790,7 +4128,11 @@ mod installed_pi {
             !cleared.contains("Compacting context"),
             "the Compacting status must clear after compaction: {cleared}"
         );
-        assert_skill_only_in_system("pre-compaction", &provider.requests()[0].body);
+        assert_skill_only_in_system(
+            "pre-compaction",
+            &provider.requests()[0].body,
+            &live.config.join("operator-pi"),
+        );
         wait_stopped(&mut driver, opened.id);
 
         // The next turn is a normal request over the compacted context.
@@ -3823,7 +4165,11 @@ mod installed_pi {
             .enumerate()
             .filter(|(_, request)| !operator_provider::is_compaction_request(&request.body));
         for (index, request) in normal {
-            assert_skill_only_in_system(&format!("normal provider request {index}"), &request.body);
+            assert_skill_only_in_system(
+                &format!("normal provider request {index}"),
+                &request.body,
+                &live.config.join("operator-pi"),
+            );
         }
         for request in requests
             .iter()
@@ -3848,7 +4194,11 @@ mod installed_pi {
         );
         for request in requests.iter().skip(compaction_index + 1) {
             if !operator_provider::is_compaction_request(&request.body) {
-                assert_skill_only_in_system("post-compaction", &request.body);
+                assert_skill_only_in_system(
+                    "post-compaction",
+                    &request.body,
+                    &live.config.join("operator-pi"),
+                );
             }
         }
         let journal = format!(
@@ -3925,7 +4275,11 @@ mod installed_pi {
                 request_shape(&first[0].body)
             );
             assert_normal_first_prompt(&format!("{entry} first"), &first[0].body, marker);
-            assert_skill_only_in_system(&format!("{entry} first"), &first[0].body);
+            assert_skill_only_in_system(
+                &format!("{entry} first"),
+                &first[0].body,
+                &live.config.join("operator-pi"),
+            );
             assert_no_guidance(
                 &format!("{entry} journal"),
                 &operator_harness::history_text(&history),
@@ -3952,7 +4306,11 @@ mod installed_pi {
                 .expect("the resumed turn made a provider request")
                 .body
                 .clone();
-            assert_skill_only_in_system(&format!("{entry} resumed"), &resumed_body);
+            assert_skill_only_in_system(
+                &format!("{entry} resumed"),
+                &resumed_body,
+                &live.config.join("operator-pi"),
+            );
             assert!(
                 operator_provider::non_system_text(&resumed_body).contains(answer),
                 "{entry}: the previous answer is normal conversation context"
@@ -4051,7 +4409,11 @@ mod installed_pi {
             request_shape(&first[0].body)
         );
         assert_normal_first_prompt("cli first", &first[0].body, "REQUEST_SKILL_CLI");
-        assert_skill_only_in_system("cli first", &first[0].body);
+        assert_skill_only_in_system(
+            "cli first",
+            &first[0].body,
+            &live.config.join("operator-pi"),
+        );
         let user = operator_provider::last_user_text(&first[0].body);
         assert!(user.contains("\"project\":\"fixture\""), "{user}");
         assert!(user.contains("\"workspace\":\"skill-cli\""), "{user}");
@@ -4150,7 +4512,11 @@ mod installed_pi {
         let requests = provider.requests();
         assert!(requests.len() >= 2, "the tool result feeds another request");
         for (index, request) in requests.iter().enumerate() {
-            assert_skill_only_in_system(&format!("cli provider request {index}"), &request.body);
+            assert_skill_only_in_system(
+                &format!("cli provider request {index}"),
+                &request.body,
+                &live.config.join("operator-pi"),
+            );
             for result in operator_provider::tool_result_texts(&request.body) {
                 assert_no_guidance("CLI tool result", &result);
             }
@@ -4185,7 +4551,10 @@ mod installed_pi {
     /// context window and COMPACT_ONE produces an oversized answer, which triggers
     /// automatic compaction in that same turn. Observe `Compacting context…`, then
     /// create the release marker to finish the turn; send COMPACT_TWO afterwards
-    /// to prove the normal post-compaction follow-up.
+    /// to prove the normal post-compaction follow-up. With
+    /// `OVRCR_OPERATOR_GUI_COORDINATOR=1`, it checks the private HOME's matching
+    /// ownership marker, seeds its normal Pi profile to the loopback provider,
+    /// and starts two managed Pi sessions on separate fixture worktrees.
     #[test]
     #[ignore = "manual GUI acceptance helper; requires OVRCR_OPERATOR_GUI_HOME and OVRCR_OPERATOR_GUI_TOKEN"]
     fn operator_pi_gui_provider() {
@@ -4202,6 +4571,12 @@ mod installed_pi {
         // the GUI can show the live Compacting status before releasing it.
         let compaction = std::env::var_os("OVRCR_OPERATOR_GUI_COMPACTION")
             .is_some_and(|value| !value.is_empty());
+        let coordinator = std::env::var_os("OVRCR_OPERATOR_GUI_COORDINATOR")
+            .is_some_and(|value| !value.is_empty());
+        assert!(
+            !(compaction && coordinator),
+            "run one GUI provider mode at a time"
+        );
         let provider = Provider::start(scenario_handler_mode(
             workspace.clone(),
             marker.clone(),
@@ -4209,6 +4584,7 @@ mod installed_pi {
             ScenarioMode {
                 hold_compaction: compaction,
                 inflate_compaction_turn: compaction,
+                coordinator,
             },
         ));
         if compaction {
@@ -4220,10 +4596,27 @@ mod installed_pi {
         } else {
             provider.seed_profile(&root);
         }
+        if coordinator {
+            let token = std::env::var("OVRCR_OPERATOR_GUI_TOKEN")
+                .expect("gui_root validated OVRCR_OPERATOR_GUI_TOKEN");
+            let home = gui_private_workspace_home(std::env::var_os("HOME"), &token)
+                .unwrap_or_else(|error| panic!("{error}"));
+            assert!(
+                home.starts_with("/private/tmp"),
+                "coordinator GUI HOME must be task-private under /private/tmp"
+            );
+            assert!(
+                std::env::var_os("PI_CODING_AGENT_DIR").is_none(),
+                "clear inherited PI_CODING_AGENT_DIR before starting the GUI"
+            );
+            provider.seed_workspace_profile(&home);
+            let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
+            eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+        }
         let _ = std::fs::remove_file(&release_marker);
         let _ = std::fs::remove_file(&stop_marker);
         println!(
-            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction}",
+            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator}",
             provider.base,
             root.display()
         );
@@ -4253,7 +4646,7 @@ mod installed_pi {
             body.push_str(
                 &serde_json::to_string(&json!({
                     "path": request.path,
-                    "authorization": request.authorization,
+                    "authorization": request.authorization.as_ref().map(|_| "<redacted>"),
                     "body": request.body,
                 }))
                 .unwrap(),
@@ -4261,6 +4654,7 @@ mod installed_pi {
             body.push('\n');
         }
         let _ = std::fs::write(&evidence, body);
+        let _ = std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o600));
         eprintln!(
             "OPERATOR_PI_GUI_PROVIDER exit root_exists={} stop_marker={} requests={} evidence={}",
             root.is_dir(),
@@ -4282,6 +4676,107 @@ mod installed_pi {
             "{GUI_OWNER_VERSION}\nroot={}\ntoken={token}\n",
             root.display()
         )
+    }
+
+    fn gui_private_workspace_home(home: Option<OsString>, token: &str) -> Result<PathBuf, String> {
+        let Some(home) = home.filter(|value| !value.is_empty()) else {
+            return Err("coordinator GUI needs a private HOME".into());
+        };
+        let home = PathBuf::from(home)
+            .canonicalize()
+            .map_err(|error| format!("coordinator GUI HOME unavailable: {error}"))?;
+        let metadata = std::fs::symlink_metadata(&home)
+            .map_err(|error| format!("coordinator GUI HOME unavailable: {error}"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("coordinator GUI HOME must be a real directory".into());
+        }
+        if metadata.mode() & 0o777 != 0o700 {
+            return Err("coordinator GUI HOME must be private (mode 0700)".into());
+        }
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("coordinator GUI HOME is owned by another user".into());
+        }
+
+        let marker = home.join(GUI_OWNER_MARKER);
+        let marker_metadata = std::fs::symlink_metadata(&marker).map_err(|_| {
+            format!(
+                "coordinator GUI HOME needs {GUI_OWNER_MARKER} (mode 0600) bound to this HOME and fixture token"
+            )
+        })?;
+        if !marker_metadata.is_file() || marker_metadata.file_type().is_symlink() {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} must be a regular file, not a symlink"
+            ));
+        }
+        if marker_metadata.mode() & 0o777 != 0o600
+            || marker_metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} must be private (mode 0600) and owned by this user"
+            ));
+        }
+        if std::fs::read_to_string(&marker)
+            .map_err(|error| format!("coordinator GUI HOME marker: {error}"))?
+            != gui_owner_text(&home, token)
+        {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} does not bind this HOME and fixture token"
+            ));
+        }
+
+        for directory in [home.join(".pi"), home.join(".pi/agent")] {
+            match std::fs::symlink_metadata(&directory) {
+                Ok(metadata)
+                    if metadata.is_dir()
+                        && !metadata.file_type().is_symlink()
+                        && metadata.uid() == unsafe { libc::geteuid() }
+                        && metadata.mode() & 0o777 == 0o700 => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "coordinator GUI Pi profile directory must be private and cannot be a symlink: {}",
+                        directory.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect coordinator GUI Pi profile directory {}: {error}",
+                        directory.display()
+                    ));
+                }
+            }
+        }
+        let profile = home.join(".pi/agent");
+        for filename in ["models.json", "settings.json"] {
+            let path = profile.join(filename);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "coordinator GUI Pi profile file must be regular, not a symlink: {}",
+                        path.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect coordinator GUI Pi profile file {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        let auth = profile.join("auth.json");
+        match std::fs::symlink_metadata(&auth) {
+            Ok(_) => return Err("coordinator GUI Pi profile contains auth.json".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect coordinator GUI Pi profile auth file: {error}"
+                ));
+            }
+        }
+        Ok(home)
     }
 
     fn gui_root() -> PathBuf {
@@ -4479,6 +4974,126 @@ mod installed_pi {
             gui_root_from(Some(accepted.clone().into_os_string()), Some(token.into())).unwrap(),
             accepted
         );
+
+        let home = base.path().join("ovrcr-gui-workspace-home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error =
+            gui_private_workspace_home(Some(home.clone().into_os_string()), token).unwrap_err();
+        assert!(error.contains(GUI_OWNER_MARKER), "{error}");
+
+        let home = home.canonicalize().unwrap();
+        let marker = home.join(GUI_OWNER_MARKER);
+        std::fs::write(&marker, gui_owner_text(&home, token)).unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            gui_private_workspace_home(Some(home.clone().into_os_string()), token).unwrap(),
+            home
+        );
+
+        let pi = base.path().join("foreign-pi-profile");
+        std::fs::create_dir(&pi).unwrap();
+        std::os::unix::fs::symlink(&pi, home.join(".pi")).unwrap();
+        let error = gui_private_workspace_home(Some(home.into_os_string()), token).unwrap_err();
+        assert!(error.contains("cannot be a symlink"), "{error}");
+    }
+
+    fn create_gui_coordinator_sessions(root: &Path, pi: &Path) -> String {
+        let cli = Path::new(env!("CARGO_BIN_EXE_ovrcr"));
+        let home = std::env::var_os("HOME").expect("coordinator GUI needs a private HOME");
+        for (name, branch, label) in [
+            (
+                GUI_COORD_ALPHA_SESSION,
+                GUI_COORD_ALPHA_WORKSPACE,
+                "pi / coordinator alpha",
+            ),
+            (
+                GUI_COORD_BETA_SESSION,
+                GUI_COORD_BETA_WORKSPACE,
+                "pi / coordinator beta",
+            ),
+        ] {
+            let output = Command::new(cli)
+                .args([
+                    "terminal",
+                    "create",
+                    "--json",
+                    "--project",
+                    "consigint",
+                    "--workspace",
+                    branch,
+                    "--name",
+                    name,
+                    "--label",
+                    label,
+                    "--",
+                ])
+                .arg(cli)
+                .args(["agent", "run", "pi", "--"])
+                .arg(pi)
+                .env("HOME", &home)
+                .env("OVRCR_HOME", root)
+                .env("OVRCR_SOCKET", root.join("server.sock"))
+                .output()
+                .unwrap_or_else(|error| panic!("start {name} fixture session: {error}"));
+            assert!(
+                output.status.success(),
+                "create {name} fixture session failed with {}",
+                output.status
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let rows = loop {
+            let output = Command::new(cli)
+                .args(["terminal", "list", "--json"])
+                .env("HOME", &home)
+                .env("OVRCR_HOME", root)
+                .env("OVRCR_SOCKET", root.join("server.sock"))
+                .output()
+                .expect("inspect coordinator fixture sessions");
+            if output.status.success() {
+                let sessions: Vec<Value> = serde_json::from_slice(&output.stdout)
+                    .expect("terminal list --json returns session rows");
+                let rows: Vec<Value> = [GUI_COORD_ALPHA_SESSION, GUI_COORD_BETA_SESSION]
+                    .into_iter()
+                    .map(|name| {
+                        sessions
+                            .iter()
+                            .find(|row| row["name"] == name)
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                if rows.iter().all(|row| {
+                    row["scope"] == "Workspace"
+                        && row["phase"] == "running"
+                        && row["kind"]["agent"] == "pi"
+                        && row["agent"]["activity_revision"].as_u64().is_some()
+                }) {
+                    break rows;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "managed Pi coordinator fixture sessions did not reach Reporter readiness"
+            );
+            thread::sleep(Duration::from_millis(100));
+        };
+        serde_json::to_string(
+            &rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "name": row["name"],
+                        "id": row["id"],
+                        "run": row["run"],
+                        "workspace": row["workspace"],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
     }
 
     fn gui_workspace(root: &Path) -> PathBuf {

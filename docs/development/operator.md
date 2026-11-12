@@ -13,8 +13,8 @@ work lease, that process stays live across warm user turns on the same run.
 ## Package layout
 
 - `src/operator/pi.rs` — executable resolution, the dedicated profile, launch
-  command construction, the bundled CLI skill, extension materialization and
-  bounded model listing.
+  command construction, the system-only CLI guide, coordinator-skill
+  materialization, extension materialization and bounded model listing.
 - `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
   worker and `ovrcr operator models`.
 - `src/operator/worker.rs` — cold Start and run-scoped warm StartTurn, one live
@@ -38,6 +38,8 @@ All Operator state lives inside the instance directory (`RegistryPath::resolve`)
 | Path | Mode | Purpose |
 | --- | --- | --- |
 | `<instance>/operator-pi` | 0700 | Pi's `PI_CODING_AGENT_DIR`: native auth, models and settings |
+| `<instance>/operator-pi/ovrcr-coordinator` | 0700 | Explicitly loaded coordinator skill |
+| `<instance>/operator-pi/ovrcr-coordinator/SKILL.md` | 0600 | Bundled coordinator instructions |
 | `<instance>/operator-pi/turns` | 0700 | One attempt directory per turn id |
 | `<instance>/operator-pi/runs/<run-id>` | 0700 | Live Pi session files for one worker run |
 | `<instance>/operator-workdir` | 0700 | Fixed pi process cwd for the whole conversation |
@@ -68,22 +70,31 @@ Managed turn (`pi.rs::rpc_command`):
 ```text
 pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --no-themes --no-context-files --no-approve --offline
-   --tools read,bash,edit,write
+   --tools read,bash,edit,write,watch_sessions
+   --skill <operator-pi>/ovrcr-coordinator/SKILL.md
    --session-dir <operator-pi>/runs/<run-id>
    --session-id operator-<conversation-id>
-   --append-system-prompt <policy + bundled CLI skill>
+   --append-system-prompt <policy + bundled CLI guide>
    --extension <operator-pi>/pi-operator-extension.mjs
 ```
 
 One `--append-system-prompt` argument carries the fixed Operator policy followed
 by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`.
-The skill is available before the first model request in full chat and Quick
-message without a repository checkout. `--no-skills` remains, so neither that
-source tree nor a personal profile contributes a second copy; no runtime skill
-file is read and the skill is never injected into a conversation message or tool
-result. Its interactive-shell guidance resolves `ovrcr` once, while Operator
-keeps the inherited `OVRCR_EXECUTABLE`, `OVRCR_HOME`, `OVRCR_CONFIG`,
-`OVRCR_SOCKET` and exactly the captured project/workspace/session run identities.
+The CLI guide is available before the first model request in full chat and Quick
+message without a repository checkout. The separate coordinator skill is
+atomically materialized as a private profile file and passed through `--skill`.
+`--no-skills` remains, so Pi advertises that explicit file without discovering
+skills from the profile, project or personal home. Pi reads its body on demand
+when the task matches. The CLI guide remains only in system prompt text and never
+enters the user message or journal. Its interactive-shell
+guidance resolves `ovrcr` once, while Operator keeps the inherited
+`OVRCR_EXECUTABLE`, `OVRCR_HOME`, `OVRCR_CONFIG`, `OVRCR_SOCKET` and exactly the
+captured project/workspace/session run identities.
+
+The coordinator skill source is `pi/skills/ovrcr-coordinator/SKILL.md` and is
+embedded with `include_str!`; each cold worker launch atomically writes the
+profile copy with mode 0600. Its name, description and exact private path are
+advertised to Pi.
 
 pi stays in the worker's process group (no `process_group(0)`), so the Server's
 lifetime Session owns pi and its tool children. `ovrcr operator models` runs in
@@ -106,7 +117,8 @@ Server.
    The returned `OperatorWorkerStart` carries the turn's captured `model`
    override, text, context and `checkpoint_turn`.
 2. Create the exclusive turn attempt and run directory, materialize the
-   extension, and launch pi. `get_state` resolves the fresh profile's model and thinking level; the
+   extension and coordinator skill, then launch pi. `get_state` resolves the
+   fresh profile's model and thinking level; the
    session id must equal `operator-<conversation-id>`; the trusted extension must
    bind before anything else happens.
 3. On a cold start, if `checkpoint_turn` is set, copy its private
@@ -134,9 +146,10 @@ Server.
    also requires the final assistant message's `stopReason == "stop"`, no
    unresolved admitted tool, and no transport or extension error. Auto-compaction
    runs inside the one conversation. Every ordinary model request, including the
-   one after compaction, carries the policy and bundled CLI skill only in its
-   system prompt; the compaction conversation payload and the durable
-   conversation journal never contain that guidance.
+   one after compaction, carries the policy and bundled CLI guide only in its
+   system prompt; the compaction conversation payload and durable conversation
+   journal never contain that guidance. The coordinator skill remains a separate
+   explicit `--skill` file.
 7. Read the bounded `ovrcr_operator_watches` status. With an active lease, copy
    the live session into this turn's private `session.jsonl`, validate the
    session header, and fsync the copy and directory. Commit
@@ -174,6 +187,31 @@ and IDs afterward. Wire protocol 85 carries `OperatorRunIdentity`,
 `worker_live`, warm `StartTurn`, prepared `AbortTurn`, and leased completion.
 `Open` and `Current` remain read-only and never create a worker.
 
+## Workspace coordination watches
+
+The explicit coordinator skill and fixed policy teach Operator to use visible
+Retained Workspace Agent sessions for delegated work. Coding tasks use separate
+worktree Workspaces on dedicated branches, protecting Root; shared Workspaces
+are limited to read-only research or an explicit same-branch request. The
+`watch_sessions` tool adds, lists or removes bounded Reporter watches. Removing
+a watch does not stop its session.
+
+Before `terminal send`, Operator captures the session `run`, numeric
+`agent.activity_revision` and opaque `unread.turn` from `terminal list --json`.
+The tool maps `unread.turn` to `baseline.unread_turn` without parsing it. Its
+deterministic poller wakes on a post-baseline Ready revision/identity change,
+`waiting_input`, a run change, or an exited/stopped/interrupted session. It
+batches reports received during another turn and starts one `AsyncWakeup` only
+when Pi is idle; queued reports keep the worker leased until that wakeup settles.
+
+On wakeup, Operator reads only the watched session replies: Claude Code and
+Codex use `terminal transcript --json`, falling back to the terminal tail when a
+transcript entry reaches the 16 KiB cap; Pi and Oh My Pi use `terminal read` or
+`terminal screen`. It inspects a reply once if the requested completion trailer
+is missing, verifies `git status`, `git diff --stat` and reported check exit codes
+in the matching Workspace, and leaves completed Retained sessions open. Human
+decisions and `waiting_input` prompts return to the user.
+
 ## Standard pi tools and durable admission
 
 pi supplies `read`, `bash`, `edit` and `write` with their native schemas,
@@ -187,13 +225,13 @@ model request. Trailing output from a completed background child is drained
 within a short idle window so a held pipe cannot hang the tool.
 
 The extension reports a version-1 contract through `ctx.ui.setStatus` with the
-session id and `getActiveTools()`. The worker requires exactly the four tools and
+session id and `getActiveTools()`. The worker requires exactly the five tools and
 the expected session id before prompting; a missing or wrong contract refuses the
 turn with `Pi Operator integration is unavailable; no prompt was sent.`
 
 Tool calls use an awaited `confirm` dialog titled
 `OVRCR Operator tool admission` carrying `{toolCallId, toolName, input}`. The
-worker validates the four-tool allowlist, the id and argument bounds, requires
+worker validates the five-tool allowlist, the id and argument bounds, requires
 the matching completed assistant message with `stopReason` `toolUse` or `stop`
 and the same call id/name/arguments, flushes preceding assistant text, commits
 `ToolCall`, and only then answers `confirmed:true`. Admissions are serialized.
