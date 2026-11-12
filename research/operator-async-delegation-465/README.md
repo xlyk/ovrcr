@@ -163,3 +163,7 @@ At `13cbab82`, run [43121584362](https://github.com/xlyk/ovrcr/actions/runs/4312
 The earlier four-pane terminal failure was not reproduced in one isolated offline run (1/1); [diagnosis](terminal-ci-diagnosis.md) distinguishes the observed picker/COPY screens from the inferred synchronization issue. No terminal-test source or assertion changed. This local pass does not clear required hosted checks.
 
 At `13cbab82`, hosted shard4 passed all738 selected tests; the four-pane test passed on its first attempt (5.935s). Shard2, offline Cursor and selection audit also passed. Required aggregate was red only for the two watch-test issues corrected in `b63bab60`. Final current-head CI remains required.
+
+## Submit/wakeup barrier CI correction
+
+Hosted run [43122941722](https://github.com/xlyk/ovrcr/actions/runs/43122941722) at `bb3a890c` passed shards2–4, offline Cursor and selection audit. Shard1 exposed a repeated blocking test hook in the new Submit/wakeup regression (three timeouts); an existing GUI palette check passed on its second attempt. The hook now blocks only its first invocation in `882def7a`, preserving the race assertions. The original failure reproduces before the fix; race1/1, lock-order1/1 and Server Operator20 passed/1ignored after it. See [attempts](468-ci-race-followup.md). Current-head CI is still required.

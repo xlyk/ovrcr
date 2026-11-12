@@ -1,0 +1,24 @@
+
+running 1 test
+test server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn ... FAILED
+
+failures:
+
+failures:
+    server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 508 filtered out; finished in 5.31s
+
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.18s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-467-ci-target/debug/deps/ovrcr_runtime-8c547d91dad93461)
+
+thread 'server::operator_tests::user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn' (656385982) panicked at crates/ovrcr-runtime/src/server/operator_tests.rs:689:10:
+called `Result::unwrap()` on an `Err` value: Timeout
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (656386017) panicked at crates/ovrcr-runtime/src/server/operator_tests.rs:673:31:
+called `Result::unwrap()` on an `Err` value: SendError { .. }
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`
