@@ -175,6 +175,40 @@ try {
   };
   install(pi);
 
+  const replacementHost = () => {
+    const replacementHandlers = new Map();
+    const replacementTools = new Map();
+    const messages = [];
+    const context = {
+      ui: {
+        setStatus(key, value) {
+          statuses.push([key, JSON.parse(value)]);
+        },
+        async confirm(title, value) {
+          confirmations.push([title, JSON.parse(value)]);
+          return admitWakeup;
+        },
+      },
+      sessionManager: { getSessionId: () => "operator-1" },
+      isIdle: () => idle,
+    };
+    install({
+      on(event, handler) {
+        replacementHandlers.set(event, handler);
+      },
+      registerTool(tool) {
+        replacementTools.set(tool.name, tool);
+      },
+      getActiveTools() {
+        return ["read", "bash", "edit", "write", "watch_sessions"];
+      },
+      sendUserMessage(message) {
+        messages.push(message);
+      },
+    });
+    return { handlers: replacementHandlers, tools: replacementTools, context, messages };
+  };
+
   // 1. Sequential registration for every native tool.
   assert.deepEqual(
     [...tools.keys()].sort(),
@@ -653,29 +687,152 @@ try {
   )).content[0].text);
   assert.equal(retainedReports.active, 2);
   assert.equal(retainedReports.pending_reports.length, 2);
-  admitWakeup = true;
-  await handlers.get("agent_settled")({ type: "agent_settled" }, extensionCtx);
-  assert.equal(confirmations.length, 2);
-  assert.equal(sentMessages.length, 1);
-  assert.match(sentMessages[0], /session 41/);
-  assert.match(sentMessages[0], /second worker/);
-  await handlers.get("agent_start")({ type: "agent_start" }, extensionCtx);
-  const consumedReports = JSON.parse((await watcher.execute(
-    "watch-consumed-list",
-    { action: "list" },
-    undefined,
-    undefined,
-    extensionCtx,
-  )).content[0].text);
-  assert.equal(consumedReports.active, 0);
-  assert.equal(consumedReports.pending_reports.length, 0);
-  await watcher.execute(
-    "watch-batch-clear",
-    { action: "remove", all: true },
+
+  // A native switch reloads the extension factory inside the same Node
+  // process. Keep one live watch and an in-flight CLI poll while the two
+  // queued reports cross the resume shutdown/start boundary.
+  sessions.push({
+    scope: "Workspace",
+    id: 43,
+    run: 4,
+    project: "sample",
+    label: "third worker",
+    phase: "running",
+    activity: "busy",
+    kind: { agent: "codex" },
+    agent: { activity_revision: 8 },
+    unread: null,
+  });
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  const thirdWatch = await watcher.execute(
+    "watch-resume-add",
+    {
+      action: "add",
+      sessions: [{
+        session_id: 43,
+        baseline: { run: 4, activity_revision: 8, unread_turn: null },
+      }],
+    },
     undefined,
     undefined,
     extensionCtx,
   );
+  assert.equal(JSON.parse(thirdWatch.content[0].text).active, 3);
+  rmSync(pollStartedPath, { force: true });
+  rmSync(releasePath, { force: true });
+  writeFileSync(gatePath, "");
+  await waitUntil(() => existsSync(pollStartedPath), "resume in-flight poll");
+
+  idle = false;
+  await handlers.get("session_shutdown")(
+    { type: "session_shutdown", reason: "resume" },
+    extensionCtx,
+  );
+  const resumed = replacementHost();
+  await resumed.handlers.get("session_start")(
+    { type: "session_start", reason: "resume" },
+    resumed.context,
+  );
+  const resumedWatcher = resumed.tools.get("watch_sessions");
+  const preserved = JSON.parse((await resumedWatcher.execute(
+    "watch-resume-list",
+    { action: "list" },
+    undefined,
+    undefined,
+    resumed.context,
+  )).content[0].text);
+  assert.equal(preserved.active, 3);
+  assert.equal(preserved.pending_reports.length, 2);
+  assert.deepEqual(preserved.watches.map((watch) => watch.session_id), [43]);
+  assert.equal(statuses.at(-1)[1].active, 3, "session_start re-emits the preserved lease");
+
+  admitWakeup = true;
+  await resumed.handlers.get("agent_settled")({ type: "agent_settled" }, resumed.context);
+  assert.equal(resumed.messages.length, 0, "pending reports wait until the resumed Pi host is idle");
+  writeFileSync(releasePath, "");
+  sessions[2] = {
+    ...sessions[2],
+    activity: "response_ready",
+    agent: { activity_revision: 9 },
+  };
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  idle = true;
+  await resumed.handlers.get("agent_settled")({ type: "agent_settled" }, resumed.context);
+  assert.equal(resumed.messages.length, 1);
+  assert.match(resumed.messages[0], /session 41/);
+  assert.match(resumed.messages[0], /second worker/);
+  await resumed.handlers.get("agent_start")({ type: "agent_start" }, resumed.context);
+  const afterResumeDispatch = JSON.parse((await resumedWatcher.execute(
+    "watch-resume-consumed-list",
+    { action: "list" },
+    undefined,
+    undefined,
+    resumed.context,
+  )).content[0].text);
+  assert.equal(afterResumeDispatch.active, 1);
+  assert.equal(afterResumeDispatch.pending_reports.length, 0);
+  const beforeResumedPoll = statuses.length;
+  await waitUntil(() => statuses.length > beforeResumedPoll, "preserved watch timer poll");
+  const settledAfterResume = JSON.parse((await resumedWatcher.execute(
+    "watch-resumed-session-settled",
+    { action: "list" },
+    undefined,
+    undefined,
+    resumed.context,
+  )).content[0].text);
+  assert.equal(settledAfterResume.active, 1);
+  assert.equal(settledAfterResume.pending_reports[0].session_id, 43);
+  await resumed.handlers.get("agent_settled")({ type: "agent_settled" }, resumed.context);
+  assert.equal(resumed.messages.length, 2);
+  assert.match(resumed.messages[1], /session 43/);
+  await resumed.handlers.get("agent_start")({ type: "agent_start" }, resumed.context);
+
+  // A genuine shutdown drops owned watch state. A later extension factory in
+  // this process starts clean and reports no stale lease or queued report.
+  sessions.push({
+    scope: "Workspace",
+    id: 44,
+    run: 5,
+    project: "sample",
+    phase: "running",
+    activity: "busy",
+    kind: { agent: "codex" },
+    agent: { activity_revision: 1 },
+    unread: null,
+  });
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  await resumedWatcher.execute(
+    "watch-genuine-shutdown-add",
+    {
+      action: "add",
+      sessions: [{
+        session_id: 44,
+        baseline: { run: 5, activity_revision: 1, unread_turn: null },
+      }],
+    },
+    undefined,
+    undefined,
+    resumed.context,
+  );
+  await resumed.handlers.get("session_shutdown")(
+    { type: "session_shutdown", reason: "quit" },
+    resumed.context,
+  );
+  const fresh = replacementHost();
+  await fresh.handlers.get("session_start")(
+    { type: "session_start", reason: "startup" },
+    fresh.context,
+  );
+  const clean = JSON.parse((await fresh.tools.get("watch_sessions").execute(
+    "watch-genuine-shutdown-list",
+    { action: "list" },
+    undefined,
+    undefined,
+    fresh.context,
+  )).content[0].text);
+  assert.equal(clean.active, 0);
+  assert.deepEqual(clean.watches, []);
+  assert.deepEqual(clean.pending_reports, []);
   idle = false;
   admitWakeup = false;
 

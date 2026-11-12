@@ -475,9 +475,10 @@ pub enum OperatorWorkerCommand {
     StartTurn {
         identity: OperatorRunIdentity,
     },
-    /// Prepared for serialized foreground cancellation by the next lifecycle step.
+    /// Confirms that native rollback settled before a foreground Stop is published.
     AbortTurn {
         identity: OperatorTurnIdentity,
+        leased: bool,
     },
     Retire {
         identity: OperatorTurnIdentity,
@@ -509,6 +510,19 @@ pub enum OperatorWorkerResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stored_failed_worker_rows_keep_their_historical_json_shape() {
+        let raw = r#"{"Worker":{"Failed":"Pi request failed; inspect the partial journal before retrying."}}"#;
+        let decoded: OperatorMessageContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            decoded,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
+                "Pi request failed; inspect the partial journal before retrying.".into()
+            ))
+        );
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), raw);
+    }
+
     #[test]
     fn read_validates_conversation_and_current_open_need_no_identity() {
         assert!(

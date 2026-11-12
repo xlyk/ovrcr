@@ -255,6 +255,7 @@ impl Reporter {
     pub fn operator_abort_turn(
         &mut self,
         identity: ovrcr_protocol::OperatorTurnIdentity,
+        leased: bool,
         deadline: Instant,
     ) -> anyhow::Result<()> {
         let lease = self
@@ -262,7 +263,7 @@ impl Reporter {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
         match lease.operator_request(
-            ovrcr_protocol::OperatorWorkerCommand::AbortTurn { identity },
+            ovrcr_protocol::OperatorWorkerCommand::AbortTurn { identity, leased },
             deadline,
         )? {
             Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Aborted {

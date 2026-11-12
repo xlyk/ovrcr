@@ -352,7 +352,6 @@ fn leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires() {
     let leased = client.wait_history(opened.id, |history| {
         state(history) == OperatorTurnState::Complete && history.conversation.worker_live
     });
-
     assert_eq!(first.identity.run, SessionRunId(1));
     assert_eq!(
         leased.conversation.current_turn.as_ref().unwrap().identity,
@@ -512,6 +511,623 @@ fn leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires() {
         live.join_within(Duration::from_secs(10)),
         live::Stop::Finished
     ));
+}
+
+#[test]
+fn leased_stop_rolls_back_on_the_live_worker_without_advancing_checkpoint() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let release_abort_settlement = marker_dir.path().join("release-abort-settlement");
+    let release_wakeup = marker_dir.path().join("release-wakeup");
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("completed checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial stopped answer".into()),
+            Step::WatchStatus(1),
+            Step::Hold,
+        ],
+    ]);
+    scenario.set(
+        "abort_settle_release_file",
+        release_abort_settlement.display().to_string(),
+    );
+    scenario.set(
+        "wakeup_after_switch",
+        json!({
+            "text": "watch report queued during Stop rollback",
+            "answer": "the live worker handled the queued watch report",
+            "release_file": release_wakeup.display().to_string(),
+        }),
+    );
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create a checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+    let second = client.submit_turn(&leased.conversation, "start a cancellable turn");
+    let partial = client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial stopped answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    assert_eq!(second.identity.run, first.identity.run);
+
+    // Send Stop without reading its reply, then reconnect while the fake Pi is
+    // deliberately holding agent_settled. The durable turn must remain busy.
+    drop(client);
+    let mut stop_stream = ovrcr::protocol::connect_server(&live.socket).unwrap();
+    let hello =
+        ovrcr::protocol::client::request(&mut stop_stream, 900_000, Request::DashboardHello)
+            .unwrap();
+    assert!(
+        matches!(hello, Response::Hierarchy(_)),
+        "Dashboard handshake: {hello:?}"
+    );
+    ovrcr::protocol::write_frame(
+        &mut stop_stream,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 900_001,
+            request: Request::Operator(OperatorRequest::Stop {
+                identity: second.identity,
+            }),
+        },
+    )
+    .unwrap();
+    fake.wait_log(Duration::from_secs(3), |log| {
+        log.iter()
+            .any(|line| line["event"] == "command" && line["command"] == "abort")
+    });
+    drop(stop_stream);
+    let mut reconnect = OperatorClient::reconnect_after_disconnect(&live);
+    let current = reconnect.current().unwrap();
+    let busy = reconnect.read(opened.id.0, 0, 100);
+    assert_eq!(state(&busy), OperatorTurnState::Running);
+    assert!(busy.conversation.worker_live);
+    assert!(matches!(
+        reconnect.submit(&current, "cannot enter during native rollback"),
+        Response::Error { .. }
+    ));
+
+    std::fs::write(&release_abort_settlement, "settle").unwrap();
+    let stopped = reconnect.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Interrupted
+    });
+    assert_eq!(state(&stopped), OperatorTurnState::Interrupted);
+    let history = reconnect.read(opened.id.0, 0, 100);
+    assert!(has_assistant(&history, "partial stopped answer"));
+    assert!(
+        history.conversation.worker_live,
+        "the leased Pi worker remains live"
+    );
+    assert!(!history.conversation.worker_stopped);
+    assert_eq!(
+        reconnect.session(opened.session).pid,
+        Some(worker_pid),
+        "the exact worker process remains attached to the leased run"
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64),
+        "Stop never promotes its partial session"
+    );
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(second.identity.turn.0)
+            .as_deref(),
+        Some("Interrupted")
+    );
+    std::fs::write(&release_wakeup, "offer").unwrap();
+    let final_history = reconnect.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "watch report queued during Stop rollback"
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 > second.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    reconnect.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &final_history,
+        "the live worker handled the queued watch report"
+    ));
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .run,
+        first.identity.run
+    );
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "Stop rollback and wakeup reuse the original Pi process"
+    );
+    assert!(
+        partial.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text))
+                    if text.contains("partial stopped answer")
+            )
+        }),
+        "the visible partial journal remains available"
+    );
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "rollback switches to the completed checkpoint"
+    );
+    assert!(switches[0]["exists"].as_bool().unwrap());
+    assert!(
+        std::fs::read_to_string(switches[0]["path"].as_str().unwrap())
+            .unwrap()
+            .contains("completed checkpoint"),
+        "the replacement Pi session is based on the completed checkpoint"
+    );
+}
+
+#[test]
+fn leased_stop_uses_the_five_second_owned_group_fallback_when_pi_does_not_settle() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let never_release = marker_dir.path().join("abort-settlement-never-released");
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("fallback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial fallback answer".into()),
+            Step::WatchStatus(1),
+            Step::Hold,
+        ],
+    ]);
+    scenario.set(
+        "abort_settle_release_file",
+        never_release.display().to_string(),
+    );
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the fallback checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let second = client.submit_turn(&leased.conversation, "stop a Pi peer that never settles");
+    client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial fallback answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+    let started = std::time::Instant::now();
+
+    let stopped = client.stop_turn(second.identity);
+    let elapsed = started.elapsed();
+    assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+    assert!(
+        elapsed >= Duration::from_millis(4500) && elapsed < Duration::from_secs(8),
+        "the Server waits about five seconds before hard fallback; elapsed {elapsed:?}"
+    );
+    let final_history = client.read(opened.id.0, 0, 100);
+    assert_eq!(state(&final_history), OperatorTurnState::Interrupted);
+    assert!(has_assistant(&final_history, "partial fallback answer"));
+    assert!(!final_history.conversation.worker_live);
+    assert!(final_history.conversation.worker_stopped);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64),
+        "hard fallback does not promote the stopped attempt"
+    );
+    assert!(
+        fake.log()
+            .iter()
+            .any(|line| line["event"] == "command" && line["command"] == "abort"),
+        "the worker attempts scoped native abort before escalation"
+    );
+    operator_harness::assert_group_absent(&live, pgid);
+}
+
+#[test]
+fn leased_first_turn_stop_restores_an_empty_native_session() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::Delta("partial first-turn answer".into()),
+        Step::WatchStatus(1),
+        Step::Hold,
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let turn = client.submit_turn(&opened, "cancel before the first checkpoint");
+    let running = client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial first-turn answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+
+    let stopped = client.stop_turn(turn.identity);
+    assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
+    assert!(running.conversation.worker_live);
+    assert!(client.session(opened.session).pid == Some(worker_pid));
+    let history = client.read(opened.id.0, 0, 100);
+    assert!(has_assistant(&history, "partial first-turn answer"));
+
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "a changed first turn switches to an empty session"
+    );
+    let target = switches[0]["path"].as_str().unwrap();
+    assert!(switches[0]["exists"].as_bool().unwrap());
+    let restored = std::fs::read_to_string(target).unwrap();
+    assert_eq!(
+        restored.lines().count(),
+        1,
+        "the first-turn rollback has only a session header"
+    );
+    let header: serde_json::Value = serde_json::from_str(restored.lines().next().unwrap()).unwrap();
+    assert_eq!(header["type"], "session");
+    assert_eq!(header["id"], format!("operator-{}", opened.id.0));
+
+    let partial = turn_dir(&live, turn.identity.turn.0).join("session.partial.jsonl");
+    assert!(
+        partial.is_file(),
+        "the failed native attempt remains inspectable"
+    );
+    assert!(
+        std::fs::read_to_string(partial)
+            .unwrap()
+            .contains("cancel before the first checkpoint"),
+        "the partial native journal retains the user's prompt"
+    );
+}
+
+#[test]
+fn leased_zero_record_failure_keeps_the_worker_without_switching_sessions() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("completed zero-change checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("follow-up after zero-record failure"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    scenario.set("prompt_responses", json!(["ok", "error", "ok"]));
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+
+    let failed = client.submit_turn(
+        &leased.conversation,
+        "fail before native records are written",
+    );
+    let failure = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == failed.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(failed.identity.run, first.identity.run);
+    assert!(failure.conversation.worker_live);
+    assert_eq!(client.session(opened.session).pid, Some(worker_pid));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    assert!(has_assistant(&failure, "completed zero-change checkpoint"));
+
+    let log = fake.log();
+    assert_eq!(
+        log.iter().filter(|line| line["event"] == "switch").count(),
+        0,
+        "a failure with no native-record changes skips switch_session"
+    );
+    for command in ["clear_queue", "abort"] {
+        assert!(
+            log.iter()
+                .any(|line| line["event"] == "command" && line["command"] == command),
+            "zero-record rollback still issues {command}"
+        );
+    }
+    let partial = turn_dir(&live, failed.identity.turn.0).join("session.partial.jsonl");
+    assert!(
+        partial.is_file(),
+        "the unchanged native journal is retained as an attempt artifact"
+    );
+
+    client.submit_turn(
+        &failure.conversation,
+        "continue from the completed checkpoint",
+    );
+    let completed = client.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &completed,
+        "follow-up after zero-record failure"
+    ));
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), Some(3));
+}
+
+#[test]
+fn leased_failure_with_native_changes_rolls_back_and_keeps_the_partial_journal() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("failure rollback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial answer before failure".into()),
+            Step::Event(json!({"type": "extension_error", "message": "injected provider failure"})),
+            Step::Hold,
+        ],
+        vec![
+            Step::assistant("follow-up after recovered failure"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the failure checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let failed = client.submit_turn(&leased.conversation, "fail after appending native records");
+    let failure = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == failed.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(failed.identity.run, first.identity.run);
+    assert!(has_assistant(&failure, "partial answer before failure"));
+    assert!(failure.conversation.worker_live);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    let attempt = turn_dir(&live, failed.identity.turn.0);
+    assert!(attempt.join("session.partial.jsonl").is_file());
+    assert!(!attempt.join("session.jsonl").exists());
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "a changed native session switches back to the checkpoint"
+    );
+    let restored = std::fs::read_to_string(switches[0]["path"].as_str().unwrap()).unwrap();
+    assert!(restored.contains("failure rollback checkpoint"));
+    assert!(!restored.contains("fail after appending native records"));
+    assert!(!restored.contains("partial answer before failure"));
+
+    client.submit_turn(
+        &failure.conversation,
+        "continue from the recovered checkpoint",
+    );
+    let completed = client.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &completed,
+        "follow-up after recovered failure"
+    ));
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), Some(3));
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "a failed leased turn reuses the original Pi process"
+    );
+}
+
+#[test]
+fn leased_tool_timeout_rolls_back_before_accepting_an_async_wakeup() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let release_wakeup = marker_dir.path().join("release-wakeup");
+    let fake_log = PathBuf::from("/private/tmp/ovrcr-469-tool-timeout-fake-pi.jsonl");
+    let _ = std::fs::remove_file(&fake_log);
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("timeout rollback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Tool {
+                id: "timeout-after-lease".into(),
+                name: "bash".into(),
+                input: json!({"command": "sleep 30", "timeout": 0.1}),
+                output: "Command timed out after 0.1 seconds".into(),
+                status: "timedout",
+                truncated: false,
+                marker: None,
+            },
+            Step::ModelRequest,
+            Step::assistant("must not reach the model after timeout"),
+            Step::Settle,
+        ],
+    ]);
+    scenario.set(
+        "wakeup_after_switch",
+        json!({
+            "text": "the watched session settled during rollback",
+            "answer": "I resumed the queued watch report after rollback",
+            "release_file": release_wakeup.display().to_string(),
+        }),
+    );
+    scenario.set("log", fake_log.display().to_string());
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create timeout rollback checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let timed_out = client.submit_turn(&leased.conversation, "run a timed-out tool");
+
+    let failed_history = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == timed_out.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(timed_out.identity.turn.0)
+            .as_deref(),
+        Some("Error")
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    assert!(failed_history.conversation.worker_live);
+    std::fs::write(&release_wakeup, "continue").unwrap();
+
+    let final_history = client.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "the watched session settled during rollback"
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 > timed_out.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    client.wait_stopped(opened.id);
+
+    assert_eq!(timed_out.identity.run, first.identity.run);
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(timed_out.identity.turn.0)
+            .as_deref(),
+        Some("Error")
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|turn| turn.identity.turn.0 as i64),
+        "the accepted async wakeup is the only post-checkpoint promotion"
+    );
+    assert_ne!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(timed_out.identity.turn.0 as i64),
+        "the timed-out turn never becomes a checkpoint"
+    );
+    assert!(has_assistant(
+        &final_history,
+        "I resumed the queued watch report after rollback"
+    ));
+    assert!(final_history.messages.iter().any(|message| {
+        message.turn == timed_out.identity.turn
+            && matches!(
+                &message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                    id,
+                    status: ovrcr::protocol::OperatorToolStatus::TimedOut,
+                    ..
+                }) if id == "timeout-after-lease"
+            )
+    }));
+    assert!(
+        !final_history.messages.iter().any(|message| {
+            message.turn == timed_out.identity.turn
+                && matches!(
+                    &message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text))
+                        if text.contains("must not reach the model after timeout")
+                )
+        }),
+        "Pi never receives another model request after timeout"
+    );
+    let wakeup = final_history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(wakeup.identity.run, first.identity.run);
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "rollback and wakeup reuse the original Pi process"
+    );
+    let attempt = turn_dir(&live, timed_out.identity.turn.0);
+    assert!(attempt.join("session.partial.jsonl").is_file());
+    assert!(!attempt.join("session.jsonl").exists());
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "timeout rollback uses one in-place native session switch"
+    );
+    let restored = std::fs::read_to_string(switches[0]["path"].as_str().unwrap()).unwrap();
+    assert!(restored.contains("timeout rollback checkpoint"));
+    assert!(!restored.contains("run a timed-out tool"));
+    assert!(
+        fake.events("async_wakeup_admission")
+            .iter()
+            .any(|event| event["confirmed"] == true)
+    );
 }
 
 #[test]

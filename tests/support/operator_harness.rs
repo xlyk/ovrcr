@@ -55,6 +55,36 @@ impl OperatorClient {
         }
     }
 
+    /// Wait for the previous Dashboard connection to release its singleton
+    /// slot, then attach a fresh owner. Used to observe reconnect behavior
+    /// while a Dashboard Stop control is still waiting on worker rollback.
+    pub fn reconnect_after_disconnect(live: &super::live::Live) -> Self {
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            stream.set_read_timeout(Some(BUDGET)).unwrap();
+            stream.set_write_timeout(Some(BUDGET)).unwrap();
+            match protocol::client::request(&mut stream, 900_000, Request::DashboardHello) {
+                Ok(Response::Hierarchy(_)) => {
+                    return Self {
+                        stream,
+                        next_id: 900_001,
+                        messages: Vec::new(),
+                        pending: VecDeque::new(),
+                        incoming: Vec::new(),
+                    };
+                }
+                Ok(Response::Error {
+                    code: ovrcr::protocol::ErrorCode::Conflict,
+                    ..
+                }) => {}
+                other => panic!("Dashboard reconnect: {other:?}"),
+            }
+            assert!(Instant::now() < deadline, "Dashboard slot was not released");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Read the bytes the socket already holds into the persistent buffer.
     fn receive(&mut self, timeout: Duration) -> std::io::Result<usize> {
         self.stream.set_read_timeout(Some(timeout)).unwrap();

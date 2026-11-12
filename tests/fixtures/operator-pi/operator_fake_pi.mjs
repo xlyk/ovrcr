@@ -16,9 +16,11 @@
  *   thinking_level   string | null
  *   switch           "ok" | "cancel" | "wrong_file" | "no_ready"
  *   prompt_response  "ok" | "error" | "hang"
+ *   prompt_responses per-prompt response override list
  *   clear_queue_result  "ok" | "error"
  *   abort_result     "ok" | "error"
  *   abort_records    raw strings written verbatim after the abort reply
+ *   wakeup_after_switch  {text,answer} offered after a rollback switch
  *   close_exit_code  exit status after stdin closes (default 0)
  *   hang_command     command type that is never answered
  *   hang_flood       keep stdout full of harmless notifications while it hangs
@@ -56,6 +58,7 @@ function loadScenario() {
 }
 
 const scenario = loadScenario();
+const wakeupAfterSwitch = scenario.wakeup_after_switch;
 const logPath =
   scenario.log ?? (process.env.PI_CODING_AGENT_DIR ? join(process.env.PI_CODING_AGENT_DIR, "fake-pi.log") : undefined);
 
@@ -102,6 +105,8 @@ function clampThinkingLevel(level) {
 let promptRunning = false;
 let promptCount = 0;
 let aborted = false;
+let rollbackSwitchSeen = false;
+let rollbackWakeupOffered = false;
 let exited = false;
 let stdinClosed = false;
 
@@ -722,6 +727,27 @@ function handleCommand(command) {
     case "get_state":
       record({ event: "command", command: "get_state", id });
       writeRecord({ type: "response", id, command: "get_state", success: true, data: stateData() });
+      if (wakeupAfterSwitch && rollbackSwitchSeen && !rollbackWakeupOffered) {
+        rollbackWakeupOffered = true;
+        const offer = () => writeRecord({
+          type: "extension_ui_request",
+          id: "rollback-wakeup",
+          method: "confirm",
+          title: "OVRCR Operator async wakeup admission",
+          message: JSON.stringify({ text: wakeupAfterSwitch.text }),
+        });
+        if (wakeupAfterSwitch.release_file) {
+          void (async () => {
+            const deadline = Date.now() + 20_000;
+            while (!existsSync(wakeupAfterSwitch.release_file) && !stdinClosed && Date.now() < deadline) {
+              await sleep(10);
+            }
+            if (existsSync(wakeupAfterSwitch.release_file) && !stdinClosed) offer();
+          })();
+        } else {
+          offer();
+        }
+      }
       break;
     case "get_available_models":
       record({ event: "command", command: "get_available_models", id });
@@ -740,8 +766,8 @@ function handleCommand(command) {
       if (!sameModel) {
         thinkingLevel = clampThinkingLevel(scenario.model_default_thinking?.[`${match.provider}/${match.id}`]
           ?? scenario.thinking_level ?? thinkingLevel);
+        appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       }
-      appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       respond("set_model", id, { provider: match.provider, id: match.id, name: match.name ?? match.id });
       break;
     }
@@ -778,24 +804,38 @@ function handleCommand(command) {
       // must still resolve the fresh profile default captured before the switch.
       restoreSessionState(sessionFile);
       respond("switch_session", id, { cancelled: false });
+      rollbackSwitchSeen = true;
       if ((scenario.switch ?? "ok") !== "no_ready") emitContract();
       break;
     }
-    case "prompt":
+    case "prompt": {
       record({ event: "prompt", id, message: command.message });
-      if (scenario.prompt_response === "error") {
+      const promptIndex = promptCount++;
+      const promptResponse = scenario.prompt_responses?.[promptIndex] ?? scenario.prompt_response;
+      if (promptResponse === "error") {
         respond("prompt", id, undefined, false);
         break;
       }
-      if (scenario.prompt_response === "hang") break;
+      if (promptResponse === "hang") break;
       respond("prompt", id);
       promptRunning = true;
       appendPromptHistory(command.message);
-      {
-        const promptIndex = promptCount++;
       setTimeout(() => {
         runSteps(promptIndex)
-          .then((text) => {
+          .then(async (text) => {
+            if (aborted) {
+              if (scenario.abort_settle_release_file) {
+                const deadline = Date.now() + 20_000;
+                while (!existsSync(scenario.abort_settle_release_file) && !stdinClosed && Date.now() < deadline) {
+                  await sleep(10);
+                }
+                if (!existsSync(scenario.abort_settle_release_file)) return;
+              }
+              aborted = false;
+              promptRunning = false;
+              writeRecord({ type: "agent_settled" });
+              return;
+            }
             appendAssistantHistory(text, "stop");
             promptRunning = false;
           })
@@ -804,8 +844,8 @@ function handleCommand(command) {
             finish(4);
           });
       }, 0);
-      }
       break;
+    }
     case "clear_queue":
       record({ event: "command", command: "clear_queue", id });
       respond("clear_queue", id, { steering: [], followUp: [] }, scenario.clear_queue_result !== "error");
@@ -816,12 +856,9 @@ function handleCommand(command) {
         respond("abort", id, undefined, false);
         break;
       }
-      aborted = true;
+      if (promptRunning) aborted = true;
       respond("abort", id);
       for (const raw of scenario.abort_records ?? []) writeRaw(raw);
-      break;
-    case "extension_ui_response":
-      resolveDialog(command.id, command);
       break;
     default:
       record({ event: "unknown_command", type: command.type, id });
@@ -841,7 +878,27 @@ lines.on("line", (line) => {
     return;
   }
   if (command.type === "extension_ui_response") {
+    if (command.cancelled === true && promptRunning) aborted = true;
     resolveDialog(command.id, command);
+    if (command.id === "rollback-wakeup" && command.confirmed === true) {
+      record({ event: "async_wakeup_admission", confirmed: true, rollback: true });
+      appendPromptHistory(wakeupAfterSwitch.text);
+      promptRunning = true;
+      writeRecord({
+        type: "extension_ui_request",
+        id: `status-${Math.random().toString(16).slice(2)}`,
+        method: "setStatus",
+        statusKey: "ovrcr_operator_watches",
+        statusText: JSON.stringify({ active: 0 }),
+      });
+      writeRecord({ type: "agent_start" });
+      emitStart();
+      emitDelta(wakeupAfterSwitch.answer);
+      emitEnd(wakeupAfterSwitch.answer, "stop");
+      appendAssistantHistory(wakeupAfterSwitch.answer, "stop");
+      promptRunning = false;
+      writeRecord({ type: "agent_settled" });
+    }
     return;
   }
   handleCommand(command);

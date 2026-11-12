@@ -70,6 +70,7 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(20);
 const CONTRACT_DEADLINE: Duration = Duration::from_secs(20);
 const REPORT_DEADLINE: Duration = Duration::from_secs(5);
+const ROLLBACK_DEADLINE: Duration = Duration::from_secs(4);
 const RETIRE_DEADLINE: Duration = Duration::from_secs(15);
 const SHUTDOWN_REPLY: Duration = Duration::from_secs(5);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -117,6 +118,14 @@ pub fn run(run_identity: OperatorRunIdentity) -> Result<()> {
         Err(Failure::ToolTimedOut | Failure::ReportFailed) => {
             let _ = journal.retire(RETIRE_DEADLINE, true);
         }
+        Err(Failure::AbortRequested) => {
+            let _ = journal.reporter.operator_abort_turn(
+                identity,
+                false,
+                Instant::now() + REPORT_DEADLINE,
+            );
+            let _ = journal.retire(RETIRE_DEADLINE, false);
+        }
         // The connection was dropped while `attempt` unwound, which already ran the
         // bounded clear_queue/abort/drain (`Connection::drop` -> `abort_quietly`); no
         // journal write may follow a revoked authority.
@@ -138,6 +147,8 @@ enum Failure {
     ReportFailed,
     /// The Server is terminating this owned group; commit nothing more.
     Terminated,
+    /// The Server requested a foreground-only abort; roll the native session back.
+    AbortRequested,
     /// A tool result could not be acknowledged; abort and hold without a decision.
     Uncertain,
 }
@@ -193,85 +204,71 @@ fn attempt(
             previous,
         )?;
     }
+    state.reset_turn();
     let mut turn = start.clone();
     loop {
-        if turn.async_wakeup {
-            // `sendUserMessage` already started this exact Pi turn after the
-            // Server durably reserved its AsyncWakeup identity. Never issue a
-            // second prompt or alter model settings after it has started.
-            state.prompted = true;
-        } else {
-            // Resolve the accepted setting for every warm prompt, then stream
-            // exactly one user turn into the live Pi conversation.
-            let model = resolve_model(&mut connection, journal, &mut state, turn.model.as_deref())?;
-            if termination.requested() {
-                return Err(Failure::Terminated);
-            }
-            journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
-            let reasoning =
-                resolve_reasoning(&mut connection, journal, &mut state, turn.thinking_level)?;
-            if termination.requested() {
-                return Err(Failure::Terminated);
-            }
-            journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-            let prompt = prompt_text(&turn)?;
-            state.prompted = true;
-            let response = connection.request(
-                journal,
-                &mut state,
-                "prompt",
-                json!({ "message": prompt }),
-                CONTROL_DEADLINE,
-            )?;
-            if !response.success {
-                return Err(Failure::Failed(REQUEST_FAILED));
-            }
-        }
-        connection.stream(journal, &mut state)?;
-        if state.pending.is_some() || state.last_assistant_stop().as_deref() != Some("stop") {
-            return Err(Failure::Failed(REQUEST_FAILED));
-        }
-
-        let response = connection.request(
+        let outcome = run_turn(
+            &mut connection,
             journal,
             &mut state,
-            "get_state",
-            json!({}),
-            CONTROL_DEADLINE,
-        )?;
-        require_success(&response)?;
-        state.capture(&response.data)?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
-        }
-        let leased = state.active_watches > 0;
-        // A clean, unleased retirement must settle Pi before snapshotting so its
-        // last native writes are included. The leased process remains attached
-        // to its active session file and is never switched between user turns.
-        if !leased {
-            connection.settle(journal, &mut state, SHUTDOWN_GRACE)?;
-        }
-        let attempt_dir = paths.attempt_dir(turn.identity.turn);
-        let native = state
-            .session_file
-            .clone()
-            .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
-        snapshot_session(
-            &attempt_dir,
-            &state.session_root,
-            &native,
-            &state.session_id,
-            &state.workdir,
-        )?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
-        }
-
-        journal.commit(OperatorWorkerEvent::Completed { leased })?;
-        delete_previous_checkpoint(&paths, &turn, &native);
-        if !leased {
-            let _ = journal.retire(RETIRE_DEADLINE, false);
-            return Ok(());
+            &paths,
+            &turn,
+            termination,
+        );
+        match outcome {
+            Ok(leased) => {
+                let native = state
+                    .session_file
+                    .as_deref()
+                    .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+                delete_previous_checkpoint(&paths, &turn, native);
+                if !leased {
+                    let _ = journal.retire(RETIRE_DEADLINE, false);
+                    return Ok(());
+                }
+                ()
+            }
+            Err(Failure::AbortRequested) => {
+                let leased = state.active_watches > 0;
+                if rollback_turn(&mut connection, journal, &mut state, &paths, &turn).is_err() {
+                    // Stop's Server owner keeps this turn Running through its
+                    // five-second grace and performs the scoped hard fallback.
+                    // Publishing Failed here would end that grace early and
+                    // make a reconnect appear idle before stop proof exists.
+                    return Err(Failure::Uncertain);
+                }
+                journal.flush()?;
+                journal
+                    .reporter
+                    .operator_abort_turn(turn.identity, leased, Instant::now() + REPORT_DEADLINE)
+                    .map_err(|_| Failure::ReportFailed)?;
+                if !leased {
+                    let _ = journal.retire(RETIRE_DEADLINE, false);
+                    return Ok(());
+                }
+                ()
+            }
+            Err(Failure::ToolTimedOut) if state.active_watches > 0 => {
+                rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
+                journal.flush()?;
+                journal.commit(OperatorWorkerEvent::Failed(REQUEST_FAILED.to_owned()))?;
+                journal
+                    .reporter
+                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
+                    .map_err(|_| Failure::ReportFailed)?;
+                ()
+            }
+            Err(Failure::Failed(message)) if state.active_watches > 0 => {
+                rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
+                journal.flush()?;
+                journal.commit(OperatorWorkerEvent::Failed(message.to_owned()))?;
+                journal
+                    .reporter
+                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
+                    .map_err(|_| Failure::ReportFailed)?;
+                ()
+            }
+            Err(failure) => return Err(failure),
         }
 
         let run = ovrcr_protocol::OperatorRunIdentity {
@@ -306,6 +303,79 @@ fn attempt(
         // switch the active session and reload the extension during normal chat.
         turn = next;
     }
+}
+
+fn run_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+    termination: &Termination,
+) -> std::result::Result<bool, Failure> {
+    if turn.async_wakeup {
+        // `sendUserMessage` already started this exact Pi turn after the Server
+        // durably reserved its AsyncWakeup identity.
+        state.prompted = true;
+    } else {
+        let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
+        journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+        let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+        if termination.requested() {
+            return Err(Failure::Terminated);
+        }
+        journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+        let prompt = prompt_text(turn)?;
+        state.prompted = true;
+        let response = connection.request(
+            journal,
+            state,
+            "prompt",
+            json!({ "message": prompt }),
+            CONTROL_DEADLINE,
+        )?;
+        if !response.success {
+            // An explicit negative response means Pi did not admit this user
+            // message into an agent turn. Do not wait for `agent_settled` while
+            // rolling back an unchanged native session.
+            state.prompted = false;
+            return Err(Failure::Failed(REQUEST_FAILED));
+        }
+    }
+    connection.stream(journal, state)?;
+    if state.pending.is_some() || state.last_assistant_stop().as_deref() != Some("stop") {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    let leased = state.active_watches > 0;
+    if !leased {
+        connection.settle(journal, state, SHUTDOWN_GRACE)?;
+    }
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    snapshot_session(
+        &attempt_dir,
+        &state.session_root,
+        native,
+        &state.session_id,
+        &state.workdir,
+    )?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::Completed { leased })?;
+    Ok(leased)
 }
 
 // ---------------------------------------------------------------- journal
@@ -485,6 +555,9 @@ impl Connection {
             if self.termination.requested() {
                 return Err(Failure::Terminated);
             }
+            if self.termination.take_abort() {
+                return Err(Failure::AbortRequested);
+            }
             journal.tick()?;
             // The bound applies to every iteration, not only to an idle poll: a
             // peer that keeps streaming ordinary notifications while withholding
@@ -596,6 +669,93 @@ impl Connection {
             require_success(&response)?;
         }
         self.shutdown(grace)
+    }
+
+    fn abort_for_rollback(
+        &mut self,
+        journal: &mut Journal<'_>,
+        state: &mut TurnState,
+    ) -> std::result::Result<(), Failure> {
+        let until = Instant::now() + ROLLBACK_DEADLINE;
+        let should_wait = state.prompted && !state.settled;
+        for command in ["clear_queue", "abort"] {
+            let id = format!("ovrcr-{}", self.next_id);
+            self.next_id += 1;
+            self.send(&json!({ "type": command, "id": &id }))?;
+            loop {
+                match self.next_message(journal, Some(until))? {
+                    RpcMessage::Response(response) if response.id == id => {
+                        if !response.success {
+                            return Err(Failure::Failed(REQUEST_FAILED));
+                        }
+                        break;
+                    }
+                    RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+                    RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
+                }
+            }
+        }
+        while should_wait && !state.settled {
+            match self.next_message(journal, Some(until))? {
+                RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
+                RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+            }
+        }
+        Ok(())
+    }
+
+    fn rollback_event(
+        &mut self,
+        journal: &mut Journal<'_>,
+        state: &mut TurnState,
+        event: Value,
+    ) -> std::result::Result<(), Failure> {
+        match event["type"].as_str() {
+            Some("agent_settled") => {
+                state.settled = true;
+                journal.flush()?;
+            }
+            Some("message_start") if event["message"]["role"] == "assistant" => {
+                state.reset_stream();
+            }
+            Some("message_update") if !state.compacting => {
+                let update = &event["assistantMessageEvent"];
+                match update["type"].as_str() {
+                    Some("text_delta") => {
+                        state.stream_delta(journal, DisplayKind::Answer, update)?
+                    }
+                    Some("thinking_delta") => {
+                        state.stream_delta(journal, DisplayKind::Thinking, update)?
+                    }
+                    Some("thinking_end") => {
+                        if let Some(content) = update["content"].as_str() {
+                            state.end_thinking(journal, content_index(update)?, content)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some("message_end") if !state.compacting && event["message"]["role"] == "assistant" => {
+                let _ = end_assistant(&event["message"], journal, state);
+            }
+            Some("extension_ui_request")
+                if event["method"] == "setStatus"
+                    && event["statusKey"].as_str() == Some(WATCHES_KEY) =>
+            {
+                self.read_watch_status(state, &event)?;
+            }
+            Some("extension_ui_request") => {
+                if let Some(dialog) = event["id"].as_str() {
+                    self.send(&json!({
+                        "type": "extension_ui_response",
+                        "id": dialog,
+                        "cancelled": true,
+                    }))?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Close stdin, drain the exact child and reap it within `grace`. A managed
@@ -899,7 +1059,6 @@ impl Connection {
                 "id": dialog,
                 "cancelled": true,
             }));
-            self.abort_quietly();
             return Err(Failure::ToolTimedOut);
         }
         // Durable result before the acknowledgement, before the next model step.
@@ -1133,6 +1292,7 @@ struct TurnState {
     default_model: Option<OperatorModel>,
     current_model: Option<OperatorModel>,
     session_file: Option<PathBuf>,
+    turn_start_file_len: Option<u64>,
     current_thinking_level: Option<ovrcr_protocol::OperatorThinkingLevel>,
     model_default_thinking: BTreeMap<String, ovrcr_protocol::OperatorThinkingLevel>,
     /// Display text already streamed for the current assistant message, keyed by
@@ -1198,6 +1358,7 @@ impl TurnState {
             default_model: None,
             current_model: None,
             session_file: None,
+            turn_start_file_len: None,
             current_thinking_level: None,
             model_default_thinking: BTreeMap::new(),
             stream_blocks: BTreeMap::new(),
@@ -1226,6 +1387,11 @@ impl TurnState {
     }
 
     fn reset_turn(&mut self) {
+        self.turn_start_file_len = self
+            .session_file
+            .as_ref()
+            .and_then(|path| fs::metadata(path).ok())
+            .map(|metadata| metadata.len());
         self.reset_stream();
         self.last_assistant = None;
         self.admitted.clear();
@@ -1803,6 +1969,181 @@ fn restore_checkpoint(
         },
         None => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
     }
+}
+
+fn rollback_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+) -> std::result::Result<(), Failure> {
+    connection.abort_for_rollback(journal, state)?;
+    journal.flush()?;
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    copy_partial_session(
+        &state.session_root,
+        native,
+        &attempt_dir.join("session.partial.jsonl"),
+    )?;
+
+    let start_len = state
+        .turn_start_file_len
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let current_len = fs::metadata(native)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?
+        .len();
+    if current_len == start_len {
+        return Ok(());
+    }
+    if current_len < start_len {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+
+    let target = state
+        .session_root
+        .join(format!("rollback-{}.jsonl", turn.identity.turn.0));
+    if let Some(previous) = turn.checkpoint_turn {
+        let previous_dir = paths.attempt_dir(previous);
+        let canonical = previous_dir.join("session.jsonl");
+        let source = if canonical.exists() {
+            canonical
+        } else {
+            previous_dir.join("checkpoint.jsonl")
+        };
+        copy_checkpoint(&source, &target, &state.session_id, &state.workdir)?;
+    } else {
+        write_empty_session(native, &target, &state.session_id, &state.workdir)?;
+    }
+
+    let ready_before = state.ready_count;
+    let response = connection.request(
+        journal,
+        state,
+        "switch_session",
+        json!({ "sessionPath": path_string(&target)? }),
+        CONTROL_DEADLINE,
+    )?;
+    if !response.success || response.data["cancelled"].as_bool() != Some(false) {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let until = Instant::now() + CONTRACT_DEADLINE;
+    while state.ready_count == ready_before {
+        match connection.next_message(journal, Some(until))? {
+            RpcMessage::Event(event) => connection.event(journal, state, event)?,
+            RpcMessage::Response(_) => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        }
+    }
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    match state.session_file.as_deref() {
+        Some(reported) if same_file_path(reported, &target) => {}
+        _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&target)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut reader = BufReader::new(file);
+    validate_header(
+        &read_header(&mut reader)?,
+        &state.session_id,
+        &state.workdir,
+    )?;
+    Ok(())
+}
+
+fn same_file_path(left: &Path, right: &Path) -> bool {
+    matches!((left.canonicalize(), right.canonicalize()), (Ok(left), Ok(right)) if left == right)
+}
+
+fn copy_partial_session(
+    session_root: &Path,
+    native: &Path,
+    target: &Path,
+) -> std::result::Result<(), Failure> {
+    let metadata =
+        fs::symlink_metadata(native).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    if !metadata.file_type().is_file()
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || !native.canonicalize().is_ok_and(|native| {
+            session_root
+                .canonicalize()
+                .is_ok_and(|root| native.starts_with(root))
+        })
+    {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let mut input = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(native)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(target)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    if io::copy(&mut input, &mut output).is_err()
+        || output.sync_all().is_err()
+        || fs::set_permissions(target, fs::Permissions::from_mode(0o600)).is_err()
+        || File::open(
+            target
+                .parent()
+                .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?,
+        )
+        .and_then(|directory| directory.sync_all())
+        .is_err()
+    {
+        drop(output);
+        let _ = fs::remove_file(target);
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    Ok(())
+}
+
+fn write_empty_session(
+    source: &Path,
+    target: &Path,
+    expected_session: &str,
+    workdir: &Path,
+) -> std::result::Result<(), Failure> {
+    let input = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(source)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut reader = BufReader::new(input);
+    let header = read_header(&mut reader)?;
+    validate_header(&header, expected_session, workdir)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(target)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    output
+        .write_all(&header)
+        .and_then(|()| output.sync_all())
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    fs::set_permissions(target, fs::Permissions::from_mode(0o600))
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    File::open(
+        target
+            .parent()
+            .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?,
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    Ok(())
 }
 
 /// One model-configuration step whose structured refusal is a profile/model problem.
@@ -2427,6 +2768,7 @@ fn path_string(path: &Path) -> std::result::Result<String, Failure> {
 struct Termination {
     terminate: Arc<AtomicBool>,
     hangup: Arc<AtomicBool>,
+    abort: Arc<AtomicBool>,
 }
 
 impl Termination {
@@ -2436,8 +2778,10 @@ impl Termination {
     fn install() -> Self {
         let terminate = Arc::new(AtomicBool::new(false));
         let hangup = Arc::new(AtomicBool::new(false));
+        let abort = Arc::new(AtomicBool::new(false));
         let installed = signal_hook::flag::register(libc::SIGTERM, terminate.clone()).is_ok()
-            && signal_hook::flag::register(libc::SIGHUP, hangup.clone()).is_ok();
+            && signal_hook::flag::register(libc::SIGHUP, hangup.clone()).is_ok()
+            && signal_hook::flag::register(libc::SIGUSR1, abort.clone()).is_ok();
         if installed {
             let watched = terminate.clone();
             let hup = hangup.clone();
@@ -2453,11 +2797,19 @@ impl Termination {
                     }
                 });
         }
-        Self { terminate, hangup }
+        Self {
+            terminate,
+            hangup,
+            abort,
+        }
     }
 
     fn requested(&self) -> bool {
         self.terminate.load(Ordering::Acquire) || self.hangup.load(Ordering::Acquire)
+    }
+
+    fn take_abort(&self) -> bool {
+        self.abort.swap(false, Ordering::AcqRel)
     }
 }
 

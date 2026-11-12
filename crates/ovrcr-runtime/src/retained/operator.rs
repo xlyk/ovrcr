@@ -574,7 +574,11 @@ impl SessionStore {
         let Some(previous) = conversation.current_turn else {
             return Ok(None);
         };
-        if previous.state != OperatorTurnState::Complete || previous.identity.run != identity.run {
+        if !matches!(
+            previous.state,
+            OperatorTurnState::Complete | OperatorTurnState::Interrupted | OperatorTurnState::Error
+        ) || previous.identity.run != identity.run
+        {
             return Ok(None);
         }
         let row = self
@@ -588,8 +592,11 @@ impl SessionStore {
             return Ok(None);
         }
         let leased: bool = self.connection.query_row(
-            "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2 AND state='Complete'",
-            params![sql_integer(previous.identity.turn.0)?, sql_integer(identity.conversation.0)?],
+            "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2",
+            params![
+                sql_integer(previous.identity.turn.0)?,
+                sql_integer(identity.conversation.0)?
+            ],
             |row| row.get(0),
         )?;
         if !leased {
@@ -667,8 +674,19 @@ impl SessionStore {
         }
         if warm_worker {
             let leased: bool = self.connection.query_row(
-                "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2 AND state='Complete'",
-                [sql_integer(conversation.current_turn.as_ref().context("leased Operator turn is missing")?.identity.turn.0)?, sql_integer(id.0)?],
+                "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2",
+                [
+                    sql_integer(
+                        conversation
+                            .current_turn
+                            .as_ref()
+                            .context("leased Operator turn is missing")?
+                            .identity
+                            .turn
+                            .0,
+                    )?,
+                    sql_integer(id.0)?,
+                ],
                 |row| row.get(0),
             )?;
             if !leased {
@@ -861,6 +879,7 @@ impl SessionStore {
     pub(crate) fn interrupt_operator_turn(
         &mut self,
         identity: OperatorTurnIdentity,
+        leased: bool,
     ) -> Result<OperatorTurn> {
         let mut turn = self.validate_operator_identity(identity)?;
         if turn.state != OperatorTurnState::Running {
@@ -874,12 +893,27 @@ impl SessionStore {
             &OperatorMessageContent::Interrupted,
         )?;
         transaction.execute(
-            "UPDATE operator_turns SET state='Interrupted' WHERE id=?1",
-            [sql_integer(identity.turn.0)?],
+            "UPDATE operator_turns SET state='Interrupted',leased=?2 WHERE id=?1",
+            params![sql_integer(identity.turn.0)?, leased],
         )?;
         transaction.commit()?;
         turn.state = OperatorTurnState::Interrupted;
         Ok(turn)
+    }
+    pub(crate) fn record_operator_turn_lease(
+        &mut self,
+        identity: OperatorTurnIdentity,
+        leased: bool,
+    ) -> Result<()> {
+        let turn = self.validate_operator_identity(identity)?;
+        if turn.state != OperatorTurnState::Error {
+            bail!("only a failed operator turn can retain a worker lease");
+        }
+        self.connection.execute(
+            "UPDATE operator_turns SET leased=?1 WHERE id=?2",
+            params![leased, sql_integer(identity.turn.0)?],
+        )?;
+        Ok(())
     }
     pub(crate) fn operator_worker_start(
         &self,
@@ -1716,7 +1750,9 @@ mod tests {
             Some("openai/gpt-5.1-codex/mini")
         );
         assert!(store.operator_worker_start(first.identity).is_ok());
-        store.interrupt_operator_turn(first.identity).unwrap();
+        store
+            .interrupt_operator_turn(first.identity, false)
+            .unwrap();
         store.mark_stopped(c.session, first.identity.run).unwrap();
         let second = submit(&mut store, &c, None);
         assert!(
@@ -1971,7 +2007,10 @@ mod tests {
         assert!(store.operator_worker_start(turn.identity).is_err());
         // Exact-run acknowledgement interrupts the old unfinished turn.
         assert_eq!(
-            store.interrupt_operator_turn(turn.identity).unwrap().state,
+            store
+                .interrupt_operator_turn(turn.identity, false)
+                .unwrap()
+                .state,
             OperatorTurnState::Interrupted
         );
         assert_eq!(

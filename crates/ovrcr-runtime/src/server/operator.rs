@@ -5,6 +5,8 @@ use ovrcr_protocol::operator::*;
 use std::collections::HashSet;
 use std::ffi::OsString;
 
+const SOFT_STOP_GRACE: Duration = Duration::from_secs(5);
+
 pub(super) struct OperatorRuntime {
     pub(super) executable: PathBuf,
     controls: Mutex<Controls>,
@@ -224,7 +226,7 @@ impl ServerState {
                 if let Some(hook) = self.operator.before_stop.lock().unwrap().clone() {
                     hook();
                 }
-                self.stop_operator(identity, None, false, Some(owner))
+                self.stop_operator_dashboard(identity, owner)
                     .map(OperatorResponse::Stopped)
             }
             OperatorRequest::Submit {
@@ -381,7 +383,12 @@ impl ServerState {
         if summary.run != run
             || !self.retained.lock().operator_worker_leased(conversation)?
             || summary.current_turn.as_ref().is_none_or(|turn| {
-                turn.state != OperatorTurnState::Complete || turn.identity.run != run
+                !matches!(
+                    turn.state,
+                    OperatorTurnState::Complete
+                        | OperatorTurnState::Interrupted
+                        | OperatorTurnState::Error
+                ) || turn.identity.run != run
             })
         {
             return Ok(false);
@@ -514,8 +521,48 @@ impl ServerState {
                 }
                 Ok(OperatorWorkerResult::BeginAsyncTurn(result.map(Box::new)))
             }
-            OperatorWorkerCommand::AbortTurn { .. } => {
-                bail!("operator turn abort is not available in this lifecycle version")
+            OperatorWorkerCommand::AbortTurn { identity, leased } => {
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let mut retained = self.retained.lock();
+                let current = retained.operator_conversation(identity.conversation)?;
+                if current.current_turn.as_ref().map(|turn| turn.identity) != Some(identity) {
+                    bail!("stale operator turn identity");
+                }
+                let abort_requested = session.operator_abort_requested(identity);
+                session.with_operator_authority(
+                    &request.auth,
+                    owner,
+                    identity,
+                    || match current.current_turn.as_ref().map(|turn| turn.state) {
+                        Some(OperatorTurnState::Running) if abort_requested => {
+                            retained.interrupt_operator_turn(identity, leased)
+                        }
+                        Some(OperatorTurnState::Error) => {
+                            retained.record_operator_turn_lease(identity, leased)?;
+                            retained
+                                .operator_conversation(identity.conversation)?
+                                .current_turn
+                                .context("operator turn missing")
+                        }
+                        Some(OperatorTurnState::Interrupted) => retained
+                            .operator_conversation(identity.conversation)?
+                            .current_turn
+                            .context("operator turn missing"),
+                        _ => bail!("operator turn abort was not requested"),
+                    },
+                )?;
+                session.clear_operator_abort(identity);
+                drop(retained);
+                self.operator_changed(identity.conversation);
+                Ok(OperatorWorkerResult::Aborted { identity })
             }
             OperatorWorkerCommand::Stop { identity } => {
                 self.stop_operator(identity, Some((&request.auth, owner)), false, None)?;
@@ -526,6 +573,71 @@ impl ServerState {
                 Ok(OperatorWorkerResult::Retired { identity })
             }
         }
+    }
+
+    fn stop_operator_dashboard(
+        &self,
+        identity: OperatorTurnIdentity,
+        owner: &Arc<()>,
+    ) -> Result<OperatorTurn> {
+        let session = {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            self.reject_if_stopping()?;
+            let retained = self.retained.lock();
+            retained.require_current_operator(identity.conversation)?;
+            let conversation = retained.operator_conversation(identity.conversation)?;
+            let turn = conversation.current_turn.context("operator turn missing")?;
+            if turn.identity != identity {
+                bail!("stale operator turn identity");
+            }
+            self.dashboard
+                .with_owned(owner, |_| ())
+                .context("dashboard owner changed")?;
+            let session = self
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&identity.session)
+                .cloned();
+            if conversation.worker_stopped
+                || turn.state != OperatorTurnState::Running
+                || !session.as_ref().is_some_and(|session| session.is_live())
+            {
+                None
+            } else {
+                let session = session.context("operator worker unavailable")?;
+                if session.request_operator_abort(identity).is_err() {
+                    None
+                } else {
+                    Some(session)
+                }
+            }
+        };
+        let Some(session) = session else {
+            return self.stop_operator(identity, None, false, None);
+        };
+        self.operator_changed(identity.conversation);
+
+        let deadline = Instant::now() + SOFT_STOP_GRACE;
+        loop {
+            let turn = self
+                .retained
+                .lock()
+                .operator_conversation(identity.conversation)?
+                .current_turn
+                .context("operator turn missing")?;
+            if turn.identity != identity || turn.state != OperatorTurnState::Running {
+                return Ok(turn);
+            }
+            if !session.is_live() || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // The live worker did not confirm rollback inside the grace period.
+        // Fall back to the same exact-run, owned process-group stop path.
+        self.stop_operator(identity, None, false, None)
     }
 
     fn stop_operator(
@@ -570,12 +682,13 @@ impl ServerState {
             }
             let turn = if let Some(owner) = dashboard_owner {
                 self.dashboard
-                    .with_owned(owner, |_| retained.interrupt_operator_turn(identity))
+                    .with_owned(owner, |_| retained.interrupt_operator_turn(identity, false))
                     .context("dashboard owner changed")??
             } else {
-                retained.interrupt_operator_turn(identity)?
+                retained.interrupt_operator_turn(identity, false)?
             };
             if let Some(session) = &session {
+                session.clear_operator_abort(identity);
                 session.revoke_hook_capability();
             }
             (

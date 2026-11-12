@@ -1547,7 +1547,7 @@ impl ServerState {
                     "operator turn changed; refresh inventory",
                 ));
             }
-            retained.interrupt_operator_turn(turn.identity)?;
+            retained.interrupt_operator_turn(turn.identity, false)?;
         }
         retained.mark_stopped(id, expected_run)?;
         Ok(())

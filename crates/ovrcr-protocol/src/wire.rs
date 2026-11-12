@@ -2838,7 +2838,13 @@ mod wire_snapshot {
                     text: "watch report".into(),
                 },
             ),
-            ("AbortTurn", OperatorWorkerCommand::AbortTurn { identity }),
+            (
+                "AbortTurn",
+                OperatorWorkerCommand::AbortTurn {
+                    identity,
+                    leased: false,
+                },
+            ),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
             ("Stop", OperatorWorkerCommand::Stop { identity }),
         ] {
