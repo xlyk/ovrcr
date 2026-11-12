@@ -834,14 +834,14 @@ impl Entry<'_> {
         if !expanded {
             return;
         }
-        // Expanded: the whole command, then its output.
+        // Expanded: the whole shell command after `$`, or another tool's
+        // arguments as they were sent, then the output.
         let value: serde_json::Value = serde_json::from_str(step.arguments).unwrap_or_default();
-        let command = value
-            .get("command")
-            .and_then(|command| command.as_str())
-            .unwrap_or(step.arguments);
         let mut detail = vec![(
-            format!("$ {}", display_text(command)),
+            match value.get("command").and_then(|command| command.as_str()) {
+                Some(command) => format!("$ {}", display_text(command)),
+                None => display_text(step.arguments),
+            },
             Style::default().fg(TEXT()),
         )];
         if let Some((_, output, truncated)) = step.result {

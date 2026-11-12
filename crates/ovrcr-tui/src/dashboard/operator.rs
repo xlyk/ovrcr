@@ -3124,6 +3124,33 @@ mod tests {
             ]
         );
         assert!(!rows.join("\n").contains('\u{1b}'));
+        // Another tool's expansion shows its arguments as sent, with no `$`.
+        chat.messages.insert(
+            1,
+            message(
+                2,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                    id: "r".into(),
+                    name: "read".into(),
+                    arguments: r#"{"path":"/tmp/notes.md"}"#.into(),
+                }),
+            ),
+        );
+        chat.messages[2].ordinal = 3;
+        chat.messages[3].ordinal = 4;
+        chat.expanded.insert(2, true);
+        let rows = feed(&chat, 60);
+        assert_eq!(
+            rows[2..4],
+            [
+                "▌     read /tmp/notes.md                             running",
+                "▌       {\"path\":\"/tmp/notes.md\"}",
+            ]
+        );
+        chat.messages.remove(1);
+        chat.messages[1].ordinal = 2;
+        chat.messages[2].ordinal = 3;
+        chat.expanded.clear();
         assert_eq!(
             transcript_rows(&chat, 60, 0)[0].line.spans[0].style.fg,
             Some(crate::theme::BLUE())

@@ -206,8 +206,8 @@ An open entry shows, in order:
 - the reply, wrapped at word boundaries;
 - a failure message or the interruption notice.
 
-Enter or a click on a command shows the whole command after `$` and then its
-output; truncation at 64 KiB and empty output are stated. A request with more
+Enter or a click on a command shows the whole shell command after `$` (another
+tool's arguments as they were sent) and then its output; truncation at 64 KiB and empty output are stated. A request with more
 than eight commands folds each run of two or more finished lookups into
 `▸ N lookups`, which opens the same way. A failed or unfinished lookup is never
 folded.

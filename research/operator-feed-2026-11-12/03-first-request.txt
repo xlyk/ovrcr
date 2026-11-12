@@ -1,0 +1,70 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                last reply 12s │
+↳ “TURN_ONE_DONE”                      │
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+USAGE · 0 tokens · 2m                  │
+⠹ 0 working  ? 0 input  ✓ 0 ready      │▌ ✓ REQUEST_ONE_REAL_TOOLS
+· 0 idle  ! 0 error  P 0 paused        │▌   → consigint / main / #1 run 1
+· 0 exited  - 12 unknown               │▌   › write /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌     read /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+ RESOURCES ────────────────────────────│▌   › edit /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+ cpu       ━━━━──────────────────  18% │▌     printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n' "${ANTHROPIC_API_KE…
+ mem       ━━━━━━━━━───────── 23.9/48G │▌
+                                       │▌   TURN_ONE_DONE
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │ Managing consigint / main / #1 run 1
+Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse

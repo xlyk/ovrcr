@@ -560,7 +560,7 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             return vec![KeyGroup {
                 title: "Operator transcript".into(),
                 keys: vec![
-                    native("Enter", "Expand details", Enter, KeyModifiers::NONE),
+                    native("Enter", "Open or close", Enter, KeyModifiers::NONE),
                     native("↑/↓", "Select entry", KeyCode::Down, KeyModifiers::NONE),
                     native("PageUp", "Earlier", PageUp, KeyModifiers::NONE),
                     native("PageDown", "Later", PageDown, KeyModifiers::NONE),

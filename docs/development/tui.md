@@ -260,7 +260,8 @@ classifies by leading words outside quotes into Add (`+`), Remove (`−`), Chang
 (`›`), Lookup (dimmed) or Other; an unrecognised command or one that redirects to
 a file is Other, never Lookup. A command row ends with `running`, `exit N`,
 `failed`, `timed out` or `no result`; its disclosure key is the call's ordinal and
-its detail is `$ command` then the escaped output. Above eight commands, each run
+its detail is `$ command` for a shell call, or the arguments as sent, then the
+escaped output. Above eight commands, each run
 of two or more succeeded lookups folds into `▸ N lookups`, keyed by the run's
 first call ordinal with `feed::FOLD_KEY` set.
 Thinking deltas are not rows. Only the last non-empty line of the thinking that

@@ -1,0 +1,38 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                 last reply 2m │▌ ✓ REQUEST_ONE_REAL_TOOLS
+↳ “TURN_TWO_DONE”                      │▌   → consigint / main / #1 run 1
+                                       │▌     project: consigint
+ CONSIGINT ────────────────────────────│▌     workspace: main
+  󰘬 main                          root │▌     workspace id: 6677f04e82d44a06d4d3fc0c8b6ab815
+     $ local                           │▌     captured cwd: /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/repositories/consigint
+  󰘬 gui-consigint-auth-handoff         │▌     agent workdir: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/operator-workdir
+     $ local                           │▌     session: 1 · run: 1
+     - review auth handoff    grok:4.6 │▌   › write /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+  󰘬 gui-consigint-worktree-lifecycle   │▌       $
+     $ local                           │▌       {"content":"OFFLINE_MARKER_v1\n","path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/ope
+     - implement lifecycle cleanup     │▌       rator-target/gui-fixture-marker.txt"}
+     - review websocket shutdown       │▌       Successfully wrote to
+     - plan snapshot restore        pi │▌       /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌     read /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+ SPACELIFT-AGENT ──────────────────────│▌       $
+  󰘬 main                          root │▌       {"path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.
+     $ local                           │▌       txt"}
+  󰘬 gui-spacelift-agent-pipeline-progr…│▌       OFFLINE_MARKER_v1
+     $ local                           │▌   › edit /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+USAGE · 0 tokens · 6m                  │▌       $
+⠹ 0 working  ? 0 input  ✓ 0 ready      │▌       {"edits":[{"newText":"OFFLINE_MARKER_v2","oldText":"OFFLINE_MARKER_v1"}],"path":"/private/var/folders/j9/h6rlffxd1r794
+· 0 idle  ! 0 error  P 0 paused        │▌       s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt"}
+· 0 exited  - 12 unknown               │▌       Successfully replaced 1 block(s) in
+                                       │▌       /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt.
+ RESOURCES ────────────────────────────│▌     printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n' "${ANTHROPIC_API_KE…
+ cpu       ━━━━──────────────────  19% │▌       $ cd '/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target' && printf
+ mem       ━━━━━━━━━━────────── 24/48G │▌       'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n'
+                                       │▌       "${ANTHROPIC_API_KEY:+SET}" "${OPENAI_API_KEY:+SET}" "${AWS_CONTAINER_AUTHORIZATION_TOKEN:+SET}"
+ QUOTA LEFT ───────────────────────────│▌       "${PI_SESSION_ID:+SET}" "${PI_CODING_AGENT_SESSION_DIR:+SET}" "${GITHUB_TOKEN:+SET}" && printf
+Claude · not signed in                 │ Managing consigint / main / #1 run 1
+Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ ·
+Cursor · usage off                     │
+                                       │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Enter Expand details  Ctrl-g Browse

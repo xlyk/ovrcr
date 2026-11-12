@@ -1,0 +1,70 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│local (#1)  shell · 1m                                                                                               pid 98888
+  · Off                                │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+o opens Operator · Ctrl-o quick message│consigint ›
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+USAGE · 0 tokens · 1m                  │
+⠹ 0 working  ? 0 input  ✓ 0 ready      │
+· 0 idle  ! 0 error  P 0 paused        │
+· 0 exited  - 12 unknown               │
+                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ━━━━──────────────────  17% │
+ mem       ━━━━━━━━━───────── 23.9/48G │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │
+Codex · usage off                      │
+Grok · usage off                       │
+Cursor · usage off                     │
+                                       │
+Claude and Codex status off — :connect to set up

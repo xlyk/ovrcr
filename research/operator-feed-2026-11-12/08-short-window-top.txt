@@ -1,0 +1,38 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                 last reply 1m │▌ ✓ REQUEST_ONE_REAL_TOOLS
+↳ “TURN_TWO_DONE”                      │▌   → consigint / main / #1 run 1
+                                       │▌   › write /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+ CONSIGINT ────────────────────────────│▌     read /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+  󰘬 main                          root │▌       $
+     $ local                           │▌       {"path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.
+  󰘬 gui-consigint-auth-handoff         │▌       txt"}
+     $ local                           │▌       OFFLINE_MARKER_v1
+     - review auth handoff    grok:4.6 │▌   › edit /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+  󰘬 gui-consigint-worktree-lifecycle   │▌     printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n' "${ANTHROPIC_API_KE…
+     $ local                           │▌       $ cd '/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target' && printf
+     - implement lifecycle cleanup     │▌       'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n'
+     - review websocket shutdown       │▌       "${ANTHROPIC_API_KEY:+SET}" "${OPENAI_API_KEY:+SET}" "${AWS_CONTAINER_AUTHORIZATION_TOKEN:+SET}"
+     - plan snapshot restore        pi │▌       "${PI_SESSION_ID:+SET}" "${PI_CODING_AGENT_SESSION_DIR:+SET}" "${GITHUB_TOKEN:+SET}" && printf
+                                       │▌       'ANTHROPIC_API_KEY=%s\nOPENAI_API_KEY=%s\nAWS_CONTAINER_AUTHORIZATION_TOKEN=%s\nPI_SESSION_ID=%s\nPI_CODING_AGENT_SESS
+ SPACELIFT-AGENT ──────────────────────│▌       ION_DIR=%s\nGITHUB_TOKEN=%s\n' "$ANTHROPIC_API_KEY" "$OPENAI_API_KEY" "$AWS_CONTAINER_AUTHORIZATION_TOKEN"
+  󰘬 main                          root │▌       "$PI_SESSION_ID" "$PI_CODING_AGENT_SESSION_DIR" "$GITHUB_TOKEN" > credential-probe.env && printf 'BASH_' &&
+     $ local                           │▌       "$OVRCR_EXECUTABLE" --json project list
+  󰘬 gui-spacelift-agent-pipeline-progr…│▌       CREDENTIAL_PROBE anthropic= openai= aws= pi_session= pi_session_dir= github=
+     $ local                           │▌       BASH_[{"name":"consigint","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/repositori
+USAGE · 0 tokens · 5m                  │▌       es/consigint","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui
+⠹ 0 working  ? 0 input  ✓ 0 ready      │▌       -izLl55/workspaces/consigint"},{"name":"spacelift-agent","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000g
+· 0 idle  ! 0 error  P 0 paused        │▌       n/T/ovrcr-gui-izLl55/repositories/spacelift-agent","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlf
+· 0 exited  - 12 unknown               │▌       fxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/workspaces/spacelift-agent"}]
+                                       │▌
+ RESOURCES ────────────────────────────│▌   TURN_ONE_DONE
+ cpu       ━━━━──────────────────  16% │
+ mem       ━━━━━━━━━───────── 24.1/48G │▌ ✓ REQUEST_TWO_RESUME
+                                       │▌   TURN_TWO_DONE
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │ Managing consigint / main / #1 run 1
+Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ ·
+Cursor · usage off                     │
+                                       │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Enter Expand details  Ctrl-g Browse

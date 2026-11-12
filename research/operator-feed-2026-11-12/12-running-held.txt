@@ -1,0 +1,70 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · running                                  [Reasoning medium ▾ Ctrl-t]  [Stop Ctrl-x]
+▌ ⠋ Responding                     26s │
+↳ responding                           │
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │▌ ✓ REQUEST_ONE_REAL_TOOLS
+ SPACELIFT-AGENT ──────────────────────│▌   → consigint / main / #1 run 1
+  󰘬 main                          root │▌     project: consigint
+     $ local                           │▌     workspace: main
+  󰘬 gui-spacelift-agent-pipeline-progr…│▌     workspace id: 6677f04e82d44a06d4d3fc0c8b6ab815
+     $ local                           │▌     captured cwd: /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/repositories/consigint
+     - build pipeline progress  claude │▌     agent workdir: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/operator-workdir
+  󰘬 gui-spacelift-agent-scope-quality  │▌     session: 1 · run: 1
+     $ local                           │▌   › write /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+     - review scope quality      codex │▌       $
+                                       │▌       {"content":"OFFLINE_MARKER_v1\n","path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/ope
+                                       │▌       rator-target/gui-fixture-marker.txt"}
+                                       │▌       Successfully wrote to
+                                       │▌       /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌     read /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌       $
+                                       │▌       {"path":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.
+                                       │▌       txt"}
+                                       │▌       OFFLINE_MARKER_v1
+                                       │▌   › edit /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt
+                                       │▌       $
+                                       │▌       {"edits":[{"newText":"OFFLINE_MARKER_v2","oldText":"OFFLINE_MARKER_v1"}],"path":"/private/var/folders/j9/h6rlffxd1r794
+                                       │▌       s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt"}
+                                       │▌       Successfully replaced 1 block(s) in
+                                       │▌       /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target/gui-fixture-marker.txt.
+                                       │▌     printf 'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n' "${ANTHROPIC_API_KE…
+                                       │▌       $ cd '/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/operator-target' && printf
+                                       │▌       'CREDENTIAL_PROBE anthropic=%s openai=%s aws=%s pi_session=%s pi_session_dir=%s github=%s\n'
+                                       │▌       "${ANTHROPIC_API_KEY:+SET}" "${OPENAI_API_KEY:+SET}" "${AWS_CONTAINER_AUTHORIZATION_TOKEN:+SET}"
+                                       │▌       "${PI_SESSION_ID:+SET}" "${PI_CODING_AGENT_SESSION_DIR:+SET}" "${GITHUB_TOKEN:+SET}" && printf
+                                       │▌       'ANTHROPIC_API_KEY=%s\nOPENAI_API_KEY=%s\nAWS_CONTAINER_AUTHORIZATION_TOKEN=%s\nPI_SESSION_ID=%s\nPI_CODING_AGENT_SESS
+                                       │▌       ION_DIR=%s\nGITHUB_TOKEN=%s\n' "$ANTHROPIC_API_KEY" "$OPENAI_API_KEY" "$AWS_CONTAINER_AUTHORIZATION_TOKEN"
+                                       │▌       "$PI_SESSION_ID" "$PI_CODING_AGENT_SESSION_DIR" "$GITHUB_TOKEN" > credential-probe.env && printf 'BASH_' &&
+                                       │▌       "$OVRCR_EXECUTABLE" --json project list
+                                       │▌       CREDENTIAL_PROBE anthropic= openai= aws= pi_session= pi_session_dir= github=
+                                       │▌       BASH_[{"name":"consigint","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/repositori
+                                       │▌       es/consigint","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui
+                                       │▌       -izLl55/workspaces/consigint"},{"name":"spacelift-agent","repo":"/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000g
+USAGE · 0 tokens · 8m                  │▌       n/T/ovrcr-gui-izLl55/repositories/spacelift-agent","workspace_count":3,"workspace_root":"/private/var/folders/j9/h6rlf
+⠹ 0 working  ? 0 input  ✓ 0 ready      │▌       fxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-izLl55/workspaces/spacelift-agent"}]
+· 0 idle  ! 0 error  P 0 paused        │▌
+· 0 exited  - 12 unknown               │▌   TURN_ONE_DONE
+                                       │
+ RESOURCES ────────────────────────────│▌ ✓ REQUEST_TWO_RESUME
+ cpu       ━━━━──────────────────  18% │
+ mem       ━━━━━━━━━───────── 24.2/48G │▌ ● REQUEST_THREE_HELD
+                                       │▌   HELD_BEFORE_RELEASE
+ QUOTA LEFT ───────────────────────────│▌   ⠋ Responding
+Claude · not signed in                 │ Managing consigint / main / #1 run 1
+Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Grok · usage off                       │ > ▏
+Cursor · usage off                     │
+                                       │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+OPERATOR  Shift-Enter Newline  Ctrl-g Browse  Ctrl-x Stop selected turn
