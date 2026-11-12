@@ -1,6 +1,7 @@
 //! One durable pi conversation is protocol data, never a terminal parser or a
 //! PTY input target. The shared sidebar row, the full view and the Quick
 //! message overlay all address that same singleton.
+mod feed;
 mod render;
 
 use super::text_cursor::TextCursor;
@@ -145,33 +146,9 @@ impl Chat {
                 .as_ref()
                 .is_none_or(|turn| turn.state != OperatorTurnState::Running)
     }
-    /// Enter and mouse share this toggle. A thinking block keeps its disclosure
-    /// owner while the viewport stays on the durable row that was on top.
-    fn toggle_entry(&mut self, entry: render::TranscriptEntry, top: Option<render::Anchor>) {
-        let Ok(index) = self
-            .messages
-            .binary_search_by_key(&entry.ordinal, |message| message.ordinal)
-        else {
-            return;
-        };
-        let message = &self.messages[index];
-        if matches!(
-            message.content,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(_))
-        ) {
-            self.expanded.insert(entry.ordinal, !entry.expanded);
-            if let Some(top) = top {
-                self.follow = false;
-                self.anchor = Some(top);
-                self.scroll = 0;
-            }
-        } else if expandable(message) {
-            if entry.expanded {
-                self.expanded.remove(&entry.ordinal);
-            } else {
-                self.expanded.insert(entry.ordinal, true);
-            }
-        }
+    /// Enter and mouse share this toggle; the choice outlives the default.
+    fn toggle_entry(&mut self, entry: render::TranscriptEntry) {
+        self.expanded.insert(entry.ordinal, !entry.expanded);
     }
 }
 enum Pending {
@@ -244,7 +221,7 @@ fn stop_rect(right: Rect) -> Rect {
 }
 #[cfg(test)]
 use render::wrapped_lines;
-use render::{transcript_offset, transcript_rows};
+use render::{transcript_offset, transcript_pad, transcript_rows};
 
 fn context_label(context: &OperatorContext) -> String {
     let mut label = context.project.clone().unwrap_or_else(|| "global".into());
@@ -393,18 +370,6 @@ fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
     })
 }
 
-fn expandable(message: &OperatorMessage) -> bool {
-    matches!(
-        message.content,
-        OperatorMessageContent::User { .. }
-            | OperatorMessageContent::AsyncWakeup { .. }
-            | OperatorMessageContent::Worker(
-                OperatorWorkerEvent::ToolCall { .. }
-                    | OperatorWorkerEvent::ToolOutput { .. }
-                    | OperatorWorkerEvent::ThinkingDelta(_)
-            )
-    )
-}
 impl Dashboard {
     /// The singleton is worth a spinner while its visible journal animates.
     pub(super) fn operator_conversation_busy(&self) -> bool {
@@ -1024,8 +989,7 @@ impl Dashboard {
                             })
                             .and_then(|row| row.entry)
                         {
-                            let top = rows.get(offset).and_then(|row| row.anchor);
-                            chat.toggle_entry(entry, top);
+                            chat.toggle_entry(entry);
                         }
                     }
                     KeyCode::Home => chat.entry_focus = entries.first().copied(),
@@ -1161,13 +1125,14 @@ impl Dashboard {
                     {
                         let rows = transcript_rows(chat, transcript.width, 0);
                         let offset = transcript_offset(chat, &rows, transcript.height as usize);
-                        let hit = rows
-                            .get(offset + usize::from(mouse.row - transcript.y))
+                        let pad = transcript_pad(rows.len(), transcript.height as usize);
+                        let hit = usize::from(mouse.row - transcript.y)
+                            .checked_sub(pad)
+                            .and_then(|row| rows.get(offset + row))
                             .and_then(|row| row.entry);
                         chat.entry_focus = hit.map(|entry| entry.ordinal);
                         if let Some(entry) = hit {
-                            let top = rows.get(offset).and_then(|row| row.anchor);
-                            chat.toggle_entry(entry, top);
+                            chat.toggle_entry(entry);
                         }
                     }
                 }
@@ -1787,37 +1752,95 @@ mod tests {
             .join("\n")
             + "\n"
     }
-    /// A running current turn with one thinking delta.
-    fn thinking_dashboard(text: &str) -> Dashboard {
+    fn request(ordinal: u64, text: &str) -> OperatorMessage {
+        message(
+            ordinal,
+            OperatorMessageContent::User {
+                text: text.into(),
+                context: OperatorContext::default(),
+            },
+        )
+    }
+    fn thinking(ordinal: u64, text: &str) -> OperatorMessage {
+        message(
+            ordinal,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text.into())),
+        )
+    }
+    fn call(ordinal: u64, id: &str, command: &str) -> OperatorMessage {
+        message(
+            ordinal,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
+                id: id.into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": command, "timeout": 30}).to_string(),
+            }),
+        )
+    }
+    fn output(ordinal: u64, id: &str, text: &str, status: OperatorToolStatus) -> OperatorMessage {
+        message(
+            ordinal,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                id: id.into(),
+                output: text.into(),
+                truncated: false,
+                status,
+            }),
+        )
+    }
+    fn on_turn(turn: u64, mut message: OperatorMessage) -> OperatorMessage {
+        message.turn = OperatorTurnId(turn);
+        message
+    }
+    /// Two finished requests: one that changed something, one whose command failed.
+    fn two_requests() -> Vec<OperatorMessage> {
+        let mut messages = vec![
+            request(1, "create the workspace"),
+            thinking(2, "SECRET_PLAN"),
+            call(
+                3,
+                "a",
+                "cd /repo && \"$OVRCR_EXECUTABLE\" --json workspace list",
+            ),
+            output(4, "a", "[]", OperatorToolStatus::Succeeded),
+            call(
+                5,
+                "b",
+                "\"$OVRCR_EXECUTABLE\" workspace create ovrcr issue-1",
+            ),
+            output(6, "b", "CREATED_OUTPUT", OperatorToolStatus::Succeeded),
+            delta(7, "Created it."),
+            completed(8),
+        ];
+        messages.extend(
+            [
+                request(9, "now remove it"),
+                call(10, "c", "ovrcr workspace remove issue-1 --force"),
+                output(
+                    11,
+                    "c",
+                    "REMOVE_OUTPUT",
+                    OperatorToolStatus::Failed { exit_code: Some(2) },
+                ),
+                delta(12, "It failed."),
+                completed(13),
+            ]
+            .map(|message| on_turn(2, message)),
+        );
+        messages
+    }
+    fn feed(chat: &Chat, width: u16) -> Vec<String> {
+        transcript_rows(chat, width, 0)
+            .iter()
+            .map(|row| row.line.to_string().trim_end().to_owned())
+            .collect()
+    }
+    fn loaded(value: Summary, messages: Vec<OperatorMessage>) -> Dashboard {
         let mut d = dashboard();
-        let value = running_turn();
         let out = opened(&mut d, value.clone());
         let read = read_request(&out);
-        respond(
-            &mut d,
-            read.request_id,
-            history_of(
-                value,
-                vec![message(
-                    1,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(text.into())),
-                )],
-                None,
-            ),
-        );
+        respond(&mut d, read.request_id, history_of(value, messages, None));
         d
-    }
-    /// The thinking fixture drawn at 60 columns as trimmed rows.
-    fn thinking_screen(text: &str) -> String {
-        frame_lines(&mut thinking_dashboard(text), 60, 24)
-    }
-    /// The thinking fixture's rendered cells at 60 columns.
-    fn thinking_buffer(text: &str) -> ratatui::buffer::Buffer {
-        let mut d = thinking_dashboard(text);
-        d.install_area(Rect::new(0, 0, 60, 24));
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
-        d.draw(&mut terminal).unwrap();
-        terminal.backend().buffer().clone()
     }
     fn click(d: &mut Dashboard, column: u16, row: u16) {
         d.mouse_action(
@@ -1982,7 +2005,7 @@ mod tests {
             "{screen}"
         );
         assert!(
-            screen.contains("Context · proj / work"),
+            screen.contains("→ proj / work"),
             "the journal keeps each message's captured context: {screen}"
         );
         assert!(
@@ -1998,7 +2021,7 @@ mod tests {
             "the selected model is metadata, not a journal row"
         );
         let chat = d.operator.chat.as_mut().unwrap();
-        chat.expanded.insert(1, true);
+        chat.expanded.insert(1 | feed::CONTEXT_KEY, true);
         let screen = draw(&mut d, 140, 24);
         assert!(screen.contains("captured cwd: /captured/cwd"), "{screen}");
         assert!(
@@ -2260,9 +2283,9 @@ mod tests {
     }
 
     #[test]
-    fn async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread() {
+    fn async_wakeup_is_one_woke_entry_and_terminal_outcomes_mark_one_unread() {
         if super::super::pi_available_test::run_with_pi_available(
-            "dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread",
+            "dashboard::operator::tests::async_wakeup_is_one_woke_entry_and_terminal_outcomes_mark_one_unread",
         ) {
             return;
         }
@@ -2324,32 +2347,34 @@ mod tests {
 
             let chat = d.operator.chat.as_ref().unwrap();
             assert_eq!(chat.unread, Some(OperatorTurnId(2)));
-            let transcript = render::transcript_rows(chat, 140, 0)
-                .into_iter()
-                .map(|row| {
-                    row.line
-                        .spans
-                        .into_iter()
-                        .map(|span| span.content.to_string())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>();
+            let transcript = feed(chat, 140);
+            let glyph = match outcome {
+                "complete" => '◆',
+                "failed" => '✕',
+                "interrupted" => '■',
+                _ => unreachable!(),
+            };
             assert_eq!(
                 transcript
                     .iter()
-                    .filter(|line| { line.trim_start_matches(['│', ' ']) == "Operator" })
-                    .count(),
-                1,
-                "the async request and answer share one clean Operator heading"
+                    .filter(|line| line.contains("Woke ·"))
+                    .collect::<Vec<_>>(),
+                [&format!("▌ {glyph} Woke · WATCH_REPORT_FOR_TRANSCRIPT")],
+                "the wake-up and its answer are one entry"
             );
             assert!(
                 transcript
                     .iter()
-                    .any(|line| line.contains("WATCH_REPORT_FOR_TRANSCRIPT"))
+                    .any(|line| line == "▌   WATCH_WAKEUP_ANSWER"),
+                "{transcript:?}"
             );
-            assert!(
-                !transcript.iter().any(|line| line == "You"),
-                "an async wakeup never renders as a user bubble"
+            assert_eq!(
+                transcript
+                    .iter()
+                    .filter(|line| line.starts_with('▌'))
+                    .count(),
+                transcript.iter().filter(|line| !line.is_empty()).count(),
+                "every row belongs to the wake-up entry: {transcript:?}"
             );
 
             d.key(KeyCode::Esc);
@@ -2678,7 +2703,7 @@ mod tests {
                         OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
                             id: "call-1".into(),
                             name: "bash".into(),
-                            arguments: "{\"cmd\":\"ls\"}".into(),
+                            arguments: "{\"command\":\"ls\"}".into(),
                         }),
                     ),
                 ],
@@ -2718,15 +2743,15 @@ mod tests {
         let screen = draw(&mut d, 140, 24);
         assert!(!screen.contains("Team"));
         assert!(screen.contains("run it"), "{screen}");
-        assert!(screen.contains("Turn complete"), "{screen}");
+        assert!(screen.contains("▌ ✓ run it"), "{screen}");
         assert!(
-            !screen.contains("\u{1b}]52;c;INJECTED\u{7}"),
-            "collapsed receipts do not leak tool output"
+            !screen.contains("INJECTED"),
+            "a command row does not show its output: {screen}"
         );
-        // Expanding keeps the source escaped and expands under its own ordinal.
-        d.operator.chat.as_mut().unwrap().expanded.insert(3, true);
+        // Expanding keeps the source escaped and expands under the call's ordinal.
+        d.operator.chat.as_mut().unwrap().expanded.insert(2, true);
         let screen = draw(&mut d, 140, 24);
-        assert!(screen.contains("succeeded"), "{screen}");
+        assert!(screen.contains("$ ls"), "{screen}");
         assert!(screen.contains("\\u{1b}]52;c;INJECTED\\u{7}"), "{screen}");
         assert!(
             !screen.contains("\u{1b}]52;c;INJECTED\u{7}}"),
@@ -3000,30 +3025,6 @@ mod tests {
     }
 
     #[test]
-    fn thinking_text_escapes_terminal_controls() {
-        let mut chat = Chat::new(summary(), OperatorContext::default());
-        chat.messages = vec![message(
-            1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                "PLAN \u{1b}]52;c;INJECTED\u{7}".into(),
-            )),
-        )];
-        // The ended block is explicitly expanded before its source is checked.
-        chat.expanded.insert(1, true);
-        let visible = transcript_rows(&chat, 80, 0)
-            .iter()
-            .map(|row| row.line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(visible.contains("Thinking"), "{visible}");
-        assert!(
-            visible.contains("PLAN \\u{1b}]52;c;INJECTED\\u{7}"),
-            "{visible}"
-        );
-        assert!(!visible.contains('\u{1b}'), "{visible}");
-    }
-
-    #[test]
     fn empty_thinking_and_compaction_events_add_no_visible_rows() {
         let mut chat = Chat::new(summary(), OperatorContext::default());
         chat.messages = vec![
@@ -3052,266 +3053,304 @@ mod tests {
     }
 
     #[test]
-    fn thinking_wraps_once_at_body_width_and_styles_only_the_body() {
-        let mut d = dashboard();
-        let value = running_turn();
-        let out = opened(&mut d, value.clone());
-        let read = read_request(&out);
-        let thought = format!("{}界e\u{301}", "a".repeat(55));
-        let out = respond(
-            &mut d,
-            read.request_id,
-            history_of(
-                value,
-                vec![
-                    message(
-                        1,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(thought)),
-                    ),
-                    delta(2, "plain answer"),
-                ],
-                None,
-            ),
-        );
-        assert!(out.is_empty(), "{out:?}");
-        d.install_area(Rect::new(0, 0, 60, 24));
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
-        d.draw(&mut terminal).unwrap();
-        let buffer = terminal.backend().buffer();
-        let rows: Vec<String> = (0..24u16)
-            .map(|row| {
-                (0..60u16)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect()
-            })
-            .collect();
-        let header_row = rows
-            .iter()
-            .position(|row| row.contains("▾ Thinking · 2 lines"))
-            .unwrap_or_else(|| panic!("missing wrapped header: {rows:?}"));
-        let body_row = rows
-            .iter()
-            .position(|row| row.contains("aaaa"))
-            .unwrap_or_else(|| panic!("missing body row: {rows:?}"));
+    fn feed_collapses_older_requests_and_opens_the_newest() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = two_requests();
+        let rows = feed(&chat, 60);
         assert_eq!(
-            rows[body_row].chars().filter(|ch| *ch == 'a').count(),
-            55,
-            "the first body row keeps exactly 55 cells: {}",
-            rows[body_row]
+            rows,
+            [
+                "▌ ✓ create the workspace               1 change · 2 commands",
+                "",
+                "▌ ✓ now remove it",
+                "▌   − ovrcr workspace remove issue-1 --force          exit 2",
+                "▌",
+                "▌   It failed.",
+                "",
+            ]
         );
-        // TestBackend gives a wide glyph a continuation cell, so the flattened
-        // row cannot contain the grapheme sequence. The cells still must.
-        let second_y = (body_row + 1) as u16;
-        let wide_column = (0..60u16)
-            .find(|column| buffer[(*column, second_y)].symbol() == "界")
-            .unwrap_or_else(|| panic!("missing wide glyph: {}", rows[body_row + 1]));
+        // A finished request never shows its thinking or a command's output.
+        chat.expanded.insert(1, true);
+        let open = feed(&chat, 60);
         assert_eq!(
-            buffer[(wide_column + 2, second_y)].symbol(),
-            "e\u{301}",
-            "the combining mark stays in one grapheme cell: {}",
-            rows[body_row + 1]
+            open[..7],
+            [
+                "▌ ✓ create the workspace",
+                "▌   → global",
+                "▌     ovrcr workspace list",
+                "▌   + ovrcr workspace create ovrcr issue-1",
+                "▌",
+                "▌   Created it.",
+                "",
+            ]
         );
-        let y = body_row as u16;
-        let a_column = (0..60u16)
-            .find(|column| buffer[(*column, y)].symbol() == "a")
-            .unwrap();
-        let body = &buffer[(a_column, y)];
-        assert_eq!(body.fg, crate::theme::PEACH());
-        assert!(body.modifier.contains(Modifier::ITALIC));
-        for column in 2..4u16 {
-            let indent = &buffer[(column, y)];
-            assert_eq!(indent.fg, crate::theme::PEACH());
-            assert!(indent.modifier.contains(Modifier::ITALIC));
-        }
-        let guide = &buffer[(0, y)];
-        assert_eq!(guide.symbol(), "│");
-        assert_eq!(guide.fg, crate::theme::SURFACE2());
-        assert!(!guide.modifier.contains(Modifier::ITALIC));
-        let header_y = header_row as u16;
-        let label_column = (0..60u16)
-            .find(|column| buffer[(*column, header_y)].symbol() == "T")
-            .unwrap();
-        let label = &buffer[(label_column, header_y)];
-        assert_eq!(label.fg, crate::theme::SUBTEXT());
-        assert!(label.modifier.contains(Modifier::BOLD));
-        assert!(!label.modifier.contains(Modifier::ITALIC));
-        let answer_row = rows
-            .iter()
-            .position(|row| row.contains("plain answer"))
-            .unwrap();
-        let answer_y = answer_row as u16;
-        let p_column = (0..60u16)
-            .find(|column| buffer[(*column, answer_y)].symbol() == "p")
-            .unwrap();
-        let answer = &buffer[(p_column, answer_y)];
-        assert_eq!(answer.fg, crate::theme::TEXT());
-        assert!(!answer.modifier.contains(Modifier::ITALIC));
-
-        // The explicit collapse survives a resize that changes N.
-        d.key(KeyCode::Tab);
-        d.key(KeyCode::End);
-        d.key(KeyCode::Enter);
-        let narrow = draw(&mut d, 60, 24);
-        assert!(narrow.contains("▸ Thinking · 2 lines"), "{narrow}");
-        let wide = draw(&mut d, 120, 24);
-        assert!(
-            wide.contains("▸ Thinking · 1 lines"),
-            "the wider transcript recounts the same choice: {wide}"
+        let all = open.join("\n");
+        assert!(!all.contains("SECRET_PLAN"), "{all}");
+        assert!(!all.contains("CREATED_OUTPUT"), "{all}");
+        // The state colours the bar; a changing command is marked in peach.
+        let styled = transcript_rows(&chat, 60, 0);
+        assert_eq!(
+            styled[0].line.spans[0].style.fg,
+            Some(crate::theme::GREEN())
         );
-        d.key(KeyCode::Enter);
-        let wide_open = draw(&mut d, 120, 24);
-        assert!(
-            wide_open.contains("▾ Thinking · 1 lines"),
-            "the same entry expands at the new width: {wide_open}"
+        assert_eq!(
+            styled[3].line.spans[2].style.fg,
+            Some(crate::theme::PEACH())
         );
-        assert!(wide_open.contains("aaaa"), "{wide_open}");
-    }
-
-    #[test]
-    fn thinking_counts_interior_blanks_but_not_trailing_newlines() {
-        let screen = thinking_screen("one\n\ntwo\n");
-        assert!(screen.contains("▾ Thinking · 3 lines"), "{screen}");
-        let rows: Vec<&str> = screen.lines().collect();
-        let one = rows
-            .iter()
-            .position(|row| row.contains("one"))
-            .unwrap_or_else(|| panic!("missing first line: {screen}"));
-        let two = rows
-            .iter()
-            .position(|row| row.contains("two"))
-            .unwrap_or_else(|| panic!("missing last line: {screen}"));
-        assert_eq!(two, one + 2, "the interior blank counts: {screen}");
-        assert_eq!(rows[one + 1].trim(), "│", "blank body row: {screen}");
-        let spaced = thinking_screen("  spaced  \nend");
-        assert!(spaced.contains("▾ Thinking · 2 lines"), "{spaced}");
-        // frame_lines trims trailing row whitespace; the cells retain both
-        // leading and trailing body spaces with peach italic styling.
-        assert!(spaced.contains("│     spaced"), "{spaced}");
-        let spaced_buffer = thinking_buffer("  spaced  \nend");
-        let spaced_rows: Vec<String> = (0..24u16)
-            .map(|row| {
-                (0..60u16)
-                    .map(|column| spaced_buffer[(column, row)].symbol())
-                    .collect()
-            })
-            .collect();
-        let spaced_y = spaced_rows
-            .iter()
-            .position(|row| row.contains("spaced"))
-            .unwrap_or_else(|| panic!("missing spaced body: {spaced_rows:?}"))
-            as u16;
-        assert_eq!(spaced_buffer[(4, spaced_y)].symbol(), " ");
-        assert_eq!(spaced_buffer[(6, spaced_y)].symbol(), "s");
-        for column in [12u16, 13] {
-            let cell = &spaced_buffer[(column, spaced_y)];
-            assert_eq!(cell.symbol(), " ", "trailing body space at {column}");
-            assert_eq!(cell.fg, crate::theme::PEACH());
-            assert!(cell.modifier.contains(Modifier::ITALIC));
-        }
-        let after = &spaced_buffer[(14, spaced_y)];
-        assert_eq!(after.symbol(), " ");
-        assert_ne!(
-            after.fg,
-            crate::theme::PEACH(),
-            "body styling stops after the text"
-        );
-        let trimmed = thinking_screen("one\n\n");
-        assert!(
-            trimmed.contains("▾ Thinking · 1 lines"),
-            "trailing terminators do not add rows: {trimmed}"
+        assert_eq!(
+            styled[2].line.spans[2].style.fg,
+            Some(crate::theme::SUBTEXT()),
+            "a lookup is dimmed"
         );
     }
 
     #[test]
-    fn empty_thinking_blocks_add_no_rows_or_entry_stops() {
-        let value = running_turn();
-        let mut with_empty = dashboard();
-        let out = opened(&mut with_empty, value.clone());
-        let read = read_request(&out);
-        respond(
-            &mut with_empty,
-            read.request_id,
-            history_of(
-                value.clone(),
-                vec![
-                    message(
-                        1,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                            String::new(),
-                        )),
-                    ),
-                    message(
-                        2,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                            "real thought\n".into(),
-                        )),
-                    ),
-                    message(
-                        3,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                            "more text".into(),
-                        )),
-                    ),
-                    delta(4, "answer"),
-                ],
-                None,
-            ),
-        );
-        let with_empty = frame_lines(&mut with_empty, 60, 24);
-        let mut without_empty = dashboard();
-        let out = opened(&mut without_empty, value.clone());
-        let read = read_request(&out);
-        respond(
-            &mut without_empty,
-            read.request_id,
-            history_of(
-                value,
-                vec![
-                    message(
-                        2,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                            "real thought\n".into(),
-                        )),
-                    ),
-                    message(
-                        3,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(
-                            "more text".into(),
-                        )),
-                    ),
-                    delta(4, "answer"),
-                ],
-                None,
-            ),
-        );
-        let without_empty = frame_lines(&mut without_empty, 60, 24);
-        assert_eq!(
-            with_empty, without_empty,
-            "an empty prefix delta changes no rendered row"
-        );
-        assert_eq!(
-            with_empty.matches("▾ Thinking · 2 lines").count(),
-            1,
-            "the empty prefix adds no phantom entry stop: {with_empty}"
-        );
-        let newline_only = thinking_screen("\n\n");
-        assert!(!newline_only.contains("Thinking"), "{newline_only}");
+    fn running_request_shows_its_pending_command_and_one_escaped_thought() {
         let mut chat = Chat::new(running_turn(), OperatorContext::default());
         chat.messages = vec![
-            message(
-                1,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta(String::new())),
-            ),
+            request(1, "do it"),
+            call(2, "a", "ovrcr list"),
+            thinking(3, "first line\nPLAN \u{1b}]52;c;INJECTED\u{7}\n\n"),
+        ];
+        let rows = feed(&chat, 60);
+        assert_eq!(
+            rows,
+            [
+                "▌ ● do it",
+                "▌   → global",
+                "▌     ovrcr list                                     running",
+                "▌     PLAN \\u{1b}]52;c;INJECTED\\u{7}",
+                "▌   ⠋ Responding",
+            ]
+        );
+        assert!(!rows.join("\n").contains('\u{1b}'));
+        assert_eq!(
+            transcript_rows(&chat, 60, 0)[0].line.spans[0].style.fg,
+            Some(crate::theme::BLUE())
+        );
+        // The thought is only the trailing one; an answer replaces it.
+        chat.messages.push(delta(4, "answer"));
+        let rows = feed(&chat, 60);
+        assert!(!rows.join("\n").contains("PLAN"), "{rows:?}");
+        assert_eq!(rows[rows.len() - 2], "▌   answer");
+        // Empty or newline-only thinking adds no row.
+        chat.messages = vec![request(1, "do it"), thinking(2, ""), thinking(3, "\n\n")];
+        assert_eq!(
+            feed(&chat, 60),
+            ["▌ ● do it", "▌   → global", "▌   ⠋ Responding"]
+        );
+    }
+
+    #[test]
+    fn failed_interrupted_and_wake_entries_name_their_outcome() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![
+            request(1, "first"),
             message(
                 2,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ThinkingDelta("real".into())),
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
+                    "No Pi model selected; run ovrcr operator setup.".into(),
+                )),
             ),
+            on_turn(2, request(3, "second")),
+            on_turn(2, delta(4, "partial")),
+            on_turn(2, message(5, OperatorMessageContent::Interrupted)),
+            on_turn(
+                3,
+                message(
+                    6,
+                    OperatorMessageContent::AsyncWakeup {
+                        text: "These watched OVRCR Workspace Agent sessions settled:\n- session 13 (coordinator-alpha) in consigint: response_ready (phase running, activity response_ready, run 1)\n- session 14 (coordinator-beta) in consigint: response_ready (phase running, activity response_ready, run 1)".into(),
+                    },
+                ),
+            ),
+            on_turn(3, delta(7, "Both finished.")),
+            on_turn(3, completed(8)),
         ];
-        let entries: BTreeSet<u64> = transcript_rows(&chat, 60, 0)
+        chat.expanded.insert(6, false);
+        assert_eq!(
+            feed(&chat, 100),
+            [
+                "▌ ✕ first                                            No Pi model selected; run ovrcr operator setup.",
+                "▌ ■ second                                                                               interrupted",
+                "▌ ◆ Woke · #13 coordinator-alpha, #14 coordinator-beta",
+                "",
+            ]
+        );
+        chat.expanded.clear();
+        chat.expanded.insert(3, true);
+        let rows = feed(&chat, 100);
+        assert!(rows.contains(&"▌   partial".to_owned()), "{rows:?}");
+        assert!(
+            rows.contains(
+                &"▌   Interrupted · operations may finish; file changes remain.".to_owned()
+            ),
+            "{rows:?}"
+        );
+        assert!(rows.contains(&"▌   Both finished.".to_owned()), "{rows:?}");
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with("▌   - session 13 (coordinator-alpha)")),
+            "the open wake-up keeps its report: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn long_requests_fold_runs_of_finished_lookups() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![request(1, "find it")];
+        for step in 0..9u64 {
+            let id = format!("lookup-{step}");
+            chat.messages.push(call(
+                2 + step * 2,
+                &id,
+                &format!("ovrcr list --page {step}"),
+            ));
+            chat.messages.push(output(
+                3 + step * 2,
+                &id,
+                "",
+                if step == 8 {
+                    OperatorToolStatus::TimedOut
+                } else {
+                    OperatorToolStatus::Succeeded
+                },
+            ));
+        }
+        chat.messages
+            .push(call(20, "change", "ovrcr new --project ovrcr"));
+        chat.messages
+            .push(output(21, "change", "", OperatorToolStatus::Succeeded));
+        chat.messages.push(completed(22));
+        assert_eq!(
+            feed(&chat, 60),
+            [
+                "▌ ✓ find it",
+                "▌   → global",
+                "▌     ▸ 8 lookups",
+                "▌     ovrcr list --page 8                          timed out",
+                "▌   + ovrcr new --project ovrcr",
+                "",
+            ],
+            "a failed lookup stays visible"
+        );
+        chat.expanded.insert(2 | feed::FOLD_KEY, true);
+        let rows = feed(&chat, 60);
+        assert_eq!(rows[2], "▌     ▾ 8 lookups");
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.contains("ovrcr list --page"))
+                .count(),
+            9
+        );
+    }
+
+    #[test]
+    fn keys_and_clicks_open_entries_and_commands() {
+        let mut d = loaded(summary(), two_requests());
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(!screen.contains("Created it."), "{screen}");
+        // Tab focuses the transcript; Home reaches the oldest entry.
+        d.key(KeyCode::Tab);
+        d.key(KeyCode::Home);
+        assert_eq!(d.operator.chat.as_ref().unwrap().entry_focus, Some(1));
+        d.key(KeyCode::Enter);
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(screen.contains("▌   Created it."), "{screen}");
+        assert!(!screen.contains("CREATED_OUTPUT"), "{screen}");
+        // Down passes the context row and the lookup to reach the changing command.
+        for _ in 0..3 {
+            d.key(KeyCode::Down);
+        }
+        assert_eq!(d.operator.chat.as_ref().unwrap().entry_focus, Some(5));
+        d.key(KeyCode::Enter);
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(
+            screen.contains("▌       $ \"$OVRCR_EXECUTABLE\" workspace create ovrcr issue-1"),
+            "{screen}"
+        );
+        assert!(screen.contains("▌       CREATED_OUTPUT"), "{screen}");
+        d.key(KeyCode::Enter);
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(!screen.contains("CREATED_OUTPUT"), "{screen}");
+        // Enter on the header collapses the entry again.
+        d.key(KeyCode::Home);
+        d.key(KeyCode::Enter);
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(!screen.contains("Created it."), "{screen}");
+
+        // A click on a command row opens it.
+        let content = content_area(&d, d.outer_area);
+        let row = screen
+            .lines()
+            .position(|line| line.contains("− ovrcr workspace remove"))
+            .expect("the newest entry lists its command") as u16;
+        click(&mut d, content.x + 8, row);
+        let screen = frame_lines(&mut d, 140, 24);
+        assert!(screen.contains("▌       REMOVE_OUTPUT"), "{screen}");
+        // A click above a short feed hits nothing.
+        let transcript = d.operator_layout(d.outer_area).transcript;
+        click(&mut d, transcript.x + 8, transcript.y);
+        assert_eq!(d.operator.chat.as_ref().unwrap().entry_focus, None);
+        assert_eq!(frame_lines(&mut d, 140, 24), screen);
+    }
+
+    #[test]
+    fn a_short_feed_sits_against_the_composer() {
+        let mut d = loaded(
+            summary(),
+            vec![request(1, "hello"), delta(2, "Hello back."), completed(3)],
+        );
+        let screen = frame_lines(&mut d, 140, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        let caption = lines
             .iter()
-            .filter_map(|row| row.entry.map(|entry| entry.ordinal))
+            .position(|line| line.contains("Managing global"))
+            .expect("the target caption is drawn");
+        assert!(lines[caption - 2].contains("▌   Hello back."), "{screen}");
+        assert!(lines[caption - 4].contains("▌ ✓ hello"), "{screen}");
+        let transcript = d.operator_layout(d.outer_area).transcript;
+        let top: String = lines[transcript.y as usize]
+            .chars()
+            .skip(transcript.x as usize)
             .collect();
-        assert_eq!(entries, BTreeSet::from([1]), "one block, no empty stop");
+        assert!(
+            top.trim().is_empty(),
+            "the space is above the feed: {screen}"
+        );
+    }
+
+    #[test]
+    fn a_scrolled_feed_keeps_its_row_while_the_reply_streams() {
+        let mut chat = Chat::new(running_turn(), OperatorContext::default());
+        chat.messages = vec![request(1, "list them"), call(2, "a", "ovrcr list")];
+        chat.messages
+            .push(output(3, "a", "", OperatorToolStatus::Succeeded));
+        for line in 0..60u64 {
+            chat.messages
+                .push(delta(4 + line, &format!("reply line {line}\n")));
+        }
+        let rows = transcript_rows(&chat, 80, 0);
+        let top = rows
+            .iter()
+            .position(|row| row.line.to_string().contains("reply line 20"))
+            .unwrap();
+        chat.follow = false;
+        chat.anchor = rows[top].anchor;
+        assert_eq!(transcript_offset(&chat, &rows, 10), top);
+        // More commands and more reply arrive below the viewport.
+        chat.messages.push(call(100, "b", "ovrcr list"));
+        chat.messages.push(delta(101, "and a later paragraph"));
+        let rows = transcript_rows(&chat, 80, 0);
+        let offset = transcript_offset(&chat, &rows, 10);
+        assert!(
+            rows[offset].line.to_string().contains("reply line 20"),
+            "{}",
+            rows[offset].line
+        );
+        // Durable rows keep ascending anchors, so the offset search is exact.
+        let anchors: Vec<_> = rows.iter().filter_map(|row| row.anchor).collect();
+        assert!(anchors.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
