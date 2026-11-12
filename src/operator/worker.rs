@@ -238,7 +238,6 @@ fn attempt(
                     let _ = journal.retire(RETIRE_DEADLINE, false);
                     return Ok(());
                 }
-                ()
             }
             Err(Failure::AbortRequested) => {
                 let leased = state.active_watches > 0;
@@ -258,7 +257,6 @@ fn attempt(
                     let _ = journal.retire(RETIRE_DEADLINE, false);
                     return Ok(());
                 }
-                ()
             }
             Err(Failure::ToolTimedOut) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
@@ -268,7 +266,6 @@ fn attempt(
                     .reporter
                     .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
                     .map_err(|_| Failure::ReportFailed)?;
-                ()
             }
             Err(Failure::Failed(message)) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
@@ -278,7 +275,6 @@ fn attempt(
                     .reporter
                     .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
                     .map_err(|_| Failure::ReportFailed)?;
-                ()
             }
             Err(failure) => return Err(failure),
         }

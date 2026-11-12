@@ -484,6 +484,8 @@ fn operator_worker_fixture() {
         ),
         Response::OperatorExchange(_)
     ));
+    let abort_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    signal_hook::flag::register(libc::SIGUSR1, Arc::clone(&abort_requested)).unwrap();
     let ready = root.join(format!("ready-{}", identity.conversation.0));
     fs::write(
         ready.with_extension("tmp"),
@@ -498,7 +500,36 @@ fn operator_worker_fixture() {
     fs::rename(ready.with_extension("tmp"), &ready).unwrap();
     let complete = root.join(format!("complete-{}", identity.conversation.0));
     let complete_leased = root.join(format!("complete-leased-{}", identity.conversation.0));
-    wait_until(|| complete.exists() || complete_leased.exists());
+    wait_until(|| {
+        complete.exists() || complete_leased.exists() || abort_requested.load(Ordering::Acquire)
+    });
+    if abort_requested.load(Ordering::Acquire) {
+        // Model the native worker's soft-stop handshake: acknowledge its exact
+        // interrupted turn, then retire the now-idle worker run.
+        assert!(matches!(
+            worker_exchange(
+                &mut stream,
+                Request::OperatorWorker(OperatorWorkerRequest {
+                    auth: auth.clone(),
+                    command: OperatorWorkerCommand::AbortTurn {
+                        identity,
+                        leased: false,
+                    },
+                })
+            ),
+            Response::OperatorWorker(OperatorWorkerResult::Aborted {
+                identity: aborted
+            }) if aborted == identity
+        ));
+        let _ = worker_exchange(
+            &mut stream,
+            Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::Retire { identity },
+            }),
+        );
+        return;
+    }
     let leased = complete_leased.exists();
     assert!(matches!(
         worker_exchange(
@@ -745,15 +776,21 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
         })),
         Response::Error { .. }
     ));
-    let Response::Operator(OperatorResponse::Stopped(stopped)) =
-        live.request(Request::Operator(OperatorRequest::Stop {
-            identity: turn.identity,
-        }))
-    else {
-        panic!("stop")
+    let stop_response = live.request(Request::Operator(OperatorRequest::Stop {
+        identity: turn.identity,
+    }));
+    let Response::Operator(OperatorResponse::Stopped(stopped)) = stop_response else {
+        panic!("unexpected Stop response: {stop_response:?}")
     };
     assert_eq!(stopped.state, OperatorTurnState::Interrupted);
-    assert!(live.history(&c).conversation.worker_stopped);
+    // AbortTurn publishes Interrupted before Retire publishes stop proof.
+    wait_until(|| {
+        let conversation = live.history(&c).conversation;
+        conversation.run == turn.identity.run && conversation.worker_stopped
+    });
+    let stopped_history = live.history(&c);
+    assert_eq!(stopped_history.conversation.run, turn.identity.run);
+    assert!(stopped_history.conversation.worker_stopped);
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth,
