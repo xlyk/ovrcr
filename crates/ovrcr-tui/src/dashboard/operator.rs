@@ -107,6 +107,8 @@ struct Chat {
     follow: bool,
     unread: Option<OperatorTurnId>,
     reviewed: Option<OperatorTurnId>,
+    /// Wrapped journal rows, reused until an input in their key changes.
+    rows: std::cell::RefCell<Option<(render::RowsKey, Vec<render::TranscriptRow>)>>,
 }
 impl Chat {
     fn new(summary: Summary, context: OperatorContext) -> Self {
@@ -131,6 +133,7 @@ impl Chat {
             follow: true,
             unread: None,
             reviewed: None,
+            rows: std::cell::RefCell::new(None),
         }
     }
     fn can_submit(&self) -> bool {
@@ -900,6 +903,9 @@ impl Dashboard {
     }
 
     pub(super) fn operator_key(&mut self, key: KeyEvent) -> DashboardAction {
+        // Rows built here are the rows the next draw reuses, so build them
+        // under the same theme.
+        let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
@@ -1119,6 +1125,7 @@ impl Dashboard {
         mouse: MouseEvent,
         area: Rect,
     ) -> Option<DashboardAction> {
+        let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
         if self.operator.reasoning_picker.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.operator.reasoning_picker = None;
@@ -2026,17 +2033,24 @@ mod tests {
             screen.contains("No Pi model selected; run ovrcr operator setup."),
             "{screen}"
         );
-        for failure in [
-            "Configured Operator model is unavailable in the dedicated Pi profile.",
-            "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+        // Journal ordinals are never reused, so each failure gets its own.
+        for (ordinal, failure) in [
+            (
+                1,
+                "Configured Operator model is unavailable in the dedicated Pi profile.",
+            ),
+            (
+                2,
+                "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+            ),
         ] {
             let chat = d.operator.chat.as_mut().unwrap();
             chat.messages = vec![message(
-                1,
+                ordinal,
                 OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(failure.into())),
             )];
             chat.dirty = false;
-            chat.confirmed_tail = Some(1);
+            chat.confirmed_tail = Some(ordinal);
             let screen = draw(&mut d, 140, 24);
             assert!(screen.contains(failure), "{screen}");
         }
@@ -3395,5 +3409,58 @@ mod tests {
         assert!(!labels.iter().any(|label| label.contains("Chats")));
         assert!(labels.contains(&"Send"));
         assert!(labels.contains(&"Toggle sidebar"));
+    }
+
+    #[test]
+    fn scrolling_an_unchanged_transcript_reuses_wrapped_rows() {
+        let mut d = dashboard();
+        // A non-default theme: input handlers and draws must share one build.
+        d.theme = crate::theme::ThemeTokens::light();
+        let out = opened(&mut d, summary());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                summary(),
+                (1..=200)
+                    .map(|ordinal| delta(ordinal, &format!("line {ordinal}\n")))
+                    .collect(),
+                None,
+            ),
+        );
+        let area = Rect::new(0, 0, 140, 24);
+        let bottom = draw(&mut d, 140, 24);
+        let transcript = d.operator_layout(area).transcript;
+        let wheel = |kind| MouseEvent {
+            kind,
+            column: transcript.x + 1,
+            row: transcript.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        let builds = render::ROW_BUILDS.get();
+        for _ in 0..20 {
+            d.handle_mouse(wheel(MouseEventKind::ScrollUp), area);
+        }
+        let scrolled = draw(&mut d, 140, 24);
+        assert!(scrolled.contains("line 130"), "{scrolled}");
+        assert!(!scrolled.contains("line 200"), "{scrolled}");
+        for _ in 0..20 {
+            d.handle_mouse(wheel(MouseEventKind::ScrollDown), area);
+            draw(&mut d, 140, 24);
+        }
+        assert_eq!(draw(&mut d, 140, 24), bottom);
+        assert_eq!(
+            render::ROW_BUILDS.get(),
+            builds,
+            "wheel events and redraws over an unchanged journal must not re-wrap it"
+        );
+        // An appended message is a new journal and is wrapped once.
+        let chat = d.operator.chat.as_mut().unwrap();
+        chat.messages.push(delta(201, "appended tail"));
+        let appended = draw(&mut d, 140, 24);
+        assert!(appended.contains("appended tail"), "{appended}");
+        draw(&mut d, 140, 24);
+        assert_eq!(render::ROW_BUILDS.get(), builds + 1);
     }
 }

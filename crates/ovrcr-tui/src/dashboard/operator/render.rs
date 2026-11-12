@@ -515,10 +515,30 @@ pub(super) struct TranscriptEntry {
     pub(super) expanded: bool,
 }
 
+#[derive(Clone)]
 pub(super) struct TranscriptRow {
     pub(super) line: Line<'static>,
     pub(super) anchor: Option<Anchor>,
     pub(super) entry: Option<TranscriptEntry>,
+}
+
+/// Everything the journal rows are built from. Scrolling, focus moves and
+/// spinner frames leave it unchanged, so they reuse the wrapped rows.
+#[derive(PartialEq)]
+pub(super) struct RowsKey {
+    width: u16,
+    // The journal is append-only, so its length and tail identify its content.
+    messages: usize,
+    tail: Option<u64>,
+    expanded: BTreeMap<u64, bool>,
+    workdir: Option<std::path::PathBuf>,
+    running: Option<OperatorTurnId>,
+    theme: crate::theme::ThemeTokens,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static ROW_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 const THINKING_PREVIEW_LINES: usize = 6;
@@ -912,7 +932,14 @@ fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<(Line<'static>, (u
                     used = 0;
                     start = byte;
                 }
-                spans.push(Span::styled(grapheme.symbol.to_owned(), grapheme.style));
+                // One span per style run, not per grapheme: rows stay cheap to
+                // build, clone and draw.
+                match spans.last_mut() {
+                    Some(Span { content, style }) if *style == grapheme.style => {
+                        content.to_mut().push_str(grapheme.symbol);
+                    }
+                    _ => spans.push(Span::styled(grapheme.symbol.to_owned(), grapheme.style)),
+                }
                 used += cells;
                 byte += grapheme.symbol.len();
             }
@@ -1009,7 +1036,7 @@ fn clip_line(line: Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-pub(super) fn transcript_rows(chat: &Chat, width: u16, now_unix_ms: u64) -> Vec<TranscriptRow> {
+fn journal_rows(chat: &Chat, width: u16) -> Vec<TranscriptRow> {
     // Deltas share visual paragraphs, but their anchors keep the actual durable
     // source. Answer and thinking runs are separate paragraphs; thinking blocks
     // never merge across turns.
@@ -1135,6 +1162,36 @@ pub(super) fn transcript_rows(chat: &Chat, width: u16, now_unix_ms: u64) -> Vec<
             });
         }
     }
+    rows
+}
+pub(super) fn transcript_rows(chat: &Chat, width: u16, now_unix_ms: u64) -> Vec<TranscriptRow> {
+    let key = RowsKey {
+        width,
+        messages: chat.messages.len(),
+        tail: chat.messages.last().map(|message| message.ordinal),
+        expanded: chat.expanded.clone(),
+        workdir: chat.workdir.clone(),
+        running: chat
+            .summary
+            .current_turn
+            .as_ref()
+            .filter(|turn| turn.state == OperatorTurnState::Running)
+            .map(|turn| turn.identity.turn),
+        theme: crate::theme::active(),
+    };
+    let mut cache = chat.rows.borrow_mut();
+    if cache.as_ref().is_none_or(|(cached, _)| *cached != key) {
+        #[cfg(test)]
+        ROW_BUILDS.with(|builds| builds.set(builds.get() + 1));
+        *cache = Some((key, journal_rows(chat, width)));
+    }
+    // ponytail: clones every cached row per call and rebuilds the whole journal
+    // on append. Hand out the visible slice and wrap per message if journals
+    // outgrow tens of thousands of rows.
+    let mut rows = cache
+        .as_ref()
+        .map_or_else(Vec::new, |(_, rows)| rows.clone());
+    drop(cache);
     if let Some(activity) = conversation_activity(chat) {
         if rows
             .last()
