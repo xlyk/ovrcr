@@ -625,12 +625,15 @@ fn user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn() {
     let (arrived_tx, arrived_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let release_rx = Mutex::new(release_rx);
+    let once = AtomicBool::new(false);
     *live.state.operator.before_retained.lock().unwrap() = Some(Arc::new(move || {
-        arrived_tx.send(()).unwrap();
-        let _ = release_rx
-            .lock()
-            .unwrap()
-            .recv_timeout(Duration::from_secs(5));
+        if !once.swap(true, Ordering::AcqRel) {
+            arrived_tx.send(()).unwrap();
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5));
+        }
     }));
 
     let submit_state = live.state.clone();
