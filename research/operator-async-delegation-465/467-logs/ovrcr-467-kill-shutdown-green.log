@@ -7,4 +7,3 @@ LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmNZfy
 test kill_shutdown_terminates_a_leased_worker_and_its_pi_group ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 4.58s
-

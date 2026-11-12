@@ -40,4 +40,3 @@ LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpAyPC
 test a_damaged_checkpoint_fails_closed_and_preserves_its_bytes ... ok
 
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.11s
-

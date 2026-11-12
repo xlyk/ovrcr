@@ -11,7 +11,7 @@ running 1 test
 
 thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654536758) panicked at tests/operator_worker.rs:1954:5:
 extension probe failed:
-stdout: 
+stdout:
 stderr: node:internal/modules/run_main:123
     triggerUncaughtException(
     ^

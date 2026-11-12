@@ -5,7 +5,7 @@ running 1 test
 
 thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654740490) panicked at tests/operator_worker.rs:1954:5:
 extension probe failed:
-stdout: 
+stdout:
 stderr: file:///private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-IvHgkr/extension.mjs:138
     throw new Error("terminal list returned invalid session data");
           ^

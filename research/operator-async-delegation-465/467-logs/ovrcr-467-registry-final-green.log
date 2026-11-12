@@ -28,4 +28,3 @@ test held_sqlite_write_lock_rejects_mutation_boundedly_then_recovers ... ok
 test schema_30_migrates_retained_sessions_with_empty_last_activity ... ok
 
 test result: ok. 14 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.80s
-

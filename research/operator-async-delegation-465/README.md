@@ -1,169 +1,71 @@
 # Operator async session delegation acceptance
 
-Spec: [#465](https://github.com/xlyk/ovrcr/issues/465). Implementation:
-[PR #471](https://github.com/xlyk/ovrcr/pull/471), branch
-`codex/465-integration`, based on `ceb8f06d`.
+[#465](https://github.com/xlyk/ovrcr/issues/465) ·
+[PR #471](https://github.com/xlyk/ovrcr/pull/471) · `codex/465-integration` ·
+base `ceb8f06d25096dfb490efca5861532b009b6949f`.
 
-This report is in progress. Unverified requirements remain open.
+All five ticket implementations and review corrections are integrated at
+`1dc1e248f032d04090133ef7177fb620e3551254`. Native acceptance passed on that
+source revision. Current CI results are linked below.
 
-## Capacity and control fences (#466)
+## Implementation and focused proof
 
-Implementation commit: `5ce4fdc3`; integrated by `3083aac1`.
+| Ticket | Behavior | Evidence |
+|---|---|---|
+| #466 | 50 Workspace slots plus a dedicated Operator slot; generic Operator input/pause fences | Compiled Server/CLI scope 10/10; existing delegation capacity 1/1. New regressions failed on original behavior. [Attempts](466-attempts.md) |
+| #467 | Run-scoped warm worker, per-run active Pi file, durable per-turn checkpoints, model/default changes, retirement/shutdown | e2e 17, worker 50, retained 20, migration 14 passed/1 ignored; focused wire/UI/CLI/Reporter checks. [Attempts](467-attempts.md) |
+| #468 | Bounded deterministic watches, supplied-baseline catch-up, atomic idle wakeup admission, batching, unread and drafts | protocol 6, retained 21, Server Operator 20 passed/1 ignored, Dashboard 32, e2e 18, worker 50. [Attempts](468-attempts.md), [portable UI fixture correction](468-ci-followup.md), [one-shot race barrier](468-ci-race-followup.md) |
+| #469 | Leased Stop/failure/timeout rollback, Running until settlement, first-turn/zero-record cases, five-second owned fallback | Six focused compiled Server/fake-Pi cases; real extension same-process resume/queue/in-flight proof; historical Failed JSON round-trip. [Evidence](469-evidence.md) |
+| #470 | Private bundled coordinator skill, explicit argv, isolated policy, provider-aware delegation/verification | Materialization/argv 1, HOME guard 1, compaction detector regression 1; installed Pi isolation 1 with 32 filtered; helper build/fmt/diff. [Evidence and native setup](470-evidence.md) |
 
-The new compiled-binary regressions failed on the original code:
+The above counts identify the staged focused checks. Final hosted CI supplies
+the complete workspace regression and lint gate after corrections.
 
-- A running Operator accepted generic `SendTerminal` input.
-- With 49 live Workspace sessions and a running Operator, creating the 50th
-  Workspace session returned `Conflict: all 50 live process slots are occupied`.
-- Before a worker existed, the Operator row lacked an explicit scope refusal.
+## Native GUI proof
 
-After the fix:
+Source `1dc1e248`, unmodified Pi 0.87.1, local scripted provider. Two real managed
+Pi sessions on separate worktrees received Paste tasks and held their replies
+while Operator completed dispatch and accepted another turn. Ctrl-x stopped
+that foreground reply; the next warm chat reused PID 21898/run 1 and its provider
+context excluded the stopped prompt/partial answer.
 
-| Check | Result |
-| --- | --- |
-| `cargo test -p ovrcr --test operator_scope` | 10 passed |
-| `cargo test -p ovrcr --test pi_delegation public_pi_research_assignment_launches_collects_and_fences_real_child` | 1 passed |
-| `cargo fmt --all --check` | Passed |
-| `git diff --check` | Passed |
+After release, both Reporters advanced revision 1→6. One batched AsyncWakeup
+read the replies and inspected Git state/checks. The hidden dock showed 1 unread;
+reopening preserved the unsent Quick draft. Both delegates remained open. The
+last wakeup released the lease and Operator exited.
 
-The scope suite uses a compiled Server, private sockets, Workspace PTYs and a
-deterministic fake Pi. It covers both admission orders for 50 Workspace sessions
-plus one Operator, refusal of the 51st Workspace session, and Server/CLI Paste,
-Keystroke, Pause and Resume refusals for idle and running Operator rows. The
-existing delegation test preserves its capacity refusal at 50 Workspace sessions.
-Tests cleared `OVRCR_AGENT_SOCKET` and `OVRCR_AGENT_TOKEN`.
+[Native evidence](native/README.md) contains five screenshots with matching AX,
+JSON baselines, journal summary, Git checks and redacted provider requests.
+The GUI/provider exited 0, root/socket were removed, and all 15 owned process
+groups were absent. The corrected interruption text was verified in the final native run.
+[Final review and resolutions](review.md) include the old-journal compatibility
+fix and its production migration/read regression.
 
-Draft CI at `3083aac1` found an existing expectation that still requires Operator
-to be refused at 50 Workspace sessions:
-`operator_capacity_refuses_without_consuming_prompt_or_run`.
-[Failed macOS shard](https://github.com/xlyk/ovrcr/actions/runs/43102686631/job/130797927456).
-The other three macOS shards, offline Cursor preflight and selection audit passed;
-Linux gates were skipped. These results apply only to that draft revision.
+![Batched wakeup and preserved draft](native/05-wakeup-draft.png)
 
-Correction `caae6b32` replaces the superseded refusal assertion with acceptance,
-journal/run advancement, and completion at 50 Workspace sessions. The owning
-runtime regression passed (1 test; 503 filtered); formatting and diff checks
-passed. [Attempt metadata](466-attempts.md) preserves the observed failures,
-commands, exit statuses and known evidence limits.
+## Integration decisions
 
-At `130e2897`, all four macOS shards, offline Cursor preflight, selection audit and
-the required aggregate passed ([run](https://github.com/xlyk/ovrcr/actions/runs/43106035491)).
-The three Linux jobs were skipped. This covers the capacity revision only.
+- Current base source was protocol 84/schema 32; this unreleased PR advances once
+  to 85/33. SQLite preserves journals, receipts and sequence values while allowing
+  multiple turns per run. Older binaries refuse the newer schema; clients and
+  Server need matching wire versions.
+- CLI `unread.turn` is an opaque string/null. Watches compare changed non-null
+  identity alongside numeric `activity_revision`, preserving the existing CLI.
+- The extension confirms atomic Server admission before `sendUserMessage`, so a
+  wakeup losing to user Submit retains its reports and starts no model work.
+- The existing CLI guide stays system-only. Pi advertises coordinator metadata
+  and its private path; its `read` tool loads the skill body on demand.
 
-## Work-leased residency (#467)
+## Hosted checks
 
-Feature commit: `8df8b930`; integrated revision: `010e3812`.
-[Attempts and source pointers](467-attempts.md) include preserved red/green logs.
+[Current PR checks](https://github.com/xlyk/ovrcr/pull/471/checks) are the authority
+for the final revision. The required workflow runs the four macOS workspace
+shards, formatting, Clippy, documentation/extension tests, offline Cursor
+preflight, selection audit and aggregate. Linux jobs run only on manual dispatch;
+a skipped Linux job is not a pass. The PR body records the final checked SHA and
+outcome.
 
-| Check | Result |
-| --- | --- |
-| Operator e2e suite | 17 passed |
-| Operator worker suite | 50 passed |
-| Retained Operator tests | 20 passed |
-| Registry migration | 14 passed; 1 ignored |
-| Wire snapshot, leased-idle Dashboard, hidden CLI, runtime argv, Reporter Start | 1 passed each |
-| Combined 50 Workspace plus Operator regression after merging #466 | 1 passed |
-| Formatting and diff checks | Passed |
-
-The live fake-Pi proofs cover same-run warm turns, model override/default and
-thinking default restoration, private validated checkpoint copies, cold resume
-followed by warm turns, shutdown refusal while leased, clean retirement and forced
-owned-group cleanup. Cold worker arguments carry only the run identity. SQLite
-schema 33 preserves the journal and receipt children while removing the old
-one-turn-per-run constraint; wire protocol 85 carries the new state.
-
-Pi writes its active session under a private per-run directory. Completed turns
-retain the canonical `turns/<turn>/session.jsonl` checkpoint path; cleanup removes
-superseded copies after an acknowledged completion. Native Pi and GUI acceptance
-remain separate, open gates.
-
-Hosted residency CI at `ce9193d6` found a Clippy `collapsible_if` warning and a
-lock-order test hook placed after the new first retained lookup
-([run](https://github.com/xlyk/ovrcr/actions/runs/43110937314)). Correction
-`6506e4e5` keeps the lock-order assertions, moves the hook to the first lookup,
-and uses a let-chain for the same-run UI guard. The runtime regression passed
-(1 test), owning TUI Clippy passed, and formatting/diff checks passed. New hosted
-results are pending.
-
-The next run at `4244a8c4` cleared the residency Clippy and lock-order failures.
-Its required aggregate still failed because
-`nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes` failed
-three attempts ([run](https://github.com/xlyk/ovrcr/actions/runs/43115269908)).
-The four-pane failure is under separate investigation; it is not a passed gate.
-
-## Session watches and wakeups (#468)
-
-Integrated commit: `3eb28f49`.
-[Attempts and log index](468-attempts.md) preserve the development failures and
-final focused results.
-
-| Check | Result |
-| --- | --- |
-| Wire tests | 6 passed |
-| Retained Operator tests | 21 passed |
-| Server Operator tests | 20 passed; 1 ignored |
-| Dashboard Operator tests | 32 passed |
-| Operator e2e suite | 18 passed |
-| Operator worker suite, including the Node extension probe | 50 passed |
-| Formatting and diff checks | Passed |
-
-The Node probe covers add/list/remove, actual string/null baseline types,
-pre-settled catch-up, stopped Agents without a current Reporter snapshot,
-inventories containing more than 50 rows, and stale in-flight poll protection.
-Polling uses only `terminal list --json`, with a five-second timeout and bounded
-output, and does not overlap. Reports batch while busy and remain queued after a
-declined wakeup admission.
-
-The live fake-Pi trace demonstrates an early preflight denied while the previous
-turn is still committing, followed by successful idle admission. Its retry is
-response-driven at 2.5-second intervals within a fixture budget. The worker
-streams the extension-triggered turn without issuing a second RPC prompt.
-Dashboard cases cover the Operator heading, one unread result across all terminal
-outcomes, both drafts and busy refusal.
-
-## Remaining acceptance
-
-- [x] Leased and unleased worker lifecycle, same-run user turns, model updates,
-  checkpoint permissions and retirement ordering (#467).
-- [x] Forward SQLite migration and wire/controller/render coverage (#467).
-- [x] Deterministic watch actions, baseline settlement, idle batching and durable
-  wakeups with unread/draft behavior (#468).
-- [ ] Leased Stop/failure/timeout rollback, extension state survival and hard
-  termination fallback (#469).
-- [ ] Isolated coordinator skill and provider-aware workflow (#470).
-- [ ] Reviewed-checkout native GUI walkthrough with screenshots and accessibility
-  evidence (#470).
-- [ ] Final workspace regression, lint, formatting and hosted checks.
-- [ ] Independent Standards and Spec reviews of the integrated committed diff.
-
-## Compatibility and boundaries
-
-The spec's version literals predate the current base: `ceb8f06d` uses protocol 84
-and schema 32. The implementation migrates forward from those versions. Matching
-clients and Server are required; no live instance is upgraded by this task.
-
-Offline fixtures establish OVRCR behavior. Native GUI evidence and any live
-provider inference are separate claims. No paid model calls are part of this
-acceptance plan.
-
-The CLI's `unread.turn` is an opaque string or null (`ReadyObservation.turn`), so
-the watch baseline preserves that identity and detects a changed non-null turn
-alongside the numeric activity revision. This corrects the spec's numeric-turn
-assumption without changing the CLI format.
-
-Watch delivery reserves its asynchronous turn through the existing extension UI
-handshake before calling `sendUserMessage`. That lets the Server serialize the
-reservation against Submit; a losing wakeup keeps its reports and starts no model
-work. Stock Pi extension APIs remain unmodified.
-
-## Watch CI follow-up
-
-At `13cbab82`, run [43121584362](https://github.com/xlyk/ovrcr/actions/runs/43121584362) exposed a Clippy manual-character comparison in the new heading test and the same test’s implicit dependence on an installed Pi. `b63bab60` uses the established isolated Pi-availability fixture and a character-array pattern; its assertions are unchanged. The unavailable-Pi reproduction fails before and passes 1/1 after. Owning TUI Clippy, fmt and diff checks pass. See [follow-up attempts](468-ci-followup.md).
-
-The earlier four-pane terminal failure was not reproduced in one isolated offline run (1/1); [diagnosis](terminal-ci-diagnosis.md) distinguishes the observed picker/COPY screens from the inferred synchronization issue. No terminal-test source or assertion changed. This local pass does not clear required hosted checks.
-
-At `13cbab82`, hosted shard4 passed all738 selected tests; the four-pane test passed on its first attempt (5.935s). Shard2, offline Cursor and selection audit also passed. Required aggregate was red only for the two watch-test issues corrected in `b63bab60`. Final current-head CI remains required.
-
-## Submit/wakeup barrier CI correction
-
-Hosted run [43122941722](https://github.com/xlyk/ovrcr/actions/runs/43122941722) at `bb3a890c` passed shards2–4, offline Cursor and selection audit. Shard1 exposed a repeated blocking test hook in the new Submit/wakeup regression (three timeouts); an existing GUI palette check passed on its second attempt. The hook now blocks only its first invocation in `882def7a`, preserving the race assertions. The original failure reproduces before the fix; race1/1, lock-order1/1 and Server Operator20 passed/1ignored after it. See [attempts](468-ci-race-followup.md). Current-head CI is still required.
+Earlier failures and corrections remain in the linked attempt records. The
+four-pane terminal gate later passed without source/assertion changes;
+[diagnosis](terminal-ci-diagnosis.md) separates observed failures from the
+unconfirmed synchronization hypothesis.

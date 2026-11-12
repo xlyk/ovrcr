@@ -1,0 +1,148 @@
+{
+  "turns": [
+    {
+      "id": 1,
+      "run": 1,
+      "state": "Complete",
+      "leased": 1
+    },
+    {
+      "id": 2,
+      "run": 1,
+      "state": "Interrupted",
+      "leased": 1
+    },
+    {
+      "id": 3,
+      "run": 1,
+      "state": "Complete",
+      "leased": 1
+    },
+    {
+      "id": 4,
+      "run": 1,
+      "state": "Complete",
+      "leased": 0
+    }
+  ],
+  "messages": [
+    {
+      "turn": 1,
+      "ordinal": 1,
+      "kinds": [
+        "User"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 2,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 3,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 4,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 5,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 6,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 7,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 1,
+      "ordinal": 8,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 2,
+      "ordinal": 9,
+      "kinds": [
+        "User"
+      ]
+    },
+    {
+      "turn": 2,
+      "ordinal": 10,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 2,
+      "ordinal": 11,
+      "kinds": []
+    },
+    {
+      "turn": 3,
+      "ordinal": 12,
+      "kinds": [
+        "User"
+      ]
+    },
+    {
+      "turn": 3,
+      "ordinal": 13,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 4,
+      "ordinal": 14,
+      "kinds": [
+        "AsyncWakeup"
+      ]
+    },
+    {
+      "turn": 4,
+      "ordinal": 15,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 4,
+      "ordinal": 16,
+      "kinds": [
+        "Worker"
+      ]
+    },
+    {
+      "turn": 4,
+      "ordinal": 17,
+      "kinds": [
+        "Worker"
+      ]
+    }
+  ],
+  "checkpoint": 4
+}

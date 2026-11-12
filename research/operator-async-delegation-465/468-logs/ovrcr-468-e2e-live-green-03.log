@@ -7,4 +7,3 @@ LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpnH5W
 test an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 7.28s
-

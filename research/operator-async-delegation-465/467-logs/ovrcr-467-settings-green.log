@@ -7,4 +7,3 @@ LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcnIl
 test leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 5.07s
-

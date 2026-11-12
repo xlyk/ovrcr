@@ -1,0 +1,44 @@
+[
+  {
+    "session": 13,
+    "workspace": "gui-consigint-worktree-lifecycle",
+    "checks": {
+      "status": {
+        "exit_code": 0,
+        "stdout": " M README\n",
+        "stderr": ""
+      },
+      "diff_stat": {
+        "exit_code": 0,
+        "stdout": " README | 2 ++\n 1 file changed, 2 insertions(+)\n",
+        "stderr": ""
+      },
+      "diff_check": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  {
+    "session": 14,
+    "workspace": "gui-consigint-auth-handoff",
+    "checks": {
+      "status": {
+        "exit_code": 0,
+        "stdout": " M README\n",
+        "stderr": ""
+      },
+      "diff_stat": {
+        "exit_code": 0,
+        "stdout": " README | 2 ++\n 1 file changed, 2 insertions(+)\n",
+        "stderr": ""
+      },
+      "diff_check": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  }
+]

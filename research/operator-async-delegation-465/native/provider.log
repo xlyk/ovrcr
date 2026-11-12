@@ -1,0 +1,10 @@
+
+running 1 test
+OPERATOR_PI_GUI_COORDINATOR_SESSIONS [{"id":13,"name":"coordinator-alpha","run":1,"workspace":"gui-consigint-worktree-lifecycle"},{"id":14,"name":"coordinator-beta","run":1,"workspace":"gui-consigint-auth-handoff"}]
+OPERATOR_PI_GUI_PROVIDER root=/private/tmp/ovrcr-gui-8tnDxU workspace=/private/tmp/ovrcr-gui-8tnDxU/operator-target marker=/private/tmp/ovrcr-gui-8tnDxU/operator-target/gui-fixture-marker.txt
+OPERATOR_PI_GUI_READY base=http://127.0.0.1:59151 root=/private/tmp/ovrcr-gui-8tnDxU compaction=false coordinator=true
+test installed_pi::operator_pi_gui_provider has been running for over 60 seconds
+OPERATOR_PI_GUI_PROVIDER exit root_exists=true stop_marker=true requests=14 evidence=/private/tmp/ovrcr-gui-8tnDxU/operator-pi/fixture-requests.jsonl
+test installed_pi::operator_pi_gui_provider ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 131.50s

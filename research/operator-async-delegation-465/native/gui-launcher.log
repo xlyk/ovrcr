@@ -1,0 +1,7 @@
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-465-integration/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-465-integration/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-465-integration/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-465-integration/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-465-integration)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.33s

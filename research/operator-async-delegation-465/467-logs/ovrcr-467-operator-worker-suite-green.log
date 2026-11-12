@@ -104,4 +104,3 @@ LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpraAR
 test thinking_prefix_and_content_block_contradictions_fail_closed ... ok
 
 test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.42s
-

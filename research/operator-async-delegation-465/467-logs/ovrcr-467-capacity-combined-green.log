@@ -58,4 +58,3 @@ LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yP
 test fifty_workspace_sessions_coexist_with_the_operator_dedicated_slot ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 10.74s
-

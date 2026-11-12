@@ -6,7 +6,7 @@ running 1 test
 
 thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654634273) panicked at tests/operator_worker.rs:1954:5:
 extension probe failed:
-stdout: 
+stdout:
 stderr: file:///private/tmp/ovrcr-468/tests/fixtures/operator-pi/extension_probe.mjs:242
   assert.equal(caught.watches.length, 0);
                               ^
