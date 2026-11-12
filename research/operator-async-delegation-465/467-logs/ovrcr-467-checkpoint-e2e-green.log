@@ -1,0 +1,19 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppC1FT9 server=15754 test=only_completed_turns_advance_the_checkpoint_across_failure_and_interruption
+
+thread 'only_completed_turns_advance_the_checkpoint_across_failure_and_interruption' (654025632) panicked at tests/operator_e2e.rs:626:14:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test only_completed_turns_advance_the_checkpoint_across_failure_and_interruption ... FAILED
+
+failures:
+
+failures:
+    only_completed_turns_advance_the_checkpoint_across_failure_and_interruption
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 7.02s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

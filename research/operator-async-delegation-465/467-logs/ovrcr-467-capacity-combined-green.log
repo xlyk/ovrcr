@@ -1,0 +1,60 @@
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-467/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.14s
+     Running tests/operator_scope.rs (target/debug/deps/operator_scope-1fb597e56f6c60ed)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq server=51958 test=fifty_workspace_sessions_coexist_with_the_operator_dedicated_slot
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=52959
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=52996
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53032
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53068
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53104
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53140
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53176
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53212
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53308
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53344
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53380
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53416
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53464
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53500
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53536
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53572
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53609
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53645
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53681
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53717
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53753
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53800
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53885
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53921
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=53957
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54016
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54141
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54232
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54334
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54461
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54508
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54546
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54582
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54618
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54664
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54750
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54786
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54822
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54858
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54894
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54942
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=54978
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55014
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55051
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55087
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55123
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55160
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55199
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55296
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6P7yPq pgid=55616
+test fifty_workspace_sessions_coexist_with_the_operator_dedicated_slot ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 10.74s

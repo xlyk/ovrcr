@@ -364,6 +364,26 @@ impl Session {
         identity: ovrcr_protocol::OperatorTurnIdentity,
         apply: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        self.with_operator_run_authority(
+            auth,
+            owner,
+            ovrcr_protocol::OperatorRunIdentity {
+                conversation: identity.conversation,
+                session: identity.session,
+                run: identity.run,
+            },
+            apply,
+        )
+    }
+
+    pub(crate) fn with_operator_run_authority<T>(
+        &self,
+        auth: &SupervisorAuth,
+        owner: Option<&Arc<()>>,
+        identity: ovrcr_protocol::OperatorRunIdentity,
+        apply: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        identity.validate().map_err(anyhow::Error::msg)?;
         let state = self.state.lock().unwrap();
         if self.run() != identity.run
             || self.summary.id != identity.session

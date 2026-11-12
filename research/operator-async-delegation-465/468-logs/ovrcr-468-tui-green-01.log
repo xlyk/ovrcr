@@ -1,0 +1,15 @@
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.62s
+     Running unittests src/lib.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/ovrcr_tui-4d4bbaf401d6754e)
+
+running 2 tests
+test dashboard::operator::tests::async_wakeup_attach_preserves_composer_and_quick_drafts_while_busy ... ok
+test dashboard::operator::tests::async_wakeup_uses_one_operator_heading_and_terminal_outcomes_mark_one_unread ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 462 filtered out; finished in 0.02s
+
+     Running tests/settings_theme_preview.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/settings_theme_preview-30cade4bb78e8633)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s

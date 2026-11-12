@@ -5,6 +5,8 @@ use ovrcr_protocol::operator::*;
 use std::collections::HashSet;
 use std::ffi::OsString;
 
+const SOFT_STOP_GRACE: Duration = Duration::from_secs(5);
+
 pub(super) struct OperatorRuntime {
     pub(super) executable: PathBuf,
     controls: Mutex<Controls>,
@@ -73,15 +75,13 @@ impl Default for OperatorRuntime {
 }
 
 /// Same executable; only nonsecret identities cross argv. Payload uses authenticated Start.
-pub fn operator_worker_argv(executable: &Path, identity: OperatorTurnIdentity) -> Vec<OsString> {
+pub fn operator_worker_argv(executable: &Path, identity: OperatorRunIdentity) -> Vec<OsString> {
     [
         executable.as_os_str().to_owned(),
         "operator".into(),
         "worker".into(),
         "--conversation".into(),
         identity.conversation.0.to_string().into(),
-        "--turn".into(),
-        identity.turn.0.to_string().into(),
         "--session".into(),
         identity.session.0.to_string().into(),
         "--run".into(),
@@ -186,12 +186,17 @@ impl ServerState {
                 if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
                     hook();
                 }
-                let retained = self.retained.lock();
-                let current = self
-                    .dashboard
-                    .with_owned(owner, |_| retained.current_operator_conversation())
-                    .context("dashboard owner changed")??;
-                Ok(OperatorResponse::Current(current))
+                let current = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| retained.current_operator_conversation())
+                        .context("dashboard owner changed")??
+                };
+                Ok(OperatorResponse::Current(
+                    current
+                        .map(|summary| self.publish_worker_live(summary))
+                        .transpose()?,
+                ))
             }
             OperatorRequest::Open => {
                 let opened = {
@@ -204,10 +209,13 @@ impl ServerState {
                     if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
                         hook();
                     }
-                    let mut retained = self.retained.lock();
-                    self.dashboard
-                        .with_owned(owner, |_| retained.open_operator_conversation(&cwd))
-                        .context("dashboard owner changed")??
+                    let opened = {
+                        let mut retained = self.retained.lock();
+                        self.dashboard
+                            .with_owned(owner, |_| retained.open_operator_conversation(&cwd))
+                            .context("dashboard owner changed")??
+                    };
+                    self.publish_worker_live(opened)?
                 };
                 self.operator_changed(opened.id);
                 Ok(OperatorResponse::Opened(opened))
@@ -218,7 +226,7 @@ impl ServerState {
                 if let Some(hook) = self.operator.before_stop.lock().unwrap().clone() {
                     hook();
                 }
-                self.stop_operator(identity, None, false, Some(owner))
+                self.stop_operator_dashboard(identity, owner)
                     .map(OperatorResponse::Stopped)
             }
             OperatorRequest::Submit {
@@ -229,7 +237,7 @@ impl ServerState {
             } => {
                 let _mutation = self.mutation_lock.lock().unwrap();
                 self.reject_if_stopping()?;
-                self.check_live_capacity()?;
+                let warm = self.operator_warm_dispatchable(conversation, expected_run)?;
                 self.validate_operator_context(&context)?;
                 // The accepted turn captures the current model and reasoning settings, so a
                 // later settings edit cannot change what this turn asked the worker to use.
@@ -242,28 +250,45 @@ impl ServerState {
                     .operator
                     .clone();
                 let turn = {
-                    #[cfg(test)]
-                    if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
-                        hook();
-                    }
                     // Assigned human input also acquires retained before the Dashboard slot.
                     let mut retained = self.retained.lock();
                     self.dashboard
                         .with_owned(owner, |_| {
-                            retained.submit_operator_turn(
-                                conversation,
-                                expected_run,
-                                &text,
-                                context,
-                                settings,
-                            )
+                            if warm {
+                                retained.submit_operator_turn_warm(
+                                    conversation,
+                                    expected_run,
+                                    &text,
+                                    context,
+                                    settings,
+                                )
+                            } else {
+                                retained.submit_operator_turn(
+                                    conversation,
+                                    expected_run,
+                                    &text,
+                                    context,
+                                    settings,
+                                )
+                            }
                         })
                         .context("dashboard owner changed")??
                 };
+                if warm {
+                    self.operator_changed(conversation);
+                    return Ok(OperatorResponse::Submitted(turn));
+                }
                 let result = self.spawn_prepared_record_locked(
                     turn.identity.session,
                     turn.identity.run,
-                    operator_worker_argv(&self.operator.executable, turn.identity),
+                    operator_worker_argv(
+                        &self.operator.executable,
+                        OperatorRunIdentity {
+                            conversation: turn.identity.conversation,
+                            session: turn.identity.session,
+                            run: turn.identity.run,
+                        },
+                    ),
                     SessionSpawnOptions {
                         prepared: true,
                         ..SessionSpawnOptions::default()
@@ -296,23 +321,85 @@ impl ServerState {
                 if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
                     hook();
                 }
-                let retained = self.retained.lock();
-                self.dashboard
-                    .with_owned(owner, |_| -> Result<_> {
-                        match request {
-                            OperatorRequest::Read {
-                                conversation,
-                                after,
-                                limit,
-                            } => retained
-                                .read_operator_history(conversation, after, limit)
-                                .map(OperatorResponse::History),
-                            _ => unreachable!(),
-                        }
-                    })
-                    .context("dashboard owner changed")?
+                let result = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| -> Result<_> {
+                            match request {
+                                OperatorRequest::Read {
+                                    conversation,
+                                    after,
+                                    limit,
+                                } => retained.read_operator_history(conversation, after, limit),
+                                _ => unreachable!(),
+                            }
+                        })
+                        .context("dashboard owner changed")??
+                };
+                Ok(OperatorResponse::History(ovrcr_protocol::OperatorHistory {
+                    conversation: self.publish_worker_live(result.conversation)?,
+                    ..result
+                }))
             }
         }
+    }
+
+    fn publish_worker_live(
+        &self,
+        mut summary: ovrcr_protocol::OperatorConversationSummary,
+    ) -> Result<ovrcr_protocol::OperatorConversationSummary> {
+        let leased = self.retained.lock().operator_worker_leased(summary.id)?;
+        let active_turn = summary.current_turn.as_ref().is_some_and(|turn| {
+            turn.state == OperatorTurnState::Running && turn.identity.run == summary.run
+        });
+        if !leased && !active_turn {
+            summary.worker_live = false;
+            return Ok(summary);
+        }
+        let session = self.sessions.lock().unwrap().get(&summary.session).cloned();
+        summary.worker_live = session.is_some_and(|session| {
+            session.run() == summary.run
+                && session.is_live()
+                && session.summary().scope
+                    == (ovrcr_protocol::SessionScope::OperatorConversation {
+                        conversation: summary.id,
+                    })
+        });
+        Ok(summary)
+    }
+
+    fn operator_warm_dispatchable(
+        &self,
+        conversation: OperatorConversationId,
+        run: SessionRunId,
+    ) -> Result<bool> {
+        // Submit's warm check is its first retained boundary. Keep the lock-order
+        // seam here so the test observes waits before any Dashboard slot is held.
+        #[cfg(test)]
+        if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+            hook();
+        }
+        let summary = self.retained.lock().operator_conversation(conversation)?;
+        if summary.run != run
+            || !self.retained.lock().operator_worker_leased(conversation)?
+            || summary.current_turn.as_ref().is_none_or(|turn| {
+                !matches!(
+                    turn.state,
+                    OperatorTurnState::Complete
+                        | OperatorTurnState::Interrupted
+                        | OperatorTurnState::Error
+                ) || turn.identity.run != run
+            })
+        {
+            return Ok(false);
+        }
+        let session = self.sessions.lock().unwrap().get(&summary.session).cloned();
+        Ok(session.is_some_and(|session| {
+            session.run() == run
+                && session.is_live()
+                && session.summary().scope
+                    == (ovrcr_protocol::SessionScope::OperatorConversation { conversation })
+        }))
     }
 
     fn validate_operator_context(&self, context: &OperatorContext) -> Result<()> {
@@ -383,10 +470,99 @@ impl ServerState {
                     .context("operator worker unavailable")?;
                 let retained = self.retained.lock();
                 session
-                    .with_operator_authority(&request.auth, owner, identity, || {
-                        retained.operator_worker_start(identity)
+                    .with_operator_run_authority(&request.auth, owner, identity, || {
+                        retained.operator_worker_start_for_run(identity)
                     })
                     .map(|start| OperatorWorkerResult::Start(Box::new(start)))
+            }
+            OperatorWorkerCommand::StartTurn { identity } => {
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let retained = self.retained.lock();
+                session
+                    .with_operator_run_authority(&request.auth, owner, identity, || {
+                        retained.operator_worker_next_turn(identity)
+                    })
+                    .map(|start| OperatorWorkerResult::StartTurn(start.map(Box::new)))
+            }
+            OperatorWorkerCommand::BeginAsyncTurn { identity, text } => {
+                // The async wakeup and human Submit share this exact admission
+                // lock. A winner durably owns the one-running-turn slot before
+                // Pi is allowed to continue its native asynchronous prompt.
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let dispatchable =
+                    self.operator_warm_dispatchable(identity.conversation, identity.run)?;
+                let result = if dispatchable {
+                    let mut retained = self.retained.lock();
+                    session.with_operator_run_authority(&request.auth, owner, identity, || {
+                        retained.begin_async_operator_turn(identity, &text)
+                    })?
+                } else {
+                    // Still authenticate the exact current worker before a
+                    // losing request receives a safe refusal.
+                    session
+                        .with_operator_run_authority(&request.auth, owner, identity, || Ok(None))?
+                };
+                if result.is_some() {
+                    self.operator_changed(identity.conversation);
+                }
+                Ok(OperatorWorkerResult::BeginAsyncTurn(result.map(Box::new)))
+            }
+            OperatorWorkerCommand::AbortTurn { identity, leased } => {
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let mut retained = self.retained.lock();
+                let current = retained.operator_conversation(identity.conversation)?;
+                if current.current_turn.as_ref().map(|turn| turn.identity) != Some(identity) {
+                    bail!("stale operator turn identity");
+                }
+                let abort_requested = session.operator_abort_requested(identity);
+                session.with_operator_authority(
+                    &request.auth,
+                    owner,
+                    identity,
+                    || match current.current_turn.as_ref().map(|turn| turn.state) {
+                        Some(OperatorTurnState::Running) if abort_requested => {
+                            retained.interrupt_operator_turn(identity, leased)
+                        }
+                        Some(OperatorTurnState::Error) => {
+                            retained.record_operator_turn_lease(identity, leased)?;
+                            retained
+                                .operator_conversation(identity.conversation)?
+                                .current_turn
+                                .context("operator turn missing")
+                        }
+                        Some(OperatorTurnState::Interrupted) => retained
+                            .operator_conversation(identity.conversation)?
+                            .current_turn
+                            .context("operator turn missing"),
+                        _ => bail!("operator turn abort was not requested"),
+                    },
+                )?;
+                session.clear_operator_abort(identity);
+                drop(retained);
+                self.operator_changed(identity.conversation);
+                Ok(OperatorWorkerResult::Aborted { identity })
             }
             OperatorWorkerCommand::Stop { identity } => {
                 self.stop_operator(identity, Some((&request.auth, owner)), false, None)?;
@@ -397,6 +573,71 @@ impl ServerState {
                 Ok(OperatorWorkerResult::Retired { identity })
             }
         }
+    }
+
+    fn stop_operator_dashboard(
+        &self,
+        identity: OperatorTurnIdentity,
+        owner: &Arc<()>,
+    ) -> Result<OperatorTurn> {
+        let session = {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            self.reject_if_stopping()?;
+            let retained = self.retained.lock();
+            retained.require_current_operator(identity.conversation)?;
+            let conversation = retained.operator_conversation(identity.conversation)?;
+            let turn = conversation.current_turn.context("operator turn missing")?;
+            if turn.identity != identity {
+                bail!("stale operator turn identity");
+            }
+            self.dashboard
+                .with_owned(owner, |_| ())
+                .context("dashboard owner changed")?;
+            let session = self
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&identity.session)
+                .cloned();
+            if conversation.worker_stopped
+                || turn.state != OperatorTurnState::Running
+                || !session.as_ref().is_some_and(|session| session.is_live())
+            {
+                None
+            } else {
+                let session = session.context("operator worker unavailable")?;
+                if session.request_operator_abort(identity).is_err() {
+                    None
+                } else {
+                    Some(session)
+                }
+            }
+        };
+        let Some(session) = session else {
+            return self.stop_operator(identity, None, false, None);
+        };
+        self.operator_changed(identity.conversation);
+
+        let deadline = Instant::now() + SOFT_STOP_GRACE;
+        loop {
+            let turn = self
+                .retained
+                .lock()
+                .operator_conversation(identity.conversation)?
+                .current_turn
+                .context("operator turn missing")?;
+            if turn.identity != identity || turn.state != OperatorTurnState::Running {
+                return Ok(turn);
+            }
+            if !session.is_live() || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // The live worker did not confirm rollback inside the grace period.
+        // Fall back to the same exact-run, owned process-group stop path.
+        self.stop_operator(identity, None, false, None)
     }
 
     fn stop_operator(
@@ -441,12 +682,13 @@ impl ServerState {
             }
             let turn = if let Some(owner) = dashboard_owner {
                 self.dashboard
-                    .with_owned(owner, |_| retained.interrupt_operator_turn(identity))
+                    .with_owned(owner, |_| retained.interrupt_operator_turn(identity, false))
                     .context("dashboard owner changed")??
             } else {
-                retained.interrupt_operator_turn(identity)?
+                retained.interrupt_operator_turn(identity, false)?
             };
             if let Some(session) = &session {
+                session.clear_operator_abort(identity);
                 session.revoke_hook_capability();
             }
             (

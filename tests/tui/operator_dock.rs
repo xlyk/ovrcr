@@ -22,6 +22,7 @@ fn summary() -> OperatorConversationSummary {
     OperatorConversationSummary {
         run: SessionRunId(1),
         worker_stopped: true,
+        worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
         model: None,
@@ -114,7 +115,9 @@ fn assistant_reply(text: &str) -> Vec<OperatorMessage> {
         OperatorMessage {
             ordinal: 2,
             turn: OperatorTurnId(1),
-            content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+            }),
         },
     ]
 }

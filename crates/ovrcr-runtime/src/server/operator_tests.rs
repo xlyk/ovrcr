@@ -1,6 +1,35 @@
 use super::*;
 use crate::retained::Disposition;
+use crate::server::operator::operator_worker_argv;
 use ovrcr_protocol::*;
+
+#[test]
+fn worker_argv_carries_run_identity_without_turn_identity() {
+    let argv = operator_worker_argv(
+        Path::new("/tmp/ovrcr-worker"),
+        OperatorRunIdentity {
+            conversation: OperatorConversationId(1),
+            session: SessionId(2),
+            run: SessionRunId(3),
+        },
+    );
+    let args: Vec<_> = argv.iter().map(|value| value.to_string_lossy()).collect();
+    assert_eq!(
+        args,
+        [
+            "/tmp/ovrcr-worker",
+            "operator",
+            "worker",
+            "--conversation",
+            "1",
+            "--session",
+            "2",
+            "--run",
+            "3",
+        ]
+    );
+    assert!(!args.iter().any(|arg| arg == "--turn"));
+}
 
 #[test]
 fn operator_current_and_open_require_the_current_dashboard() {
@@ -152,7 +181,7 @@ impl LiveOperator {
             &script,
             format!(
                 r#"#!/bin/sh
-export OVRCR_TEST_OPERATOR_IDENT="$4,$6,$8,${{10}}"
+export OVRCR_TEST_OPERATOR_IDENT="$4,$6,$8"
 export OVRCR_TEST_OPERATOR_ROOT='{}'
 exec '{}' --exact server::operator_tests::operator_worker_fixture --ignored --nocapture
 "#,
@@ -369,11 +398,10 @@ fn operator_worker_fixture() {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect();
-    let identity = OperatorTurnIdentity {
+    let run_identity = OperatorRunIdentity {
         conversation: OperatorConversationId(ids[0]),
-        turn: OperatorTurnId(ids[1]),
-        session: SessionId(ids[2]),
-        run: SessionRunId(ids[3]),
+        session: SessionId(ids[1]),
+        run: SessionRunId(ids[2]),
     };
     let root = PathBuf::from(std::env::var_os("OVRCR_TEST_OPERATOR_ROOT").unwrap());
     let socket = std::env::var_os("OVRCR_HOOK_SOCKET").unwrap();
@@ -387,7 +415,7 @@ fn operator_worker_fixture() {
     let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = worker_exchange(
         &mut stream,
         Request::ReserveAgent(ReserveAgent {
-            session: identity.session,
+            session: run_identity.session,
             capability: AgentSecret(bytes),
             operation: "reserve".into(),
             invocation: "fixture".into(),
@@ -399,19 +427,24 @@ fn operator_worker_fixture() {
         panic!("reserve")
     };
     let auth = SupervisorAuth {
-        session: identity.session,
+        session: run_identity.session,
         lease: reservation.lease,
     };
     let Response::OperatorWorker(OperatorWorkerResult::Start(start)) = worker_exchange(
         &mut stream,
         Request::OperatorWorker(OperatorWorkerRequest {
             auth: auth.clone(),
-            command: OperatorWorkerCommand::Start { identity },
+            command: OperatorWorkerCommand::Start {
+                identity: run_identity,
+            },
         }),
     ) else {
         panic!("start")
     };
-    assert_eq!(start.identity, identity);
+    let identity = start.identity;
+    assert_eq!(identity.conversation, run_identity.conversation);
+    assert_eq!(identity.session, run_identity.session);
+    assert_eq!(identity.run, run_identity.run);
     assert_eq!(start.text, "fixture prompt");
     assert!(
         start.model.is_none(),
@@ -451,6 +484,8 @@ fn operator_worker_fixture() {
         ),
         Response::OperatorExchange(_)
     ));
+    let abort_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    signal_hook::flag::register(libc::SIGUSR1, Arc::clone(&abort_requested)).unwrap();
     let ready = root.join(format!("ready-{}", identity.conversation.0));
     fs::write(
         ready.with_extension("tmp"),
@@ -463,12 +498,44 @@ fn operator_worker_fixture() {
     )
     .unwrap();
     fs::rename(ready.with_extension("tmp"), &ready).unwrap();
+    let complete = root.join(format!("complete-{}", identity.conversation.0));
+    let complete_leased = root.join(format!("complete-leased-{}", identity.conversation.0));
     wait_until(|| {
-        root.join(format!("complete-{}", identity.conversation.0))
-            .exists()
+        complete.exists() || complete_leased.exists() || abort_requested.load(Ordering::Acquire)
     });
+    if abort_requested.load(Ordering::Acquire) {
+        // Model the native worker's soft-stop handshake: acknowledge its exact
+        // interrupted turn, then retire the now-idle worker run.
+        assert!(matches!(
+            worker_exchange(
+                &mut stream,
+                Request::OperatorWorker(OperatorWorkerRequest {
+                    auth: auth.clone(),
+                    command: OperatorWorkerCommand::AbortTurn {
+                        identity,
+                        leased: false,
+                    },
+                })
+            ),
+            Response::OperatorWorker(OperatorWorkerResult::Aborted {
+                identity: aborted
+            }) if aborted == identity
+        ));
+        let _ = worker_exchange(
+            &mut stream,
+            Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::Retire { identity },
+            }),
+        );
+        return;
+    }
+    let leased = complete_leased.exists();
     assert!(matches!(
-        worker_exchange(&mut stream, batch(2, vec![OperatorWorkerEvent::Completed])),
+        worker_exchange(
+            &mut stream,
+            batch(2, vec![OperatorWorkerEvent::Completed { leased }])
+        ),
         Response::OperatorExchange(_)
     ));
     fs::write(
@@ -571,6 +638,116 @@ fn operator_worker_completes_and_retires_with_stop_proof() {
 }
 
 #[test]
+fn user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let first = live.submit(&c);
+    let auth = live.ready(&c);
+    live.command(&c, "complete-leased");
+    wait_until(|| {
+        live.history(&c)
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+    });
+
+    let owner = live.state.dashboard.snapshot().unwrap().identity;
+    let (arrived_tx, arrived_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let once = AtomicBool::new(false);
+    *live.state.operator.before_retained.lock().unwrap() = Some(Arc::new(move || {
+        if !once.swap(true, Ordering::AcqRel) {
+            arrived_tx.send(()).unwrap();
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5));
+        }
+    }));
+
+    let submit_state = live.state.clone();
+    let submit_owner = owner.clone();
+    let (submit_tx, submit_rx) = mpsc::channel();
+    let submit = thread::spawn(move || {
+        let result = submit_state.operator_request(
+            &submit_owner,
+            OperatorRequest::Submit {
+                conversation: c.id,
+                expected_run: first.identity.run,
+                text: "human report follow-up".into(),
+                context: OperatorContext::default(),
+            },
+        );
+        submit_tx.send(result).unwrap();
+    });
+    arrived_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("human Submit owns mutation_lock before retained commit");
+
+    let async_state = live.state.clone();
+    let run_identity = OperatorRunIdentity {
+        conversation: c.id,
+        session: c.session,
+        run: first.identity.run,
+    };
+    let (async_tx, async_rx) = mpsc::channel();
+    let async_request = thread::spawn(move || {
+        let result = async_state.operator_worker(
+            OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::BeginAsyncTurn {
+                    identity: run_identity,
+                    text: "watched session report remains queued".into(),
+                },
+            },
+            None,
+        );
+        async_tx.send(result).unwrap();
+    });
+    assert!(
+        async_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "the async admission waits behind the already-owned human Submit"
+    );
+    release_tx.send(()).unwrap();
+
+    let submitted = submit_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    submit.join().unwrap();
+    assert!(matches!(submitted, OperatorResponse::Submitted(_)));
+    let wakeup = async_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    async_request.join().unwrap();
+    assert!(matches!(wakeup, OperatorWorkerResult::BeginAsyncTurn(None)));
+    *live.state.operator.before_retained.lock().unwrap() = None;
+
+    let history = live.history(&c);
+    let user_turn = history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(user_turn.state, OperatorTurnState::Running);
+    assert_eq!(user_turn.identity.run, first.identity.run);
+    assert!(matches!(
+        history.messages.last().map(|message| &message.content),
+        Some(OperatorMessageContent::User { text, .. }) if text == "human report follow-up"
+    ));
+    assert!(
+        !history.messages.iter().any(|message| {
+            matches!(message.content, OperatorMessageContent::AsyncWakeup { .. })
+        })
+    );
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: user_turn.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+}
+
+#[test]
 fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history() {
     let mut live = LiveOperator::new();
     let c = live.open();
@@ -599,15 +776,21 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
         })),
         Response::Error { .. }
     ));
-    let Response::Operator(OperatorResponse::Stopped(stopped)) =
-        live.request(Request::Operator(OperatorRequest::Stop {
-            identity: turn.identity,
-        }))
-    else {
-        panic!("stop")
+    let stop_response = live.request(Request::Operator(OperatorRequest::Stop {
+        identity: turn.identity,
+    }));
+    let Response::Operator(OperatorResponse::Stopped(stopped)) = stop_response else {
+        panic!("unexpected Stop response: {stop_response:?}")
     };
     assert_eq!(stopped.state, OperatorTurnState::Interrupted);
-    assert!(live.history(&c).conversation.worker_stopped);
+    // AbortTurn publishes Interrupted before Retire publishes stop proof.
+    wait_until(|| {
+        let conversation = live.history(&c).conversation;
+        conversation.run == turn.identity.run && conversation.worker_stopped
+    });
+    let stopped_history = live.history(&c);
+    assert_eq!(stopped_history.conversation.run, turn.identity.run);
+    assert!(stopped_history.conversation.worker_stopped);
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth,
@@ -703,7 +886,7 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
 }
 
 #[test]
-fn operator_capacity_refuses_without_consuming_prompt_or_run() {
+fn operator_uses_dedicated_capacity_at_fifty_workspace_sessions() {
     let mut live = LiveOperator::new();
     let c = live.open();
     for index in 0..50 {
@@ -737,25 +920,26 @@ fn operator_capacity_refuses_without_consuming_prompt_or_run() {
             )
             .unwrap();
     }
-    assert!(matches!(
-        live.request(Request::Operator(OperatorRequest::Submit {
-            conversation: c.id,
-            expected_run: SessionRunId(0),
-            text: "keep this draft".into(),
-            context: OperatorContext::default()
-        })),
-        Response::Error {
-            code: ErrorCode::Conflict,
-            ..
-        }
-    ));
+    let turn = live.submit(&c);
+    assert_eq!(turn.identity.run, SessionRunId(1));
+    live.ready(&c);
+
     let h = live.history(&c);
-    assert!(h.messages.is_empty());
-    assert!(h.conversation.worker_stopped);
-    assert!(h.conversation.current_turn.is_none());
+    assert!(h.messages.iter().any(|message| matches!(
+        &message.content,
+        OperatorMessageContent::User { text, .. } if text == "fixture prompt"
+    )));
+    assert_eq!(h.conversation.run, SessionRunId(1));
+    let current_turn = h.conversation.current_turn.unwrap();
+    assert_eq!(current_turn.identity, turn.identity);
+    assert_eq!(current_turn.state, OperatorTurnState::Running);
+    assert!(!h.conversation.worker_stopped);
+
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
     assert_eq!(
-        live.state.retained.lock().get(c.session).unwrap().run,
-        SessionRunId(0)
+        live.history(&c).conversation.current_turn.unwrap().state,
+        OperatorTurnState::Complete
     );
 }
 

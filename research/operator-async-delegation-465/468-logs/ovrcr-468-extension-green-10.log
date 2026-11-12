@@ -1,0 +1,12 @@
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.31s
+     Running tests/operator_worker.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 1 test
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 49 filtered out; finished in 11.59s

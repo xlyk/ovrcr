@@ -1,0 +1,8 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.37s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-4015e4727f8a17ff)
+
+running 1 test
+test report::reporter::tests::operator_uses_watched_lease_and_validates_exact_journal_receipts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 163 filtered out; finished in 0.00s

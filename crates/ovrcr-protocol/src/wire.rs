@@ -2686,6 +2686,12 @@ mod wire_snapshot {
             session: SessionId(3),
             run: SessionRunId(4),
         };
+        let run_identity = OperatorRunIdentity {
+            conversation: identity.conversation,
+            session: identity.session,
+            run: identity.run,
+        };
+        all.push(("OperatorRunIdentity".into(), encode(&run_identity)));
         let context = OperatorContext {
             project: Some("p".into()),
             workspace: Some("label".into()),
@@ -2703,6 +2709,7 @@ mod wire_snapshot {
             reasoning: None,
             run: identity.run,
             worker_stopped: false,
+            worker_live: false,
             id: identity.conversation,
             session: identity.session,
             model: Some(OperatorModel {
@@ -2779,7 +2786,10 @@ mod wire_snapshot {
                     id: "model".into(),
                 }),
             ),
-            ("Completed", OperatorWorkerEvent::Completed),
+            (
+                "Completed",
+                OperatorWorkerEvent::Completed { leased: false },
+            ),
             ("Failed", OperatorWorkerEvent::Failed("error".into())),
             (
                 "ThinkingDelta",
@@ -2809,7 +2819,32 @@ mod wire_snapshot {
             ));
         }
         for (name, command) in [
-            ("Start", OperatorWorkerCommand::Start { identity }),
+            (
+                "Start",
+                OperatorWorkerCommand::Start {
+                    identity: run_identity,
+                },
+            ),
+            (
+                "StartTurn",
+                OperatorWorkerCommand::StartTurn {
+                    identity: run_identity,
+                },
+            ),
+            (
+                "BeginAsyncTurn",
+                OperatorWorkerCommand::BeginAsyncTurn {
+                    identity: run_identity,
+                    text: "watch report".into(),
+                },
+            ),
+            (
+                "AbortTurn",
+                OperatorWorkerCommand::AbortTurn {
+                    identity,
+                    leased: false,
+                },
+            ),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
             ("Stop", OperatorWorkerCommand::Stop { identity }),
         ] {
@@ -2869,10 +2904,51 @@ mod wire_snapshot {
                     identity,
                     model: Some("openai/model".into()),
                     text: "hello".into(),
-                    context,
+                    context: context.clone(),
                     checkpoint_turn: Some(OperatorTurnId(2)),
+                    async_wakeup: false,
                 }),
             ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::StartTurn".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::StartTurn(
+                Some(Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    text: "warm".into(),
+                    context: context.clone(),
+                    checkpoint_turn: Some(identity.turn),
+                    async_wakeup: false,
+                })),
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::StartTurnNone".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::StartTurn(
+                None,
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::BeginAsyncTurn".into(),
+            encode(&Response::OperatorWorker(
+                OperatorWorkerResult::BeginAsyncTurn(Some(Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    text: "watch report".into(),
+                    context: context.clone(),
+                    checkpoint_turn: Some(identity.turn),
+                    async_wakeup: true,
+                }))),
+            )),
+        ));
+        all.push((
+            "Response::OperatorWorker::Aborted".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Aborted {
+                identity,
+            })),
         ));
         all.push((
             "Response::OperatorWorker::Retired".into(),
@@ -2936,6 +3012,12 @@ mod wire_snapshot {
         all.push((
             "OperatorMessageContent::Interrupted".into(),
             encode(&OperatorMessageContent::Interrupted),
+        ));
+        all.push((
+            "OperatorMessageContent::AsyncWakeup".into(),
+            encode(&OperatorMessageContent::AsyncWakeup {
+                text: "watch report".into(),
+            }),
         ));
     }
 
@@ -3984,13 +4066,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0454017301630168016c0104",
+            "2a0455017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0454017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0455017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4040,18 +4122,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04540000"),
+        ("Response::NotificationNavigation", "0d04550000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0454017301630168016c0104",
+            "0e01016e0455017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010454017301630168016c0164",
+            "0f0107080901016901010455017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004540107080901016901010454017301630168016c0164",
+            "1004550107080901016901010455017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4091,7 +4173,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0454017301630168016c0104",
+            "08016e0455017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4548,6 +4630,7 @@ mod wire_snapshot {
             "Response::AssignedRead",
             "18016901770163010174010101720102010303010004040472656164",
         ),
+        ("OperatorRunIdentity", "010304"),
         ("Request::Operator::Current", "3900"),
         ("Request::Operator::Open", "3901"),
         ("Request::Operator::Read", "390201010a"),
@@ -4574,7 +4657,7 @@ mod wire_snapshot {
         ),
         (
             "Request::OperatorExchange::Completed",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010400",
         ),
         (
             "Request::OperatorExchange::Failed",
@@ -4598,37 +4681,59 @@ mod wire_snapshot {
         ),
         (
             "Request::OperatorWorker::Start",
-            "3b0307070707070707070707070707070707070707070707070707070707070707070001020304",
+            "3b03070707070707070707070707070707070707070707070707070707070707070700010304",
+        ),
+        (
+            "Request::OperatorWorker::StartTurn",
+            "3b03070707070707070707070707070707070707070707070707070707070707070701010304",
+        ),
+        (
+            "Request::OperatorWorker::BeginAsyncTurn",
+            "3b030707070707070707070707070707070707070707070707070707070707070707050103040c7761746368207265706f7274",
+        ),
+        (
+            "Request::OperatorWorker::AbortTurn",
+            "3b030707070707070707070707070707070707070707070707070707070707070707020102030400",
         ),
         (
             "Request::OperatorWorker::Retire",
-            "3b0307070707070707070707070707070707070707070707070707070707070707070101020304",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070301020304",
         ),
         (
             "Request::OperatorWorker::Stop",
-            "3b0307070707070707070707070707070707070707070707070707070707070707070201020304",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070401020304",
         ),
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
-            "1900010400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "190001040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::Opened",
-            "19010400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "1901040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::History",
-            "19020400010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "1902040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106010200",
+            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f770105010601020000",
         ),
-        ("Response::OperatorWorker::Retired", "1b0101020304"),
+        (
+            "Response::OperatorWorker::StartTurn",
+            "1b01010102030400047761726d01017001056c6162656c0106737461626c6501022f770105010601020000",
+        ),
+        ("Response::OperatorWorker::StartTurnNone", "1b0100"),
+        (
+            "Response::OperatorWorker::BeginAsyncTurn",
+            "1b040101020304000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f770105010601020001",
+        ),
+        ("Response::OperatorWorker::Aborted", "1b0201020304"),
+        ("Response::OperatorWorker::Retired", "1b0301020304"),
         ("ServerEvent::OperatorChanged", "0c01"),
         ("SessionScope::Workspace", "00"),
         ("SessionScope::OperatorConversation", "0101"),
@@ -4644,6 +4749,10 @@ mod wire_snapshot {
         ("OperatorMessageContent::WorkerCompactionStarted", "0107"),
         ("OperatorMessageContent::WorkerCompactionEnded", "0108"),
         ("OperatorMessageContent::Interrupted", "02"),
+        (
+            "OperatorMessageContent::AsyncWakeup",
+            "030c7761746368207265706f7274",
+        ),
     ];
 
     #[test]

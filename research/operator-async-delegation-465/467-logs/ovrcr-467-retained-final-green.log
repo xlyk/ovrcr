@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-8c547d91dad93461)
+
+running 20 tests
+test retained::operator::tests::open_conflict_without_a_visible_singleton_returns_the_insert_error ... ok
+test retained::operator::tests::invalid_inputs_do_not_create_turns_or_change_the_retained_run ... ok
+test retained::operator::tests::open_is_idempotent_and_current_never_creates_anything ... ok
+test retained::operator::tests::corrupt_saved_checkpoint_turn_fails_worker_start_instead_of_resetting_context ... ok
+test retained::operator::tests::failed_batch_transaction_preserves_sequence_and_checkpoint ... ok
+test retained::operator::tests::leased_turns_warm_dispatch_on_the_same_run_until_completion_releases_it ... ok
+test retained::operator::tests::batches_store_model_selection_without_copying_metadata_into_history ... ok
+test retained::operator::tests::legacy_rows_refuse_new_work_but_recovery_and_diagnostics_still_resolve ... ok
+test retained::operator::tests::only_completed_promotes_the_checkpoint_and_does_so_with_its_receipt ... ok
+test retained::operator::tests::interrupt_and_restart_preserve_the_visible_journal_without_replay ... ok
+test retained::operator::tests::a_store_that_missed_the_singleton_hydrates_the_foreign_row ... ok
+test retained::operator::tests::submit_captures_the_model_override_for_that_turn_only ... ok
+test retained::operator::tests::the_database_refuses_a_second_singleton_row ... ok
+test retained::operator::tests::restart_interrupts_an_unacknowledged_turn_but_never_claims_stop ... ok
+test retained::operator::tests::reasoning_snapshot_and_metadata_survive_reopen_and_schema_29_migration ... ok
+test retained::operator::tests::schema_32_migration_preserves_operator_turn_dependents_and_id_sequence ... ok
+test retained::operator::tests::fresh_and_migrated_schemas_share_the_singleton_structure ... ok
+test retained::operator::tests::schema_28_upgrade_preserves_legacy_rows_and_evidence_exactly ... ok
+test retained::operator::tests::schema_26_upgrade_widens_a_pre_singleton_operator_table ... ok
+test retained::operator::tests::history_pages_fit_a_frame_and_catch_up_without_loss ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 487 filtered out; finished in 0.20s
+
+     Running tests/delegation_cancellation_state.rs (target/debug/deps/delegation_cancellation_state-0b7489904822854b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/delegation_fallback_files.rs (target/debug/deps/delegation_fallback_files-192b79fbc0202909)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+
+     Running tests/settings_matrix.rs (target/debug/deps/settings_matrix-31d2ec05f0ce7579)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+     Running tests/theme_catalog.rs (target/debug/deps/theme_catalog-99eb73a759b33030)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s

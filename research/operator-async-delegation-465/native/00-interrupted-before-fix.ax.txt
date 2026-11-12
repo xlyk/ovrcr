@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · interrupted                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                 last reply 1m │❯ You
+↳ No repli
+		3 text (settable) 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+		4 text (settable)  OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · interrupted                              [Reasoning medium ▾ Ctrl-t]
+		5 text (settable) ▌ · Idle                 last reply 1m │❯ You
+		6 text (settable) ↳ No replies yet                       │  ▸ Context · consigint / main / #1 run 1
+		7 text (settable)                                        │  REQUEST_COORDINATOR_DISPATCH
+		8 text (settable)  CONSIGINT ────────────────────────────│
+		9 text (settable)   󰘬 main                          root ││ ▸ read
+		10 text (settable)      $ local                           ││ ▸ succeeded · Output
+		11 text (settable)   󰘬 gui-consigint-auth-handoff         ││ ▸ bash
+		12 text (settable)      $ local                           ││ ▸ succeeded · Output
+		13 text (settable)      - review auth handoff             ││ ▸ watch_sessions
+		14 text (settable)        └ grok:4.6                      ││ ▸ succeeded · Output
+		15 text (settable)      ⠹ coordinator-beta                ││ Dispatched both tasks and registered their session watches.
+		16 text (settable)        └ pi:operator-fixture           ││
+		17 text (settable)   󰘬 gui-consigint-worktree-lifecycle   ││ | Task | Workspace | Session |
+		18 text (settable)      $ local                           ││ |---|---|---|
+		19 text (settable)      - implement lifecycle cleanup     ││ | Alpha | gui-consigint-worktree-lifecycle | coordinator-alpha (13) |
+		20 text (settable)        └ claude:sonnet-4               ││ | Beta | gui-consigint-auth-handoff | coordinator-beta (14) |
+		21 text (settable)      - review websocket shutdown       ││ Operator is ready for another message while both Agents work.
+		22 text (settable)        └ codex:gpt-5.4                 │
+		23 text (settable)      - plan snapshot restore           │❯ You
+		24 text (settable)        └ pi:grok-4.6                   │  REQUEST_THREE_HELD
+		25 text (settable)      ⠹ coordinator-alpha               │
+		26 text (settable)        └ pi:operator-fixture           ││ Operator
+		27 text (settable)                                        ││ HELD_BEFORE_RELEASE
+		28 text (settable)  SPACELIFT-AGENT ──────────────────────││ Interrupted · accepted operations may finish; no rollback.
+		29 text (settable)   󰘬 main                          root │
+		30 text (settable)      $ local                           │
+		31 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│
+		32 text (settable)      $ local                           │
+		33 text (settable)      - build pipeline progress         │
+		34 text (settable)        └ claude:opus-4                 │
+		35 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │
+		36 text (settable)      $ local                           │
+		37 text (settable)      - review scope quality            │
+		38 text (settable)        └ codex:gpt-5.4                 │
+		39 text (settable)                                        │
+		40 text (settable)                                        │
+		41 text (settable)                                        │
+		42 text (settable)                                        │
+		43 text (settable)                                        │
+		44 text (settable)                                        │
+		45 text (settable)                                        │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable) USAGE · 0 tokens · 2m                  │
+		49 text (settable) ⠹ 2 working  ? 0 input  ✓ 0 ready      │
+		50 text (settable) · 0 idle  ! 0 error  P 0 paused        │
+		51 text (settable) · 0 exited  - 12 unknown               │
+		52 text (settable)                                        │
+		53 text (settable)  RESOURCES ────────────────────────────│
+		54 text (settable)  cpu       ━━━━━─────────────────  21% │
+		55 text (settable)  mem       ━━━━━━━━━━━━━━━━──── 38/48G │
+		56 text (settable)                                        │
+		57 text (settable)  QUOTA LEFT ───────────────────────────│
+		58 text (settable) Claude · not signed in                 │ Managing consigint / main / #1 run 1
+		59 text (settable) Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		60 text (settable) Grok · usage off                       │ > ▏
+		61 text (settable) Cursor · usage off                     │
+		62 text (settable)                                        │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		63 text (settable) OPERATOR  Shift-Enter Newline  Ctrl-g Browse  Ctrl-x Stop selected turn
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ OPERATOR ─────────────────────────────│Operator · pi · fixture/operator-fixture · interrupted                              [Reasoning medium ▾ Ctrl-t]
+▌ · Idle                 last reply 1m │❯ You
+↳ No repli

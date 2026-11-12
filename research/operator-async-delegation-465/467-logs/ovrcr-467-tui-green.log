@@ -1,0 +1,21 @@
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-467/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.82s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-4d4bbaf401d6754e)
+
+running 1 test
+
+thread 'dashboard::operator::tests::leased_idle_worker_accepts_a_followup_on_the_same_run_without_stop_control' (653428891) panicked at crates/ovrcr-tui/src/dashboard/operator.rs:2354:9:
+assertion `left == right` failed
+  left: OperatorTurnIdentity { conversation: OperatorConversationId(1), turn: OperatorTurnId(1), session: SessionId(11), run: SessionRunId(1) }
+ right: OperatorTurnIdentity { conversation: OperatorConversationId(1), turn: OperatorTurnId(2), session: SessionId(11), run: SessionRunId(1) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dashboard::operator::tests::leased_idle_worker_accepts_a_followup_on_the_same_run_without_stop_control ... FAILED
+
+failures:
+
+failures:
+    dashboard::operator::tests::leased_idle_worker_accepts_a_followup_on_the_same_run_without_stop_control
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 461 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`

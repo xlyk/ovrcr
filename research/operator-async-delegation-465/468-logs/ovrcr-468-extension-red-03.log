@@ -1,0 +1,41 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/operator_worker.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 1 test
+
+thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654673570) panicked at tests/operator_worker.rs:1954:5:
+extension probe failed:
+stdout:
+stderr: node:internal/errors:983
+  const err = new Error(message);
+              ^
+
+Error: Command failed: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-qyUCXg/ovrcr terminal list --json
+
+    at genericNodeError (node:internal/errors:983:15)
+    at wrappedFn (node:internal/errors:537:14)
+    at ChildProcess.exithandler (node:child_process:417:12)
+    at ChildProcess.emit (node:events:519:28)
+    at maybeClose (node:internal/child_process:1101:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:304:5) {
+  code: null,
+  killed: true,
+  signal: 'SIGTERM',
+  cmd: '/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-operator-extension-qyUCXg/ovrcr terminal list --json',
+  stdout: '',
+  stderr: ''
+}
+
+Node.js v22.23.2
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... FAILED
+
+failures:
+
+failures:
+    the_extension_forces_sequential_tools_and_bounds_its_bash_timeout
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 49 filtered out; finished in 5.34s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_worker`

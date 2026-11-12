@@ -581,12 +581,12 @@ fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
 }
 
 #[test]
-fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
+fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
     use ovrcr_protocol::{
         AgentSecret, ClientMessage, OperatorConversationId, OperatorEventBatch,
-        OperatorExchangeResult, OperatorTurnId, OperatorTurnIdentity, OperatorWorkerCommand,
-        OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId, SessionRunId,
-        SupervisorAuth, read_frame, write_frame,
+        OperatorExchangeResult, OperatorRunIdentity, OperatorTurnId, OperatorTurnIdentity,
+        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId,
+        SessionRunId, SupervisorAuth, read_frame, write_frame,
     };
     use std::os::unix::net::UnixStream;
     let identity = OperatorTurnIdentity {
@@ -594,6 +594,23 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
         turn: OperatorTurnId(3),
         session: SessionId(4),
         run: SessionRunId(5),
+    };
+    let run_identity = OperatorRunIdentity {
+        conversation: identity.conversation,
+        session: identity.session,
+        run: identity.run,
+    };
+    let wrong_conversation = OperatorTurnIdentity {
+        conversation: OperatorConversationId(6),
+        ..identity
+    };
+    let wrong_session = OperatorTurnIdentity {
+        session: SessionId(7),
+        ..identity
+    };
+    let wrong_run = OperatorTurnIdentity {
+        run: SessionRunId(8),
+        ..identity
     };
     let auth = SupervisorAuth {
         session: identity.session,
@@ -607,6 +624,7 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
         .unwrap();
     let thread = std::thread::spawn(move || {
         let mut observed = Vec::new();
+        let mut starts = 0;
         while let Ok(ClientMessage {
             request_id: id,
             request,
@@ -618,19 +636,63 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
                     observed.push(request.command.clone());
                     match request.command {
                         OperatorWorkerCommand::Start { identity: i } => {
-                            assert_eq!(i, identity);
+                            assert_eq!(i, run_identity);
+                            starts += 1;
                             Response::OperatorWorker(OperatorWorkerResult::Start(Box::new(
                                 OperatorWorkerStart {
                                     thinking_level: Default::default(),
-                                    identity,
+                                    identity: if starts == 1 {
+                                        identity
+                                    } else {
+                                        wrong_conversation
+                                    },
                                     model: None,
                                     text: "prompt".into(),
                                     context: Default::default(),
                                     checkpoint_turn: None,
+                                    async_wakeup: false,
                                 },
                             )))
                         }
                         OperatorWorkerCommand::Retire { .. } => Response::Error {
+                            code: ovrcr_protocol::ErrorCode::Conflict,
+                            message: "refused".into(),
+                        },
+                        OperatorWorkerCommand::StartTurn { identity: i } => {
+                            assert_eq!(i, run_identity);
+                            Response::OperatorWorker(OperatorWorkerResult::StartTurn(Some(
+                                Box::new(OperatorWorkerStart {
+                                    thinking_level: Default::default(),
+                                    identity: wrong_session,
+                                    model: None,
+                                    text: "prompt".into(),
+                                    context: Default::default(),
+                                    checkpoint_turn: None,
+                                    async_wakeup: false,
+                                }),
+                            )))
+                        }
+                        OperatorWorkerCommand::BeginAsyncTurn { identity: i, text } => {
+                            assert_eq!(i, run_identity);
+                            let (identity, async_wakeup) = if text == "wrong run" {
+                                (wrong_run, true)
+                            } else {
+                                assert_eq!(text, "not a wakeup");
+                                (identity, false)
+                            };
+                            Response::OperatorWorker(OperatorWorkerResult::BeginAsyncTurn(Some(
+                                Box::new(OperatorWorkerStart {
+                                    thinking_level: Default::default(),
+                                    identity,
+                                    model: None,
+                                    text,
+                                    context: Default::default(),
+                                    checkpoint_turn: None,
+                                    async_wakeup,
+                                }),
+                            )))
+                        }
+                        OperatorWorkerCommand::AbortTurn { .. } => Response::Error {
                             code: ovrcr_protocol::ErrorCode::Conflict,
                             message: "refused".into(),
                         },
@@ -673,10 +735,26 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     let mut reporter = Reporter::new(AgentProvider::Operator, Some(lease), None);
     assert_eq!(
         reporter
-            .operator_start(identity, deadline())
+            .operator_start(run_identity, deadline())
             .unwrap()
             .identity,
         identity
+    );
+    assert!(reporter.operator_start(run_identity, deadline()).is_err());
+    assert!(
+        reporter
+            .operator_start_turn(run_identity, deadline())
+            .is_err()
+    );
+    assert!(
+        reporter
+            .operator_begin_async_turn(run_identity, "wrong run".into(), deadline())
+            .is_err()
+    );
+    assert!(
+        reporter
+            .operator_begin_async_turn(run_identity, "not a wakeup".into(), deadline())
+            .is_err()
     );
     assert!(
         reporter
@@ -706,7 +784,23 @@ fn operator_uses_watched_lease_and_validates_exact_journal_receipts() {
     assert_eq!(
         thread.join().unwrap(),
         vec![
-            OperatorWorkerCommand::Start { identity },
+            OperatorWorkerCommand::Start {
+                identity: run_identity,
+            },
+            OperatorWorkerCommand::Start {
+                identity: run_identity,
+            },
+            OperatorWorkerCommand::StartTurn {
+                identity: run_identity,
+            },
+            OperatorWorkerCommand::BeginAsyncTurn {
+                identity: run_identity,
+                text: "wrong run".into(),
+            },
+            OperatorWorkerCommand::BeginAsyncTurn {
+                identity: run_identity,
+                text: "not a wakeup".into(),
+            },
             OperatorWorkerCommand::Retire { identity },
             OperatorWorkerCommand::Stop { identity }
         ]

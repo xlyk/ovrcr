@@ -1,0 +1,111 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.79s
+     Running tests/operator_e2e.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2qqaUG server=13685 test=an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly
+
+thread 'an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly' (655396117) panicked at tests/support/operator_harness.rs:239:13:
+operator history deadline: OperatorHistory {
+    conversation: OperatorConversationSummary {
+        run: SessionRunId(
+            1,
+        ),
+        worker_stopped: false,
+        worker_live: true,
+        id: OperatorConversationId(
+            1,
+        ),
+        session: SessionId(
+            1,
+        ),
+        model: Some(
+            OperatorModel {
+                provider: "fixture",
+                id: "default",
+            },
+        ),
+        title: "Operator",
+        current_turn: Some(
+            OperatorTurn {
+                identity: OperatorTurnIdentity {
+                    conversation: OperatorConversationId(
+                        1,
+                    ),
+                    turn: OperatorTurnId(
+                        1,
+                    ),
+                    session: SessionId(
+                        1,
+                    ),
+                    run: SessionRunId(
+                        1,
+                    ),
+                },
+                state: Complete,
+                sequence: 4,
+            },
+        ),
+        reasoning: Some(
+            OperatorReasoning {
+                requested: Default,
+                level: Medium,
+                available: [
+                    Off,
+                    Minimal,
+                    Low,
+                    Medium,
+                    High,
+                ],
+            },
+        ),
+        current_turn_started_unix_ms: Some(
+            1794438819934,
+        ),
+        last_reply_unix_ms: Some(
+            1794438820515,
+        ),
+    },
+    messages: [
+        OperatorMessage {
+            ordinal: 1,
+            turn: OperatorTurnId(
+                1,
+            ),
+            content: User {
+                text: "start watcher",
+                context: OperatorContext {
+                    project: None,
+                    workspace: None,
+                    workspace_id: None,
+                    cwd: None,
+                    session: None,
+                    run: None,
+                },
+            },
+        },
+        OperatorMessage {
+            ordinal: 2,
+            turn: OperatorTurnId(
+                1,
+            ),
+            content: Worker(
+                AssistantDelta(
+                    "initial turn",
+                ),
+            ),
+        },
+    ],
+    next_after: None,
+}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly ... FAILED
+
+failures:
+
+failures:
+    an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 21.96s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

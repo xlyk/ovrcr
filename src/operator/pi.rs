@@ -4,11 +4,12 @@
 //! The profile at `<instance>/operator-pi` is the only Pi configuration the
 //! Operator uses; the personal `~/.pi/agent` profile and OVRCR credentials are
 //! never copied. The instance-wide agent working directory is
-//! `<instance>/operator-workdir`. Every child gets umask 077, its own Pi
-//! session directory per attempt, and an environment stripped of private
+//! `<instance>/operator-workdir`. Every worker run gets a private Pi session
+//! directory, and every turn gets a separate checkpoint attempt directory.
+//! Children use umask 077 and an environment stripped of private
 //! OVRCR authority and inherited provider credentials.
 use crate::operator::rpc::{RpcChild, RpcMessage};
-use crate::protocol::{OperatorConversationId, OperatorTurnId};
+use crate::protocol::{OperatorConversationId, OperatorTurnId, SessionRunId};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -27,7 +28,9 @@ const PROFILE_DIR: &str = "operator-pi";
 const WORKDIR_DIR: &str = "operator-workdir";
 const TURNS_DIR: &str = "turns";
 const EXTENSION_FILE: &str = "pi-operator-extension.mjs";
-const TOOLS: &str = "read,bash,edit,write";
+const COORDINATOR_SKILL_DIR: &str = "ovrcr-coordinator";
+const COORDINATOR_SKILL_FILE: &str = "SKILL.md";
+const TOOLS: &str = "read,bash,edit,write,watch_sessions";
 const MODEL_DEADLINE: Duration = Duration::from_secs(20);
 const MODEL_LIMIT: usize = 4096;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -36,6 +39,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// its OVRCR operating guide before the first model request without reading a
 /// checkout or discovering any skill at runtime. `--no-skills` stays in force.
 const BUNDLED_SKILL: &str = include_str!("../../.agents/skills/ovrcr/SKILL.md");
+const BUNDLED_COORDINATOR_SKILL: &str = include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md");
 const SYSTEM_PROMPT_GAP: &str = "\n\n";
 
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
@@ -169,12 +173,18 @@ pub struct PiPaths {
     pub profile: PathBuf,
     pub workdir: PathBuf,
     pub turns: PathBuf,
+    pub runs: PathBuf,
 }
 
 impl PiPaths {
     /// Per-attempt session directory. Callers create it exclusively.
     pub fn attempt_dir(&self, turn: OperatorTurnId) -> PathBuf {
         self.turns.join(turn.0.to_string())
+    }
+
+    /// One native Pi session directory owned by a worker run.
+    pub fn run_dir(&self, run: SessionRunId) -> PathBuf {
+        self.runs.join(run.0.to_string())
     }
 }
 
@@ -189,7 +199,8 @@ pub fn conversation_session_id(conversation: OperatorConversationId) -> String {
 }
 
 /// Resolve and validate the instance profile. Creates `operator-pi`,
-/// `operator-pi/turns`, and `operator-workdir` with mode 0700. Existing paths
+/// `operator-pi/turns`, `operator-pi/runs`, and `operator-workdir` with mode
+/// 0700. Existing paths
 /// that are symlinks, non-directories, foreign-owned, or group/world-writable
 /// are refused rather than replaced.
 pub fn paths(instance: &Path) -> Result<PiPaths, PiError> {
@@ -197,14 +208,17 @@ pub fn paths(instance: &Path) -> Result<PiPaths, PiError> {
     let profile = instance.join(PROFILE_DIR);
     let workdir = instance.join(WORKDIR_DIR);
     let turns = profile.join(TURNS_DIR);
+    let runs = profile.join("runs");
     prepare_private_dir(&profile)?;
     prepare_private_dir(&turns)?;
+    prepare_private_dir(&runs)?;
     prepare_private_dir(&workdir)?;
     Ok(PiPaths {
         root: instance,
         profile,
         workdir,
         turns,
+        runs,
     })
 }
 
@@ -276,33 +290,62 @@ fn mode_rejected(mode: u32) -> bool {
 /// atomic replacement and mode 0600.
 pub fn materialize_extension(paths: &PiPaths) -> Result<PathBuf, PiError> {
     let target = paths.profile.join(EXTENSION_FILE);
+    materialize_private_file(
+        &paths.profile,
+        &target,
+        include_str!("../pi-operator-extension.mjs").as_bytes(),
+        "extension",
+    )?;
+    Ok(target)
+}
+
+/// Materialize the separate coordinator skill under the dedicated profile.
+/// Pi receives only this explicit file while automatic discovery stays off.
+pub fn materialize_coordinator_skill(paths: &PiPaths) -> Result<PathBuf, PiError> {
+    let directory = paths.profile.join(COORDINATOR_SKILL_DIR);
+    prepare_private_dir(&directory)?;
+    let target = directory.join(COORDINATOR_SKILL_FILE);
+    materialize_private_file(
+        &directory,
+        &target,
+        BUNDLED_COORDINATOR_SKILL.as_bytes(),
+        "coordinator skill",
+    )?;
+    Ok(target)
+}
+
+fn materialize_private_file(
+    directory: &Path,
+    target: &Path,
+    contents: &[u8],
+    label: &str,
+) -> Result<(), PiError> {
     let write = (|| -> io::Result<()> {
         // NamedTempFile uses exclusive creation with a random suffix, so a
         // planted path can neither redirect this write nor be truncated.
         let mut file = tempfile::Builder::new()
-            .prefix(&format!(".{EXTENSION_FILE}."))
+            .prefix(&format!(
+                ".{}.",
+                target.file_name().unwrap().to_string_lossy()
+            ))
             .suffix(".tmp")
-            .tempfile_in(&paths.profile)?;
-        file.write_all(include_str!("../pi-operator-extension.mjs").as_bytes())?;
+            .tempfile_in(directory)?;
+        file.write_all(contents)?;
         file.as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))?;
         file.as_file().sync_all()?;
-        file.persist(&target).map_err(|error| error.error)?;
+        file.persist(target).map_err(|error| error.error)?;
         Ok(())
     })();
-    if let Err(error) = write {
-        return Err(PiError::integration(format!(
-            "materialize Operator extension: {error}"
-        )));
-    }
-    Ok(target)
+    write.map_err(|error| PiError::integration(format!("materialize Operator {label}: {error}")))
 }
 
-/// Managed-turn launcher. The caller materializes the extension first. Pi stays
-/// in the caller's process group so the lifetime Session owns it and its tools.
+/// Managed-run launcher. `session_dir` is private and owned by one worker run.
+/// The caller materializes the extension first. Pi stays in the caller's
+/// process group so the lifetime Session owns it and its tools.
 pub fn rpc_command(
     paths: &PiPaths,
-    attempt: &Path,
+    session_dir: &Path,
     conversation: OperatorConversationId,
     policy: &str,
 ) -> Result<Command, PiError> {
@@ -311,12 +354,11 @@ pub fn rpc_command(
     }
     let system_prompt = format!("{policy}{SYSTEM_PROMPT_GAP}{BUNDLED_SKILL}");
     let extension = paths.profile.join(EXTENSION_FILE);
+    let coordinator_skill = materialize_coordinator_skill(paths)?;
     let mut command = Command::new(executable()?);
+    command.args(["--mode", "rpc", "--no-extensions", "--no-skills"]);
+    command.arg("--skill").arg(coordinator_skill);
     command.args([
-        "--mode",
-        "rpc",
-        "--no-extensions",
-        "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
         "--no-context-files",
@@ -326,7 +368,7 @@ pub fn rpc_command(
         TOOLS,
         "--session-dir",
     ]);
-    command.arg(attempt);
+    command.arg(session_dir);
     command
         .arg("--session-id")
         .arg(conversation_session_id(conversation))
@@ -886,7 +928,8 @@ mod tests {
         assert_eq!(paths.profile, instance.path().join("operator-pi"));
         assert_eq!(paths.workdir, instance.path().join("operator-workdir"));
         assert_eq!(paths.turns, instance.path().join("operator-pi/turns"));
-        for directory in [&paths.profile, &paths.turns, &paths.workdir] {
+        assert_eq!(paths.runs, instance.path().join("operator-pi/runs"));
+        for directory in [&paths.profile, &paths.turns, &paths.runs, &paths.workdir] {
             let metadata = fs::symlink_metadata(directory).unwrap();
             assert!(metadata.is_dir());
             assert_eq!(metadata.mode() & 0o777, 0o700);
@@ -957,13 +1000,19 @@ mod tests {
                 "rpc",
                 "--no-extensions",
                 "--no-skills",
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-coordinator/SKILL.md")
+                    .to_str()
+                    .unwrap(),
                 "--no-prompt-templates",
                 "--no-themes",
                 "--no-context-files",
                 "--no-approve",
                 "--offline",
                 "--tools",
-                "read,bash,edit,write",
+                "read,bash,edit,write,watch_sessions",
                 "--session-dir",
                 attempt.to_str().unwrap(),
                 "--session-id",
@@ -976,6 +1025,20 @@ mod tests {
             system_prompt.matches(BUNDLED_SKILL).count(),
             1,
             "the bundled CLI skill is appended exactly once"
+        );
+        assert!(
+            !system_prompt.contains(BUNDLED_COORDINATOR_SKILL),
+            "the coordinator skill stays separate from the system-only CLI guide"
+        );
+        let coordinator_skill = paths.profile.join("ovrcr-coordinator/SKILL.md");
+        let directory = fs::symlink_metadata(coordinator_skill.parent().unwrap()).unwrap();
+        assert_eq!(directory.mode() & 0o777, 0o700);
+        let metadata = fs::symlink_metadata(&coordinator_skill).unwrap();
+        assert!(metadata.is_file());
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::read_to_string(coordinator_skill).unwrap(),
+            include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md")
         );
         assert_eq!(argv[prompt + 2].as_str(), "--extension");
         assert_eq!(

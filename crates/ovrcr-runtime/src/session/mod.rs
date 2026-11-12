@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::context::{ContextUsageSnapshot, validate_context};
-use ovrcr_protocol::{AgentReport, AgentUpdate, HISTORY_ROWS, HistorySnapshotId};
+use ovrcr_protocol::{
+    AgentReport, AgentUpdate, HISTORY_ROWS, HistorySnapshotId, OperatorTurnIdentity,
+};
 use ovrcr_terminal::key::{Key, Modifiers, encode_key};
 use ovrcr_terminal::{encode_paste, history::FrozenHistory, vt100};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -277,6 +279,7 @@ struct SessionState {
     activity_order: ReportOrder,
     context_usage: Option<ContextUsageSnapshot>,
     context_order: ReportOrder,
+    operator_abort: Option<OperatorTurnIdentity>,
 }
 
 fn effective_activity(state: &SessionState) -> AgentActivity {
@@ -694,6 +697,7 @@ impl Session {
                 activity_order: ReportOrder::default(),
                 context_usage: None,
                 context_order: ReportOrder::default(),
+                operator_abort: None,
             }),
             state_changed: Condvar::new(),
             terminal: Mutex::new(TerminalState {
@@ -1051,6 +1055,53 @@ impl Session {
         let mut state = self.state.lock().unwrap();
         state.reporting.lost("capability_revoked");
         state.hook_capability = None;
+    }
+
+    pub(crate) fn request_operator_abort(&self, identity: OperatorTurnIdentity) -> Result<()> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        if self.run() != identity.run
+            || self.summary.id != identity.session
+            || self.summary.scope
+                != (ovrcr_protocol::SessionScope::OperatorConversation {
+                    conversation: identity.conversation,
+                })
+        {
+            bail!("operator worker run changed");
+        }
+        verify_owned_group(self)?;
+        let mut state = self.state.lock().unwrap();
+        if !state.phase.is_live() || state.hook_capability.is_none() {
+            bail!("operator worker is unavailable");
+        }
+        if state.operator_abort == Some(identity) {
+            return Ok(());
+        }
+        if state.operator_abort.is_some() {
+            bail!("another Operator turn is stopping");
+        }
+        let pid = state
+            .pid
+            .context("operator worker process is unavailable")? as libc::pid_t;
+        if pid != self.pgid || unsafe { libc::getpgid(pid) } != self.pgid {
+            bail!("operator worker process identity changed");
+        }
+        state.operator_abort = Some(identity);
+        if unsafe { libc::kill(pid, libc::SIGUSR1) } == -1 {
+            state.operator_abort = None;
+            return Err(std::io::Error::last_os_error()).context("request Operator turn abort");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn operator_abort_requested(&self, identity: OperatorTurnIdentity) -> bool {
+        self.state.lock().unwrap().operator_abort == Some(identity)
+    }
+
+    pub(crate) fn clear_operator_abort(&self, identity: OperatorTurnIdentity) {
+        let mut state = self.state.lock().unwrap();
+        if state.operator_abort == Some(identity) {
+            state.operator_abort = None;
+        }
     }
 
     pub fn current_screen(&self) -> Vec<u8> {

@@ -1,0 +1,42 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 17 tests
+test operator_harness::tests::registry_scan_finds_text_and_blob_credential_sentinels ... ok
+test operator_harness::tests::registry_scan_ignores_a_clean_database ... ok
+test operator_harness::tests::pump_keeps_a_frame_split_between_polls ... ok
+test live::command_clears_inherited_reporting_authority ... LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQFyfzX server=59593 test=current_never_creates_and_open_yields_one_durable_conversation
+ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOtzwlp server=59600 test=a_worker_that_exits_after_settling_never_promotes_a_checkpoint
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpu2rdGE server=59601 test=a_natural_worker_exit_is_not_stop_proof_and_blocks_the_next_turn
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBCU34g server=59602 test=cold_resumed_leased_worker_keeps_its_active_session_across_warm_turns
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5eh617 server=59607 test=only_completed_turns_advance_the_checkpoint_across_failure_and_interruption
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUDjqAd server=59608 test=kill_shutdown_terminates_a_leased_worker_and_its_pi_group
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJkBEUz server=59609 test=an_existing_attempt_directory_is_never_replayed
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpYbuzCx server=59614 test=reasoning_changes_during_a_turn_apply_only_to_the_next_turn
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpDuAbU3 server=59615 test=operator_session_identity_is_the_conversation_session
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBoc5zi server=59616 test=stale_run_submits_and_terminal_lifecycle_routes_are_refused
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKMGfqo server=59617 test=a_damaged_checkpoint_fails_closed_and_preserves_its_bytes
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbO9jL7 server=59618 test=leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+test operator_cli_is_the_native_profile_entry_point ... ok
+test current_never_creates_and_open_yields_one_durable_conversation ... ok
+test operator_session_identity_is_the_conversation_session ... ok
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUDjqAd pgid=60005
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpu2rdGE pgid=60010
+test kill_shutdown_terminates_a_leased_worker_and_its_pi_group ... ok
+test a_natural_worker_exit_is_not_stop_proof_and_blocks_the_next_turn ... ok
+test leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires ... ok
+test stale_run_submits_and_terminal_lifecycle_routes_are_refused ... ok
+test reasoning_changes_during_a_turn_apply_only_to_the_next_turn ... ok
+test a_worker_that_exits_after_settling_never_promotes_a_checkpoint ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkEASRL server=61745 test=a_damaged_checkpoint_fails_closed_and_preserves_its_bytes
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5eh617 pgid=61867
+test an_existing_attempt_directory_is_never_replayed ... ok
+test cold_resumed_leased_worker_keeps_its_active_session_across_warm_turns ... ok
+test only_completed_turns_advance_the_checkpoint_across_failure_and_interruption ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkmuXS5 server=62851 test=a_damaged_checkpoint_fails_closed_and_preserves_its_bytes
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPUecrF server=63943 test=a_damaged_checkpoint_fails_closed_and_preserves_its_bytes
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpAyPCP0 server=65072 test=a_damaged_checkpoint_fails_closed_and_preserves_its_bytes
+test a_damaged_checkpoint_fails_closed_and_preserves_its_bytes ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.11s

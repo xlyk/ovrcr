@@ -117,10 +117,38 @@ Existing OVRCR CLI guards still apply.
 The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
-without a checkout. Automatic skill discovery stays off: personal and project
-skills are not loaded, and the guide never appears in your conversation, tool
-results or journal. Every ordinary model request, including one after pi
-compacts context automatically, receives the guide only as system prompt text.
+without a checkout. The separate coordinator skill is materialized in the
+private Operator profile and advertised to Pi by its explicit `--skill` path.
+When coordinating work, Pi reads that file on demand. Automatic discovery stays
+off, so personal and project skills are not loaded. The CLI guide remains only
+in system prompt text; it never appears in your conversation, tool results or
+journal. Every ordinary model request, including one after Pi compacts context
+automatically, receives the guide.
+
+## Coordinate Workspace sessions
+
+Use Operator's CLI directly for a quick inspection or one small step. For
+parallel coding tasks, Operator uses separate Git worktree Workspaces on
+dedicated branches and protects the Root workspace. A shared Workspace is for
+read-only research or work on the same branch only when you ask for it.
+
+Operator provisions or reuses ordinary visible Retained Agent sessions. Before
+it pastes each task with `terminal send`, it records the session run, numeric
+Reporter activity revision, and opaque unread-turn identity. It asks each Agent
+for an `OVRCR_WORKER_DONE` trailer with summary, files and checks, or an
+`OVRCR_WORKER_BLOCKED` trailer with reason and need, then registers the sessions
+with `watch_sessions`. It returns a Task / Workspace / Session table and finishes
+the turn without waiting, so you can keep using the composer while the work runs.
+
+When watched sessions settle, Operator wakes and reads the relevant replies:
+Claude Code and Codex use their transcripts, while Pi and Oh My Pi use terminal
+output. When a transcript entry reaches the 16 KiB cap, Operator falls back to the
+terminal tail. Operator checks repository status, diff size and reported check
+exit codes before calling coding work ready for review. If an Agent needs a
+human decision or is waiting for input, Operator asks you and marks one unread
+reply when hidden. Finished sessions stay open in the Dashboard for review.
+`watch_sessions` list and remove control monitoring; removing a watch does not
+stop its session.
 
 `Shift-Enter` inserts a newline; paste edits the draft without submitting. Both
 message inputs support these editing commands:
@@ -248,10 +276,11 @@ ovrcr terminal acknowledge-stopped SESSION_ID
 Acknowledgement marks an unfinished turn Interrupted and unlocks the next message.
 Interrupted or uncertain commands are never automatically replayed.
 
-Each running Operator turn uses one of the existing fifty live-session slots; an
-idle conversation uses none and at most one Operator turn runs at a time. At
-capacity, stop or close an ordinary session through the normal controls, then
-retry the preserved draft.
+The Operator worker has a dedicated live slot outside the fifty live Workspace
+session slots. It can run while all fifty Workspace sessions are active; a
+fifty-first Workspace session is still refused. Generic `terminal send`,
+`terminal keystroke`, `pause` and `resume` commands refuse Operator conversations.
+Use the Operator composer to submit a turn and its native Stop control to stop it.
 
 ## Existing data
 

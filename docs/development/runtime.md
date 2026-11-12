@@ -38,12 +38,16 @@ the nullable stored value because their start time is unavailable. Activity is
 persisted at most once per second per session. Shutdown flushes any newer
 in-memory value before stopping, and a completed child run keeps its timestamp.
 
-Operator conversations use those same retained rows and live slots with explicit
-global scope. Submission commits its user message and next run together before the
-shared prepared-run spawn body; it never advances that run twice. Current-owner
-Dashboard submit/Stop work runs on bounded, tracked control threads so the reader
-continues accepting terminal input. Completed handles are pruned during admission,
-and shutdown closes admission and joins controls before stopping the dispatcher.
+Operator conversations use those same retained rows with explicit global scope.
+The singleton worker has a dedicated live slot outside the fifty live Workspace
+slots; capacity admission and delegation headroom count Workspace sessions only.
+Generic terminal Paste, Keystroke, Pause and Resume reject Operator scope. Native
+Dashboard Submit and Stop control the worker. Submission commits its user message
+and next run together before the shared prepared-run spawn body; it never advances
+that run twice. Current-owner Dashboard submit/Stop work runs on bounded, tracked
+control threads so the reader continues accepting terminal input. Completed
+handles are pruned during admission, and shutdown closes admission and joins
+controls before stopping the dispatcher.
 Authenticated Start and event batches run on their scoped connection thread; they
 hold retained then Session authority only through validation and durable commit.
 Only IDs cross worker argv; immutable prompt/context/history use authenticated Start.

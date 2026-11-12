@@ -26,7 +26,8 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
         conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
         run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
         model_override TEXT, thinking_level TEXT NOT NULL DEFAULT '\"default\"',
-        UNIQUE(conversation,run));
+        started_unix_ms INTEGER, completed_unix_ms INTEGER,
+        leased INTEGER NOT NULL DEFAULT 0 CHECK(leased IN (0,1)));
         CREATE TABLE IF NOT EXISTS operator_messages (
         ordinal INTEGER PRIMARY KEY AUTOINCREMENT, conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
         turn INTEGER NOT NULL REFERENCES operator_turns(id), content TEXT NOT NULL);
@@ -40,7 +41,19 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     // as the old writer shaped it, so the current columns are added explicitly.
     ensure_singleton_columns(connection)?;
     migrate_reasoning(connection)?;
+    ensure_lease_column(connection)?;
     create_operator_indexes(connection)
+}
+
+fn ensure_lease_column(connection: &Connection) -> Result<()> {
+    if has_table(connection, "operator_turns")?
+        && !has_column(connection, "operator_turns", "leased")?
+    {
+        connection.execute_batch(
+            "ALTER TABLE operator_turns ADD COLUMN leased INTEGER NOT NULL DEFAULT 0 CHECK(leased IN (0,1));",
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn migrate_reasoning(connection: &Connection) -> Result<()> {
@@ -107,6 +120,8 @@ fn create_operator_indexes(connection: &Connection) -> Result<()> {
          ON operator_conversations(singleton) WHERE singleton=1;
          CREATE UNIQUE INDEX IF NOT EXISTS operator_one_running_turn
          ON operator_turns(conversation) WHERE state='Running';
+         CREATE INDEX IF NOT EXISTS operator_turn_run
+         ON operator_turns(conversation,run);
          CREATE INDEX IF NOT EXISTS operator_history
          ON operator_messages(conversation,ordinal);",
     )?;
@@ -121,6 +136,60 @@ pub(crate) fn migrate_singleton_conversation(connection: &Connection) -> Result<
         return Ok(());
     }
     ensure_singleton_columns(connection)?;
+    create_operator_indexes(connection)
+}
+
+/// Schema 33: allow multiple turns on one retained worker run. The turn rebuild
+/// keeps child rows and SQLite's deleted-ID sequence; the connection owner has
+/// foreign-key enforcement disabled until the surrounding migration commits.
+pub(crate) fn migrate_work_leases(connection: &Connection) -> Result<()> {
+    if !has_table(connection, "operator_turns")? {
+        return Ok(());
+    }
+    ensure_lease_column(connection)?;
+    let definition: String = connection.query_row(
+        "SELECT sql FROM sqlite_schema WHERE type='table' AND name='operator_turns'",
+        [],
+        |row| row.get(0),
+    )?;
+    if definition.contains("UNIQUE(conversation,run)")
+        || definition.contains("UNIQUE (conversation, run)")
+    {
+        let sequence: Option<i64> = connection
+            .query_row(
+                "SELECT seq FROM sqlite_sequence WHERE name='operator_turns'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        connection.execute_batch(
+            "CREATE TABLE operator_turns_work_lease (
+                id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
+                conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
+                run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
+                model_override TEXT, thinking_level TEXT NOT NULL DEFAULT '\"default\"',
+                started_unix_ms INTEGER, completed_unix_ms INTEGER,
+                leased INTEGER NOT NULL DEFAULT 0 CHECK(leased IN (0,1)));
+             INSERT INTO operator_turns_work_lease
+                (id,conversation,run,state,sequence,model_override,thinking_level,started_unix_ms,completed_unix_ms,leased)
+             SELECT id,conversation,run,state,sequence,model_override,thinking_level,started_unix_ms,completed_unix_ms,leased
+                FROM operator_turns;
+             DROP TABLE operator_turns;
+             ALTER TABLE operator_turns_work_lease RENAME TO operator_turns;",
+        )?;
+        if let Some(sequence) = sequence {
+            let updated = connection.execute(
+                "UPDATE sqlite_sequence SET seq=max(seq,?1) WHERE name='operator_turns'",
+                [sequence],
+            )?;
+            if updated == 0 {
+                connection.execute(
+                    "INSERT INTO sqlite_sequence(name,seq) VALUES('operator_turns',?1)",
+                    [sequence],
+                )?;
+            }
+        }
+    }
     create_operator_indexes(connection)
 }
 
@@ -216,6 +285,14 @@ impl SessionStore {
             .optional()?;
         id.map(|id| self.operator_conversation(OperatorConversationId(id)))
             .transpose()
+    }
+
+    pub(crate) fn operator_worker_leased(&self, id: OperatorConversationId) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT COALESCE((SELECT leased FROM operator_turns WHERE conversation=?1 ORDER BY id DESC LIMIT 1),0)",
+            [sql_integer(id.0)?],
+            |row| row.get(0),
+        )?)
     }
 
     /// Atomically gets or creates the sole conversation. Repeats return the same
@@ -357,6 +434,7 @@ impl SessionStore {
         Ok(OperatorConversationSummary {
             run: record.run,
             worker_stopped: record.stopped,
+            worker_live: false,
             id,
             session: SessionId(session),
             model,
@@ -433,10 +511,15 @@ impl SessionStore {
                 break;
             }
             bytes += raw.len();
+            let content = if raw == r#"{"Worker":"Completed"}"# {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
+            } else {
+                serde_json::from_str(&raw)?
+            };
             messages.push(OperatorMessage {
                 ordinal,
                 turn: OperatorTurnId(turn),
-                content: serde_json::from_str(&raw)?,
+                content,
             });
         }
         let next_after = if more {
@@ -459,6 +542,109 @@ impl SessionStore {
         text: &str,
         context: OperatorContext,
         settings: OperatorSettings,
+    ) -> Result<OperatorTurn> {
+        self.submit_operator_turn_inner(id, expected_run, text, context, settings, false)
+    }
+
+    /// Accepts another turn only after a completed turn explicitly kept its
+    /// exact worker run leased; the Server separately verifies that process is live.
+    pub(crate) fn submit_operator_turn_warm(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        text: &str,
+        context: OperatorContext,
+        settings: OperatorSettings,
+    ) -> Result<OperatorTurn> {
+        self.submit_operator_turn_inner(id, expected_run, text, context, settings, true)
+    }
+
+    /// Persists an idle watch report as its own turn on the currently leased
+    /// run. The Server holds `mutation_lock` across this call and the native
+    /// Pi confirmation, so a competing human Submit cannot own the same slot.
+    pub(crate) fn begin_async_operator_turn(
+        &mut self,
+        identity: OperatorRunIdentity,
+        text: &str,
+    ) -> Result<Option<OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        if text.trim().is_empty() || text.len() > MAX_OPERATOR_TEXT_BYTES || text.contains('\0') {
+            bail!("invalid async wakeup text bounds");
+        }
+        self.require_current_operator(identity.conversation)?;
+        let conversation = self.operator_conversation(identity.conversation)?;
+        if conversation.session != identity.session || conversation.run != identity.run {
+            bail!("stale operator run identity");
+        }
+        let Some(previous) = conversation.current_turn else {
+            return Ok(None);
+        };
+        if !matches!(
+            previous.state,
+            OperatorTurnState::Complete | OperatorTurnState::Interrupted | OperatorTurnState::Error
+        ) || previous.identity.run != identity.run
+        {
+            return Ok(None);
+        }
+        let row = self
+            .records
+            .get(&identity.session)
+            .context("retained operator session missing")?;
+        if row.run != identity.run
+            || row.stopped
+            || !matches!(row.disposition, Disposition::Active | Disposition::Returned)
+        {
+            return Ok(None);
+        }
+        let leased: bool = self.connection.query_row(
+            "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2",
+            params![
+                sql_integer(previous.identity.turn.0)?,
+                sql_integer(identity.conversation.0)?
+            ],
+            |row| row.get(0),
+        )?;
+        if !leased {
+            return Ok(None);
+        }
+
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO operator_turns(conversation,run,state,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4)",
+            params![
+                sql_integer(identity.conversation.0)?,
+                sql_integer(identity.run.0)?,
+                serde_json::to_string(&OperatorThinkingLevel::Default)?,
+                sql_integer(wall_clock_ms())?,
+            ],
+        )?;
+        let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
+        append_message(
+            &transaction,
+            sql_integer(identity.conversation.0)?,
+            sql_integer(turn.0)?,
+            &OperatorMessageContent::AsyncWakeup {
+                text: text.to_owned(),
+            },
+        )?;
+        transaction.commit()?;
+        self.operator_worker_start(OperatorTurnIdentity {
+            conversation: identity.conversation,
+            turn,
+            session: identity.session,
+            run: identity.run,
+        })
+        .map(Some)
+    }
+
+    fn submit_operator_turn_inner(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        text: &str,
+        context: OperatorContext,
+        settings: OperatorSettings,
+        warm_worker: bool,
     ) -> Result<OperatorTurn> {
         OperatorRequest::Submit {
             conversation: id,
@@ -486,21 +672,49 @@ impl SessionStore {
             .context("retained operator session missing")?;
         if row.run != expected_run
             || !matches!(row.disposition, Disposition::Active | Disposition::Returned)
-            || !row.stopped
+            || (warm_worker && row.stopped)
+            || (!warm_worker && !row.stopped)
         {
             bail!("operator session run changed or ownership remains uncertain");
         }
-        let run = SessionRunId(
+        if warm_worker {
+            let leased: bool = self.connection.query_row(
+                "SELECT leased FROM operator_turns WHERE id=?1 AND conversation=?2",
+                [
+                    sql_integer(
+                        conversation
+                            .current_turn
+                            .as_ref()
+                            .context("leased Operator turn is missing")?
+                            .identity
+                            .turn
+                            .0,
+                    )?,
+                    sql_integer(id.0)?,
+                ],
+                |row| row.get(0),
+            )?;
+            if !leased {
+                bail!("operator worker is no longer eligible for a warm turn");
+            }
+        }
+        let run = if warm_worker {
             expected_run
-                .0
-                .checked_add(1)
-                .context("session run exhausted")?,
-        );
+        } else {
+            SessionRunId(
+                expected_run
+                    .0
+                    .checked_add(1)
+                    .context("session run exhausted")?,
+            )
+        };
         let transaction = self.connection.transaction()?;
         let started_unix_ms = wall_clock_ms();
-        let changed=transaction.execute("UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0,disposition=0 WHERE id=?3 AND run=?4 AND stopped=1 AND disposition IN (0,2)",params![sql_integer(run.0)?,self.boot_id,sql_integer(conversation.session.0)?,sql_integer(expected_run.0)?])?;
-        if changed != 1 {
-            bail!("operator session run changed");
+        if !warm_worker {
+            let changed=transaction.execute("UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0,disposition=0 WHERE id=?3 AND run=?4 AND stopped=1 AND disposition IN (0,2)",params![sql_integer(run.0)?,self.boot_id,sql_integer(conversation.session.0)?,sql_integer(expected_run.0)?])?;
+            if changed != 1 {
+                bail!("operator session run changed");
+            }
         }
         transaction.execute(
             "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4,?5)",
@@ -517,13 +731,15 @@ impl SessionStore {
             },
         )?;
         transaction.commit()?;
-        let row = self.records.get_mut(&conversation.session).unwrap();
-        row.run = run;
-        row.disposition = Disposition::Active;
-        row.stopped = false;
-        row.boot_id = self.boot_id.clone();
-        row.failure = None;
-        row.title_revision = 0;
+        if !warm_worker {
+            let row = self.records.get_mut(&conversation.session).unwrap();
+            row.run = run;
+            row.disposition = Disposition::Active;
+            row.stopped = false;
+            row.boot_id = self.boot_id.clone();
+            row.failure = None;
+            row.title_revision = 0;
+        }
         Ok(OperatorTurn {
             identity: OperatorTurnIdentity {
                 conversation: id,
@@ -592,6 +808,7 @@ impl SessionStore {
         }
         let transaction = self.connection.transaction()?;
         let mut state = "Running";
+        let mut leased = None;
         for event in &batch.events {
             // Metadata events update the retained conversation without entering
             // the visible transcript.
@@ -610,8 +827,9 @@ impl SessionStore {
                     )?;
                     continue;
                 }
-                OperatorWorkerEvent::Completed => {
+                OperatorWorkerEvent::Completed { leased: value } => {
                     state = "Complete";
+                    leased = Some(*value);
                     continue;
                 }
                 OperatorWorkerEvent::Failed(_) => state = "Error",
@@ -625,13 +843,14 @@ impl SessionStore {
             )?;
         }
         transaction.execute(
-            "UPDATE operator_turns SET state=?1,sequence=?2,completed_unix_ms=?3 WHERE id=?4",
+            "UPDATE operator_turns SET state=?1,sequence=?2,completed_unix_ms=?3,leased=COALESCE(?4,leased) WHERE id=?5",
             params![
                 state,
                 sql_integer(batch.sequence)?,
                 (state == "Complete")
                     .then(|| sql_integer(wall_clock_ms()))
                     .transpose()?,
+                leased,
                 sql_integer(batch.identity.turn.0)?
             ],
         )?;
@@ -665,6 +884,7 @@ impl SessionStore {
     pub(crate) fn interrupt_operator_turn(
         &mut self,
         identity: OperatorTurnIdentity,
+        leased: bool,
     ) -> Result<OperatorTurn> {
         let mut turn = self.validate_operator_identity(identity)?;
         if turn.state != OperatorTurnState::Running {
@@ -678,12 +898,27 @@ impl SessionStore {
             &OperatorMessageContent::Interrupted,
         )?;
         transaction.execute(
-            "UPDATE operator_turns SET state='Interrupted' WHERE id=?1",
-            [sql_integer(identity.turn.0)?],
+            "UPDATE operator_turns SET state='Interrupted',leased=?2 WHERE id=?1",
+            params![sql_integer(identity.turn.0)?, leased],
         )?;
         transaction.commit()?;
         turn.state = OperatorTurnState::Interrupted;
         Ok(turn)
+    }
+    pub(crate) fn record_operator_turn_lease(
+        &mut self,
+        identity: OperatorTurnIdentity,
+        leased: bool,
+    ) -> Result<()> {
+        let turn = self.validate_operator_identity(identity)?;
+        if turn.state != OperatorTurnState::Error {
+            bail!("only a failed operator turn can retain a worker lease");
+        }
+        self.connection.execute(
+            "UPDATE operator_turns SET leased=?1 WHERE id=?2",
+            params![leased, sql_integer(identity.turn.0)?],
+        )?;
+        Ok(())
     }
     pub(crate) fn operator_worker_start(
         &self,
@@ -709,8 +944,12 @@ impl SessionStore {
             [sql_integer(identity.turn.0)?],
             |r| r.get(0),
         )?;
-        let OperatorMessageContent::User { text, context } = serde_json::from_str(&raw)? else {
-            bail!("operator submission missing")
+        let (text, context, async_wakeup) = match serde_json::from_str(&raw)? {
+            OperatorMessageContent::User { text, context } => (text, context, false),
+            OperatorMessageContent::AsyncWakeup { text } => {
+                (text, OperatorContext::default(), true)
+            }
+            _ => bail!("operator submission missing"),
         };
         let checkpoint_turn = checkpoint_turn
             .map(|turn| -> Result<OperatorTurnId> {
@@ -734,7 +973,40 @@ impl SessionStore {
                 [sql_integer(identity.turn.0)?],
                 |r| r.get::<_, String>(0),
             )?)?,
+            async_wakeup,
         })
+    }
+
+    /// Resolves the cold worker's turn from its authenticated run identity; no
+    /// turn number is trusted from process arguments.
+    pub(crate) fn operator_worker_start_for_run(
+        &self,
+        identity: OperatorRunIdentity,
+    ) -> Result<OperatorWorkerStart> {
+        self.operator_worker_next_turn(identity)?
+            .context("operator worker bootstrap is no longer current")
+    }
+
+    pub(crate) fn operator_worker_next_turn(
+        &self,
+        identity: OperatorRunIdentity,
+    ) -> Result<Option<OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        self.require_current_operator(identity.conversation)?;
+        let current = self.operator_conversation(identity.conversation)?;
+        if current.session != identity.session || current.run != identity.run {
+            bail!("stale operator run identity");
+        }
+        let Some(turn) = current.current_turn else {
+            return Ok(None);
+        };
+        if turn.identity.run != identity.run
+            || turn.state != OperatorTurnState::Running
+            || turn.sequence != 0
+        {
+            return Ok(None);
+        }
+        self.operator_worker_start(turn.identity).map(Some)
     }
 }
 #[cfg(test)]
@@ -783,7 +1055,7 @@ mod tests {
             sequence: 1,
             events: vec![
                 OperatorWorkerEvent::ReasoningSelected(reasoning.clone()),
-                OperatorWorkerEvent::Completed,
+                OperatorWorkerEvent::Completed { leased: false },
             ],
         };
         store.apply_operator_batch(&batch).unwrap();
@@ -861,8 +1133,147 @@ mod tests {
         OperatorEventBatch {
             identity: turn.identity,
             sequence,
-            events: vec![OperatorWorkerEvent::Completed],
+            events: vec![OperatorWorkerEvent::Completed { leased: false }],
         }
+    }
+
+    #[test]
+    fn leased_turns_warm_dispatch_on_the_same_run_until_completion_releases_it() {
+        let mut store = SessionStore::in_memory();
+        let conversation = open(&mut store);
+        let first = submit(&mut store, &conversation, None);
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: first.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: true }],
+            })
+            .unwrap();
+
+        let second = store
+            .submit_operator_turn_warm(
+                conversation.id,
+                first.identity.run,
+                "continue",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        assert_eq!(second.identity.run, first.identity.run);
+        assert!(second.identity.turn.0 > first.identity.turn.0);
+        assert_eq!(
+            store
+                .operator_worker_next_turn(OperatorRunIdentity {
+                    conversation: conversation.id,
+                    session: conversation.session,
+                    run: first.identity.run,
+                })
+                .unwrap()
+                .unwrap()
+                .identity,
+            second.identity
+        );
+
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: second.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: false }],
+            })
+            .unwrap();
+        assert!(
+            store
+                .submit_operator_turn_warm(
+                    conversation.id,
+                    first.identity.run,
+                    "too late",
+                    OperatorContext::default(),
+                    OperatorSettings::default(),
+                )
+                .is_err(),
+            "an unleased completion cannot authorize warm dispatch during teardown"
+        );
+    }
+
+    #[test]
+    fn async_wakeup_is_a_durable_turn_only_on_the_exact_leased_completed_run() {
+        let mut store = SessionStore::in_memory();
+        let conversation = open(&mut store);
+        let first = submit(&mut store, &conversation, None);
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: first.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: true }],
+            })
+            .unwrap();
+        let run = OperatorRunIdentity {
+            conversation: conversation.id,
+            session: conversation.session,
+            run: first.identity.run,
+        };
+        let wakeup = store
+            .begin_async_operator_turn(run, "watched session 23 is ready")
+            .unwrap()
+            .expect("the leased completed run owns an idle slot");
+        assert!(wakeup.async_wakeup);
+        assert_eq!(wakeup.identity.run, first.identity.run);
+        assert_eq!(wakeup.identity.session, first.identity.session);
+        assert_eq!(wakeup.text, "watched session 23 is ready");
+        assert_eq!(wakeup.context, OperatorContext::default());
+        let history = store
+            .read_operator_history(conversation.id, 0, 100)
+            .unwrap();
+        assert!(matches!(
+            history.messages.last().map(|message| &message.content),
+            Some(OperatorMessageContent::AsyncWakeup { text })
+                if text == "watched session 23 is ready"
+        ));
+        assert_eq!(
+            store.operator_worker_start(wakeup.identity).unwrap(),
+            wakeup
+        );
+        assert!(
+            store
+                .begin_async_operator_turn(run, "duplicate report")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .submit_operator_turn_warm(
+                    conversation.id,
+                    first.identity.run,
+                    "human loses the occupied slot",
+                    OperatorContext::default(),
+                    OperatorSettings::default(),
+                )
+                .is_err()
+        );
+
+        let mut unleased = SessionStore::in_memory();
+        let conversation = open(&mut unleased);
+        let completed = submit(&mut unleased, &conversation, None);
+        unleased
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: completed.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: false }],
+            })
+            .unwrap();
+        assert!(
+            unleased
+                .begin_async_operator_turn(
+                    OperatorRunIdentity {
+                        conversation: conversation.id,
+                        session: conversation.session,
+                        run: completed.identity.run,
+                    },
+                    "must not revive an unleased run",
+                )
+                .unwrap()
+                .is_none()
+        );
     }
     fn checkpoint(store: &SessionStore, id: OperatorConversationId) -> Option<i64> {
         store
@@ -1344,7 +1755,9 @@ mod tests {
             Some("openai/gpt-5.1-codex/mini")
         );
         assert!(store.operator_worker_start(first.identity).is_ok());
-        store.interrupt_operator_turn(first.identity).unwrap();
+        store
+            .interrupt_operator_turn(first.identity, false)
+            .unwrap();
         store.mark_stopped(c.session, first.identity.run).unwrap();
         let second = submit(&mut store, &c, None);
         assert!(
@@ -1599,7 +2012,10 @@ mod tests {
         assert!(store.operator_worker_start(turn.identity).is_err());
         // Exact-run acknowledgement interrupts the old unfinished turn.
         assert_eq!(
-            store.interrupt_operator_turn(turn.identity).unwrap().state,
+            store
+                .interrupt_operator_turn(turn.identity, false)
+                .unwrap()
+                .state,
             OperatorTurnState::Interrupted
         );
         assert_eq!(
@@ -1732,7 +2148,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -1897,7 +2313,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         migrate_singleton_conversation(&store.connection).unwrap();
         let completed = store
             .operator_conversation(OperatorConversationId(1))
@@ -2048,7 +2464,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         let singleton = column_specs_on(&connection, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "singleton")
@@ -2198,7 +2614,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 32, "the comparison uses a migrated database");
+        assert_eq!(version, 33, "the comparison uses a migrated database");
         for table in [
             "operator_conversations",
             "operator_turns",
@@ -2258,7 +2674,7 @@ mod tests {
         assert!(conversation_sql.contains("CHECK(id>0)"));
         let turn_sql = table_sql(&migrated, "operator_turns");
         assert!(turn_sql.contains("CHECK(run>0)"));
-        assert!(turn_sql.contains("UNIQUE(conversation,run)"));
+        assert!(!turn_sql.contains("UNIQUE(conversation,run)"));
         let single = index_specs(&migrated, "operator_conversations")
             .into_iter()
             .find(|(name, ..)| name == "operator_single_conversation")
@@ -2273,6 +2689,199 @@ mod tests {
         assert_eq!((running.1, running.2), (1, 1), "unique and partial");
         assert_eq!(running.3, vec!["conversation".to_string()]);
         assert!(running.4.contains("WHERE state='Running'"));
+    }
+
+    #[test]
+    fn schema_32_migration_preserves_legacy_completion_and_turn_dependents() {
+        let root = tempfile::tempdir().unwrap();
+        let conversation_id;
+        let first_turn;
+        let original_messages;
+        let original_receipt;
+        let old_completed = r#"{"Worker":"Completed"}"#;
+        {
+            let mut store = SessionStore::open(root.path()).unwrap();
+            let conversation = open(&mut store);
+            let turn = submit(&mut store, &conversation, None);
+            store.apply_operator_batch(&completed(&turn, 1)).unwrap();
+            conversation_id = conversation.id;
+            first_turn = turn.identity.turn;
+            store
+                .connection
+                .execute(
+                    "INSERT INTO operator_messages(conversation,turn,content) VALUES(?1,?2,?3)",
+                    params![
+                        sql_integer(conversation_id.0).unwrap(),
+                        sql_integer(first_turn.0).unwrap(),
+                        old_completed
+                    ],
+                )
+                .unwrap();
+            original_messages = raw_messages(&store, conversation_id);
+            original_receipt = store
+                .connection
+                .query_row(
+                    "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                    [sql_integer(first_turn.0).unwrap()],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap();
+            store
+                .connection
+                .execute(
+                    "INSERT INTO operator_model_history(conversation,turn,history) VALUES(?1,?2,'{\"kept\":true}')",
+                    params![sql_integer(conversation_id.0).unwrap(), sql_integer(first_turn.0).unwrap()],
+                )
+                .unwrap();
+            store
+                .connection
+                .execute(
+                    "UPDATE sqlite_sequence SET seq=40 WHERE name='operator_turns'",
+                    [],
+                )
+                .unwrap();
+            // Restore the actual schema-32 table shape. The fixture disables
+            // foreign keys only around the table replacement, just like startup.
+            store
+                .connection
+                .execute_batch(
+                    "PRAGMA foreign_keys=OFF;
+                     CREATE TABLE operator_turns_schema32 (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id>0),
+                        conversation INTEGER NOT NULL REFERENCES operator_conversations(id) ON DELETE CASCADE,
+                        run INTEGER NOT NULL CHECK(run>0), state TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
+                        model_override TEXT, thinking_level TEXT NOT NULL DEFAULT '\"default\"',
+                        started_unix_ms INTEGER, completed_unix_ms INTEGER,
+                        UNIQUE(conversation,run));
+                     INSERT INTO operator_turns_schema32
+                        (id,conversation,run,state,sequence,model_override,thinking_level,started_unix_ms,completed_unix_ms)
+                     SELECT id,conversation,run,state,sequence,model_override,thinking_level,started_unix_ms,completed_unix_ms
+                        FROM operator_turns;
+                     DROP TABLE operator_turns;
+                     ALTER TABLE operator_turns_schema32 RENAME TO operator_turns;
+                     UPDATE sqlite_sequence SET seq=40 WHERE name='operator_turns';
+                     PRAGMA foreign_keys=ON;
+                     PRAGMA user_version=32;",
+                )
+                .unwrap();
+        }
+
+        // Open the actual schema-32 database through the production migration path.
+        let connection = crate::config::open_writable_registry(root.path()).unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 33);
+        let turn_sql: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name='operator_turns'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!turn_sql.contains("UNIQUE(conversation,run)"));
+        let run_index: Option<(i64, i64)> = connection
+            .query_row(
+                "SELECT \"unique\",partial FROM pragma_index_list('operator_turns') WHERE name='operator_turn_run'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(run_index, Some((0, 0)));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT seq FROM sqlite_sequence WHERE name='operator_turns'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            40,
+            "rebuilding the parent table preserves deleted-ID history"
+        );
+        let history: String = connection
+            .query_row(
+                "SELECT history FROM operator_model_history WHERE conversation=?1",
+                [sql_integer(conversation_id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(history, "{\"kept\":true}");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM operator_messages WHERE turn=?1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(message_count, 2);
+        assert_eq!(
+            raw_messages_on(&connection, conversation_id),
+            original_messages
+        );
+        let receipt_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM operator_batches WHERE turn=?1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt_count, 1);
+        let receipt: String = connection
+            .query_row(
+                "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt, original_receipt);
+
+        // Both a second turn on the same run and the existing running-turn fence work.
+        connection
+            .execute(
+                "INSERT INTO operator_turns(conversation,run,state,sequence) VALUES(?1,1,'Running',0)",
+                [sql_integer(conversation_id.0).unwrap()],
+            )
+            .unwrap();
+        let duplicate_running = connection.execute(
+            "INSERT INTO operator_turns(conversation,run,state,sequence) VALUES(?1,2,'Running',0)",
+            [sql_integer(conversation_id.0).unwrap()],
+        );
+        assert!(
+            duplicate_running.is_err(),
+            "one Running turn per conversation remains enforced"
+        );
+        assert!(
+            !connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        drop(connection);
+
+        let store = SessionStore::open(root.path()).unwrap();
+        let history = store
+            .read_operator_history(conversation_id, 0, 100)
+            .unwrap();
+        assert_eq!(
+            history.messages[1].content,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
+        );
+        assert!(
+            raw_messages(&store, conversation_id).starts_with(&original_messages),
+            "opening after migration preserves the original journal payloads"
+        );
+        let receipt: String = store
+            .connection
+            .query_row(
+                "SELECT digest FROM operator_batches WHERE turn=?1 AND sequence=1",
+                [sql_integer(first_turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt, original_receipt);
     }
 
     #[test]

@@ -148,6 +148,29 @@ pub struct OperatorTurnIdentity {
     pub session: SessionId,
     pub run: SessionRunId,
 }
+
+/// Stable identity for one live Operator worker, shared across its turns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperatorRunIdentity {
+    pub conversation: OperatorConversationId,
+    pub session: SessionId,
+    pub run: SessionRunId,
+}
+impl OperatorRunIdentity {
+    pub fn validate(&self) -> Result<(), String> {
+        if [self.conversation.0, self.session.0, self.run.0].contains(&0) {
+            Err("zero operator run identity".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn matches_turn(&self, turn: &OperatorTurnIdentity) -> bool {
+        self.conversation == turn.conversation
+            && self.session == turn.session
+            && self.run == turn.run
+    }
+}
 impl OperatorTurnIdentity {
     pub fn validate(&self) -> Result<(), String> {
         if [self.conversation.0, self.turn.0, self.session.0, self.run.0].contains(&0) {
@@ -176,6 +199,8 @@ pub struct OperatorConversationSummary {
     pub run: SessionRunId,
     /// Derived only from the retained exact-run controlled-stop proof.
     pub worker_stopped: bool,
+    /// True only while the exact retained worker run is live in this Server.
+    pub worker_live: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
     /// The last pi model the worker selected; `None` before the first selection.
@@ -209,7 +234,9 @@ pub enum OperatorWorkerEvent {
         status: OperatorToolStatus,
     },
     ModelSelected(OperatorModel),
-    Completed,
+    Completed {
+        leased: bool,
+    },
     Failed(String),
     /// Displayable incremental thinking text; provider signatures are never carried.
     ThinkingDelta(String),
@@ -223,7 +250,7 @@ pub enum OperatorWorkerEvent {
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Completed | Self::Failed(_))
+        matches!(self, Self::Completed { .. } | Self::Failed(_))
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,7 +276,7 @@ impl OperatorEventBatch {
             match event {
                 OperatorWorkerEvent::ReasoningSelected(reasoning) => reasoning.validate()?,
                 OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
-                OperatorWorkerEvent::Completed
+                OperatorWorkerEvent::Completed { .. }
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded => {}
                 OperatorWorkerEvent::AssistantDelta(text)
@@ -324,6 +351,10 @@ pub enum OperatorMessageContent {
     },
     Worker(OperatorWorkerEvent),
     Interrupted,
+    /// A queued watched-session report admitted while the leased Pi worker was idle.
+    AsyncWakeup {
+        text: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorMessage {
@@ -438,11 +469,22 @@ pub struct OperatorWorkerStart {
     /// The last completed turn whose native session is this turn's context base.
     pub checkpoint_turn: Option<OperatorTurnId>,
     pub thinking_level: OperatorThinkingLevel,
+    /// Pi has already started this prompt through its native async input API.
+    pub async_wakeup: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
     Start {
+        identity: OperatorRunIdentity,
+    },
+    /// Claims the next submitted user turn for an already leased worker run.
+    StartTurn {
+        identity: OperatorRunIdentity,
+    },
+    /// Confirms that native rollback settled before a foreground Stop is published.
+    AbortTurn {
         identity: OperatorTurnIdentity,
+        leased: bool,
     },
     Retire {
         identity: OperatorTurnIdentity,
@@ -450,6 +492,11 @@ pub enum OperatorWorkerCommand {
     /// Authenticated timeout cancellation uses the same exact-turn Stop path.
     Stop {
         identity: OperatorTurnIdentity,
+    },
+    /// Atomically claims a settled watch report as a new turn on the leased run.
+    BeginAsyncTurn {
+        identity: OperatorRunIdentity,
+        text: String,
     },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -460,12 +507,28 @@ pub struct OperatorWorkerRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerResult {
     Start(Box<OperatorWorkerStart>),
+    StartTurn(Option<Box<OperatorWorkerStart>>),
+    Aborted { identity: OperatorTurnIdentity },
     Retired { identity: OperatorTurnIdentity },
+    BeginAsyncTurn(Option<Box<OperatorWorkerStart>>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stored_failed_worker_rows_keep_their_historical_json_shape() {
+        let raw = r#"{"Worker":{"Failed":"Pi request failed; inspect the partial journal before retrying."}}"#;
+        let decoded: OperatorMessageContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            decoded,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
+                "Pi request failed; inspect the partial journal before retrying.".into()
+            ))
+        );
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), raw);
+    }
+
     #[test]
     fn read_validates_conversation_and_current_open_need_no_identity() {
         assert!(
@@ -510,7 +573,7 @@ mod tests {
             "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
         )];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::Completed];
+        batch.events = vec![OperatorWorkerEvent::Completed { leased: false }];
         assert!(batch.validate().is_ok());
         batch.events = vec![
             OperatorWorkerEvent::Failed("failed".into()),
@@ -518,7 +581,7 @@ mod tests {
         ];
         assert!(batch.validate().is_err());
         batch.events = vec![
-            OperatorWorkerEvent::Completed,
+            OperatorWorkerEvent::Completed { leased: false },
             OperatorWorkerEvent::AssistantDelta("late".into()),
         ];
         assert!(batch.validate().is_err());
@@ -574,7 +637,7 @@ mod tests {
         batch.events = vec![
             OperatorWorkerEvent::CompactionStarted,
             OperatorWorkerEvent::CompactionEnded,
-            OperatorWorkerEvent::Completed,
+            OperatorWorkerEvent::Completed { leased: false },
         ];
         assert!(batch.validate().is_ok());
         batch.events = vec![OperatorWorkerEvent::ToolOutput {

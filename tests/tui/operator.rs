@@ -17,6 +17,7 @@ fn summary() -> OperatorConversationSummary {
         reasoning: None,
         run: SessionRunId(1),
         worker_stopped: true,
+        worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
         model: None,
@@ -157,7 +158,7 @@ fn delta(ordinal: u64, text: &str) -> OperatorMessage {
 fn completed(ordinal: u64) -> OperatorMessage {
     message(
         ordinal,
-        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
     )
 }
 
@@ -757,7 +758,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         vec![turn_message(
             2,
             6,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
         )],
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
@@ -853,7 +854,7 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
             turn_message(
                 2,
                 2,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
             ),
         ],
     );
@@ -903,7 +904,7 @@ fn unread_outranks_a_retained_draft_in_the_operator_section() {
         vec![turn_message(
             2,
             1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
@@ -3542,7 +3543,7 @@ fn thinking_blocks_toggle_independently_by_mouse() {
         turn_message(
             1,
             3,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
         ),
         turn_message(
             2,
@@ -3674,7 +3675,7 @@ fn thinking_viewport_keeps_the_header_while_scrolling_and_collapsing() {
         turn_message(
             1,
             3,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
         ),
         turn_message(
             2,

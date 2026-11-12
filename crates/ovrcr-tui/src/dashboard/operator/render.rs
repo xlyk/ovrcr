@@ -92,7 +92,7 @@ fn latest_completed_turn(chat: &Chat) -> Option<ovrcr_protocol::OperatorTurnId> 
         .find(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
             )
         })
         .map(|message| message.turn)
@@ -150,7 +150,7 @@ fn activity(chat: &Chat) -> AgentActivity {
     }
     match chat.summary.current_turn.as_ref().map(|turn| turn.state) {
         Some(OperatorTurnState::Running) => AgentActivity::Busy,
-        Some(_) if !chat.summary.worker_stopped => AgentActivity::Busy,
+        Some(_) if !chat.summary.worker_live && !chat.summary.worker_stopped => AgentActivity::Busy,
         Some(OperatorTurnState::Error) => AgentActivity::Error,
         Some(OperatorTurnState::Interrupted) => AgentActivity::WaitingInput,
         Some(OperatorTurnState::Complete) => AgentActivity::ResponseReady,
@@ -654,6 +654,17 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 }
                 push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
             }
+            OperatorMessageContent::AsyncWakeup { text } => {
+                push_lines(
+                    &mut lines,
+                    ordinal,
+                    0,
+                    "Operator".into(),
+                    Style::default().fg(BLUE()),
+                    true,
+                );
+                push_lines(&mut lines, ordinal, 3, display_text(text), normal, true);
+            }
             OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(_)) => {
                 if index == 0
                     || matches!(
@@ -820,7 +831,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
             ) => {}
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed) => {
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. }) => {
                 push_lines(
                     &mut lines,
                     ordinal,
@@ -845,7 +856,7 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
                     &mut lines,
                     ordinal,
                     0,
-                    "Interrupted · accepted operations may finish; no rollback.".into(),
+                    "Interrupted · operations may finish; file changes remain.".into(),
                     error,
                     true,
                 );
@@ -867,8 +878,15 @@ fn logical_lines(chat: &Chat) -> Vec<TranscriptLine> {
         }
         if lines.len() > first_line
             && chat.messages.get(index + 1).is_none_or(|next| {
-                matches!(message.content, OperatorMessageContent::User { .. })
-                    || matches!(next.content, OperatorMessageContent::User { .. })
+                matches!(
+                    message.content,
+                    OperatorMessageContent::User { .. }
+                        | OperatorMessageContent::AsyncWakeup { .. }
+                ) || matches!(
+                    next.content,
+                    OperatorMessageContent::User { .. }
+                        | OperatorMessageContent::AsyncWakeup { .. }
+                )
             })
         {
             push_lines(&mut lines, ordinal, 4, String::new(), normal, true);
@@ -1266,7 +1284,7 @@ impl Dashboard {
         now_unix_ms: u64,
     ) {
         let layout = self.operator_layout(frame.area());
-        let stop = !chat.summary.worker_stopped
+        let stop = (!chat.summary.worker_live && !chat.summary.worker_stopped)
             || chat
                 .summary
                 .current_turn

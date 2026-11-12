@@ -1,0 +1,22 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.66s
+     Running tests/operator_e2e.rs (target/debug/deps/operator_e2e-a590bc20bee045c7)
+
+running 1 test
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3pPPPT server=54257 test=leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+
+thread 'leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires' (653632726) panicked at tests/operator_e2e.rs:404:5:
+assertion `left == right` failed: Default restores the captured profile level after an explicit warm level
+  left: ["high", "high"]
+ right: ["high", "high", "medium"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires ... FAILED
+
+failures:
+
+failures:
+    leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 5.01s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_e2e`

@@ -168,7 +168,7 @@ impl Reporter {
     /// Native Operator uses this same watched lease without a provider-native binding.
     pub fn operator_start(
         &mut self,
-        identity: ovrcr_protocol::OperatorTurnIdentity,
+        identity: ovrcr_protocol::OperatorRunIdentity,
         deadline: Instant,
     ) -> anyhow::Result<ovrcr_protocol::OperatorWorkerStart> {
         let lease = self
@@ -180,11 +180,90 @@ impl Reporter {
             deadline,
         )? {
             Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Start(start))
-                if start.identity == identity =>
+                if identity.matches_turn(&start.identity) =>
             {
                 Ok(*start)
             }
             _ => anyhow::bail!("operator bootstrap refused"),
+        }
+    }
+    pub fn operator_start_turn(
+        &mut self,
+        identity: ovrcr_protocol::OperatorRunIdentity,
+        deadline: Instant,
+    ) -> anyhow::Result<Option<ovrcr_protocol::OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::StartTurn { identity },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::StartTurn(start)) => {
+                if start
+                    .as_ref()
+                    .is_some_and(|start| !identity.matches_turn(&start.identity))
+                {
+                    anyhow::bail!("operator turn bootstrap identity changed");
+                }
+                Ok(start.map(|start| *start))
+            }
+            _ => anyhow::bail!("operator turn bootstrap refused"),
+        }
+    }
+
+    /// Reserve a settled watch report as an async turn on the exact leased run.
+    /// `None` means a user Submit or another lifecycle transition already owns
+    /// the turn slot; the Pi extension must leave the report queued.
+    pub fn operator_begin_async_turn(
+        &mut self,
+        identity: ovrcr_protocol::OperatorRunIdentity,
+        text: String,
+        deadline: Instant,
+    ) -> anyhow::Result<Option<ovrcr_protocol::OperatorWorkerStart>> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::BeginAsyncTurn { identity, text },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::BeginAsyncTurn(
+                start,
+            )) => {
+                if start.as_ref().is_some_and(|start| {
+                    !identity.matches_turn(&start.identity) || !start.async_wakeup
+                }) {
+                    anyhow::bail!("async turn bootstrap identity changed");
+                }
+                Ok(start.map(|start| *start))
+            }
+            _ => anyhow::bail!("async turn admission refused"),
+        }
+    }
+
+    pub fn operator_abort_turn(
+        &mut self,
+        identity: ovrcr_protocol::OperatorTurnIdentity,
+        leased: bool,
+        deadline: Instant,
+    ) -> anyhow::Result<()> {
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::AbortTurn { identity, leased },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::Aborted {
+                identity: aborted,
+            }) if aborted == identity => Ok(()),
+            _ => anyhow::bail!("operator turn abort refused"),
         }
     }
     pub fn operator_batch(

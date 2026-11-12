@@ -1,0 +1,51 @@
+   Compiling ovrcr-protocol v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-protocol)
+   Compiling vt100 v0.16.2 (/private/tmp/ovrcr-468/vendor/vt100)
+   Compiling ovrcr-terminal v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/private/tmp/ovrcr-468/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-468)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.23s
+     Running tests/operator_worker.rs (/private/tmp/ovrcr-465-integration/target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 1 test
+
+thread 'the_extension_forces_sequential_tools_and_bounds_its_bash_timeout' (654536758) panicked at tests/operator_worker.rs:1954:5:
+extension probe failed:
+stdout:
+stderr: node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: the four native tools and watcher are registered
++ actual - expected
+
+  [
+    'bash',
+    'edit',
+    'read',
+-   'watch_sessions',
+    'write'
+  ]
+
+    at file:///private/tmp/ovrcr-468/tests/fixtures/operator-pi/extension_probe.mjs:159:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [ 'bash', 'edit', 'read', 'write' ],
+  expected: [ 'bash', 'edit', 'read', 'watch_sessions', 'write' ],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... FAILED
+
+failures:
+
+failures:
+    the_extension_forces_sequential_tools_and_bounds_its_bash_timeout
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_worker`

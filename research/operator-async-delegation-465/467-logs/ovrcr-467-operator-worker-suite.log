@@ -1,0 +1,119 @@
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-467)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.50s
+     Running tests/operator_worker.rs (target/debug/deps/operator_worker-e9b69a730af2f10c)
+
+running 50 tests
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcKyqM9 server=33840 test=an_interrupted_turn_keeps_its_partial_journal_and_never_promotes_a_checkpoint
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmputLeZU server=33842 test=a_wrong_extension_contract_refuses_the_turn_before_any_prompt
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWYTD80 server=33869 test=a_timed_out_tool_result_is_not_acknowledged_and_stops_the_turn
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpO38d2D server=33871 test=a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoint
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmrpJoJ server=33873 test=a_checkpoint_with_a_malformed_record_fails_closed_and_preserves_bytes
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1J8Ueg server=33874 test=a_startup_failure_refuses_the_turn_before_any_prompt
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpD6pUua server=33879 test=a_native_failure_commits_one_fixed_message_without_a_checkpoint
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOQqUHS server=33880 test=an_execution_without_the_admission_dialog_fails_the_turn
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpko65L3 server=33881 test=a_result_for_an_unadmitted_call_is_refused_without_effects
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprpQjOq server=33882 test=admissions_are_sequential_and_no_command_runs_after_a_refusal
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJf4jKp server=33883 test=a_streaming_peer_cannot_defer_a_control_deadline
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIvt0si server=33885 test=a_failed_tool_result_is_recorded_and_still_completes
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5RRalk server=33884 test=an_unclean_shutdown_fails_the_turn_without_promoting_a_checkpoint
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp61zige server=33886 test=a_completed_turn_selects_the_profile_default_and_promotes_its_checkpoint
+LIVE_OWNED_GROUP root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcKyqM9 pgid=34326
+test an_interrupted_turn_keeps_its_partial_journal_and_never_promotes_a_checkpoint ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpe8YnSl server=35334 test=assistant_text_is_prefix_deduplicated_and_a_contradiction_fails
+test a_failed_tool_result_is_recorded_and_still_completes ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8I6xbi server=35468 test=compaction_failure_keeps_the_start_without_an_end_and_fails_the_turn
+test an_execution_without_the_admission_dialog_fails_the_turn ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsx3IC2 server=35619 test=compaction_phase_is_durable_isolated_and_does_not_duplicate_thinking
+test a_result_for_an_unadmitted_call_is_refused_without_effects ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcoPGdB server=35803 test=deferred_buffered_thinking_end_retracts_its_trailing_separator
+
+thread 'a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoint' (654052355) panicked at tests/operator_worker.rs:698:5:
+assertion `left == right` failed
+  left: "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpO38d2D/instance/operator-pi/runs/2"
+ right: "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpO38d2D/instance/operator-pi/turns/2"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSXPGPR server=35917 test=assistant_text_is_prefix_deduplicated_and_a_contradiction_fails
+test a_completed_turn_selects_the_profile_default_and_promotes_its_checkpoint ... ok
+test a_native_failure_commits_one_fixed_message_without_a_checkpoint ... ok
+test direct_worker_without_a_server_lease_creates_no_profile_side_effects ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpz40CFt server=36048 test=deferred_end_only_block_preserves_interleaved_arrival_runs
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmps2iidN server=36077 test=empty_signature_and_redacted_thinking_never_become_a_block
+test a_startup_failure_refuses_the_turn_before_any_prompt ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJzg3g6 server=36102 test=end_only_redacted_thinking_never_becomes_a_block
+test a_timed_out_tool_result_is_not_acknowledged_and_stops_the_turn ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvvcBIr server=36372 test=end_only_thinking_before_answer_stays_in_order
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpH1HkfG server=36622 test=a_wrong_extension_contract_refuses_the_turn_before_any_prompt
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqSLGg1 server=36647 test=an_unclean_shutdown_fails_the_turn_without_promoting_a_checkpoint
+test admissions_are_sequential_and_no_command_runs_after_a_refusal ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp67PcFg server=36695 test=final_content_block_suffixes_append_in_order_without_duplicate_thinking
+test a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoint ... FAILED
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpaNGlhH server=36829 test=final_only_thinking_block_is_emitted_once
+test compaction_failure_keeps_the_start_without_an_end_and_fails_the_turn ... ok
+test harness::tests::pump_keeps_a_frame_split_between_polls ... ok
+test harness::tests::registry_scan_finds_text_and_blob_credential_sentinels ... ok
+test harness::tests::registry_scan_ignores_a_clean_database ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMVYpPp server=36881 test=held_thinking_whitespace_releases_before_the_answer
+test compaction_phase_is_durable_isolated_and_does_not_duplicate_thinking ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmOtTHB server=36940 test=interleaved_text_and_thinking_indexes_keep_arrival_order_and_prefixes
+test deferred_buffered_thinking_end_retracts_its_trailing_separator ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbY1wEs server=37010 test=invalid_pi_reasoning_readback_stops_before_prompt
+test a_checkpoint_with_a_malformed_record_fails_closed_and_preserves_bytes ... ok
+test live::command_clears_inherited_reporting_authority ... ok
+test assistant_text_is_prefix_deduplicated_and_a_contradiction_fails ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvuINkI server=37173 test=one_assistant_message_with_two_tool_calls_journals_both_in_order
+test deferred_end_only_block_preserves_interleaved_arrival_runs ... ok
+test operator_cli_exposes_setup_and_models_and_hides_worker ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprK4kxO server=37582 test=provider_and_stderr_sentinels_never_reach_the_journal_settings_or_events
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplfxxbd server=37674 test=empty_signature_and_redacted_thinking_never_become_a_block
+test end_only_redacted_thinking_never_becomes_a_block ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpM7ZtFp server=37738 test=reasoning_setting_is_applied_read_back_and_kept_after_model_change
+test end_only_thinking_before_answer_stays_in_order ... ok
+test models_lists_the_dedicated_profiles_catalog_without_launching_a_server ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpaZgNxN server=37877 test=a_wrong_extension_contract_refuses_the_turn_before_any_prompt
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpydhXij server=37910 test=an_unclean_shutdown_fails_the_turn_without_promoting_a_checkpoint
+test final_content_block_suffixes_append_in_order_without_duplicate_thinking ... ok
+test final_only_thinking_block_is_emitted_once ... ok
+test rpc_child_writes_are_bounded_and_termination_reaps_the_fixture ... ok
+test held_thinking_whitespace_releases_before_the_answer ... ok
+test setup_requires_a_terminal_and_refuses_json_before_starting_pi ... ok
+test rpc_refuses_an_oversize_command_without_writing ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZj1eLY server=38449 test=stop_during_compaction_leaves_no_completed_phase
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprA77KT server=38464 test=submit_snapshots_the_model_override_for_that_turn_only
+test interleaved_text_and_thinking_indexes_keep_arrival_order_and_prefixes ... ok
+test rpc_splits_on_lf_only_and_separators_stay_inside_strings ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfQvJDJ server=38638 test=thinking_and_answer_order_is_preserved_around_a_tool_receipt
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfFXNhC server=38640 test=invalid_pi_reasoning_readback_stops_before_prompt
+test a_streaming_peer_cannot_defer_a_control_deadline ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpV6WqKO server=38666 test=thinking_deltas_stream_before_a_held_answer_and_final_blocks_do_not_duplicate
+test one_assistant_message_with_two_tool_calls_journals_both_in_order ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBHdu30 server=38757 test=thinking_end_reconciles_responses_separator_normalization
+test stop_during_compaction_leaves_no_completed_phase ... ok
+test provider_and_stderr_sentinels_never_reach_the_journal_settings_or_events ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprus6Rn server=38865 test=thinking_prefix_and_content_block_contradictions_fail_closed
+test empty_signature_and_redacted_thinking_never_become_a_block ... ok
+test a_wrong_extension_contract_refuses_the_turn_before_any_prompt ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8SLXtK server=39454 test=an_unclean_shutdown_fails_the_turn_without_promoting_a_checkpoint
+test rpc_refuses_an_incomplete_record_past_the_limit ... ok
+test thinking_and_answer_order_is_preserved_around_a_tool_receipt ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqCMyLA server=39722 test=invalid_pi_reasoning_readback_stops_before_prompt
+test thinking_deltas_stream_before_a_held_answer_and_final_blocks_do_not_duplicate ... ok
+test thinking_end_reconciles_responses_separator_normalization ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPFFMAD server=40087 test=thinking_prefix_and_content_block_contradictions_fail_closed
+test an_unclean_shutdown_fails_the_turn_without_promoting_a_checkpoint ... ok
+test the_extension_forces_sequential_tools_and_bounds_its_bash_timeout ... ok
+test submit_snapshots_the_model_override_for_that_turn_only ... ok
+test rpc_accepts_an_exact_limit_record_and_refuses_one_byte_more ... ok
+test reasoning_setting_is_applied_read_back_and_kept_after_model_change ... ok
+test invalid_pi_reasoning_readback_stops_before_prompt ... ok
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3oMFx1 server=40732 test=thinking_prefix_and_content_block_contradictions_fail_closed
+LIVE_OWNED_SERVER root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSwB9Bo server=41497 test=thinking_prefix_and_content_block_contradictions_fail_closed
+test thinking_prefix_and_content_block_contradictions_fail_closed ... ok
+
+failures:
+
+failures:
+    a_resumed_turn_uses_the_fresh_profile_default_and_the_last_completed_checkpoint
+
+test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.64s
+
+error: test failed, to rerun pass `-p ovrcr --test operator_worker`

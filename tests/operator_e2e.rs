@@ -25,7 +25,7 @@ use live::Live;
 use operator_harness::{OperatorClient, Registry, has_assistant, tool_calls, tool_outputs};
 use ovrcr::protocol::{
     OperatorMessageContent, OperatorRequest, OperatorTurnState, OperatorWorkerEvent, Request,
-    Response, SessionId,
+    Response, SessionId, SessionRunId,
 };
 use serde_json::json;
 use std::{
@@ -164,6 +164,96 @@ fn operator_cli_is_the_native_profile_entry_point() {
 }
 
 #[test]
+fn an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly() {
+    let event_log = PathBuf::from("/private/tmp/ovrcr-468-async-wakeup-fake-pi-retry.log");
+    let _ = std::fs::remove_file(&event_log);
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::WatchStatus(1),
+        Step::assistant("initial turn"),
+        Step::Settle,
+        Step::async_wakeup(
+            "A watched Workspace Agent finished.",
+            "I reviewed the completed session.",
+        ),
+    ]);
+    scenario.set("log", event_log.display().to_string());
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "start watcher");
+    assert_eq!(first.identity.run, SessionRunId(1));
+
+    let final_history = client.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "A watched Workspace Agent finished."
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != first.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    client.wait_stopped(opened.id);
+
+    let wakeups: Vec<_> = final_history
+        .messages
+        .iter()
+        .filter_map(|message| match &message.content {
+            OperatorMessageContent::AsyncWakeup { text } => Some((message.turn, text)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        wakeups.len(),
+        1,
+        "the settled batch creates one journal row"
+    );
+    let turn = final_history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(wakeups[0].0, turn.identity.turn);
+    assert_eq!(turn.identity.session, first.identity.session);
+    assert_eq!(turn.identity.run, first.identity.run);
+    assert!(has_assistant(
+        &final_history,
+        "I reviewed the completed session."
+    ));
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|line| line["event"] == "prompt")
+            .count(),
+        1,
+        "the wakeup is the already-started native Pi request, not a second RPC prompt"
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn.identity.turn.0 as i64),
+        "the accepted wakeup becomes the next durable native-session checkpoint"
+    );
+    let admissions: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "async_wakeup_admission")
+        .collect();
+    assert!(
+        admissions.len() >= 2,
+        "the pre-settle offer is retried at idle: {admissions:?}"
+    );
+    assert_eq!(admissions[0]["confirmed"], false);
+    for retry in &admissions[1..admissions.len() - 1] {
+        assert_eq!(retry["confirmed"], false);
+        assert_eq!(retry["retry"], true);
+    }
+    assert_eq!(admissions.last().unwrap()["confirmed"], true);
+    assert_eq!(admissions.last().unwrap()["retry"], true);
+}
+
+#[test]
 fn current_never_creates_and_open_yields_one_durable_conversation() {
     let scenario = Scenario::new();
     let (live, _fake, mut client) = fixture(&scenario);
@@ -215,6 +305,956 @@ fn current_never_creates_and_open_yields_one_durable_conversation() {
     assert_eq!(reconnected.current(), Some(opened.clone()));
     assert!(reconnected.session(opened.session).pid.is_none());
     assert_eq!(Registry::of(&live).conversation_ids(), vec![opened.id.0]);
+}
+
+#[test]
+fn leased_worker_reuses_one_live_run_for_warm_user_turns_then_retires() {
+    let mut scenario = Scenario::new();
+    scenario.set(
+        "model_default_thinking",
+        json!({"fixture/default": "medium", "fixture/alternate": "low"}),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("first leased answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("second leased answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("final unleased answer"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    for (key, value) in [
+        ("operator.model", "fixture/alternate"),
+        ("operator.thinking_level", "high"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", key, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "launch watched work");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    assert_eq!(first.identity.run, SessionRunId(1));
+    assert_eq!(
+        leased.conversation.current_turn.as_ref().unwrap().identity,
+        first.identity
+    );
+    assert!(!leased.conversation.worker_stopped);
+    assert!(client.session(opened.session).pid.is_some());
+    let first_checkpoint = checkpoint_file(&live, first.identity.turn.0);
+    assert!(
+        first_checkpoint.is_file(),
+        "leased turns publish a separate checkpoint copy"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&first_checkpoint).unwrap().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        std::fs::read_to_string(&first_checkpoint)
+            .unwrap()
+            .starts_with("{\"type\":\"session\""),
+        "the copied checkpoint starts with the validated native header"
+    );
+    assert!(matches!(
+        live.request(Request::Shutdown { kill: false }),
+        Response::Error {
+            code: ovrcr::protocol::ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.model".into(),
+            value: None,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'high'".into()),
+        }),
+        Response::Ok
+    );
+    let second = client.submit_turn(&leased.conversation, "continue while watched");
+    assert_eq!(
+        second.identity.run, first.identity.run,
+        "warm Submit keeps the worker run"
+    );
+    assert!(second.identity.turn.0 > first.identity.turn.0);
+
+    let second_leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == second.identity)
+    });
+    assert_eq!(
+        second_leased.conversation.model,
+        Some(ovrcr::protocol::OperatorModel {
+            provider: "fixture".into(),
+            id: "default".into(),
+        }),
+        "clearing an explicit model applies the Pi profile default on a warm turn"
+    );
+    assert_eq!(
+        client.exchange(Request::SetSetting {
+            path: "operator.thinking_level".into(),
+            value: Some("'default'".into()),
+        }),
+        Response::Ok
+    );
+    let third = client.submit_turn(&second_leased.conversation, "restore profile reasoning");
+    assert_eq!(third.identity.run, first.identity.run);
+    assert!(third.identity.turn.0 > second.identity.turn.0);
+
+    let final_history = client.wait_stopped(opened.id);
+    assert_eq!(state(&final_history), OperatorTurnState::Complete);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity,
+        third.identity
+    );
+    assert!(!final_history.conversation.worker_live);
+    assert!(final_history.conversation.worker_stopped);
+    assert!(client.session(opened.session).pid.is_none());
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(third.identity.turn.0 as i64)
+    );
+    assert!(
+        !first_checkpoint.exists(),
+        "the new checkpoint replaces the old copy"
+    );
+
+    let starts = fake.events("start");
+    let prompts = fake.events("prompt");
+    assert_eq!(
+        starts.len(),
+        1,
+        "the leased follow-up reused one Pi process"
+    );
+    assert_eq!(prompts.len(), 3);
+    assert!(
+        prompts[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("launch watched work")
+    );
+    assert!(
+        prompts[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("continue while watched")
+    );
+    assert!(
+        prompts[2]["message"]
+            .as_str()
+            .unwrap()
+            .contains("restore profile reasoning")
+    );
+    let selected_models: Vec<_> = fake
+        .events("command")
+        .into_iter()
+        .filter(|event| event["command"] == "set_model")
+        .map(|event| event["modelId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(selected_models, ["alternate", "default", "default"]);
+    let selected_levels: Vec<_> = fake
+        .events("command")
+        .into_iter()
+        .filter(|event| event["command"] == "set_thinking_level")
+        .map(|event| event["level"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        selected_levels,
+        ["high", "high", "medium"],
+        "Default restores the captured profile level after an explicit warm level"
+    );
+    assert_eq!(
+        final_history.conversation.reasoning.as_ref().unwrap().level,
+        ovrcr::protocol::OperatorThinkingLevel::Medium
+    );
+    assert_eq!(
+        live.request(Request::Shutdown { kill: false }),
+        Response::Ok,
+        "clean unleased retirement leaves non-kill shutdown available"
+    );
+    assert!(matches!(
+        live.join_within(Duration::from_secs(10)),
+        live::Stop::Finished
+    ));
+}
+
+#[test]
+fn leased_stop_rolls_back_on_the_live_worker_without_advancing_checkpoint() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let release_abort_settlement = marker_dir.path().join("release-abort-settlement");
+    let release_wakeup = marker_dir.path().join("release-wakeup");
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("completed checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial stopped answer".into()),
+            Step::WatchStatus(1),
+            Step::Hold,
+        ],
+    ]);
+    scenario.set(
+        "abort_settle_release_file",
+        release_abort_settlement.display().to_string(),
+    );
+    scenario.set(
+        "wakeup_after_switch",
+        json!({
+            "text": "watch report queued during Stop rollback",
+            "answer": "the live worker handled the queued watch report",
+            "release_file": release_wakeup.display().to_string(),
+        }),
+    );
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create a checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+    let second = client.submit_turn(&leased.conversation, "start a cancellable turn");
+    let partial = client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial stopped answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    assert_eq!(second.identity.run, first.identity.run);
+
+    // Send Stop without reading its reply, then reconnect while the fake Pi is
+    // deliberately holding agent_settled. The durable turn must remain busy.
+    drop(client);
+    let mut stop_stream = ovrcr::protocol::connect_server(&live.socket).unwrap();
+    let hello =
+        ovrcr::protocol::client::request(&mut stop_stream, 900_000, Request::DashboardHello)
+            .unwrap();
+    assert!(
+        matches!(hello, Response::Hierarchy(_)),
+        "Dashboard handshake: {hello:?}"
+    );
+    ovrcr::protocol::write_frame(
+        &mut stop_stream,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 900_001,
+            request: Request::Operator(OperatorRequest::Stop {
+                identity: second.identity,
+            }),
+        },
+    )
+    .unwrap();
+    fake.wait_log(Duration::from_secs(3), |log| {
+        log.iter()
+            .any(|line| line["event"] == "command" && line["command"] == "abort")
+    });
+    drop(stop_stream);
+    let mut reconnect = OperatorClient::reconnect_after_disconnect(&live);
+    let current = reconnect.current().unwrap();
+    let busy = reconnect.read(opened.id.0, 0, 100);
+    assert_eq!(state(&busy), OperatorTurnState::Running);
+    assert!(busy.conversation.worker_live);
+    assert!(matches!(
+        reconnect.submit(&current, "cannot enter during native rollback"),
+        Response::Error { .. }
+    ));
+
+    std::fs::write(&release_abort_settlement, "settle").unwrap();
+    let stopped = reconnect.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Interrupted
+    });
+    assert_eq!(state(&stopped), OperatorTurnState::Interrupted);
+    let history = reconnect.read(opened.id.0, 0, 100);
+    assert!(has_assistant(&history, "partial stopped answer"));
+    assert!(
+        history.conversation.worker_live,
+        "the leased Pi worker remains live"
+    );
+    assert!(!history.conversation.worker_stopped);
+    assert_eq!(
+        reconnect.session(opened.session).pid,
+        Some(worker_pid),
+        "the exact worker process remains attached to the leased run"
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64),
+        "Stop never promotes its partial session"
+    );
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(second.identity.turn.0)
+            .as_deref(),
+        Some("Interrupted")
+    );
+    std::fs::write(&release_wakeup, "offer").unwrap();
+    let final_history = reconnect.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "watch report queued during Stop rollback"
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 > second.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    reconnect.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &final_history,
+        "the live worker handled the queued watch report"
+    ));
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .run,
+        first.identity.run
+    );
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "Stop rollback and wakeup reuse the original Pi process"
+    );
+    assert!(
+        partial.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text))
+                    if text.contains("partial stopped answer")
+            )
+        }),
+        "the visible partial journal remains available"
+    );
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "rollback switches to the completed checkpoint"
+    );
+    assert!(switches[0]["exists"].as_bool().unwrap());
+    assert!(
+        std::fs::read_to_string(switches[0]["path"].as_str().unwrap())
+            .unwrap()
+            .contains("completed checkpoint"),
+        "the replacement Pi session is based on the completed checkpoint"
+    );
+}
+
+#[test]
+fn leased_stop_uses_the_five_second_owned_group_fallback_when_pi_does_not_settle() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let never_release = marker_dir.path().join("abort-settlement-never-released");
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("fallback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial fallback answer".into()),
+            Step::WatchStatus(1),
+            Step::Hold,
+        ],
+    ]);
+    scenario.set(
+        "abort_settle_release_file",
+        never_release.display().to_string(),
+    );
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the fallback checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let second = client.submit_turn(&leased.conversation, "stop a Pi peer that never settles");
+    client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial fallback answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+    let started = std::time::Instant::now();
+
+    let stopped = client.stop_turn(second.identity);
+    let elapsed = started.elapsed();
+    assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+    assert!(
+        elapsed >= Duration::from_millis(4500) && elapsed < Duration::from_secs(8),
+        "the Server waits about five seconds before hard fallback; elapsed {elapsed:?}"
+    );
+    let final_history = client.read(opened.id.0, 0, 100);
+    assert_eq!(state(&final_history), OperatorTurnState::Interrupted);
+    assert!(has_assistant(&final_history, "partial fallback answer"));
+    assert!(!final_history.conversation.worker_live);
+    assert!(final_history.conversation.worker_stopped);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64),
+        "hard fallback does not promote the stopped attempt"
+    );
+    assert!(
+        fake.log()
+            .iter()
+            .any(|line| line["event"] == "command" && line["command"] == "abort"),
+        "the worker attempts scoped native abort before escalation"
+    );
+    operator_harness::assert_group_absent(&live, pgid);
+}
+
+#[test]
+fn leased_first_turn_stop_restores_an_empty_native_session() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::Start,
+        Step::Delta("partial first-turn answer".into()),
+        Step::WatchStatus(1),
+        Step::Hold,
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let turn = client.submit_turn(&opened, "cancel before the first checkpoint");
+    let running = client.wait_history(opened.id, |history| {
+        has_assistant(history, "partial first-turn answer")
+            && state(history) == OperatorTurnState::Running
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+
+    let stopped = client.stop_turn(turn.identity);
+    assert_eq!(stopped.state, OperatorTurnState::Interrupted);
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
+    assert!(running.conversation.worker_live);
+    assert!(client.session(opened.session).pid == Some(worker_pid));
+    let history = client.read(opened.id.0, 0, 100);
+    assert!(has_assistant(&history, "partial first-turn answer"));
+
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "a changed first turn switches to an empty session"
+    );
+    let target = switches[0]["path"].as_str().unwrap();
+    assert!(switches[0]["exists"].as_bool().unwrap());
+    let restored = std::fs::read_to_string(target).unwrap();
+    assert_eq!(
+        restored.lines().count(),
+        1,
+        "the first-turn rollback has only a session header"
+    );
+    let header: serde_json::Value = serde_json::from_str(restored.lines().next().unwrap()).unwrap();
+    assert_eq!(header["type"], "session");
+    assert_eq!(header["id"], format!("operator-{}", opened.id.0));
+
+    let partial = turn_dir(&live, turn.identity.turn.0).join("session.partial.jsonl");
+    assert!(
+        partial.is_file(),
+        "the failed native attempt remains inspectable"
+    );
+    assert!(
+        std::fs::read_to_string(partial)
+            .unwrap()
+            .contains("cancel before the first checkpoint"),
+        "the partial native journal retains the user's prompt"
+    );
+}
+
+#[test]
+fn leased_zero_record_failure_keeps_the_worker_without_switching_sessions() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("completed zero-change checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("follow-up after zero-record failure"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    scenario.set("prompt_responses", json!(["ok", "error", "ok"]));
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let worker_pid = client.session(opened.session).pid.unwrap();
+
+    let failed = client.submit_turn(
+        &leased.conversation,
+        "fail before native records are written",
+    );
+    let failure = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == failed.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(failed.identity.run, first.identity.run);
+    assert!(failure.conversation.worker_live);
+    assert_eq!(client.session(opened.session).pid, Some(worker_pid));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    assert!(has_assistant(&failure, "completed zero-change checkpoint"));
+
+    let log = fake.log();
+    assert_eq!(
+        log.iter().filter(|line| line["event"] == "switch").count(),
+        0,
+        "a failure with no native-record changes skips switch_session"
+    );
+    for command in ["clear_queue", "abort"] {
+        assert!(
+            log.iter()
+                .any(|line| line["event"] == "command" && line["command"] == command),
+            "zero-record rollback still issues {command}"
+        );
+    }
+    let partial = turn_dir(&live, failed.identity.turn.0).join("session.partial.jsonl");
+    assert!(
+        partial.is_file(),
+        "the unchanged native journal is retained as an attempt artifact"
+    );
+
+    client.submit_turn(
+        &failure.conversation,
+        "continue from the completed checkpoint",
+    );
+    let completed = client.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &completed,
+        "follow-up after zero-record failure"
+    ));
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), Some(3));
+}
+
+#[test]
+fn leased_failure_with_native_changes_rolls_back_and_keeps_the_partial_journal() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("failure rollback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Delta("partial answer before failure".into()),
+            Step::Event(json!({"type": "extension_error", "message": "injected provider failure"})),
+            Step::Hold,
+        ],
+        vec![
+            Step::assistant("follow-up after recovered failure"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create the failure checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let failed = client.submit_turn(&leased.conversation, "fail after appending native records");
+    let failure = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == failed.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(failed.identity.run, first.identity.run);
+    assert!(has_assistant(&failure, "partial answer before failure"));
+    assert!(failure.conversation.worker_live);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    let attempt = turn_dir(&live, failed.identity.turn.0);
+    assert!(attempt.join("session.partial.jsonl").is_file());
+    assert!(!attempt.join("session.jsonl").exists());
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "a changed native session switches back to the checkpoint"
+    );
+    let restored = std::fs::read_to_string(switches[0]["path"].as_str().unwrap()).unwrap();
+    assert!(restored.contains("failure rollback checkpoint"));
+    assert!(!restored.contains("fail after appending native records"));
+    assert!(!restored.contains("partial answer before failure"));
+
+    client.submit_turn(
+        &failure.conversation,
+        "continue from the recovered checkpoint",
+    );
+    let completed = client.wait_stopped(opened.id);
+    assert!(has_assistant(
+        &completed,
+        "follow-up after recovered failure"
+    ));
+    assert_eq!(Registry::of(&live).checkpoint(opened.id.0), Some(3));
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "a failed leased turn reuses the original Pi process"
+    );
+}
+
+#[test]
+fn leased_tool_timeout_rolls_back_before_accepting_an_async_wakeup() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let release_wakeup = marker_dir.path().join("release-wakeup");
+    let fake_log = PathBuf::from("/private/tmp/ovrcr-469-tool-timeout-fake-pi.jsonl");
+    let _ = std::fs::remove_file(&fake_log);
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::assistant("timeout rollback checkpoint"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::Start,
+            Step::Tool {
+                id: "timeout-after-lease".into(),
+                name: "bash".into(),
+                input: json!({"command": "sleep 30", "timeout": 0.1}),
+                output: "Command timed out after 0.1 seconds".into(),
+                status: "timedout",
+                truncated: false,
+                marker: None,
+            },
+            Step::ModelRequest,
+            Step::assistant("must not reach the model after timeout"),
+            Step::Settle,
+        ],
+    ]);
+    scenario.set(
+        "wakeup_after_switch",
+        json!({
+            "text": "the watched session settled during rollback",
+            "answer": "I resumed the queued watch report after rollback",
+            "release_file": release_wakeup.display().to_string(),
+        }),
+    );
+    scenario.set("log", fake_log.display().to_string());
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "create timeout rollback checkpoint");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    let timed_out = client.submit_turn(&leased.conversation, "run a timed-out tool");
+
+    let failed_history = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity == timed_out.identity && turn.state == OperatorTurnState::Error
+            })
+    });
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(timed_out.identity.turn.0)
+            .as_deref(),
+        Some("Error")
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(first.identity.turn.0 as i64)
+    );
+    assert!(failed_history.conversation.worker_live);
+    std::fs::write(&release_wakeup, "continue").unwrap();
+
+    let final_history = client.wait_history(opened.id, |history| {
+        history.messages.iter().any(|message| {
+            matches!(
+                &message.content,
+                OperatorMessageContent::AsyncWakeup { text }
+                    if text == "the watched session settled during rollback"
+            )
+        }) && history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 > timed_out.identity.turn.0
+                    && turn.state == OperatorTurnState::Complete
+            })
+    });
+    client.wait_stopped(opened.id);
+
+    assert_eq!(timed_out.identity.run, first.identity.run);
+    assert_eq!(
+        Registry::of(&live)
+            .turn_state(timed_out.identity.turn.0)
+            .as_deref(),
+        Some("Error")
+    );
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|turn| turn.identity.turn.0 as i64),
+        "the accepted async wakeup is the only post-checkpoint promotion"
+    );
+    assert_ne!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(timed_out.identity.turn.0 as i64),
+        "the timed-out turn never becomes a checkpoint"
+    );
+    assert!(has_assistant(
+        &final_history,
+        "I resumed the queued watch report after rollback"
+    ));
+    assert!(final_history.messages.iter().any(|message| {
+        message.turn == timed_out.identity.turn
+            && matches!(
+                &message.content,
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput {
+                    id,
+                    status: ovrcr::protocol::OperatorToolStatus::TimedOut,
+                    ..
+                }) if id == "timeout-after-lease"
+            )
+    }));
+    assert!(
+        !final_history.messages.iter().any(|message| {
+            message.turn == timed_out.identity.turn
+                && matches!(
+                    &message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text))
+                        if text.contains("must not reach the model after timeout")
+                )
+        }),
+        "Pi never receives another model request after timeout"
+    );
+    let wakeup = final_history.conversation.current_turn.as_ref().unwrap();
+    assert_eq!(wakeup.identity.run, first.identity.run);
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "rollback and wakeup reuse the original Pi process"
+    );
+    let attempt = turn_dir(&live, timed_out.identity.turn.0);
+    assert!(attempt.join("session.partial.jsonl").is_file());
+    assert!(!attempt.join("session.jsonl").exists());
+    let switches: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|line| line["event"] == "switch")
+        .collect();
+    assert_eq!(
+        switches.len(),
+        1,
+        "timeout rollback uses one in-place native session switch"
+    );
+    let restored = std::fs::read_to_string(switches[0]["path"].as_str().unwrap()).unwrap();
+    assert!(restored.contains("timeout rollback checkpoint"));
+    assert!(!restored.contains("run a timed-out tool"));
+    assert!(
+        fake.events("async_wakeup_admission")
+            .iter()
+            .any(|event| event["confirmed"] == true)
+    );
+}
+
+#[test]
+fn cold_resumed_leased_worker_keeps_its_active_session_across_warm_turns() {
+    let mut cold = Scenario::new();
+    cold.steps(vec![Step::assistant("cold checkpoint base"), Step::Settle]);
+    let (live, fake, mut client) = fixture(&cold);
+    let opened = client.open();
+    let first = client.submit_turn(&opened, "make a cold checkpoint");
+    complete(&mut client, opened.id);
+
+    let mut resumed = Scenario::new();
+    resumed.prompt_steps(vec![
+        vec![
+            Step::assistant("cold resumed answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("first warm answer"),
+            Step::WatchStatus(1),
+            Step::Settle,
+        ],
+        vec![
+            Step::assistant("second warm answer"),
+            Step::WatchStatus(0),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&resumed);
+    let current = client.current().unwrap();
+    let second = client.submit_turn(&current, "resume and lease");
+    assert_ne!(second.identity.run, first.identity.run);
+    let second_history = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == second.identity)
+    });
+    let active_session = live
+        .config
+        .join("operator-pi/runs")
+        .join(second.identity.run.0.to_string())
+        .join("session.jsonl");
+    let second_checkpoint = checkpoint_file(&live, second.identity.turn.0);
+    assert!(
+        active_session.is_file(),
+        "cold resume creates the session file Pi keeps active for this worker"
+    );
+    assert!(
+        second_checkpoint.is_file(),
+        "leased completion promotes a canonical per-turn session.jsonl copy"
+    );
+
+    let third = client.submit_turn(&second_history.conversation, "first warm turn");
+    let third_history = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete
+            && history.conversation.worker_live
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.identity == third.identity)
+    });
+    assert!(
+        active_session.is_file(),
+        "warm cleanup must preserve Pi's live file"
+    );
+
+    let fourth = client.submit_turn(&third_history.conversation, "second warm turn");
+    let final_history = client.wait_stopped(opened.id);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity,
+        fourth.identity
+    );
+    assert!(
+        active_session.is_file(),
+        "retirement keeps the worker's source file"
+    );
+    let promoted = checkpoint_file(&live, fourth.identity.turn.0);
+    let contents = std::fs::read_to_string(promoted).unwrap();
+    for expected in [
+        "cold checkpoint base",
+        "cold resumed answer",
+        "first warm answer",
+        "second warm answer",
+    ] {
+        assert!(
+            contents.contains(expected),
+            "checkpoint lost {expected}: {contents}"
+        );
+    }
+    assert!(has_assistant(&final_history, "second warm answer"));
+}
+
+#[test]
+fn kill_shutdown_terminates_a_leased_worker_and_its_pi_group() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![vec![
+        Step::assistant("leased before kill"),
+        Step::WatchStatus(1),
+        Step::Settle,
+    ]]);
+    let (live, fake, mut client) = fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "start leased worker");
+    let leased = client.wait_history(opened.id, |history| {
+        state(history) == OperatorTurnState::Complete && history.conversation.worker_live
+    });
+    assert!(leased.conversation.worker_live);
+    assert_eq!(fake.events("start").len(), 1);
+
+    let pgid = operator_harness::own_worker_group(&live, &mut client, opened.session);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    operator_harness::assert_group_absent(&live, pgid);
+    assert!(matches!(
+        live.join_within(Duration::from_secs(10)),
+        live::Stop::Finished
+    ));
 }
 
 #[test]
@@ -285,12 +1325,17 @@ fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption()
         attempt_two.is_dir(),
         "failed attempt evidence must be preserved"
     );
-    // The resumed attempt holds only the copied base context plus this attempt's
-    // own writes; it is never adopted as the checkpoint.
+    // The run-owned active session holds only the copied base context plus this
+    // attempt's own writes; it is never adopted as a checkpoint on failure.
     assert!(
-        std::fs::read_to_string(attempt_two.join("session.jsonl"))
-            .unwrap()
-            .contains("first answer"),
+        std::fs::read_to_string(
+            live.config
+                .join("operator-pi/runs")
+                .join(turn_two.identity.run.0.to_string())
+                .join("session.jsonl")
+        )
+        .unwrap()
+        .contains("first answer"),
         "a resumed attempt starts from the completed checkpoint copy"
     );
     let registry = Registry::of(&live);
@@ -339,9 +1384,14 @@ fn only_completed_turns_advance_the_checkpoint_across_failure_and_interruption()
         "an interrupted turn is not a context checkpoint"
     );
     assert!(
-        std::fs::read_to_string(checkpoint_file(&live, turn_three.identity.turn.0))
-            .unwrap()
-            .contains("first answer"),
+        std::fs::read_to_string(
+            live.config
+                .join("operator-pi/runs")
+                .join(turn_three.identity.run.0.to_string())
+                .join("session.jsonl")
+        )
+        .unwrap()
+        .contains("first answer"),
         "the interrupted attempt kept only its checkpoint copy"
     );
 
@@ -1486,10 +2536,43 @@ mod installed_pi {
             .collect()
     }
 
-    /// The bundled CLI skill is present exactly once, and only as instruction
-    /// text. Pi's OpenAI adapter may use `developer` instead of `system`.
-    fn assert_skill_only_in_system(label: &str, body: &Value) {
+    /// The CLI guide stays in instruction text; Pi advertises the private
+    /// coordinator file by metadata. Its body is read on demand. Pi's OpenAI
+    /// adapter may use `developer` instead of `system`.
+    fn assert_skill_only_in_system(label: &str, body: &Value, operator_profile: &Path) {
         let system = operator_provider::system_text(body);
+        for instruction in [
+            "Use the read tool to load a skill's file when the task matches its description.",
+            "Use the bundled coordinator skill for multi-session work.",
+            "watch_sessions only to add, list, or remove bounded watches",
+            "opaque unread.turn (string or null)",
+            "Claude Code and Codex via terminal transcript --json",
+            "Leave finished Retained sessions open unless asked to close or archive them.",
+        ] {
+            assert!(
+                system.contains(instruction),
+                "{label}: Operator policy omitted {instruction:?}"
+            );
+        }
+        assert!(
+            system.contains("<name>ovrcr-coordinator</name>"),
+            "{label}: Pi did not advertise the explicitly loaded coordinator skill"
+        );
+        assert!(
+            system.contains(
+                "<description>Coordinate parallel coding or research through visible OVRCR Workspace Agent sessions, register watches, and verify asynchronous results.</description>"
+            ),
+            "{label}: Pi omitted the coordinator skill description"
+        );
+        let coordinator_skill = operator_profile.join("ovrcr-coordinator/SKILL.md");
+        assert!(
+            system.contains(&format!(
+                "<location>{}</location>",
+                coordinator_skill.display()
+            )),
+            "{label}: Pi did not advertise the exact private coordinator skill path {}",
+            coordinator_skill.display()
+        );
         assert_eq!(
             system.matches(BUNDLED_SKILL).count(),
             1,
@@ -1497,6 +2580,15 @@ mod installed_pi {
             request_shape(body)
         );
         let conversation = operator_provider::non_system_text(body);
+        assert!(
+            !system.contains(PERSONAL_SKILL_SENTINEL),
+            "{label}: a personal skill was discovered despite --no-skills"
+        );
+        assert!(
+            !system.contains("<name>personal-operator-sentinel</name>")
+                && !system.contains("<description>fixture personal skill</description>"),
+            "{label}: personal skill metadata was discovered despite --no-skills"
+        );
         assert!(
             !conversation.contains(BUNDLED_SKILL),
             "{label}: the bundled CLI skill leaked into the conversation payload"
@@ -1680,7 +2772,7 @@ mod installed_pi {
         history.messages.iter().any(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed)
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
             )
         })
     }
@@ -1868,6 +2960,8 @@ mod installed_pi {
         /// Make the first COMPACT turn's answer large enough that the next
         /// prompt crosses the seeded threshold in a manual GUI run.
         inflate_compaction_turn: bool,
+        /// Script the private local-provider Operator coordinator walkthrough.
+        coordinator: bool,
     }
 
     /// Scripted operator/tool scenario shared by the installed-pi test and the
@@ -1909,6 +3003,11 @@ mod installed_pi {
                 "REQUEST_SKILL_QUICK",
                 "REQUEST_SKILL_CLI",
                 "REQUEST_SKILL_RESUME",
+                "REQUEST_COORDINATOR_DISPATCH",
+                "REQUEST_COORDINATOR_WARM_CHAT",
+                "OVRCR_GUI_COORDINATOR_ALPHA",
+                "OVRCR_GUI_COORDINATOR_BETA",
+                "These watched OVRCR Workspace Agent sessions settled:",
                 "REQUEST_THINKING_HELD",
                 "REQUEST_THINKING_LONG_HELD",
                 "COMPACT_ONE",
@@ -1965,6 +3064,117 @@ mod installed_pi {
                 ("REQUEST_ONE_REAL_TOOLS", 4) => Plan::text("TURN_ONE_DONE"),
                 ("REQUEST_TWO_RESUME", 0) => Plan::text("TURN_TWO_DONE"),
                 ("REQUEST_THREE_HELD", 0) => Plan::text("HELD_BEFORE_RELEASE").holding(),
+                ("REQUEST_COORDINATOR_DISPATCH", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-skill-read",
+                    "read",
+                    json!({
+                        "path": workspace
+                            .parent()
+                            .expect("GUI workspace has an instance root")
+                            .join("operator-pi/ovrcr-coordinator/SKILL.md")
+                    }),
+                ),
+                ("REQUEST_COORDINATOR_DISPATCH", 1) if mode.coordinator => {
+                    let readback = operator_provider::tool_result_texts(body).join("\n");
+                    assert!(
+                        readback.contains(
+                            "Use this workflow for work that needs multiple Workspace Agent sessions."
+                        ),
+                        "Pi's read tool returned the bundled coordinator skill"
+                    );
+                    Plan::tool(
+                        "coordinator-dispatch",
+                        "bash",
+                        json!({"command": coordinator_dispatch_script()}),
+                    )
+                }
+                ("REQUEST_COORDINATOR_DISPATCH", 2) if mode.coordinator => Plan::tool(
+                    "coordinator-watch",
+                    "watch_sessions",
+                    coordinator_watch_input(body),
+                ),
+                ("REQUEST_COORDINATOR_DISPATCH", 3) if mode.coordinator => {
+                    Plan::text(&coordinator_dispatch_result(body))
+                }
+                ("REQUEST_COORDINATOR_WARM_CHAT", 0) if mode.coordinator => {
+                    assert!(
+                        !operator_provider::non_system_text(body).contains("REQUEST_THREE_HELD")
+                            && !operator_provider::non_system_text(body)
+                                .contains("HELD_BEFORE_RELEASE"),
+                        "the interrupted Operator turn was rolled back before warm chat"
+                    );
+                    Plan::text("COORDINATOR_WARM_CHAT_DONE while both Workspace replies remain held")
+                }
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-alpha-edit",
+                    "edit",
+                    json!({
+                        "path": coordinator_workspace(&workspace, GUI_COORD_ALPHA_WORKSPACE).join("README"),
+                        "edits": [{
+                            "oldText": "Disposable OVRCR GUI fixture for consigint\n",
+                            "newText": "Disposable OVRCR GUI fixture for consigint\n\nCoordinator alpha native evidence.\n"
+                        }]
+                    }),
+                ),
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 1) if mode.coordinator => Plan::tool(
+                    "coordinator-alpha-check",
+                    "bash",
+                    json!({"command": "git diff --check"}),
+                ),
+                ("OVRCR_GUI_COORDINATOR_ALPHA", 2) if mode.coordinator => Plan::new(vec![
+                    Chunk::Text("OVRCR_ALPHA_PARTIAL".into()),
+                ])
+                .holding()
+                .then_text_after_release(
+                    "\nOVRCR_WORKER_DONE\nsummary: appended the alpha fixture note\nfiles: README\nchecks: git diff --check exit 0",
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 0) if mode.coordinator => Plan::tool(
+                    "coordinator-beta-edit",
+                    "edit",
+                    json!({
+                        "path": coordinator_workspace(&workspace, GUI_COORD_BETA_WORKSPACE).join("README"),
+                        "edits": [{
+                            "oldText": "Disposable OVRCR GUI fixture for consigint\n",
+                            "newText": "Disposable OVRCR GUI fixture for consigint\n\nCoordinator beta native evidence.\n"
+                        }]
+                    }),
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 1) if mode.coordinator => Plan::tool(
+                    "coordinator-beta-check",
+                    "bash",
+                    json!({"command": "git diff --check"}),
+                ),
+                ("OVRCR_GUI_COORDINATOR_BETA", 2) if mode.coordinator => Plan::new(vec![
+                    Chunk::Text("OVRCR_BETA_PARTIAL".into()),
+                ])
+                .holding()
+                .then_text_after_release(
+                    "\nOVRCR_WORKER_DONE\nsummary: appended the beta fixture note\nfiles: README\nchecks: git diff --check exit 0",
+                ),
+                ("These watched OVRCR Workspace Agent sessions settled:", 0)
+                    if mode.coordinator => Plan::tool(
+                        "coordinator-read-verify",
+                        "bash",
+                        json!({"command": coordinator_wakeup_script(&workspace, &user)}),
+                    ),
+                ("These watched OVRCR Workspace Agent sessions settled:", 1)
+                    if mode.coordinator => {
+                        let verification = operator_provider::tool_result_texts(body).join("\n");
+                        for evidence in [
+                            "GIT_STATUS_ALPHA",
+                            "DIFF_STAT_ALPHA",
+                            "CHECK_ALPHA exit=0",
+                            "GIT_STATUS_BETA",
+                            "DIFF_STAT_BETA",
+                            "CHECK_BETA exit=0",
+                        ] {
+                            assert!(
+                                verification.contains(evidence),
+                                "Workspace verification returned {evidence:?}"
+                            );
+                        }
+                        Plan::text(&coordinator_wakeup_result(&user))
+                    }
                 ("REQUEST_FOUR_BACKGROUND", 0) => Plan::tool(
                     "call-background",
                     "bash",
@@ -2066,6 +3276,183 @@ mod installed_pi {
                 _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
             }
         })
+    }
+
+    const GUI_COORD_ALPHA_WORKSPACE: &str = "gui-consigint-worktree-lifecycle";
+    const GUI_COORD_BETA_WORKSPACE: &str = "gui-consigint-auth-handoff";
+    const GUI_COORD_ALPHA_SESSION: &str = "coordinator-alpha";
+    const GUI_COORD_BETA_SESSION: &str = "coordinator-beta";
+
+    fn coordinator_workspace(operator_workspace: &Path, branch: &str) -> PathBuf {
+        operator_workspace
+            .parent()
+            .expect("GUI operator workspace has a fixture root")
+            .join("workspaces/consigint")
+            .join(branch)
+    }
+
+    fn coordinator_dispatch_script() -> &'static str {
+        r#"python3 - <<'PY'
+import json
+import os
+import subprocess
+
+cli = os.environ["OVRCR_EXECUTABLE"]
+rows = json.loads(subprocess.check_output([cli, "terminal", "list", "--json"], text=True))
+wanted = [
+    ("coordinator-alpha", "gui-consigint-worktree-lifecycle", "OVRCR_GUI_COORDINATOR_ALPHA"),
+    ("coordinator-beta", "gui-consigint-auth-handoff", "OVRCR_GUI_COORDINATOR_BETA"),
+]
+sessions = []
+for name, branch, marker in wanted:
+    matches = [row for row in rows if row.get("name") == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected exactly one {name} session, found {len(matches)}")
+    row = matches[0]
+    agent = row.get("agent") or {}
+    kind = row.get("kind")
+    if row.get("scope") != "Workspace" or not isinstance(kind, dict) or kind.get("agent") != "pi" or row.get("phase") != "running":
+        raise SystemExit(f"{name} is not a running Workspace Pi Agent")
+    if row.get("workspace") != branch:
+        raise SystemExit(f"{name} is in unexpected Workspace {row.get('workspace')!r}")
+    revision = agent.get("activity_revision")
+    if not isinstance(revision, int) or isinstance(revision, bool):
+        raise SystemExit(f"{name} has no numeric Reporter activity_revision")
+    run = row.get("run")
+    if not isinstance(run, int) or isinstance(run, bool):
+        raise SystemExit(f"{name} has no numeric run identity")
+    unread = row.get("unread")
+    unread_turn = unread.get("turn") if isinstance(unread, dict) else None
+    if unread_turn is not None and not isinstance(unread_turn, str):
+        raise SystemExit(f"{name} unread.turn is not an opaque string or null")
+    sessions.append((row, {
+        "run": run,
+        "activity_revision": revision,
+        "unread_turn": unread_turn,
+    }, marker))
+
+for row, baseline, marker in sessions:
+    task = (
+        f"{marker}\nAppend exactly one sentence to the existing README in this Workspace: "
+        f"Coordinator {'alpha' if marker.endswith('ALPHA') else 'beta'} native evidence. "
+        "Change no other files. Run git diff --check and report its actual exit code. "
+        "Finish with OVRCR_WORKER_DONE (summary, files, checks) or "
+        "OVRCR_WORKER_BLOCKED (reason, need)."
+    )
+    subprocess.run([cli, "terminal", "send", str(row["id"]), "--text", task], check=True)
+
+watch = {
+    "action": "add",
+    "sessions": [
+        {
+            "session_id": row["id"],
+            "project": row["project"],
+            "label": row["name"],
+            "baseline": baseline,
+        }
+        for row, baseline, _ in sessions
+    ],
+}
+table = [
+    {"task": marker.rsplit("_", 1)[-1].title(), "workspace": row["workspace"], "session_id": row["id"], "name": row["name"]}
+    for row, _, marker in sessions
+]
+print("OVRCR_WATCH_INPUT=" + json.dumps(watch, separators=(",", ":")))
+print("OVRCR_SESSION_TABLE=" + json.dumps(table, separators=(",", ":")))
+PY"#
+    }
+
+    fn marked_tool_json(body: &Value, prefix: &str) -> Value {
+        operator_provider::tool_result_texts(body)
+            .iter()
+            .rev()
+            .flat_map(|text| text.lines())
+            .find_map(|line| {
+                line.strip_prefix(prefix)
+                    .and_then(|value| serde_json::from_str(value).ok())
+            })
+            .unwrap_or_else(|| panic!("fixture tool result did not include {prefix}"))
+    }
+
+    fn coordinator_watch_input(body: &Value) -> Value {
+        marked_tool_json(body, "OVRCR_WATCH_INPUT=")
+    }
+
+    fn coordinator_table(body: &Value) -> Vec<Value> {
+        marked_tool_json(body, "OVRCR_SESSION_TABLE=")
+            .as_array()
+            .cloned()
+            .expect("fixture dispatch table is an array")
+    }
+
+    fn coordinator_dispatch_result(body: &Value) -> String {
+        let rows = coordinator_table(body);
+        assert_eq!(rows.len(), 2, "both coding tasks are dispatched");
+        let mut result = String::from(
+            "Dispatched both tasks and registered their session watches.\n\n| Task | Workspace | Session |\n|---|---|---|\n",
+        );
+        for row in rows {
+            result.push_str(&format!(
+                "| {} | {} | {} ({}) |\n",
+                row["task"].as_str().unwrap_or("task"),
+                row["workspace"].as_str().unwrap_or("unknown"),
+                row["name"].as_str().unwrap_or("session"),
+                row["session_id"].as_u64().unwrap_or_default(),
+            ));
+        }
+        result.push_str("Operator is ready for another message while both Agents work.");
+        result
+    }
+
+    fn coordinator_wakeup_rows(user: &str) -> Vec<(String, u64)> {
+        user.lines()
+            .filter_map(|line| {
+                let tail = line.strip_prefix("- session ")?;
+                let (id, label) = tail.split_once(' ')?;
+                let label = label.strip_prefix('(')?.split_once(')')?.0;
+                Some((label.to_owned(), id.parse().ok()?))
+            })
+            .collect()
+    }
+
+    fn coordinator_wakeup_script(workspace: &Path, user: &str) -> String {
+        let rows = coordinator_wakeup_rows(user);
+        assert_eq!(rows.len(), 2, "one wakeup batches both settled sessions");
+        let alpha = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_ALPHA_SESSION)
+            .unwrap()
+            .1;
+        let beta = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_BETA_SESSION)
+            .unwrap()
+            .1;
+        let alpha_path = coordinator_workspace(workspace, GUI_COORD_ALPHA_WORKSPACE);
+        let beta_path = coordinator_workspace(workspace, GUI_COORD_BETA_WORKSPACE);
+        format!(
+            "set +e\nprintf 'PI_SESSION_ALPHA %s\\n' '{alpha}'\n\"$OVRCR_EXECUTABLE\" terminal read '{alpha}' --max-lines 30 || exit $?\nprintf 'PI_SESSION_BETA %s\\n' '{beta}'\n\"$OVRCR_EXECUTABLE\" terminal read '{beta}' --max-lines 30 || exit $?\n( cd '{}' || exit 90; printf 'GIT_STATUS_ALPHA\\n'; git status --short --branch || exit $?; printf 'DIFF_STAT_ALPHA\\n'; git diff --stat || exit $?; git diff --check; code=$?; printf 'CHECK_ALPHA exit=%s\\n' \"$code\"; exit \"$code\" ) || exit $?\n( cd '{}' || exit 90; printf 'GIT_STATUS_BETA\\n'; git status --short --branch || exit $?; printf 'DIFF_STAT_BETA\\n'; git diff --stat || exit $?; git diff --check; code=$?; printf 'CHECK_BETA exit=%s\\n' \"$code\"; exit \"$code\" )",
+            alpha_path.display(),
+            beta_path.display()
+        )
+    }
+
+    fn coordinator_wakeup_result(user: &str) -> String {
+        let rows = coordinator_wakeup_rows(user);
+        assert_eq!(rows.len(), 2, "one wakeup contains both sessions");
+        let alpha = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_ALPHA_SESSION)
+            .unwrap()
+            .1;
+        let beta = rows
+            .iter()
+            .find(|(name, _)| name == GUI_COORD_BETA_SESSION)
+            .unwrap()
+            .1;
+        format!(
+            "Both Pi sessions completed their requested README change.\n\n| Task | Workspace | Session |\n|---|---|---|\n| Alpha | {GUI_COORD_ALPHA_WORKSPACE} | coordinator-alpha ({alpha}) |\n| Beta | {GUI_COORD_BETA_WORKSPACE} | coordinator-beta ({beta}) |\n\nVerified `git status`, `git diff --stat`, and `git diff --check` (exit 0) in both Workspaces. Both Retained sessions remain open for review."
+        )
     }
 
     #[test]
@@ -2384,7 +3771,7 @@ mod installed_pi {
 
         // Turn six: one assistant message with two tool calls. Pi prepares every
         // admission before executing anything unless the tools are sequential,
-        // so this fails the turn unless the extension registered all four.
+        // so this fails the turn unless the extension registered every tool sequentially.
         let fifth_turn = fifth
             .conversation
             .current_turn
@@ -2483,14 +3870,13 @@ mod installed_pi {
                     .iter()
                     .any(|name| name == "bash")
         });
-        let timeout_turn = pending_timeout
+        let timeout_identity = pending_timeout
             .conversation
             .current_turn
             .as_ref()
             .unwrap()
-            .identity
-            .turn
-            .0;
+            .identity;
+        let timeout_turn = timeout_identity.turn.0;
         let pid = driver
             .session(opened.session)
             .pid
@@ -2629,7 +4015,11 @@ mod installed_pi {
             "the attempt evidence is preserved"
         );
         assert!(
-            timeout_attempt.join("session.jsonl").is_file(),
+            live.config
+                .join("operator-pi/runs")
+                .join(timeout_identity.run.0.to_string())
+                .join("session.jsonl")
+                .is_file(),
             "the timed-out native session is preserved: {timeout_attempt:?}"
         );
         eprintln!(
@@ -2704,6 +4094,7 @@ mod installed_pi {
             ScenarioMode {
                 hold_compaction: true,
                 inflate_compaction_turn: true,
+                coordinator: false,
             },
         ));
         provider.seed_profile_with(
@@ -2737,7 +4128,11 @@ mod installed_pi {
             !cleared.contains("Compacting context"),
             "the Compacting status must clear after compaction: {cleared}"
         );
-        assert_skill_only_in_system("pre-compaction", &provider.requests()[0].body);
+        assert_skill_only_in_system(
+            "pre-compaction",
+            &provider.requests()[0].body,
+            &live.config.join("operator-pi"),
+        );
         wait_stopped(&mut driver, opened.id);
 
         // The next turn is a normal request over the compacted context.
@@ -2770,7 +4165,11 @@ mod installed_pi {
             .enumerate()
             .filter(|(_, request)| !operator_provider::is_compaction_request(&request.body));
         for (index, request) in normal {
-            assert_skill_only_in_system(&format!("normal provider request {index}"), &request.body);
+            assert_skill_only_in_system(
+                &format!("normal provider request {index}"),
+                &request.body,
+                &live.config.join("operator-pi"),
+            );
         }
         for request in requests
             .iter()
@@ -2795,7 +4194,11 @@ mod installed_pi {
         );
         for request in requests.iter().skip(compaction_index + 1) {
             if !operator_provider::is_compaction_request(&request.body) {
-                assert_skill_only_in_system("post-compaction", &request.body);
+                assert_skill_only_in_system(
+                    "post-compaction",
+                    &request.body,
+                    &live.config.join("operator-pi"),
+                );
             }
         }
         let journal = format!(
@@ -2872,7 +4275,11 @@ mod installed_pi {
                 request_shape(&first[0].body)
             );
             assert_normal_first_prompt(&format!("{entry} first"), &first[0].body, marker);
-            assert_skill_only_in_system(&format!("{entry} first"), &first[0].body);
+            assert_skill_only_in_system(
+                &format!("{entry} first"),
+                &first[0].body,
+                &live.config.join("operator-pi"),
+            );
             assert_no_guidance(
                 &format!("{entry} journal"),
                 &operator_harness::history_text(&history),
@@ -2899,7 +4306,11 @@ mod installed_pi {
                 .expect("the resumed turn made a provider request")
                 .body
                 .clone();
-            assert_skill_only_in_system(&format!("{entry} resumed"), &resumed_body);
+            assert_skill_only_in_system(
+                &format!("{entry} resumed"),
+                &resumed_body,
+                &live.config.join("operator-pi"),
+            );
             assert!(
                 operator_provider::non_system_text(&resumed_body).contains(answer),
                 "{entry}: the previous answer is normal conversation context"
@@ -2998,7 +4409,11 @@ mod installed_pi {
             request_shape(&first[0].body)
         );
         assert_normal_first_prompt("cli first", &first[0].body, "REQUEST_SKILL_CLI");
-        assert_skill_only_in_system("cli first", &first[0].body);
+        assert_skill_only_in_system(
+            "cli first",
+            &first[0].body,
+            &live.config.join("operator-pi"),
+        );
         let user = operator_provider::last_user_text(&first[0].body);
         assert!(user.contains("\"project\":\"fixture\""), "{user}");
         assert!(user.contains("\"workspace\":\"skill-cli\""), "{user}");
@@ -3097,7 +4512,11 @@ mod installed_pi {
         let requests = provider.requests();
         assert!(requests.len() >= 2, "the tool result feeds another request");
         for (index, request) in requests.iter().enumerate() {
-            assert_skill_only_in_system(&format!("cli provider request {index}"), &request.body);
+            assert_skill_only_in_system(
+                &format!("cli provider request {index}"),
+                &request.body,
+                &live.config.join("operator-pi"),
+            );
             for result in operator_provider::tool_result_texts(&request.body) {
                 assert_no_guidance("CLI tool result", &result);
             }
@@ -3132,7 +4551,10 @@ mod installed_pi {
     /// context window and COMPACT_ONE produces an oversized answer, which triggers
     /// automatic compaction in that same turn. Observe `Compacting context…`, then
     /// create the release marker to finish the turn; send COMPACT_TWO afterwards
-    /// to prove the normal post-compaction follow-up.
+    /// to prove the normal post-compaction follow-up. With
+    /// `OVRCR_OPERATOR_GUI_COORDINATOR=1`, it checks the private HOME's matching
+    /// ownership marker, seeds its normal Pi profile to the loopback provider,
+    /// and starts two managed Pi sessions on separate fixture worktrees.
     #[test]
     #[ignore = "manual GUI acceptance helper; requires OVRCR_OPERATOR_GUI_HOME and OVRCR_OPERATOR_GUI_TOKEN"]
     fn operator_pi_gui_provider() {
@@ -3149,6 +4571,12 @@ mod installed_pi {
         // the GUI can show the live Compacting status before releasing it.
         let compaction = std::env::var_os("OVRCR_OPERATOR_GUI_COMPACTION")
             .is_some_and(|value| !value.is_empty());
+        let coordinator = std::env::var_os("OVRCR_OPERATOR_GUI_COORDINATOR")
+            .is_some_and(|value| !value.is_empty());
+        assert!(
+            !(compaction && coordinator),
+            "run one GUI provider mode at a time"
+        );
         let provider = Provider::start(scenario_handler_mode(
             workspace.clone(),
             marker.clone(),
@@ -3156,6 +4584,7 @@ mod installed_pi {
             ScenarioMode {
                 hold_compaction: compaction,
                 inflate_compaction_turn: compaction,
+                coordinator,
             },
         ));
         if compaction {
@@ -3167,10 +4596,27 @@ mod installed_pi {
         } else {
             provider.seed_profile(&root);
         }
+        if coordinator {
+            let token = std::env::var("OVRCR_OPERATOR_GUI_TOKEN")
+                .expect("gui_root validated OVRCR_OPERATOR_GUI_TOKEN");
+            let home = gui_private_workspace_home(std::env::var_os("HOME"), &token)
+                .unwrap_or_else(|error| panic!("{error}"));
+            assert!(
+                home.starts_with("/private/tmp"),
+                "coordinator GUI HOME must be task-private under /private/tmp"
+            );
+            assert!(
+                std::env::var_os("PI_CODING_AGENT_DIR").is_none(),
+                "clear inherited PI_CODING_AGENT_DIR before starting the GUI"
+            );
+            provider.seed_workspace_profile(&home);
+            let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
+            eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+        }
         let _ = std::fs::remove_file(&release_marker);
         let _ = std::fs::remove_file(&stop_marker);
         println!(
-            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction}",
+            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator}",
             provider.base,
             root.display()
         );
@@ -3200,7 +4646,7 @@ mod installed_pi {
             body.push_str(
                 &serde_json::to_string(&json!({
                     "path": request.path,
-                    "authorization": request.authorization,
+                    "authorization": request.authorization.as_ref().map(|_| "<redacted>"),
                     "body": request.body,
                 }))
                 .unwrap(),
@@ -3208,6 +4654,7 @@ mod installed_pi {
             body.push('\n');
         }
         let _ = std::fs::write(&evidence, body);
+        let _ = std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o600));
         eprintln!(
             "OPERATOR_PI_GUI_PROVIDER exit root_exists={} stop_marker={} requests={} evidence={}",
             root.is_dir(),
@@ -3229,6 +4676,107 @@ mod installed_pi {
             "{GUI_OWNER_VERSION}\nroot={}\ntoken={token}\n",
             root.display()
         )
+    }
+
+    fn gui_private_workspace_home(home: Option<OsString>, token: &str) -> Result<PathBuf, String> {
+        let Some(home) = home.filter(|value| !value.is_empty()) else {
+            return Err("coordinator GUI needs a private HOME".into());
+        };
+        let home = PathBuf::from(home)
+            .canonicalize()
+            .map_err(|error| format!("coordinator GUI HOME unavailable: {error}"))?;
+        let metadata = std::fs::symlink_metadata(&home)
+            .map_err(|error| format!("coordinator GUI HOME unavailable: {error}"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("coordinator GUI HOME must be a real directory".into());
+        }
+        if metadata.mode() & 0o777 != 0o700 {
+            return Err("coordinator GUI HOME must be private (mode 0700)".into());
+        }
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("coordinator GUI HOME is owned by another user".into());
+        }
+
+        let marker = home.join(GUI_OWNER_MARKER);
+        let marker_metadata = std::fs::symlink_metadata(&marker).map_err(|_| {
+            format!(
+                "coordinator GUI HOME needs {GUI_OWNER_MARKER} (mode 0600) bound to this HOME and fixture token"
+            )
+        })?;
+        if !marker_metadata.is_file() || marker_metadata.file_type().is_symlink() {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} must be a regular file, not a symlink"
+            ));
+        }
+        if marker_metadata.mode() & 0o777 != 0o600
+            || marker_metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} must be private (mode 0600) and owned by this user"
+            ));
+        }
+        if std::fs::read_to_string(&marker)
+            .map_err(|error| format!("coordinator GUI HOME marker: {error}"))?
+            != gui_owner_text(&home, token)
+        {
+            return Err(format!(
+                "coordinator GUI HOME {GUI_OWNER_MARKER} does not bind this HOME and fixture token"
+            ));
+        }
+
+        for directory in [home.join(".pi"), home.join(".pi/agent")] {
+            match std::fs::symlink_metadata(&directory) {
+                Ok(metadata)
+                    if metadata.is_dir()
+                        && !metadata.file_type().is_symlink()
+                        && metadata.uid() == unsafe { libc::geteuid() }
+                        && metadata.mode() & 0o777 == 0o700 => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "coordinator GUI Pi profile directory must be private and cannot be a symlink: {}",
+                        directory.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect coordinator GUI Pi profile directory {}: {error}",
+                        directory.display()
+                    ));
+                }
+            }
+        }
+        let profile = home.join(".pi/agent");
+        for filename in ["models.json", "settings.json"] {
+            let path = profile.join(filename);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "coordinator GUI Pi profile file must be regular, not a symlink: {}",
+                        path.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "cannot inspect coordinator GUI Pi profile file {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        let auth = profile.join("auth.json");
+        match std::fs::symlink_metadata(&auth) {
+            Ok(_) => return Err("coordinator GUI Pi profile contains auth.json".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect coordinator GUI Pi profile auth file: {error}"
+                ));
+            }
+        }
+        Ok(home)
     }
 
     fn gui_root() -> PathBuf {
@@ -3426,6 +4974,126 @@ mod installed_pi {
             gui_root_from(Some(accepted.clone().into_os_string()), Some(token.into())).unwrap(),
             accepted
         );
+
+        let home = base.path().join("ovrcr-gui-workspace-home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error =
+            gui_private_workspace_home(Some(home.clone().into_os_string()), token).unwrap_err();
+        assert!(error.contains(GUI_OWNER_MARKER), "{error}");
+
+        let home = home.canonicalize().unwrap();
+        let marker = home.join(GUI_OWNER_MARKER);
+        std::fs::write(&marker, gui_owner_text(&home, token)).unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            gui_private_workspace_home(Some(home.clone().into_os_string()), token).unwrap(),
+            home
+        );
+
+        let pi = base.path().join("foreign-pi-profile");
+        std::fs::create_dir(&pi).unwrap();
+        std::os::unix::fs::symlink(&pi, home.join(".pi")).unwrap();
+        let error = gui_private_workspace_home(Some(home.into_os_string()), token).unwrap_err();
+        assert!(error.contains("cannot be a symlink"), "{error}");
+    }
+
+    fn create_gui_coordinator_sessions(root: &Path, pi: &Path) -> String {
+        let cli = Path::new(env!("CARGO_BIN_EXE_ovrcr"));
+        let home = std::env::var_os("HOME").expect("coordinator GUI needs a private HOME");
+        for (name, branch, label) in [
+            (
+                GUI_COORD_ALPHA_SESSION,
+                GUI_COORD_ALPHA_WORKSPACE,
+                "pi / coordinator alpha",
+            ),
+            (
+                GUI_COORD_BETA_SESSION,
+                GUI_COORD_BETA_WORKSPACE,
+                "pi / coordinator beta",
+            ),
+        ] {
+            let output = Command::new(cli)
+                .args([
+                    "terminal",
+                    "create",
+                    "--json",
+                    "--project",
+                    "consigint",
+                    "--workspace",
+                    branch,
+                    "--name",
+                    name,
+                    "--label",
+                    label,
+                    "--",
+                ])
+                .arg(cli)
+                .args(["agent", "run", "pi", "--"])
+                .arg(pi)
+                .env("HOME", &home)
+                .env("OVRCR_HOME", root)
+                .env("OVRCR_SOCKET", root.join("server.sock"))
+                .output()
+                .unwrap_or_else(|error| panic!("start {name} fixture session: {error}"));
+            assert!(
+                output.status.success(),
+                "create {name} fixture session failed with {}",
+                output.status
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let rows = loop {
+            let output = Command::new(cli)
+                .args(["terminal", "list", "--json"])
+                .env("HOME", &home)
+                .env("OVRCR_HOME", root)
+                .env("OVRCR_SOCKET", root.join("server.sock"))
+                .output()
+                .expect("inspect coordinator fixture sessions");
+            if output.status.success() {
+                let sessions: Vec<Value> = serde_json::from_slice(&output.stdout)
+                    .expect("terminal list --json returns session rows");
+                let rows: Vec<Value> = [GUI_COORD_ALPHA_SESSION, GUI_COORD_BETA_SESSION]
+                    .into_iter()
+                    .map(|name| {
+                        sessions
+                            .iter()
+                            .find(|row| row["name"] == name)
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                if rows.iter().all(|row| {
+                    row["scope"] == "Workspace"
+                        && row["phase"] == "running"
+                        && row["kind"]["agent"] == "pi"
+                        && row["agent"]["activity_revision"].as_u64().is_some()
+                }) {
+                    break rows;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "managed Pi coordinator fixture sessions did not reach Reporter readiness"
+            );
+            thread::sleep(Duration::from_millis(100));
+        };
+        serde_json::to_string(
+            &rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "name": row["name"],
+                        "id": row["id"],
+                        "run": row["run"],
+                        "workspace": row["workspace"],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
     }
 
     fn gui_workspace(root: &Path) -> PathBuf {

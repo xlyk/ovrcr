@@ -200,7 +200,24 @@ impl Provider {
         context_window: u64,
         compaction: Option<Value>,
     ) -> PathBuf {
-        let profile = instance.join("operator-pi");
+        self.seed_profile_at(instance.join("operator-pi"), context_window, compaction)
+    }
+
+    /// Seed the disposable user's normal Pi profile for managed Workspace
+    /// sessions; it receives the same loopback-only synthetic provider.
+    pub fn seed_workspace_profile(&self, home: &Path) -> PathBuf {
+        let parent = home.join(".pi");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+        self.seed_profile_at(home.join(".pi/agent"), CONTEXT_WINDOW, None)
+    }
+
+    fn seed_profile_at(
+        &self,
+        profile: PathBuf,
+        context_window: u64,
+        compaction: Option<Value>,
+    ) -> PathBuf {
         fs::create_dir_all(&profile).unwrap();
         fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
         let models = json!({
@@ -487,14 +504,10 @@ pub fn content_text(content: &Value) -> String {
 pub fn is_compaction_request(body: &Value) -> bool {
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     messages.iter().any(|message| {
-        message["role"].as_str().is_some_and(is_instruction_role)
-            && message["content"]
-                .as_str()
-                .is_some_and(|text| text.to_lowercase().contains("summar"))
-    }) || messages.iter().any(|message| {
-        message["content"].as_str().is_some_and(|text| {
-            text.contains("Summarize the conversation") || text.contains("compaction summary")
-        })
+        let text = content_text(&message["content"]).to_lowercase();
+        text.contains("context summarization assistant")
+            || text.contains("conversation to summarize")
+            || text.contains("compaction summary")
     })
 }
 
@@ -561,4 +574,28 @@ pub fn tool_result_texts(body: &Value) -> Vec<String> {
 
 pub fn read_marker(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compaction_detection_distinguishes_coordinator_summary_guidance() {
+        let coordinator = json!({
+            "messages": [{
+                "role": "developer",
+                "content": "Ask for OVRCR_WORKER_DONE summary/files/checks and OVRCR_WORKER_BLOCKED reason/need trailers."
+            }]
+        });
+        assert!(!is_compaction_request(&coordinator));
+
+        let compaction = json!({
+            "messages": [
+                {"role": "system", "content": "You are a context summarization assistant."},
+                {"role": "user", "content": "The messages above are a conversation to summarize."}
+            ]
+        });
+        assert!(is_compaction_request(&compaction));
+    }
 }

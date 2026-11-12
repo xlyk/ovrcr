@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ ✓ 2 ready                             │Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+                                       │❯ You
+ OPERATOR
+		3 text (settable) 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+		4 text (settable)  ✓ 2 ready                             │Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+		5 text (settable)                                        │❯ You
+		6 text (settable)  OPERATOR ─────────────────────────────│  ▸ Context · consigint / main / #1 run 1
+		7 text (settable) ▌ · Idle                last reply 15s │  REQUEST_COORDINATOR_DISPATCH
+		8 text (settable) ↳ “Both Pi sessions completed their re…│
+		9 text (settable)                                        ││ ▸ read
+		10 text (settable)  CONSIGINT ────────────────────────────││ ▸ succeeded · Output
+		11 text (settable)   󰘬 main                          root ││ ▸ bash
+		12 text (settable)      $ local                           ││ ▸ succeeded · Output
+		13 text (settable)   󰘬 gui-consigint-auth-handoff         ││ ▸ watch_sessions
+		14 text (settable)      $ local                           ││ ▸ succeeded · Output
+		15 text (settable)      - review auth handoff             ││ Dispatched both tasks and registered their session watches.
+		16 text (settable)        └ grok:4.6                      ││
+		17 text (settable)      ✓ coordinator-beta                ││ | Task | Workspace | Session |
+		18 text (settable)        └ pi:operator-fixture           ││ |---|---|---|
+		19 text (settable)   󰘬 gui-consigint-worktree-lifecycle   ││ | Alpha | gui-consigint-worktree-lifecycle | coordinator-alpha (13) |
+		20 text (settable)      $ local                           ││ | Beta | gui-consigint-auth-handoff | coordinator-beta (14) |
+		21 text (settable)      - implement lifecycle cleanup     ││ Operator is ready for another message while both Agents work.
+		22 text (settable)        └ claude:sonnet-4               │
+		23 text (settable)      - review websocket shutdown       │❯ You
+		24 text (settable)        └ codex:gpt-5.4                 │  REQUEST_THREE_HELD
+		25 text (settable)      - plan snapshot restore           │
+		26 text (settable)        └ pi:grok-4.6                   ││ Operator
+		27 text (settable)      ✓ coordinator-alpha               ││ HELD_BEFORE_RELEASE
+		28 text (settable)        └ pi:operator-fixture           ││ Interrupted · operations may finish; file changes remain.
+		29 text (settable)                                        │
+		30 text (settable)  SPACELIFT-AGENT ──────────────────────│❯ You
+		31 text (settable)   󰘬 main                          root │  REQUEST_COORDINATOR_WARM_CHAT
+		32 text (settable)      $ local                           │
+		33 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…││ Operator
+		34 text (settable)      $ local                           ││ COORDINATOR_WARM_CHAT_DONE while both Workspace replies remain held
+		35 text (settable)      - build pipeline progress         │
+		36 text (settable)        └ claude:opus-4                 ││ Operator
+		37 text (settable)   󰘬 gui-spacelift-agent-scope-quality  ││ These watched OVRCR Workspace Agent sessions settled:
+		38 text (settable)      $ local                           ││ - session 13 (coordinator-alpha) in consigint: response_ready (phase running, activity response_ready, run 1)
+		39 text (settable)      - review scope quality            ││ - session 14 (coordinator-beta) in consigint: response_ready (phase running, activity response_ready, run 1)
+		40 text (settable)        └ codex:gpt-5.4                 │
+		41 text (settable)                                        ││ ▸ bash
+		42 text (settable)                                        ││ ▸ succeeded · Output
+		43 text (settable)                                        ││ Both Pi sessions completed their requested README change.
+		44 text (settable)                                        ││
+		45 text (settable)                                        ││ | Task | Workspace | Session |
+		46 text (settable)                                        ││ |---|---|---|
+		47 text (settable)                                        ││ | Alpha | gui-consigint-worktree-lifecycle | coordinator-alpha (13) |
+		48 text (settable) USAGE · 0 tokens · 2m                  ││ | Beta | gui-consigint-auth-handoff | coordinator-beta (14) |
+		49 text (settable) ⠹ 0 working  ? 0 input  ✓ 2 ready      ││
+		50 text (settable) · 0 idle  ! 0 error  P 0 paused        ││ Verified `git status`, `git diff --stat`, and `git diff --check` (exit 0) in both Workspaces. Both Retained sessions remain
+		51 text (settable) · 0 exited  - 12 unknown               ││ open for review.
+		52 text (settable)                                        │
+		53 text (settable)  RESOURCES ────────────────────────────│
+		54 text (settable)  cpu       ━━━━──────────────────  16% │
+		55 text (settable)  mem       ━━━━━━━━━━━━━━──── 37.9/48G │
+		56 text (settable)                                        │
+		57 text (settable)  QUOTA LEFT ───────────────────────────│
+		58 text (settable) Claude · not signed in                 │ Managing consigint / main / #1 run 1
+		59 text (settable) Codex · usage off                      │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		60 text (settable) Grok · usage off                       │ > NATIVE_465_UNSENT_DRAFT▏
+		61 text (settable) Cursor · usage off                     │
+		62 text (settable)                                        │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		63 text (settable) OPERATOR  Enter Send  Shift-Enter Newline  Ctrl-g Browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ ✓ 2 ready                             │Operator · pi · fixture/operator-fixture · complete                                              [Reasoning medium ▾ Ctrl-t]
+                                       │❯ You
+ OPERATOR
