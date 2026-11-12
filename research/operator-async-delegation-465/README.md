@@ -4,9 +4,11 @@
 [PR #471](https://github.com/xlyk/ovrcr/pull/471) · `codex/465-integration` ·
 base `ceb8f06d25096dfb490efca5861532b009b6949f`.
 
-All five ticket implementations and review corrections are integrated at
-`1dc1e248f032d04090133ef7177fb620e3551254`. Native acceptance passed on that
-source revision. Current CI results are linked below.
+All five ticket implementations and review corrections are integrated. Native
+acceptance passed at `1dc1e248f032d04090133ef7177fb620e3551254`. Subsequent
+`8c4d1ab3` removes four redundant unit expressions and updates the runtime test
+fixture to model the actual soft-stop handshake; feature behavior is unchanged.
+Current CI results are linked below.
 
 ## Implementation and focused proof
 
@@ -69,3 +71,12 @@ Earlier failures and corrections remain in the linked attempt records. The
 four-pane terminal gate later passed without source/assertion changes;
 [diagnosis](terminal-ci-diagnosis.md) separates observed failures from the
 unconfirmed synchronization hypothesis.
+
+[CI corrections](ci-corrections.md): the exact workspace Clippy gate passed;
+Server Operator tests passed 20 with 1 ignored. The old fixture terminated on
+SIGUSR1 instead of acknowledging AbortTurn and Retire. Controlled-stop assertions
+remain, with a bounded wait for the separate retirement proof.
+
+The [wire snapshot correction](ci-wire-snapshot.md) adds the intentionally new
+`AbortTurn.leased=false` byte to EXPECTED. The owning snapshot passes; the shared
+protocol version remains 85.
