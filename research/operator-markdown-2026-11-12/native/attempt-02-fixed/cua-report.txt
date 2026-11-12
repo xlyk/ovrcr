@@ -1,0 +1,25 @@
+Acceptance passed. Operator reached `complete` and `Idle`, with no responding spinner.
+
+Visible content:
+
+- Heading: **Operator report**
+- Paragraph: “Ready with cargo test. All checks pass.”
+- Table: `Area | Result`; `tests | pass`; `docs | updated`
+- List: `- first item`, `- second item`
+- Code: `cargo test -p ovrcr-tui`
+
+Exact sidebar row: `↳ “Operator report Ready with cargo te…`
+
+The sidebar contains neither `##` nor `**`. The reply body contains none of `##`, `**`, triple backticks, or `|---|`.
+
+Saved the five explicitly named files. Both images contain actual **JPEG** bytes; the final image is **292,390 bytes**. Saved hashes verified.
+
+- [01-operator-open.jpg](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/01-operator-open.jpg)
+- [01-operator-open.ax.txt](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/01-operator-open.ax.txt)
+- [02-markdown-reply.jpg](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/02-markdown-reply.jpg)
+- [02-markdown-reply.ax.txt](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/02-markdown-reply.ax.txt)
+- [02-markdown-reply.json](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/02-markdown-reply.json)
+
+Closed through CUA using **Cmd-Q**, with no close error. CUA inventory and process inspection confirmed no remaining GUI process or window. No CUA errors, locks, focus problems, or unsupported APIs occurred.
+
+Skipped code changes and automated tests; “All checks pass” is fixture text.

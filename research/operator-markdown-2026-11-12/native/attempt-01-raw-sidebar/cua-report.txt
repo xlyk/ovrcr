@@ -1,0 +1,25 @@
+Captured the completed reply and closed OVRCR.
+
+Saved files; both images contain actual **JPEG** bytes:
+
+- [01-operator-open.ax.txt](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/01-operator-open.ax.txt)
+- [01-operator-open.jpg](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/01-operator-open.jpg)
+- [02-markdown-reply.ax.txt](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/02-markdown-reply.ax.txt)
+- [02-markdown-reply.jpg](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/02-markdown-reply.jpg)
+- [02-markdown-reply.json](/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/02-markdown-reply.json)
+
+The JSON records the capture call, timestamps, byte length, and SHA-256 hashes. Saved bytes and hashes verified.
+
+Visible content:
+
+- Heading: **Operator report**
+- Prose: “Ready with cargo test. All checks pass.”
+- Table: **Area / Result**, with **tests / pass** and **docs / updated**
+- List: “first item”, “second item”
+- Code: `cargo test -p ovrcr-tui`
+
+The reply body contains none of `##`, `**`, fenced triple backticks, or `|---|`. **The full AX check fails:** the sidebar preview contains literal `##` and `**`. The other two markers are absent.
+
+Cmd-Q returned `-10005: frontmostApplicationChanged`; a subsequent screenshot returned ScreenCaptureKit `-3811`. AX remained available, and clicking the native close button succeeded. CUA inventory and process inspection confirmed no remaining target app. No lock, composer-focus, paste, or unsupported-API issue occurred.
+
+Only the five named evidence files were written; no code changes or automated tests. Acceptance gap: raw Markdown remains visible in the sidebar preview.

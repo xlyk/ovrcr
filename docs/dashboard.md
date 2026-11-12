@@ -62,8 +62,9 @@ when opening begins, the singleton remains **Not set up**, including when its
 journal already has replies. A queued Open with Pi available shows **Idle** until
 the first response. A known Pi setup error after opening also shows **Not set up**. After opening, it
 shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**
-with a reply preview, or **Idle** with the latest reply. The section omits the model and
-harness. Drawing it never reviews a reply or starts a worker. The
+with a reply preview, or **Idle** with the latest reply. The preview is plain
+text rendered from the reply's Markdown; it never shows source markers or table
+borders. The section omits the model and harness. Drawing it never reviews a reply or starts a worker. The
 `operator.sidebar` setting controls the section and is on by default.
 
 **Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation

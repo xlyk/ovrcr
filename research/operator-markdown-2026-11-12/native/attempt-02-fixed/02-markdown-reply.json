@@ -1,0 +1,58 @@
+{
+  "call": "app.getAXStateAndScreenshot({disableDiffing:true, emit:false})",
+  "timestamps": {
+    "requestPastedAt": "2026-11-12T23:14:27.226Z",
+    "submittedAt": "2026-11-12T23:14:29.308Z",
+    "captureStartedAt": "2026-11-12T23:14:56.753Z",
+    "captureCompletedAt": "2026-11-12T23:14:57.093Z",
+    "savedAt": "2026-11-12T23:14:57.093Z"
+  },
+  "screenshot": {
+    "path": "/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/02-markdown-reply.jpg",
+    "format": "JPEG",
+    "mimeType": "image/jpeg",
+    "byteLength": 292390,
+    "sha256": "be1685fba88903bae5772ca5c629412ab28842ddfdac82fa7cf5ee6c6f2ac853"
+  },
+  "ax": {
+    "path": "/Users/xlyk/Code/ovrcr/.worktrees/operator-markdown/research/operator-markdown-2026-11-12/native/attempt-02-fixed/02-markdown-reply.ax.txt",
+    "encoding": "utf8",
+    "sha256": "df2882d46c5386ba146a9eca8492062814ba87ab1943e2f3e0f025f568853fca"
+  },
+  "polling": {
+    "intervalMs": 750,
+    "timeoutMs": 40000,
+    "polls": [
+      {
+        "at": "2026-11-12T23:14:32.369Z",
+        "contentReady": true,
+        "operatorIdle": false,
+        "busyLines": [
+          "▌ ⠹ Responding                      1s │                                                                                                                              ",
+          "\t\t5 text (settable) ▌ ⠹ Responding                      1s │                                                                                                                              ",
+          "\t\t6 text (settable) ↳ responding                           │                                                                                                                              ",
+          "▌ ⠹ Responding                      1s │                                                                                                                              "
+        ]
+      },
+      {
+        "at": "2026-11-12T23:14:33.226Z",
+        "contentReady": true,
+        "operatorIdle": true,
+        "busyLines": []
+      }
+    ]
+  },
+  "validation": {
+    "completed": true,
+    "sidebarPreview": "↳ “Operator report Ready with cargo te…",
+    "sidebarContainsRawMarkdown": false,
+    "bodyContainsForbidden": {
+      "##": false,
+      "**": false,
+      "```": false,
+      "|---|": false
+    },
+    "operatorComplete": true,
+    "operatorIdle": true
+  }
+}

@@ -28,7 +28,8 @@ It is a visual target, not a backend/protocol specification.
    and tool content. Keep prose bounded to88cells after reserving decoration.
 3. Give user and assistant turns distinct markers/weight/color, with one blank
    row between logical turns. Avoid repeated role labels for every assistant phase.
-   Keep normal assistant prose readable; do not add a Markdown parser or infer
+   Keep normal assistant prose readable; render assistant replies as
+   GitHub-flavored Markdown (see the 2026-11-12 update) and do not infer
    structured operations from Bash text.
 4. While the selected conversation row is rendered in the sidebar, remove the
    repeated full request from the local conversation header. Show quiet Operator
@@ -89,3 +90,30 @@ controlled local-provider fixture. Recapture wide journal, tool expansion, quick
 editor and narrow/floor states; inspect pixels plus paired accessibility text.
 Retain original launcher exits and verify owned groups/roots removed. Screenshots
 prove their observed scope, not live-account quality or Linux rendering.
+
+## Update 2026-11-12: Markdown replies
+
+Kyle asked for the Operator conversation to render Markdown instead of showing
+its source. Assistant replies use the `tui-markdown` crate (MIT OR Apache-2.0)
+with its default `highlight-code` feature off, so no syntax-highlighting or
+`syntect` build enters the TUI. `operator::markdown` supplies a `StyleSheet`
+backed by the active Dashboard palette and fits the crate's Ratatui `Text` to
+the feed:
+
+- headings lose their `#` markers and use theme colours by level;
+- emphasis, inline code, links, lists, quotes, task items, footnotes and GFM
+  alerts keep their structure without source markers;
+- fenced code has no triple-backtick fence and uses the code colour;
+- tables render as fitted Unicode boxes at the transcript width;
+- a standalone rule draws as a horizontal line;
+- a rendered paragraph uses Markdown soft-break rules, so an ordinary line break
+  becomes a space unless it is a hard break.
+
+The adapter escapes terminal controls after parsing, wraps prose at word
+boundaries while retaining span styles, and never re-wraps a rendered table
+border. User requests, command rows, tool arguments and tool output remain plain
+text. The sidebar's one-line reply preview also renders the Markdown to plain
+text, without table borders or source markers. The reply's row anchor offset is
+the rendered-row index rather than a source byte offset; it is still strictly
+increasing and stable under append.
+No protocol, runtime, persistence or input behavior changes.

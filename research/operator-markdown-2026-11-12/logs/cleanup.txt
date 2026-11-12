@@ -1,0 +1,17 @@
+Attempt 01 (2026-11-12, America/Los_Angeles)
+- GUI launcher job exit 0.
+- Provider helper: `installed_pi::operator_pi_gui_provider ... ok`, exit 0,
+  `OPERATOR_PI_GUI_PROVIDER exit root_exists=false stop_marker=false requests=1`.
+- Fixture root /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-8KFnhT absent.
+- CUA reported the app window closed and no remaining target process.
+
+Attempt 02 (2026-11-12, America/Los_Angeles)
+- GUI launcher job exit 0.
+- Provider helper: `installed_pi::operator_pi_gui_provider ... ok`, exit 0,
+  `OPERATOR_PI_GUI_PROVIDER exit root_exists=false stop_marker=false requests=1`.
+- Fixture root /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-VdoIYX absent.
+- CUA closed through Cmd-Q with no close error; process inventory found no
+  `/target/OVRCR GUI.app/` process or window.
+
+Both roots were disposable task-owned demo instances. No personal or shared
+OVRCR instance, provider account, or installed executable was used.

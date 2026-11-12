@@ -253,7 +253,7 @@ An open entry draws the wrapped request, `→ target` when the captured context
 differs from the previous request's (its disclosure key is the owner ordinal with
 `feed::CONTEXT_KEY` set, and its detail prints the captured target and the fixed
 agent workdir separately), one clipped row per `ToolCall` paired with its
-`ToolOutput` by call id, then the reply word-wrapped by `feed::wrap_words`, then
+`ToolOutput` by call id, then the reply rendered by `operator::markdown`, then
 any failure or interruption text. `feed::summarize` names a command: it drops
 `cd` segments, `echo` banners, `2>&1` and `"$OVRCR_EXECUTABLE" --json`, and
 classifies by leading words outside quotes into Add (`+`), Remove (`−`), Change
@@ -268,6 +268,15 @@ Thinking deltas are not rows. Only the last non-empty line of the thinking that
 trails a Running entry is drawn, italic and muted, clipped to one row.
 `ModelSelected`, `ReasoningSelected` and compaction events are never rows.
 Successful completion Unread comes from the exact durable turn summary.
+Assistant replies are GitHub-flavored Markdown. `operator::markdown` asks the
+`tui-markdown` crate to parse and render them through a palette-aware
+`StyleSheet`; heading markers and code fences are hidden, tables are fitted to
+the transcript width, and a standalone rule is drawn as a line. The adapter then
+escapes terminal controls, wraps prose at word boundaries while retaining span
+styles, and leaves already-fitted table borders untouched. User requests, tool
+arguments and tool output are not parsed as Markdown. The sidebar's one-line
+reply preview uses the same renderer to plain text, dropping table borders and
+source markers.
 `render::transcript_rows` caches the feed rows on the chat under `RowsKey`
 (width, journal length and tail ordinal, explicit choices, agent workdir, current
 turn and state, Unread turn, theme); key and mouse handlers enter the Dashboard

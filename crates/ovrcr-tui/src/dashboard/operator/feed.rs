@@ -730,12 +730,21 @@ impl Entry<'_> {
             index += run.max(1);
         }
 
-        let reply = display_text(self.reply.trim_end());
+        let reply = self.reply.trim_end();
         if !reply.is_empty() {
             if !self.steps.is_empty() {
                 rows.push(bar_row(color, Vec::new(), (self.owner, REPLY, 0), None));
             }
-            lines(rows, &reply, 2, Style::default().fg(TEXT()), REPLY, 1, None);
+            // `tui-markdown` owns Markdown; the feed only adds its gutter and
+            // a durable offset per rendered row.
+            for (offset, line) in super::markdown::lines(reply, width.saturating_sub(4))
+                .into_iter()
+                .enumerate()
+            {
+                let mut body = vec![Span::raw("  ")];
+                body.extend(line.spans);
+                rows.push(bar_row(color, body, (self.owner, REPLY, 1 + offset), None));
+            }
         }
         match self.state {
             State::Failed => lines(
