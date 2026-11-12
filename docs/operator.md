@@ -6,6 +6,13 @@ protocol. There is one conversation, not one per project or workspace: the
 workspace or session you capture is sent with each message, so the same
 conversation can work on different targets without losing its history.
 
+Opening history or cancelling an unsent Quick message starts no worker. Submit
+starts it lazily. With no watched work, it exits after the turn; active watches
+or queued reports keep it warm for follow-up chat and wakeups on the same run.
+It retires after the final wakeup releases that lease. Normal `ovrcr shutdown`
+refuses while a turn or watch lease is active; `shutdown --kill` stops the owned
+process groups.
+
 ## Connect your own pi profile
 
 Operator uses a dedicated pi profile inside the instance directory, separate from
@@ -150,6 +157,12 @@ reply when hidden. Finished sessions stay open in the Dashboard for review.
 `watch_sessions` list and remove control monitoring; removing a watch does not
 stop its session.
 
+Watching uses deterministic CLI polling and no background model calls. Settled
+reports queue during an active Operator turn and batch into an idle wakeup headed
+**Operator**. An unseen wakeup marks one unread in the sidebar without a desktop
+Alert. Wakeups preserve unsent drafts; submitting while one is running keeps the
+draft and reports that Operator is busy.
+
 `Shift-Enter` inserts a newline; paste edits the draft without submitting. Both
 message inputs support these editing commands:
 
@@ -239,9 +252,10 @@ model = "provider/model"
 ```
 
 The value is one exact `provider/model` identifier; the model id may contain
-further slashes. Leave it unset to use the dedicated pi profile's current default
-before each turn. An explicit value is captured with the accepted message, so a
-later settings edit cannot change a turn that is already running. Model
+further slashes. Leave it unset to use the dedicated Pi profile's default captured
+when the worker starts. An explicit value is captured with the accepted message,
+including warm turns, so a later settings edit cannot change a turn that is
+already running. Model
 availability is checked against the profile's own catalog; there is no fallback to
 another model. A missing model is fixed with `ovrcr operator setup`, not by editing
 an identifier you guessed.
@@ -260,10 +274,16 @@ that already ran.
 Use the **Stop** control, `Ctrl-x`, or `Ctrl-c` in an empty full composer to stop
 the current turn. Stop affects that exact turn's model work; an OVRCR operation
 already accepted may finish. Visible partial text and command outcomes remain in
-history. Generic `terminal kill` and `terminal close` refuse Operator scope, and
+history. While watches or queued reports keep the worker leased, Stop rolls model
+context back to the last completed checkpoint in the same worker, preserving
+watches and delegated sessions. It starts with empty context if no checkpoint
+exists. File changes and already accepted operations remain. If the worker cannot
+finish rollback within five seconds, the Server terminates its owned process
+group. Generic `terminal kill` and `terminal close` refuse Operator scope, and
 there is no archive, unarchive or delete route for Operator conversations.
 
-Wait for confirmed worker stop before sending again. **Finishing / stop
+Wait until Stop settles and the composer is ready before sending again. A leased
+worker can remain live; an unleased worker retires. **Finishing / stop
 unconfirmed** is not confirmation. If an old turn is uncertain after a crash,
 inspect it with `ovrcr --json terminal list`; its `scope` identifies the
 conversation. Only after you independently confirm its worker and background

@@ -331,6 +331,18 @@ adds the opt-in gates below (`--features acceptance-diagnostics` enables the
 diagnostics-gated paths). Ignored entry points are product evidence only when
 their owning parent or native run explicitly selects and checks them.
 
+The compiled e2e suite also covers same-run leased chat and model/default
+changes, atomic Submit-versus-wakeup admission, batched reports, Stop/failure/
+timeout rollback, first-turn empty and zero-record rollback, and the five-second
+owned-group fallback. The Node extension probe covers add/list/remove,
+pre-send baseline catch-up with opaque turn identities, queued reports and
+same-process extension reload. Dashboard tests cover AsyncWakeup headings,
+unread and draft preservation. The schema-32 migration regression preserves
+legacy Completed payloads and dependent journal/receipt bytes. See the
+[merged acceptance record](../../research/operator-async-delegation-465/README.md)
+for focused results and final CI; ignored installed-Pi tests need their own
+explicit passing result.
+
 Installed pi (actual native tools and one conversation):
 
 ```sh
@@ -352,9 +364,13 @@ GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 
 ```sh
+cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e --no-run
+# Before launching the GUI, record the test executable printed above.
+# Once the matching GUI is live, run that artifact directly:
 OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root \
-  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
-  operator_pi_gui_provider -- --ignored --nocapture
+  OVRCR_OPERATOR_GUI_TOKEN=operator-gui-owned-fixture \
+  /absolute/path/to/operator_e2e-TEST_HASH \
+  installed_pi::operator_pi_gui_provider --ignored --nocapture
 ```
 
 It requires that root to contain `registry.sqlite3` and `server.sock`, refuses any
@@ -364,7 +380,16 @@ synthetic auth/models/settings for the loopback provider, prints
 `operator-pi/fixture-release` marker, and serves until the fixture root disappears
 or a private `operator-pi/fixture-stop` cleanup marker appears (the marker is an
 input to the helper, never Operator's stop output). Run it beside the still-open
-GUI launcher and wait for the ready line before Send.
+GUI launcher and wait for the ready line before Send. Bind the root with the
+private ownership marker described in the computer-use guide. Compile the helper
+before building/launching the matching GUI; do not rebuild the live CLI image.
+
+For the coordinator scenario, set `OVRCR_OPERATOR_GUI_COORDINATOR=1` and use a
+fresh private HOME with its matching ownership marker. This additionally seeds
+the HOME Pi profile for two real managed Workspace sessions. Follow the
+[coordinator setup and walkthrough](../../research/operator-async-delegation-465/470-evidence.md#native-helper-instructions)
+and retain screenshots/AX plus journal, baseline and cleanup JSON as in the
+[completed native run](../../research/operator-async-delegation-465/native/README.md).
 
 The Dashboard path is asserted by `tests/tui/operator.rs` and the crate's own unit
 suite: one fixed sidebar navigation row, direct open with composer focus, no

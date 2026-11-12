@@ -1,14 +1,15 @@
 # Operator async session delegation acceptance
 
 [#465](https://github.com/xlyk/ovrcr/issues/465) ·
-[PR #471](https://github.com/xlyk/ovrcr/pull/471) · `codex/465-integration` ·
-base `ceb8f06d25096dfb490efca5861532b009b6949f`.
+[PR #471](https://github.com/xlyk/ovrcr/pull/471), merged 2026-11-11 as
+`4a5326c5a7f08097ac9d2b7bd2c7b945b4923adc`. Integration branch:
+`codex/465-integration`; base `ceb8f06d25096dfb490efca5861532b009b6949f`.
 
 All five ticket implementations and review corrections are integrated. Native
 acceptance passed at `1dc1e248f032d04090133ef7177fb620e3551254`. Subsequent
 `8c4d1ab3` removes four redundant unit expressions and updates the runtime test
 fixture to model the actual soft-stop handshake; feature behavior is unchanged.
-Current CI results are linked below.
+Final CI results are recorded below.
 
 ## Implementation and focused proof
 
@@ -60,12 +61,14 @@ fix and its production migration/read regression.
 
 ## Hosted checks
 
-[Current PR checks](https://github.com/xlyk/ovrcr/pull/471/checks) are the authority
-for the final revision. The required workflow runs the four macOS workspace
+[Final CI run](https://github.com/xlyk/ovrcr/actions/runs/43144163403) passed
+**seven jobs** on PR head `541db6a76e6afb594481dfcaee803ab50daf0b1f`;
+**three Linux jobs were skipped**. The required workflow runs the four macOS workspace
 shards, formatting, Clippy, documentation/extension tests, offline Cursor
 preflight, selection audit and aggregate. Linux jobs run only on manual dispatch;
-a skipped Linux job is not a pass. The PR body records the final checked SHA and
-outcome.
+a skipped Linux job is not a pass. The merged PR retains the checked SHA and
+outcome. All six feature issues (#465–#470) are closed, with acceptance evidence
+and the child checklists reconciled after merge.
 
 Earlier failures and corrections remain in the linked attempt records. The
 four-pane terminal gate later passed without source/assertion changes;
