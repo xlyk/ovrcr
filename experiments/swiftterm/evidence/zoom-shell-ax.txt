@@ -1,0 +1,13 @@
+Window: "SwiftTerm Prototype", App: SwiftTermPrototype.
+0 standard window SwiftTerm Prototype, Secondary Actions: Raise
+	1 close button
+	2 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	3 minimize button
+	4 text SwiftTerm Prototype
+5 menu bar
+	6 SwiftTermPrototype
+	7 Edit
+	8 View
+	9 Window
+
+The focused UI element is 0 standard window SwiftTerm Prototype, Secondary Actions: Raise

@@ -1,0 +1,43 @@
+run> rtk python3 experiments/swiftterm/tests/lifecycle.py
+Rust revision> 56ef7694318b5a1ec0514424b503dd2d004ff6a1
+SwiftTerm revision> d4f52faaae413b2e69c728ad79cd225cdbebc042
+macOS> 26.5.2
+runner> rtk proxy python3 -I experiments/swiftterm/run-prototype.py
+runner>     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+runner> swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
+runner> Target: arm64-apple-macosx26.0
+runner> [0/3] Write swift-version--1AB21518FC5DEDBE.txt
+runner> [1/2] Linking SwiftTermBuildInfoGenerator-tool
+runner> [0/1] Planning build
+runner> Building for production...
+runner> [0/2] Write swift-version--1AB21518FC5DEDBE.txt
+runner> [1/4] Linking SwiftTermBuildInfoGenerator-tool
+runner> [2/4] Generate SwiftTerm build information
+runner> Build of product 'SwiftTermPrototype' complete! (3.57s)
+runner> SWIFTERM_FIXTURE_READY={"root":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i","home":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/home","ovrcr_home":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home","socket":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home/server.sock","app_bundle":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app","bundle_id":"dev.ovrcr.SwiftTermPrototype","app_pid":11347,"cli_path":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app/Contents/MacOS/ovrcr","server_pid":10866,"sessions":[{"id":2,"pid":11305,"name":"shell-one"},{"id":3,"pid":11323,"name":"shell-two"}],"cwd":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/workspaces/swiftterm-prototype-fixture","term":"xterm-256color","env":{"HOME":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/home","OVRCR_HOME":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home","OVRCR_SOCKET":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home/server.sock","OVRCR_SERVER_EXECUTABLE":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app/Contents/MacOS/ovrcr","TERM":"xterm-256color","COLORTERM":"truecolor","PATH":"/usr/bin:/bin:/usr/sbin:/sbin","SHELL":"/bin/sh","TMPDIR":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/tmp","LANG":"en_US.UTF-8","LC_CTYPE":"en_US.UTF-8","GIT_CONFIG_GLOBAL":"/dev/null","GIT_CONFIG_NOSYSTEM":"1","GIT_TERMINAL_PROMPT":"0"}}
+sessions> {"2": [11305, 1], "3": [11323, 1]}
+session 2 screen grid> 40x120
+session 3 screen grid> 40x120
+second Dashboard refusal> exit=1; PTY=30x100
+PASS> real app attached and refused a second Dashboard
+AppKit quit Apple Event> exit=0
+runner> SWIFTERM_FIXTURE_APP_EXIT={"app_pid": 11347, "status": 0}
+runner> Fixture Server remains live. Enter `reopen` or `teardown`.
+sessions> {"2": [11305, 1], "3": [11323, 1]}
+session 2 screen grid> 40x120
+session 3 screen grid> 40x120
+reattach CLI Dashboard> Browse and detach, exit=0; PTY=30x100
+PASS> same sessions survived and a real CLI Dashboard reattached
+runner command> reopen
+runner> SWIFTERM_FIXTURE_READY={"root":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i","home":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/home","ovrcr_home":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home","socket":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home/server.sock","app_bundle":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app","bundle_id":"dev.ovrcr.SwiftTermPrototype","app_pid":12050,"cli_path":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app/Contents/MacOS/ovrcr","server_pid":10866,"sessions":[{"id":2,"pid":11305,"name":"shell-one"},{"id":3,"pid":11323,"name":"shell-two"}],"cwd":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/workspaces/swiftterm-prototype-fixture","term":"xterm-256color","env":{"HOME":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/home","OVRCR_HOME":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home","OVRCR_SOCKET":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/ovrcr-home/server.sock","OVRCR_SERVER_EXECUTABLE":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/SwiftTermPrototype.app/Contents/MacOS/ovrcr","TERM":"xterm-256color","COLORTERM":"truecolor","PATH":"/usr/bin:/bin:/usr/sbin:/sbin","SHELL":"/bin/sh","TMPDIR":"/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i/tmp","LANG":"en_US.UTF-8","LC_CTYPE":"en_US.UTF-8","GIT_CONFIG_GLOBAL":"/dev/null","GIT_CONFIG_NOSYSTEM":"1","GIT_TERMINAL_PROMPT":"0"}}
+second Dashboard refusal> exit=1; PTY=30x100
+AppKit quit Apple Event> exit=0
+runner> SWIFTERM_FIXTURE_APP_EXIT={"app_pid": 12050, "status": 0}
+runner> Fixture Server remains live. Enter `reopen` or `teardown`.
+sessions> {"2": [11305, 1], "3": [11323, 1]}
+session 2 screen grid> 40x120
+session 3 screen grid> 40x120
+runner command> teardown
+runner> SWIFTERM_FIXTURE_TORN_DOWN={"root": "/private/tmp/ovrcr-swiftterm-prototype.bnq87o6i"}
+RESULT> PASS; fixture removed after two real app quits
+transcript> /private/tmp/ovrcr-swiftterm-lifecycle-22rv3rzi.log

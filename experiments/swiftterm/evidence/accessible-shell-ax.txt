@@ -1,0 +1,21 @@
+Window: "SwiftTerm Prototype", App: SwiftTermPrototype.
+0 standard window SwiftTerm Prototype, Secondary Actions: Raise
+	1 text entry area Description: OVRCR Dashboard terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ OPERATOR ─────────────────────────────│local  shell · 0m                                                           pid 58524
+  − Not set up                         │─────────────────────────────────────────────────────────────────────────────────────
+run ovrcr operator setup               │NATIVE_AX_OK
+
+	2 close button
+	3 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	4 minimize button
+	5 text SwiftTerm Prototype
+6 menu bar
+	7 SwiftTermPrototype
+	8 Edit
+	9 View
+	10 Window
+
+The focused UI element is 1 text entry area Description: OVRCR Dashboard terminal, Value: 󰚩 OVRCR                                                                                                     [Commands] [Menu]
+ OPERATOR ─────────────────────────────│local  shell · 0m                                                           pid 58524
+  − Not set up                         │─────────────────────────────────────────────────────────────────────────────────────
+run ovrcr operator setup               │NATIVE_AX_OK

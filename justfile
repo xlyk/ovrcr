@@ -133,3 +133,7 @@ verify: fmt-check check lint test
 # Launch the optional macOS terminal test helper with a disposable demo.
 gui:
     rtk proxy sh scripts/gui.sh
+
+# Build a pinned SwiftTerm app and run it with an isolated local Server fixture.
+swiftterm-prototype:
+    rtk proxy python3 -I experiments/swiftterm/run-prototype.py
