@@ -3,6 +3,8 @@
 Throwaway HTML prototypes for the Operator section. Four structures share one
 39-column sidebar, the same five states, and a sidebar with no Usage section.
 
+![Current app without Usage](current-app-baseline.png)
+
 Open [index.html](index.html) in a browser. Switch with `←` / `→`, the bottom
 bar, or the links below:
 
