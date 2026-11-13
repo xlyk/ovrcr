@@ -142,7 +142,6 @@ pub(super) struct SidebarRects {
     pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
-    pub usage: Rect,
     pub resources: Rect,
     pub quota: Rect,
 }
@@ -638,7 +637,6 @@ pub struct Dashboard {
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
-    usage: crate::protocol::UsageSnapshot,
     resources: resources::Sampler,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,
@@ -647,6 +645,10 @@ pub struct Dashboard {
     settings_report: Option<Box<crate::protocol::SettingsReport>>,
     settings_editor: settings_editor::Editor,
     events: events::View,
+    /// The last automatic-title failure shown in the footer. Repeated failures with the same
+    /// reason stay quiet until a title applies or the reason changes; a background failure must
+    /// not need the Events popup to be noticed, but it must not re-raise on every retry either.
+    title_failure: Option<String>,
     // Review names Presented, not a newer Unread that arrived before the next draw.
     unread: unread::Unread,
     mode: InputMode,

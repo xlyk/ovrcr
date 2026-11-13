@@ -102,6 +102,23 @@ fn slash_word_filter_keeps_events_that_contain_every_word() {
 }
 
 #[test]
+fn a_background_title_failure_is_visible_without_opening_events() {
+    let mut dashboard = dashboard_fixture();
+    recorded(
+        &mut dashboard,
+        event(
+            EventComponent::Titles,
+            Some("459"),
+            "call failed: Pi rejected the prompt: No API key found for deepseek",
+        ),
+    );
+    let text = screen(&dashboard);
+    assert!(text.contains("Automatic titles failing:"), "{text}");
+    assert!(text.contains("No API key found for deepseek"), "{text}");
+    assert!(!open(&dashboard), "Events stayed closed");
+}
+
+#[test]
 fn tab_cycles_the_component_filter() {
     let mut dashboard = dashboard_fixture();
     let action = open_from_menu(&mut dashboard);

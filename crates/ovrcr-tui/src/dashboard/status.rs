@@ -23,18 +23,6 @@ pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAM
 /// reporting (hooks not set up, or a provider without it) and reads `status off`.
 const STARTING_GRACE_MS: u64 = 60_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum UsageState {
-    Working,
-    NeedsInput,
-    Ready,
-    Idle,
-    Error,
-    Paused,
-    Exited,
-    Unknown,
-}
-
 /// The glyph and colour a session holds still at, or `None` when its glyph is a moving
 /// spinner frame — the one state that needs the clock. [`busy`] and [`SessionStatus::of`]
 /// both read this, so the redraw cadence and the drawn glyph are a single decision.
@@ -180,23 +168,6 @@ impl SessionStatus {
                     None => unread,
                 }
             }),
-        }
-    }
-
-    /// The one session-state classification shared by the sidebar row and Usage counts.
-    pub(super) fn usage_state(session: &SessionSummary) -> UsageState {
-        match session.phase {
-            SessionPhase::Exited { .. } | SessionPhase::Stopped => UsageState::Exited,
-            SessionPhase::Interrupted => UsageState::Error,
-            SessionPhase::Paused => UsageState::Paused,
-            SessionPhase::Running => match super::ready::activity(session) {
-                AgentActivity::Busy => UsageState::Working,
-                AgentActivity::WaitingInput => UsageState::NeedsInput,
-                AgentActivity::ResponseReady => UsageState::Ready,
-                AgentActivity::Idle => UsageState::Idle,
-                AgentActivity::Error => UsageState::Error,
-                AgentActivity::Unknown => UsageState::Unknown,
-            },
         }
     }
 

@@ -1,7 +1,8 @@
 󰚩 OVRCR                                                                            [Commands] [Menu]
- OPERATOR ─────────────────────────────│Operator · pi · openai/gpt-6.1-sol · ready
-▌ · Idle                               │                                    [Reasoning — ▾ Ctrl-t]
-↳ No replies yet                       │
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│Operator · pi · openai/gpt-6.1-sol · ready
+┃ Operator                            ┃│                                    [Reasoning — ▾ Ctrl-t]
+┃· Idle                 No replies yet┃│
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│
                                        │
                                        │
                                        │
@@ -9,8 +10,7 @@
                                        │
                                        │
                                        │
-                                       │
-Usage · 0 sessions · 0 tokens          │▌ ✓ Review this workspace.
+                                       │▌ ✓ Review this workspace.
  RESOURCES ────────────────────────────│▌   → global
  cpu       ──────────────────────    … │▌     tool
  mem       …                           │▌

@@ -350,13 +350,22 @@ fn dock_rows(rows: &[String]) -> Vec<String> {
         .collect();
     let start = left
         .iter()
-        .position(|row| row.contains("OPERATOR") || row.contains("Operator ·"))
+        .position(|row| row.contains("Operator"))
         .expect("the Operator section is drawn");
-    let height = if left[start].contains("OPERATOR") {
-        3
-    } else {
-        1
-    };
+    let has_status = left.get(start + 1).is_some_and(|row| {
+        [
+            "Off",
+            "Idle",
+            "Responding",
+            "Stopping",
+            "Sending",
+            "Reply ready",
+            "Not set up",
+        ]
+        .iter()
+        .any(|word| row.contains(word))
+    });
+    let height = if has_status { 2 } else { 1 };
     left.into_iter().skip(start).take(height).collect()
 }
 
@@ -366,7 +375,7 @@ fn dock_row(rows: &[String]) -> String {
 
 fn dock_status_row(rows: &[String]) -> String {
     let rows = dock_rows(rows);
-    rows[usize::from(rows[0].contains("OPERATOR"))].clone()
+    rows.get(1).cloned().unwrap_or_else(|| rows[0].clone())
 }
 
 #[test]
@@ -381,12 +390,12 @@ fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
     let rows = rendered_rows(&dashboard, 120, 40);
     let dock = dock_row(&rows);
     assert!(
-        dock.contains("OPERATOR") && dock.contains("Off"),
+        dock.contains("Operator") && dock.contains("Off"),
         "an unopened conversation has a section and Off state: {dock:?}"
     );
     assert!(
-        dock.contains("o opens Operator"),
-        "Off explains how to start: {dock:?}"
+        !dock.contains("Ctrl-o") && !dock.contains("o open"),
+        "Off carries no keyboard shortcut copy: {dock:?}"
     );
     assert!(
         dashboard.drain_outbox().is_empty(),
@@ -398,8 +407,8 @@ fn closed_idle_dock_offers_open_chat_and_open_idle_omits_it() {
     let rows = rendered_rows(&dashboard, 120, 40);
     let dock = dock_status_row(&rows);
     assert!(
-        dock.starts_with('▌'),
-        "an open conversation keeps the selected section row: {dock:?}"
+        dock.starts_with('┃'),
+        "an open conversation keeps the Operator card: {dock:?}"
     );
     assert!(
         dock.contains("Idle"),
@@ -507,7 +516,7 @@ fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
         history_of(summary(), Vec::new(), None),
     );
     let dock = dock_status_row(&rendered_rows(&dashboard, 120, 40));
-    assert!(dock.starts_with('▌'), "{dock:?}");
+    assert!(dock.starts_with('┃'), "{dock:?}");
     assert!(
         dock.contains("Idle"),
         "successful open returns to Idle: {dock:?}"
@@ -579,8 +588,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         "drawing an active conversation starts no request"
     );
 
-    // The three-row section keeps the compact state and shows the current
-    // activity as detail instead of adding another state label.
+    // The two-row section keeps the state visible without a shortcut line.
     let out = changed(
         &mut dashboard,
         running.clone(),
@@ -597,7 +605,6 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
     assert!(out.is_empty(), "{out:?}");
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
     assert!(dock.contains("Responding"), "{dock:?}");
-    assert!(dock.contains("running bash"), "{dock:?}");
     let out = changed(
         &mut dashboard,
         running.clone(),
@@ -889,7 +896,7 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
     drag_sidebar_to(&mut dashboard, area, 19);
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
     assert!(
-        dock.contains("OPERATOR"),
+        dock.contains("Operator"),
         "the section heading survives: {dock:?}"
     );
     assert!(dock_status_row(&rendered_rows(&dashboard, 120, 40)).contains("Off"));
@@ -915,12 +922,8 @@ fn narrow_sidebar_keeps_the_operator_heading_and_compact_state_rows() {
     assert!(out.is_empty(), "{out:?}");
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
     assert!(
-        dock.contains("OPERATOR") && dock.contains("Responding"),
+        dock.contains("Operator") && dock.contains("Responding"),
         "{dock:?}"
-    );
-    assert!(
-        dock.contains("running mcp__too…"),
-        "detail clips within the narrow section: {dock:?}"
     );
     assert!(
         dock.lines().all(|line| line.chars().count() == 19),
@@ -998,9 +1001,9 @@ fn operator_section_click_opens_the_singleton_from_its_right_edge() {
 
     let rows = rendered_rows(&dashboard, 120, 40);
     // Attention is empty, so Operator leads the sidebar before the tree.
-    assert!(rows[1].contains("OPERATOR"), "{rows:?}");
-    assert!(rows[2].contains("Off"), "{rows:?}");
-    assert!(rows[5].contains("CONSIGINT"), "{rows:?}");
+    assert!(rows[2].contains("Operator"), "{rows:?}");
+    assert!(rows[3].contains("Off"), "{rows:?}");
+    assert!(rows[6].contains("CONSIGINT"), "{rows:?}");
     let screen = rows.join("\n");
     for removed in [
         "New Conversation",
@@ -1016,11 +1019,11 @@ fn operator_section_click_opens_the_singleton_from_its_right_edge() {
     }
 
     // Any section row is navigation, including its right edge; there is no close target.
-    dashboard.mouse_action(mouse(38, 3), area);
+    dashboard.mouse_action(mouse(38, 2), area);
     let requests = dashboard.drain_outbox();
     assert_eq!(operator_requests(&requests), [&OperatorRequest::Open]);
     // A second Manual Open is coalesced while the first is pending.
-    dashboard.mouse_action(mouse(38, 3), area);
+    dashboard.mouse_action(mouse(38, 2), area);
     assert!(dashboard.drain_outbox().is_empty());
 
     let open = requests.into_iter().next().unwrap();
@@ -2529,10 +2532,7 @@ fn operator_navigation_is_never_a_jump_target() {
     );
     let operator_row = held
         .iter()
-        .find(|row| {
-            (row.contains("OPERATOR") || row.contains("Operator ·"))
-                && !row.contains("operator-agent")
-        })
+        .find(|row| row.contains("Operator") && !row.contains("operator-agent"))
         .unwrap_or_else(|| panic!("the fixed Operator navigation row: {held:?}"));
     assert!(
         !operator_row.contains("[1]"),

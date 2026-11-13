@@ -461,10 +461,17 @@ fn plain_session_title_is_not_bold() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..40)
+        .find(|y| {
+            (0..39)
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("implement")
+        })
+        .expect("plain session row");
     assert!(
-        !terminal.backend().buffer()[(7, 4)]
-            .modifier
-            .contains(Modifier::BOLD),
+        !buffer[(7, row)].modifier.contains(Modifier::BOLD),
         "a plain session title stays unchanged"
     );
 }

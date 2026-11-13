@@ -51,20 +51,20 @@ you are away waits for you. A notice that waited behind it shows next.
 ## Operator chat
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
-shows attention first when needed, then a three-row **Operator** section before
-the project tree, followed by Resources and quota. Click anywhere in the section
-or press `o` in Browse to open the conversation with the composer focused. There
-are no Operator controls in the title bar.
+shows attention first when needed, then a tinted two-row **Operator** card
+before the project tree, followed by Resources and quota. Click anywhere in the
+card or press `o` in Browse to open the conversation with the composer focused.
+There are no Operator controls in the title bar.
 
 Before the conversation is opened, the section says **Off** when the Pi
 executable is available and **Not set up** when it is missing. If Pi is missing
 when opening begins, the singleton remains **Not set up**, including when its
 journal already has replies. A queued Open with Pi available shows **Idle** until
 the first response. A known Pi setup error after opening also shows **Not set up**. After opening, it
-shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**
-with a reply preview, or **Idle** with the latest reply. The preview is plain
-text rendered from the reply's Markdown; it never shows source markers or table
-borders. The section omits the model and harness. Drawing it never reviews a reply or starts a worker. The
+shows **Working** with elapsed time, **Reply ready · 1 unread**, or **Idle** with
+the last reply time. It never repeats reply text as a session title, shows no
+keyboard-shortcut copy, and keeps the setup action on the right. The card omits
+the model and harness. Drawing it never reviews a reply or starts a worker. The
 `operator.sidebar` setting controls the section and is on by default.
 
 **Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation
@@ -93,19 +93,6 @@ queuing it. Legacy Operator conversations stay on disk but do not appear in the
 Dashboard or the Archived palette.
 
 See [Operator setup and controls](operator.md).
-
-## Usage summary
-
-The sidebar's **Usage** section sits below the session tree and before Quota. It
-counts Working, needs input, Ready, Idle, Error, Paused, Exited and Unknown
-sessions using the same status as their rows; Stopped counts as Exited and
-Interrupted counts as Error. Its token total adds agent-reported input and
-output tokens, including sessions later archived or removed, from the current
-Server start. It resets when the Server restarts and does not estimate cost.
-Overlapping conversation and invocation reports contribute only the larger
-known total, and rebinding the same conversation continues its high-water count.
-The `usage.sidebar` setting controls the section and is on by default. The
-summary compacts to one line and then hides when the sidebar is short.
 
 ## Browse keys
 
@@ -461,8 +448,8 @@ closing a pane restores the tree.
 
 ## Sidebar and status
 
-The attention line leads when any session needs you. The three-row **OPERATOR**
-section follows it, then the project tree and quota. Each project is a section:
+The attention line leads when any session needs you. The two-row **Operator**
+card follows it, then the project tree and quota. Each project is a section:
 its name in upper case with a rule to the sidebar edge, and a blank line before
 every project after the first. Workspaces follow
 with a branch glyph and the current branch name in bold. The repository-root
@@ -515,13 +502,16 @@ the width it had before. The choice lasts for the attachment and is not saved.
 While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
-The **OPERATOR** section shows whether the conversation is working, unread,
-idle, not yet opened, or not set up, plus its current activity or latest reply.
-It omits the model and harness. Click anywhere in the section or press `o` in
-Browse to open the conversation. The `operator.sidebar` setting controls this
-section and is on by default. A short sidebar drops section gaps, compacts
-Resources, quota and Operator, and hides them as needed to preserve room for the
-tree; `o` still opens Operator when its section is hidden.
+The **Operator** card is its own tinted section, not another project heading:
+a rail and mixed-case `Operator` identity lead its state and timing.
+It shows whether the conversation is working, unread, idle, not yet opened, or
+not set up, plus its timing or setup action. It never repeats reply text as a
+session title, shows no keyboard-shortcut copy, and omits the model and harness. Click anywhere in
+the section or press `o` in Browse to open the conversation. The
+`operator.sidebar` setting controls this section and is on by default. A short
+sidebar drops section gaps, compacts Resources, quota and Operator, and hides
+them as needed to preserve room for the tree; `o` still opens Operator when its
+section is hidden.
 
 **Resources** follows the project tree and shows whole-machine CPU use and
 memory in use over installed memory. It samples on the Dashboard's existing
@@ -1102,6 +1092,19 @@ a shell. Activity indicators and terminal output continue to update normally.
 Duplicate displayed titles include a short session identifier so they can be
 distinguished.
 
+The title call runs Pi with `--no-extensions`, so `title_model` must name a
+provider Pi exposes without extensions (for example `openai-codex` or `xai` on
+Pi 0.87.1). A provider supplied by an installed Pi package, such as
+`ollama-cloud`, is not loaded for the call. A provider that rejects the call
+still spends an attempt; the third failed attempt closes that conversation's
+title window, and a restart does not reopen it. Fix the model spelling and start
+a new conversation to get a title after a closed window.
+
+A failed title call raises a footer banner even when Events is closed:
+`Automatic titles failing: <reason> · Space v e Events`. The same reason stays
+quiet until a title applies or the reason changes, so retries do not flash the
+footer. Open Events for the full log.
+
 Use **Rename terminal** in the command palette to choose a new display title.
 Clear it to restore the original session name, not the workspace's current branch
 name. Rename never changes the session ID or retargets an action. Desktop
@@ -1318,7 +1321,7 @@ iterm_focus = false                  # separate opt-in; explicit macOS Automatio
 theme = "catppuccin-mocha"            # default; alias dark. All 80 keys: docs/themes/catalog.md
 automatic_local_terminals = "default_branch_only"  # on | off | default_branch_only
 # save_uncommitted_work = true       # opt in: push dirty feature worktrees to origin/wip/<branch>
-# title_model = "provider/model"     # optional; unset leaves automatic titles off
+# title_model = "provider/model"     # optional; provider must load without extensions
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 

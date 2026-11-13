@@ -504,12 +504,6 @@ impl Loader<'_> {
             }
             self.unknown(operator, "operator.");
         }
-        if let Some(mut usage) = self.take::<toml::Table>(table, "usage") {
-            if let Some(value) = self.take::<bool>(&mut usage, "usage.sidebar") {
-                self.accept("usage.sidebar", &mut settings.usage.sidebar, value);
-            }
-            self.unknown(usage, "usage.");
-        }
         if let Some(mut resources) = self.take::<toml::Table>(table, "resources") {
             if let Some(value) = self.take::<bool>(&mut resources, "resources.sidebar") {
                 self.accept("resources.sidebar", &mut settings.resources.sidebar, value);
@@ -1019,9 +1013,6 @@ state_db = "/tmp/cursor/state.vscdb"
 [resources]
 sidebar = true
 
-[usage]
-sidebar = true
-
 [operator]
 model = "openai/chat-model"
 thinking_level = "low"
@@ -1084,7 +1075,6 @@ login = "owner@example.com"
         assert!(settings.iterm_focus);
         assert_eq!(settings.theme, ThemeId::Light);
         assert_eq!(settings.sidebar_view, SidebarView::Recent);
-        assert!(settings.usage.sidebar);
         assert!(settings.save_uncommitted_work);
         assert_eq!(
             settings.automatic_local_terminals,
@@ -1253,7 +1243,6 @@ login = "owner@example.com"
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
-                "usage.sidebar",
                 "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",

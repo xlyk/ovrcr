@@ -1871,8 +1871,8 @@ mod tests {
             "no counts means no attention row"
         );
         assert_eq!(
-            row.height, 3,
-            "the section has title, status and detail rows"
+            row.height, 4,
+            "the tile has top border, title, status and bottom border"
         );
         assert_eq!(row.y, 1, "the section starts below the title");
         assert_eq!(
@@ -2930,8 +2930,8 @@ mod tests {
         let mut d = dashboard();
         opened(&mut d, busy());
         for (cols, rows, operator_height) in [
-            (140, 40, 3),
-            (100, 24, 3),
+            (140, 40, 4),
+            (100, 24, 4),
             (80, 24, 0),
             (60, 16, 0),
             (40, 12, 0),
@@ -3224,7 +3224,50 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_reply_preview_uses_rendered_markdown_text() {
+    fn operator_sidebar_is_its_own_card_not_a_project_heading() {
+        let mut d = dashboard();
+        d.install_area(Rect::new(0, 0, 140, 40));
+        let rect = d.sidebar_rects(d.outer_area).operator;
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, &d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, rect.y)].symbol(), "┏");
+        assert_eq!(
+            buffer[(2, rect.y + 1)].bg,
+            crate::theme::CRUST(),
+            "the closed tile has its own surface"
+        );
+        let title: String = (0..rect.width)
+            .map(|column| buffer[(column, rect.y + 1)].symbol())
+            .collect();
+        assert!(title.contains("Operator"), "{title:?}");
+        assert!(
+            !title.contains("OPERATOR") && !title.contains('─'),
+            "the tile is not a project heading: {title:?}"
+        );
+
+        d = loaded(summary(), Vec::new());
+        d.install_area(Rect::new(0, 0, 140, 40));
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, &d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(2, rect.y + 1)].bg,
+            crate::theme::SURFACE0(),
+            "the selected tile uses the selection surface"
+        );
+    }
+
+    #[test]
+    fn sidebar_never_echoes_the_reply_as_a_session_title() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::sidebar_never_echoes_the_reply_as_a_session_title",
+        ) {
+            return;
+        }
         let mut d = loaded(
             summary(),
             vec![
@@ -3234,10 +3277,21 @@ mod tests {
             ],
         );
         let screen = frame_lines(&mut d, 140, 40);
-        assert!(!screen.contains("##"), "{screen}");
-        assert!(!screen.contains("**"), "{screen}");
-        assert!(screen.contains("Status"), "{screen}");
-        assert!(screen.contains("Ready"), "{screen}");
+        let sidebar: String = screen
+            .lines()
+            .map(|line| line.chars().take(39).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for reply_text in ["Status", "Ready", "cargo test"] {
+            assert!(
+                !sidebar.contains(reply_text),
+                "the sidebar repeats reply text {reply_text:?}: {sidebar}"
+            );
+        }
+        assert!(
+            !sidebar.contains("o open") && !sidebar.contains("Ctrl-o"),
+            "the operator card carries no keyboard shortcut copy: {sidebar}"
+        );
     }
 
     #[test]

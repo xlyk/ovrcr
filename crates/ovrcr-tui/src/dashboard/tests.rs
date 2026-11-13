@@ -2295,8 +2295,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .take(usize::from(rect.width))
         .collect();
     assert_eq!(line2, "─".repeat(usize::from(rect.width)), "{ready_text}");
-    // The Dashboard Usage summary is separate from pane metrics; the exact
-    // plain second header row above proves this pane has no token report.
+    // The exact plain second header row above proves this pane has no token report.
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
@@ -2692,7 +2691,7 @@ fn light_theme_hot_switch_updates_cached_tokens_and_draw_background() {
         .draw(|frame| super::render::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(0, 1)].bg, ThemeTokens::light().base);
+    assert_eq!(buffer[(39, 1)].bg, ThemeTokens::light().base);
 
     // Scope restores after draw; active falls back to dark when no scope is open.
     assert_eq!(crate::theme::active(), ThemeTokens::dark());

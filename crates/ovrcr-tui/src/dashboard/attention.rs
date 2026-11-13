@@ -499,7 +499,9 @@ mod tests {
             " ? 2 need input · ✓ 2 ready"
         );
         assert!(
-            rows[usize::from(rects.operator.y)].contains("OPERATOR"),
+            rows[usize::from(rects.operator.y)..usize::from(rects.operator.bottom())]
+                .iter()
+                .any(|row| row.contains("Operator")),
             "{}",
             rows[rects.operator.y as usize]
         );

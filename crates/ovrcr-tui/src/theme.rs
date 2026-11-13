@@ -754,7 +754,7 @@ mod tests {
                 .draw(|frame| crate::draw_dashboard_at(frame, &dashboard, 0))
                 .unwrap();
             assert_eq!(
-                terminal.backend().buffer()[(0, 1)].bg,
+                terminal.backend().buffer()[(39, 1)].bg,
                 ThemeTokens::for_id(id).base,
                 "{id}"
             );

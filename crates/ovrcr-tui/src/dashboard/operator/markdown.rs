@@ -208,36 +208,6 @@ fn is_table_border(ch: char) -> bool {
     )
 }
 
-/// One-line plain text for the Operator sidebar's reply preview.
-///
-/// The feed renders through [`lines`]; the preview only needs the same source
-/// markers removed. Table borders become spaces so the narrow sidebar reads as
-/// prose rather than fragmented cells.
-pub(super) fn preview(text: &str) -> String {
-    const WIDTH: usize = 200;
-    const LIMIT: usize = 240;
-    let mut preview = String::new();
-    for line in lines(text, WIDTH) {
-        let text: String = line
-            .to_string()
-            .chars()
-            .map(|ch| if is_table_border(ch) { ' ' } else { ch })
-            .collect();
-        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if text.is_empty() {
-            continue;
-        }
-        if !preview.is_empty() {
-            preview.push(' ');
-        }
-        preview.push_str(&text);
-        if preview.len() >= LIMIT {
-            break;
-        }
-    }
-    preview
-}
-
 /// Wrap a styled line at spaces, falling back to grapheme boundaries for a word
 /// wider than the row. Styles and wide-glyph widths survive the split.
 fn wrap(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
@@ -433,20 +403,6 @@ mod tests {
             rendered.contains("\\u{1b}]52;c;INJECTED\\u{7}"),
             "{rendered:?}"
         );
-    }
-
-    #[test]
-    fn preview_is_one_plain_line_without_source_markers_or_table_borders() {
-        let preview = preview(
-            "## Status\n\n**Ready** with `cargo test`.\n\n| Area | Result |\n| --- | --- |\n| tests | pass |",
-        );
-        assert!(!preview.contains("##"), "{preview}");
-        assert!(!preview.contains("**"), "{preview}");
-        assert!(!preview.contains('|'), "{preview}");
-        assert!(!preview.contains('┌'), "{preview}");
-        assert!(preview.contains("Status"), "{preview}");
-        assert!(preview.contains("Ready"), "{preview}");
-        assert!(preview.contains("tests"), "{preview}");
     }
 
     #[test]

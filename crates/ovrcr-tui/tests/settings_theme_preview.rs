@@ -45,7 +45,7 @@ fn background(dashboard: &Dashboard) -> Color {
     terminal
         .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
         .unwrap();
-    terminal.backend().buffer()[(0, 1)].bg
+    terminal.backend().buffer()[(119, 1)].bg
 }
 
 fn open_theme_picker(dashboard: &mut Dashboard) {
