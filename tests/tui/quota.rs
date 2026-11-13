@@ -204,19 +204,14 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         current[last_tree_row], "▌      └ sh",
         "the stacked label is the last selectable tree line"
     );
-    let usage_row = current
-        .iter()
-        .position(|row| row.contains("USAGE") || row.contains("Usage ·"))
-        .expect("Usage follows the tree");
-    assert_eq!(last_tree_row + 1, usage_row, "{current:?}");
     let resources_row = current
         .iter()
         .position(|row| row.contains("RESOURCES"))
-        .expect("Resources follows Usage");
+        .expect("Resources follows the tree");
     assert_eq!(
-        usage_row + 1,
+        last_tree_row + 1,
         resources_row,
-        "a narrow sidebar keeps Usage's one-line summary with no gap"
+        "Resources follows the tree without a gap: {current:?}"
     );
     assert_eq!(
         resources_row + 4,
@@ -440,8 +435,7 @@ fn details_text(dashboard: &Dashboard, now: u64) -> String {
     terminal
         .draw(|frame| draw_dashboard_at(frame, dashboard, now))
         .unwrap();
-    // Return only the quota popup. The production-default Usage section also
-    // contains the word "tokens" behind the popup, outside its own content.
+    // Return only the quota popup, not dashboard chrome behind it.
     (5..35)
         .map(|row| {
             (19..102)

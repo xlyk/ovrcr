@@ -142,7 +142,6 @@ pub(super) struct SidebarRects {
     pub attention: Rect,
     pub operator: Rect,
     pub tree: Rect,
-    pub usage: Rect,
     pub resources: Rect,
     pub quota: Rect,
 }
@@ -638,7 +637,6 @@ pub struct Dashboard {
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
     quotas: Option<crate::protocol::QuotaSnapshot>,
-    usage: crate::protocol::UsageSnapshot,
     resources: resources::Sampler,
     /// The details popup on screen, and its scroll offset.
     details: Option<(quota::Details, u16)>,

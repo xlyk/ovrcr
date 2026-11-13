@@ -493,7 +493,6 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     dashboard.draw_operator_sidebar(frame, now_unix_ms);
-    dashboard.draw_usage(frame, now_unix_ms);
     dashboard.draw_resources(frame);
     dashboard.draw_quota(frame, now_unix_ms);
     dashboard.draw_attention(frame);

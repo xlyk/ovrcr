@@ -94,22 +94,6 @@ Dashboard or the Archived palette.
 
 See [Operator setup and controls](operator.md).
 
-## Usage summary
-
-The sidebar's **Usage** section sits below the session tree and before Quota. It
-counts Working, needs input, Ready, Idle, Error, Paused, Exited and Unknown
-sessions using the same status as their rows; Stopped counts as Exited and
-Interrupted counts as Error. A state with no sessions is left out, so the
-section shows values rather than a row of dim zeroes. Its token total adds
-agent-reported input and output tokens, including sessions later archived or
-removed, from the current Server start. It resets when the Server restarts and
-does not estimate cost. Overlapping conversation and invocation reports
-contribute only the larger known total, and rebinding the same conversation
-continues its high-water count. The `usage.sidebar` setting controls the section
-and is on by default. Below 28 sidebar columns the counter rows would take more
-room than they explain, so the section keeps its one-line summary at any height;
-on a short sidebar it compacts to that line and then hides.
-
 ## Browse keys
 
 The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok and Cursor account

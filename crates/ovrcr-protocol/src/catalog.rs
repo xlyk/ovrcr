@@ -89,8 +89,6 @@ const QUOTA_ABOUT: &[&str] = &[
 const OPERATOR_SIDEBAR_ABOUT: &[&str] =
     &["Shows the Operator section in the Dashboard sidebar; on by default."];
 
-const USAGE_SIDEBAR_ABOUT: &[&str] =
-    &["Shows the Usage section in the Dashboard sidebar; on by default."];
 const RESOURCES_SIDEBAR_ABOUT: &[&str] =
     &["Shows machine CPU and memory in the Dashboard sidebar; turning it off also stops sampling."];
 
@@ -283,7 +281,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 38] = [
+const CATALOG: [Entry; 37] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -514,17 +512,6 @@ const CATALOG: [Entry; 38] = [
                 .as_deref()
                 .and_then(path_text)
         },
-        show_off: |_| false,
-    },
-    Entry {
-        path: "usage.sidebar",
-        shape: Shape::Toggle,
-        owner: SettingOwner::Dashboard,
-        group: "Usage",
-        label: "Sidebar section",
-        off_state: None,
-        about: USAGE_SIDEBAR_ABOUT,
-        value: |settings| display(&settings.usage.sidebar),
         show_off: |_| false,
     },
     Entry {
@@ -785,7 +772,6 @@ mod tests {
                 "quota.grok.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
-                "usage.sidebar",
                 "resources.sidebar",
                 "agents",
                 "cursor_cloud_accounts",

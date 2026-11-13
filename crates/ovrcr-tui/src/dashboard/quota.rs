@@ -1,9 +1,6 @@
 use super::{
     Dashboard, DashboardAction, InputMode,
-    render::{
-        GREEN, RED, SUBTEXT, SURFACE2, TEXT, YELLOW, clip_text, compose_row, label_color,
-        sidebar_area,
-    },
+    render::{GREEN, RED, SUBTEXT, SURFACE2, TEXT, YELLOW, compose_row, label_color, sidebar_area},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ovrcr_protocol::{
@@ -31,7 +28,6 @@ enum SidebarSection {
     Attention,
     Operator,
     Tree,
-    Usage,
     Resources,
     Quota,
 }
@@ -64,14 +60,12 @@ impl SidebarEntry {
     }
 }
 
-const SIDEBAR_SHRINK_ORDER: [(SidebarSection, usize); 12] = [
+const SIDEBAR_SHRINK_ORDER: [(SidebarSection, usize); 10] = [
     (SidebarSection::Attention, 1),
     (SidebarSection::Operator, 1),
-    (SidebarSection::Usage, 1),
     (SidebarSection::Resources, 1),
     (SidebarSection::Resources, 2),
     (SidebarSection::Quota, 1),
-    (SidebarSection::Usage, 2),
     (SidebarSection::Resources, 3),
     (SidebarSection::Operator, 2),
     (SidebarSection::Quota, 2),
@@ -306,20 +300,8 @@ impl Dashboard {
             vec![(0, 0)]
         };
         let operator_enabled = sidebar.width > 0 && self.settings.operator.sidebar;
-        let usage_enabled = sidebar.width > 0 && self.settings.usage.sidebar;
         let operator_heights = if operator_enabled {
             vec![(3, 1), (3, 0), (1, 0), (0, 0)]
-        } else {
-            vec![(0, 0)]
-        };
-        let usage_full = if usage_enabled {
-            usage_content_height(&self.usage_counts(), sidebar.width)
-        } else {
-            0
-        };
-        let usage_heights = if usage_enabled {
-            // The compact one-line summary has no gap after it.
-            vec![(usage_full, u16::from(usage_full > 1)), (1, 0), (0, 0)]
         } else {
             vec![(0, 0)]
         };
@@ -347,7 +329,6 @@ impl Dashboard {
             ),
             entry(SidebarSection::Operator, &operator_heights),
             entry(SidebarSection::Tree, &[(tree_floor, 0)]),
-            entry(SidebarSection::Usage, &usage_heights),
             entry(SidebarSection::Resources, &resources_heights),
             entry(SidebarSection::Quota, &quota_heights),
         ];
@@ -376,14 +357,12 @@ impl Dashboard {
         };
         let attention_height = section_height(SidebarSection::Attention);
         let operator_height = section_height(SidebarSection::Operator);
-        let usage_height = section_height(SidebarSection::Usage);
         let resources_height = section_height(SidebarSection::Resources);
         let quota_height = section_height(SidebarSection::Quota);
         let operator_y = sidebar.y + attention_height.total();
         let tree_y = operator_y + operator_height.total();
         let quota_y = sidebar.bottom().saturating_sub(quota_height.content);
         let resources_y = quota_y.saturating_sub(resources_height.total());
-        let usage_y = resources_y.saturating_sub(usage_height.total());
         super::SidebarRects {
             attention: Rect::new(
                 sidebar.x,
@@ -401,7 +380,7 @@ impl Dashboard {
                 sidebar.x,
                 tree_y,
                 sidebar.width,
-                usage_y.saturating_sub(tree_y),
+                resources_y.saturating_sub(tree_y),
             ),
             resources: Rect::new(
                 sidebar.x,
@@ -409,49 +388,8 @@ impl Dashboard {
                 sidebar.width,
                 resources_height.content,
             ),
-            usage: Rect::new(sidebar.x, usage_y, sidebar.width, usage_height.content),
             quota: Rect::new(sidebar.x, quota_y, sidebar.width, quota_height.content),
         }
-    }
-
-    pub(super) fn draw_usage(&self, frame: &mut Frame<'_>, now: u64) {
-        let area = self.sidebar_rects(frame.area()).usage;
-        if area.is_empty() {
-            return;
-        }
-        let counts = self.usage_counts();
-        let sessions = counts.iter().sum::<usize>();
-        let total = format_usage_tokens(self.usage.total_tokens);
-        if area.height == 1 {
-            return frame.render_widget(
-                Paragraph::new(format!("Usage · {sessions} sessions · {total} tokens"))
-                    .style(Style::default().fg(TEXT())),
-                area,
-            );
-        }
-
-        let elapsed = usage_elapsed(self.usage.server_started_unix_ms, now);
-        let mut lines = vec![Line::from(vec![Span::styled(
-            format!("USAGE · {total} tokens · {elapsed}"),
-            Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
-        )])];
-        lines.extend(usage_counter_rows(&counts, usize::from(area.width)));
-        frame.render_widget(Paragraph::new(lines), area);
-    }
-
-    fn usage_counts(&self) -> [usize; 8] {
-        let mut counts = [0usize; 8];
-        for session in self
-            .hierarchy
-            .projects
-            .iter()
-            .flat_map(|project| &project.workspaces)
-            .flat_map(|workspace| &workspace.sessions)
-        {
-            let index = usage_state_index(super::status::SessionStatus::usage_state(session));
-            counts[index] = counts[index].saturating_add(1);
-        }
-        counts
     }
 
     pub(super) fn draw_quota(&self, frame: &mut Frame<'_>, now: u64) {
@@ -514,149 +452,6 @@ impl Dashboard {
                 Rect::new(area.x, area.y + offset as u16, area.width, 1),
             );
         }
-    }
-}
-
-/// Counters shown in the Usage summary, in the order a session becomes worth
-/// noticing. A zero counter says nothing, so it is left out rather than drawn
-/// as a dim placeholder.
-const USAGE_STATES: [(super::status::UsageState, &str); 8] = [
-    (super::status::UsageState::Working, "working"),
-    (super::status::UsageState::NeedsInput, "input"),
-    (super::status::UsageState::Ready, "ready"),
-    (super::status::UsageState::Idle, "idle"),
-    (super::status::UsageState::Error, "error"),
-    (super::status::UsageState::Paused, "paused"),
-    (super::status::UsageState::Exited, "exited"),
-    (super::status::UsageState::Unknown, "unknown"),
-];
-
-/// Below this width the counter rows would waste more space than they explain,
-/// so Usage keeps its one-line summary at any height.
-const USAGE_COUNTER_MIN_WIDTH: u16 = 28;
-/// At most this many counter rows; a rare all-state sidebar stops growing.
-const USAGE_COUNTER_MAX_ROWS: usize = 3;
-
-/// The Usage section's content height: its heading plus one line per non-zero
-/// counter row, or the one-line summary when the sidebar is too narrow.
-fn usage_content_height(counts: &[usize; 8], width: u16) -> u16 {
-    if width < USAGE_COUNTER_MIN_WIDTH {
-        return 1;
-    }
-    1 + usage_counter_rows(counts, usize::from(width)).len() as u16
-}
-
-fn usage_counter_rows(counts: &[usize; 8], width: usize) -> Vec<Line<'static>> {
-    let items: Vec<_> = USAGE_STATES
-        .iter()
-        .filter(|(state, _)| counts[usage_state_index(*state)] > 0)
-        .collect();
-    if items.is_empty() {
-        return vec![Line::from(Span::styled(
-            "no sessions",
-            Style::default().fg(super::render::MUTED()),
-        ))];
-    }
-    let mut rows = Vec::new();
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut used = 0usize;
-    let mut next = 0usize;
-    while next < items.len() && rows.len() < USAGE_COUNTER_MAX_ROWS {
-        let (state, label) = items[next];
-        let text = format!("{} {label}", counts[usage_state_index(*state)]);
-        let text_width = Line::raw(&text).width();
-        let gap = if spans.is_empty() { 0 } else { 2 };
-        if !spans.is_empty() && used + gap + text_width > width {
-            rows.push(Line::from(std::mem::take(&mut spans)));
-            used = 0;
-            continue;
-        }
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-            used += gap;
-        }
-        let text = if text_width > width {
-            clip_text(&text, width)
-        } else {
-            text
-        };
-        used = used.saturating_add(Line::raw(&text).width());
-        spans.push(Span::styled(
-            text,
-            usage_state_style(*state, counts[usage_state_index(*state)]),
-        ));
-        next += 1;
-    }
-    if !spans.is_empty() {
-        rows.push(Line::from(spans));
-    }
-    if next < items.len()
-        && let Some(last) = rows.last_mut()
-    {
-        last.spans.push(Span::styled(
-            format!("  +{}", items.len() - next),
-            Style::default().fg(super::render::MUTED()),
-        ));
-    }
-    rows
-}
-
-fn usage_state_index(state: super::status::UsageState) -> usize {
-    match state {
-        super::status::UsageState::Working => 0,
-        super::status::UsageState::NeedsInput => 1,
-        super::status::UsageState::Ready => 2,
-        super::status::UsageState::Idle => 3,
-        super::status::UsageState::Error => 4,
-        super::status::UsageState::Paused => 5,
-        super::status::UsageState::Exited => 6,
-        super::status::UsageState::Unknown => 7,
-    }
-}
-
-fn usage_state_style(state: super::status::UsageState, count: usize) -> Style {
-    if count == 0 {
-        return Style::default().fg(super::render::MUTED());
-    }
-    Style::default().fg(match state {
-        super::status::UsageState::Working => super::render::GREEN(),
-        super::status::UsageState::NeedsInput => YELLOW(),
-        super::status::UsageState::Ready => super::render::TEAL(),
-        super::status::UsageState::Idle => TEXT(),
-        super::status::UsageState::Error => RED(),
-        super::status::UsageState::Paused => SUBTEXT(),
-        super::status::UsageState::Exited => super::render::MUTED(),
-        super::status::UsageState::Unknown => SUBTEXT(),
-    })
-}
-
-fn format_usage_tokens(tokens: u64) -> String {
-    let (scale, suffix) = if tokens >= 1_000_000_000 {
-        (1_000_000_000_u128, "B")
-    } else if tokens >= 1_000_000 {
-        (1_000_000_u128, "M")
-    } else if tokens >= 1_000 {
-        (1_000_u128, "K")
-    } else {
-        return tokens.to_string();
-    };
-    let tenths = u128::from(tokens) * 10 / scale;
-    format!("{}.{:01}{suffix}", tenths / 10, tenths % 10)
-}
-
-fn usage_elapsed(started_unix_ms: u64, now_unix_ms: u64) -> String {
-    let minutes = now_unix_ms.saturating_sub(started_unix_ms) / 60_000;
-    let days = minutes / (24 * 60);
-    let hours = minutes / 60 % 24;
-    let minutes = minutes % 60;
-    if days > 0 {
-        format!("{days}d{hours}h")
-    } else if hours > 0 {
-        format!("{hours}h{minutes:02}m")
-    } else if minutes == 0 {
-        "<1m".into()
-    } else {
-        format!("{minutes}m")
     }
 }
 
@@ -1352,56 +1147,6 @@ where
 }
 
 #[cfg(test)]
-mod usage_tests {
-    use super::*;
-
-    fn all_counts(count: usize) -> [usize; 8] {
-        [count; 8]
-    }
-
-    #[test]
-    fn zero_counters_are_left_out_and_no_sessions_has_its_own_line() {
-        let mut counts = [0usize; 8];
-        counts[usage_state_index(super::super::status::UsageState::Error)] = 2;
-        counts[usage_state_index(super::super::status::UsageState::Unknown)] = 1;
-        let rows = usage_counter_rows(&counts, 39);
-        let text = rows
-            .iter()
-            .map(Line::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert_eq!(text, "2 error  1 unknown");
-        assert!(!text.contains("working") && !text.contains("0 "), "{text}");
-
-        let empty = usage_counter_rows(&[0usize; 8], 39);
-        assert_eq!(empty.len(), 1);
-        assert_eq!(empty[0].to_string(), "no sessions");
-    }
-
-    #[test]
-    fn counters_fit_bounded_rows_at_every_live_width() {
-        for width in usize::from(USAGE_COUNTER_MIN_WIDTH)..=60 {
-            let rows = usage_counter_rows(&all_counts(1), width);
-            assert!(rows.len() <= USAGE_COUNTER_MAX_ROWS, "width {width}");
-            for row in rows {
-                assert!(
-                    row.width() <= width,
-                    "width {width}, row {row:?} ({} cells)",
-                    row.width()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn content_height_uses_the_one_line_summary_below_the_counter_floor() {
-        assert_eq!(usage_content_height(&all_counts(1), 27), 1);
-        assert!(usage_content_height(&all_counts(1), 28) > 1);
-        assert_eq!(usage_content_height(&[0usize; 8], 39), 2);
-    }
-}
-
-#[cfg(test)]
 mod bar_math_tests {
     use super::{STALE_RESERVE, bar_filled, bar_width};
 
@@ -1612,7 +1357,7 @@ mod layout_tests {
             "attention counts remain visible at the minimum sidebar height"
         );
         // At this roomier height, the optional blank rows fit without shrinking
-        // the tree or the default Usage, Resources, and Quota sections.
+        // the tree or the default Resources and Quota sections.
         let full = dashboard.sidebar_rects(Rect::new(0, 0, 120, 40));
         assert_eq!(
             full.attention.y, 1,
@@ -1624,8 +1369,7 @@ mod layout_tests {
             "one blank row follows the attention strip"
         );
         assert_eq!(full.tree.y, full.operator.bottom() + 1);
-        assert_eq!(full.tree.bottom(), full.usage.y);
-        assert_eq!(full.usage.bottom() + 1, full.resources.y);
+        assert_eq!(full.tree.bottom(), full.resources.y);
         assert_eq!(full.resources.bottom() + 1, full.quota.y);
         assert_eq!(full.quota.bottom(), 39);
         dashboard.toggle_sidebar();
@@ -1634,35 +1378,6 @@ mod layout_tests {
                 .sidebar_rects(Rect::new(0, 0, 120, 30))
                 .attention
                 .is_empty()
-        );
-    }
-
-    #[test]
-    fn usage_compacts_before_quota_and_hides_before_operator_becomes_one_row() {
-        let dashboard = Dashboard::new(TerminalSize {
-            rows: 40,
-            cols: 120,
-        });
-        let mut usage_compacts_while_quota_is_full = false;
-        let mut usage_hides_while_operator_is_expanded = false;
-        for height in 8..=40 {
-            let rects = dashboard.sidebar_rects(Rect::new(0, 0, 120, height));
-            assert!(rects.tree.bottom() <= rects.usage.y);
-            assert!(rects.usage.bottom() <= rects.quota.y);
-            if rects.usage.height == 1 && rects.quota.height >= 4 {
-                usage_compacts_while_quota_is_full = true;
-            }
-            if rects.usage.height == 0 && rects.operator.height >= 3 {
-                usage_hides_while_operator_is_expanded = true;
-            }
-        }
-        assert!(
-            usage_compacts_while_quota_is_full,
-            "Usage should compact before Quota drops to one provider row"
-        );
-        assert!(
-            usage_hides_while_operator_is_expanded,
-            "Usage should hide before Operator becomes a one-row section"
         );
     }
 }

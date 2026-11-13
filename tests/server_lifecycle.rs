@@ -1214,27 +1214,6 @@ fn server_usage_reports_retain_across_archive_and_reset_after_restart() {
         180
     );
 
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
-    terminal
-        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, server_started))
-        .unwrap();
-    let sidebar = (0..40)
-        .map(|row| {
-            (0..39)
-                .map(|column| terminal.backend().buffer()[(column, row)].symbol())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        sidebar.contains("USAGE"),
-        "Usage section missing: {sidebar}"
-    );
-    assert!(
-        sidebar.contains("180 tokens"),
-        "live total missing: {sidebar}"
-    );
-
     drop(first_supervisor);
     drop(_second_supervisor);
     for session in [first.session, second.session, local] {

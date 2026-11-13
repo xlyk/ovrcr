@@ -2295,8 +2295,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .take(usize::from(rect.width))
         .collect();
     assert_eq!(line2, "─".repeat(usize::from(rect.width)), "{ready_text}");
-    // The Dashboard Usage summary is separate from pane metrics; the exact
-    // plain second header row above proves this pane has no token report.
+    // The exact plain second header row above proves this pane has no token report.
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()

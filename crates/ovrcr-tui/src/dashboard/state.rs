@@ -665,7 +665,6 @@ impl Dashboard {
             desktop: super::desktop::DesktopNotifications::default(),
             unread: Default::default(),
             quotas: Some(QuotaSnapshot::default()),
-            usage: crate::protocol::UsageSnapshot::default(),
             resources: super::resources::Sampler::system(),
             details: None,
             transcript: Default::default(),
@@ -755,14 +754,6 @@ impl Dashboard {
 
     pub fn install_hierarchy(&mut self, hierarchy: HierarchySnapshot) {
         let _ = self.update_hierarchy(hierarchy);
-    }
-
-    fn install_usage_snapshot(&mut self, incoming: crate::protocol::UsageSnapshot) {
-        if incoming.server_started_unix_ms != self.usage.server_started_unix_ms {
-            self.usage = incoming;
-        } else {
-            self.usage.total_tokens = self.usage.total_tokens.max(incoming.total_tokens);
-        }
     }
 
     pub fn install_settings(&mut self, settings: Settings) {
@@ -4862,8 +4853,8 @@ impl Dashboard {
                     self.quotas = Some(*snapshot);
                     self.ensure_selection_visible(&self.visible_rows());
                 }
-                ServerEvent::UsageChanged(snapshot) => self.install_usage_snapshot(snapshot),
                 ServerEvent::SettingsChanged(report) => self.install_settings_report(*report),
+                ServerEvent::UsageChanged(_) => {}
                 ServerEvent::Recorded(event) => self.events_recorded(event),
                 ServerEvent::WipSavePrompt {
                     project,
@@ -5098,7 +5089,6 @@ impl Dashboard {
         self.observe_desktop_responses(&hierarchy);
         let sidebar_layout = self.sidebar_tree_layout();
         let tree = sidebar_layout.viewport;
-        self.install_usage_snapshot(hierarchy.usage);
         self.hierarchy = hierarchy;
         let tree_changed = tree != self.sidebar_rects(self.outer_area).tree;
         if self.transcript.session.is_some_and(|id| {

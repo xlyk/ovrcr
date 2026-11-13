@@ -24,8 +24,8 @@
                                        │
                                        │
                                        │
-USAGE · 0 tokens · <1m                 │
-no sessions                            │
+                                       │
+                                       │
                                        │▌ ✓ Review this workspace.
  RESOURCES ────────────────────────────│▌   → global
  cpu       ──────────────────────    … │▌     tool

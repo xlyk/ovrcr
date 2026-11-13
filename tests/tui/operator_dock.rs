@@ -277,11 +277,6 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "tree follows Operator: {full:?}"
     );
     assert!(
-        full.iter().any(|row| row.contains("USAGE ·"))
-            && full.iter().any(|row| row.contains("1 input")),
-        "Usage shows its heading and non-zero counters: {full:?}"
-    );
-    assert!(
         full.iter().any(|row| row.contains("RESOURCES"))
             && full.iter().any(|row| row.contains("QUOTA LEFT")),
         "Resources and full Quota follow: {full:?}"
@@ -301,15 +296,11 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
                     rows.get(tree.saturating_sub(1))
                         .is_some_and(|row| !row.trim().is_empty())
                 }),
-            "usage compact" => rows.iter().any(|row| row.contains("Usage ·")),
             "resources compact" => rows.iter().any(|row| row.contains("Resources ·")),
             "quota compact" => {
                 !rows.iter().any(|row| row.contains("QUOTA LEFT"))
                     && rows.iter().any(|row| row.contains("Claude"))
             }
-            "usage hidden" => !rows
-                .iter()
-                .any(|row| row.contains("USAGE") || row.contains("Usage ·")),
             "operator compact" => rows
                 .iter()
                 .any(|row| row.contains("󰚩 Operator") && !row.trim_end().ends_with("Operator")),
@@ -324,44 +315,24 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     };
     let attention_gap = rung("attention gap gone");
     let operator_gap = rung("operator gap gone");
-    let usage_compact = rung("usage compact");
     let resources_compact = rung("resources compact");
     let quota_compact = rung("quota compact");
-    let usage_hidden = rung("usage hidden");
     let operator_compact = rung("operator compact");
     let quota_pointer = rung("quota pointer");
     let operator_hidden = rung("operator hidden");
     for (earlier, later) in [
         (attention_gap, operator_gap),
-        (operator_gap, usage_compact),
-        (usage_compact, resources_compact),
+        (operator_gap, resources_compact),
         (resources_compact, quota_compact),
-        (quota_compact, usage_hidden),
-        (usage_hidden, operator_compact),
+        (quota_compact, operator_compact),
         (operator_compact, quota_pointer),
         (quota_pointer, operator_hidden),
     ] {
         assert!(
             earlier > later,
-            "sections shrink out of order: {attention_gap} {operator_gap} {usage_compact} {resources_compact} {quota_compact} {usage_hidden} {operator_compact} {quota_pointer} {operator_hidden}"
+            "sections shrink out of order: {attention_gap} {operator_gap} {resources_compact} {quota_compact} {operator_compact} {quota_pointer} {operator_hidden}"
         );
     }
-
-    let usage_hidden_rows = at(&mut dashboard, usage_hidden);
-    assert!(
-        usage_hidden_rows[0].is_empty() || usage_hidden_rows[0].starts_with("󰚩 OVRCR"),
-        "{usage_hidden_rows:?}"
-    );
-    assert!(
-        !usage_hidden_rows
-            .iter()
-            .any(|row| row.contains("USAGE") || row.contains("Usage ·")),
-        "Usage hides once the tree needs room: {usage_hidden_rows:?}"
-    );
-    assert!(
-        usage_hidden_rows.iter().any(|row| row.contains("Operator")),
-        "Operator remains expanded when Usage is hidden: {usage_hidden_rows:?}"
-    );
 
     let operator_compact_rows = at(&mut dashboard, operator_compact);
     assert!(
