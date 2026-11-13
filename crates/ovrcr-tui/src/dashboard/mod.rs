@@ -647,6 +647,10 @@ pub struct Dashboard {
     settings_report: Option<Box<crate::protocol::SettingsReport>>,
     settings_editor: settings_editor::Editor,
     events: events::View,
+    /// The last automatic-title failure shown in the footer. Repeated failures with the same
+    /// reason stay quiet until a title applies or the reason changes; a background failure must
+    /// not need the Events popup to be noticed, but it must not re-raise on every retry either.
+    title_failure: Option<String>,
     // Review names Presented, not a newer Unread that arrived before the next draw.
     unread: unread::Unread,
     mode: InputMode,

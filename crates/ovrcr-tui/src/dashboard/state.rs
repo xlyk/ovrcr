@@ -672,6 +672,7 @@ impl Dashboard {
             settings_report: None,
             settings_editor: Default::default(),
             events: Default::default(),
+            title_failure: None,
             hierarchy: HierarchySnapshot {
                 usage: ovrcr_protocol::UsageSnapshot::default(),
                 projects: Vec::new(),

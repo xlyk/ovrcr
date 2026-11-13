@@ -1116,6 +1116,11 @@ still spends an attempt; the third failed attempt closes that conversation's
 title window, and a restart does not reopen it. Fix the model spelling and start
 a new conversation to get a title after a closed window.
 
+A failed title call raises a footer banner even when Events is closed:
+`Automatic titles failing: <reason> · Space v e Events`. The same reason stays
+quiet until a title applies or the reason changes, so retries do not flash the
+footer. Open Events for the full log.
+
 Use **Rename terminal** in the command palette to choose a new display title.
 Clear it to restore the original session name, not the workspace's current branch
 name. Rename never changes the session ID or retargets an action. Desktop

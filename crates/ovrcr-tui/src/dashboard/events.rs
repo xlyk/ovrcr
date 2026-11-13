@@ -262,7 +262,39 @@ impl Dashboard {
         true
     }
 
+    /// Automatic-title work happens in the background. A title failure is therefore worth a
+    /// footer banner even when Events is closed; a successful title clears that banner, and a
+    /// repeated reason stays quiet until the title changes.
+    fn title_recorded(&mut self, event: &Recorded) {
+        if event.component != EventComponent::Titles {
+            return;
+        }
+        if event.message == "title applied" {
+            self.title_failure = None;
+            if self
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Automatic titles failing:"))
+            {
+                self.dismiss_error_banner();
+            }
+            return;
+        }
+        let failed = event.message.starts_with("call failed:")
+            || event.message.starts_with("call timed out")
+            || event.message == "Pi missing for this model";
+        if !failed || self.title_failure.as_deref() == Some(event.message.as_str()) {
+            return;
+        }
+        self.title_failure = Some(event.message.clone());
+        self.set_error(format!(
+            "Automatic titles failing: {} · Space v e Events",
+            event.message
+        ));
+    }
+
     pub(super) fn events_recorded(&mut self, event: Recorded) {
+        self.title_recorded(&event);
         let open = self
             .details
             .is_some_and(|(details, _)| details == super::quota::Details::Events);
@@ -474,6 +506,46 @@ mod tests {
                 "Waiting for the Server's events.",
             ]
         );
+    }
+
+    #[test]
+    fn background_title_failure_raises_one_banner_and_success_clears_it() {
+        let mut d = Dashboard::new(crate::protocol::TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        let failure = "call failed: Pi rejected the prompt: No API key found for deepseek";
+        d.events_recorded(event(EventComponent::Titles, failure));
+        assert_eq!(
+            d.error.as_deref(),
+            Some(format!("Automatic titles failing: {failure} · Space v e Events").as_str())
+        );
+        assert_eq!(d.title_failure.as_deref(), Some(failure));
+
+        // Dismissed once; the same reason must not pop back on every retry.
+        d.dismiss_error_banner();
+        d.events_recorded(event(EventComponent::Titles, failure));
+        assert!(d.error.is_none(), "{:?}", d.error);
+
+        // A different failure is new information.
+        d.events_recorded(event(EventComponent::Titles, "call timed out after 30s"));
+        assert!(
+            d.error
+                .as_deref()
+                .is_some_and(|error| error.contains("call timed out after 30s")),
+            "{:?}",
+            d.error
+        );
+
+        // A title that applies clears both the marker and its banner.
+        d.events_recorded(event(EventComponent::Titles, "title applied"));
+        assert!(d.error.is_none() && d.title_failure.is_none());
+
+        // Non-failure title work stays out of the footer.
+        d.events_recorded(event(EventComponent::Titles, "call sent"));
+        d.events_recorded(event(EventComponent::Titles, "history unchanged"));
+        d.events_recorded(event(EventComponent::Titles, "no title_model"));
+        assert!(d.error.is_none(), "{:?}", d.error);
     }
 
     #[test]
