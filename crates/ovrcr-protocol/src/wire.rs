@@ -4066,13 +4066,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0455017301630168016c0104",
+            "2a0456017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0455017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0456017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4122,18 +4122,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04550000"),
+        ("Response::NotificationNavigation", "0d04560000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0455017301630168016c0104",
+            "0e01016e0456017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010455017301630168016c0164",
+            "0f0107080901016901010456017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004550107080901016901010455017301630168016c0164",
+            "1004560107080901016901010456017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4164,7 +4164,7 @@ mod wire_snapshot {
         ),
         (
             "ServerEvent::SettingsChanged",
-            "05072f642e746f6d6c050000010100000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb532200000001010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
+            "05072f642e746f6d6c0500000100000100000002010470692f6d08666561747572652f01022f630101610101620104776f726b056f7672637204776f726b0c636f6d706f7365722d322e35011b68747470733a2f2f6769746875622e636f6d2f61636d652f617070000b2f73646b2e7461722e677a02017001016100017100000005636f64657801022f680467726f6b000000fce0930400010103000300320000fb532200000001010d71756f74612e656e61626c656400010566616c736500010566616c736501036f66660101016b016d010300",
         ),
         (
             "ServerEvent::Recorded",
@@ -4173,7 +4173,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0455017301630168016c0104",
+            "08016e0456017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
