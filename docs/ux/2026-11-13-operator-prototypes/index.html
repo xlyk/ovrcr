@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVRCR — Operator sidebar prototypes</title>
+<style>
+  :root {
+    --base: #161616;
+    --crust: #1e1e1e;
+    --text: #f2f4f8;
+    --subtext: #b4b6b9;
+    --muted: #909193;
+    --mauve: #78a9ff;
+    --blue: #78a9ff;
+    --green: #25be6a;
+    --teal: #33b1ff;
+    --yellow: #08bdba;
+    --red: #ef5c9b;
+    --surface0: #2a2a2a;
+    --surface2: #757575;
+    --mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+    --chrome: #0d0d10;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: #0b0b0e;
+    color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding-bottom: 96px;
+  }
+
+  .proto-head {
+    width: min(1120px, calc(100% - 32px));
+    margin: 22px auto 14px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .proto-head h1 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    font-weight: 650;
+  }
+  .proto-head p {
+    margin: 0;
+    max-width: 66ch;
+    color: #b9bcc6;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .proto-head strong { color: #fff; font-weight: 600; }
+
+  .state-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .state-picker .label {
+    color: #8f93a2;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    margin-right: 2px;
+  }
+  .pill {
+    appearance: none;
+    border: 1px solid #343640;
+    background: #181920;
+    color: #d8dae2;
+    font: 500 12px/1.2 var(--mono);
+    padding: 7px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .pill:hover { border-color: #5b5f70; color: #fff; }
+  .pill[aria-pressed="true"] {
+    border-color: var(--mauve);
+    color: #0b0b0e;
+    background: var(--mauve);
+  }
+  .pill.secondary[aria-pressed="true"] {
+    border-color: var(--yellow);
+    background: var(--yellow);
+    color: #0b0b0e;
+  }
+
+  .stage {
+    display: flex;
+    justify-content: center;
+    padding: 0 16px;
+  }
+
+  .terminal {
+    width: min(1120px, 100%);
+    border: 1px solid #333641;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--base);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.38;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  }
+
+  .titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--mauve);
+    color: #0b0b0e;
+    padding: 2px 8px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .titlebar .right { font-weight: 600; opacity: 0.9; }
+
+  .body {
+    display: grid;
+    grid-template-columns: 39ch minmax(0, 1fr);
+    min-height: 610px;
+  }
+
+  .sidebar {
+    border-right: 1px solid var(--surface0);
+    padding: 2px 0 0;
+    overflow: hidden;
+  }
+
+  .attention {
+    color: var(--yellow);
+    padding: 0 1ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+  .attention .ready { color: var(--teal); }
+
+  .operator-slot { margin-top: 1.38em; }
+  .op-gap { height: 1.38em; }
+
+  .tree { color: var(--text); }
+  .project {
+    color: var(--blue);
+    font-weight: 700;
+    white-space: nowrap;
+    margin-top: 0;
+  }
+  .project-rule { color: var(--surface2); font-weight: 400; }
+  .workspace { padding-left: 2ch; color: var(--text); font-weight: 700; white-space: nowrap; }
+  .workspace .glyph { color: var(--muted); font-weight: 400; }
+  .root { color: var(--muted); font-weight: 400; float: right; padding-right: 1ch; }
+  .session {
+    padding-left: 5ch;
+    padding-right: 1ch;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 1ch;
+  }
+  .session .glyph { color: var(--muted); flex: none; }
+  .session .title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session .label { margin-left: auto; color: var(--teal); flex: none; }
+  .session .label.claude { color: #f2b58f; }
+  .session .label.pi { color: #c49af7; }
+  .session .label.codex { color: var(--green); }
+  .tree-gap { height: 1.38em; }
+
+  .resources, .quota { margin-top: 1.38em; }
+  .section-head { color: var(--subtext); font-weight: 700; white-space: nowrap; }
+  .section-head .rule { color: var(--surface2); font-weight: 400; }
+  .resource-line { padding-left: 1ch; color: var(--subtext); white-space: nowrap; }
+  .resource-line .value { color: var(--green); }
+  .quota-line { padding-left: 1ch; color: var(--subtext); white-space: nowrap; }
+  .quota-line .name { font-weight: 700; }
+  .quota-line .name.claude { color: #f2b58f; }
+  .quota-line .name.codex { color: var(--green); }
+  .quota-line .name.grok { color: var(--blue); }
+  .quota-line .pct { color: var(--text); }
+  .quota-line .bar { color: var(--teal); }
+
+  .pane {
+    padding: 0 14px;
+    min-width: 0;
+  }
+  .pane-head {
+    color: var(--subtext);
+    border-bottom: 1px solid var(--surface0);
+    padding: 1px 0 2px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .pane-head .pid { color: var(--muted); }
+  .pane-body {
+    padding-top: 8px;
+    color: var(--subtext);
+    min-height: 520px;
+    background: linear-gradient(180deg, transparent 0, transparent 78%, rgba(255,255,255,0.015) 100%);
+  }
+  .pane-body .prompt { color: var(--teal); }
+  .pane-body .muted { color: var(--muted); }
+
+  .footer {
+    background: var(--crust);
+    color: var(--text);
+    padding: 1px 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .footer .keys { color: var(--text); }
+  .footer .keys .dim { color: var(--subtext); }
+
+  /* ---------- A: command card ---------- */
+  .v-a {
+    background: var(--crust);
+    border-left: 1px solid var(--surface0);
+    padding: 0;
+    margin: 0;
+  }
+  .v-a .row { display: flex; align-items: baseline; min-height: 1.38em; }
+  .v-a .rail { color: var(--mauve); white-space: pre; }
+  .v-a .head { color: var(--mauve); font-weight: 700; }
+  .v-a .head .icon { padding: 0 0.55ch 0 0.55ch; }
+  .v-a .status { color: var(--text); white-space: nowrap; }
+  .v-a .status .state { font-weight: 500; }
+  .v-a .right { margin-left: auto; color: var(--subtext); white-space: nowrap; }
+  .v-a .detail { color: var(--muted); white-space: nowrap; overflow: hidden; }
+  .v-a .pad { width: 2ch; white-space: pre; }
+  .terminal.is-selected .v-a { background: var(--surface0); }
+  .terminal[data-state="working"] .v-a .status .state { color: var(--green); }
+  .terminal[data-state="unread"] .v-a .status .state { color: var(--teal); }
+  .terminal[data-state="setup"] .v-a .status .state { color: var(--yellow); }
+  .terminal[data-state="working"] .v-a .rail { color: var(--green); }
+  .terminal[data-state="unread"] .v-a .rail { color: var(--teal); }
+  .terminal[data-state="setup"] .v-a .rail { color: var(--yellow); }
+
+  /* ---------- B: status strip ---------- */
+  .v-b {
+    padding: 0.35em 0 0.45em;
+    border-top: 1px solid var(--surface0);
+    border-bottom: 1px solid var(--surface0);
+    background: transparent;
+  }
+  .v-b .line { display: flex; align-items: baseline; gap: 0.8ch; white-space: nowrap; }
+  .v-b .glyph { color: var(--muted); width: 1.2ch; }
+  .v-b .state { color: var(--text); font-weight: 700; }
+  .v-b .name { color: var(--subtext); }
+  .v-b .right { margin-left: auto; color: var(--subtext); padding-right: 1ch; }
+  .v-b .hint { color: var(--muted); padding-left: 2ch; white-space: nowrap; overflow: hidden; }
+  .terminal.is-selected .v-b { background: var(--surface0); }
+  .terminal[data-state="working"] .v-b .glyph,
+  .terminal[data-state="working"] .v-b .state { color: var(--green); }
+  .terminal[data-state="unread"] .v-b .glyph,
+  .terminal[data-state="unread"] .v-b .state { color: var(--teal); }
+  .terminal[data-state="unread"] .v-a .right,
+  .terminal[data-state="unread"] .v-b .name,
+  .terminal[data-state="unread"] .v-b .right,
+  .terminal[data-state="setup"] .v-b .name { display: none; }
+  .terminal[data-state="setup"] .v-b .glyph,
+  .terminal[data-state="setup"] .v-b .state { color: var(--yellow); }
+
+  /* ---------- C: command tile ---------- */
+  .v-c {
+    margin: 0 0.35ch;
+    border: 1px solid var(--surface0);
+    background: var(--crust);
+    padding: 0.45em 0.7ch 0.5em;
+  }
+  .v-c .top, .v-c .bottom { display: flex; align-items: baseline; gap: 0.8ch; white-space: nowrap; }
+  .v-c .icon { color: var(--mauve); }
+  .v-c .name { color: var(--mauve); font-weight: 700; letter-spacing: 0.01em; }
+  .v-c .key {
+    margin-left: auto;
+    color: var(--subtext);
+    border: 1px solid var(--surface0);
+    background: var(--base);
+    padding: 0 0.8ch;
+    font-weight: 700;
+  }
+  .v-c .bottom { margin-top: 0.2em; color: var(--text); }
+  .v-c .bottom .glyph { color: var(--muted); }
+  .v-c .bottom .state { font-weight: 500; }
+  .v-c .right { margin-left: auto; color: var(--subtext); padding-right: 0.4ch; }
+  .terminal.is-selected .v-c { background: var(--surface0); border-color: var(--mauve); }
+  .terminal[data-state="working"] .v-c { border-color: rgba(37, 190, 106, 0.55); }
+  .terminal[data-state="unread"] .v-c { border-color: rgba(51, 177, 255, 0.65); }
+  .terminal[data-state="setup"] .v-c { border-color: rgba(8, 189, 186, 0.55); }
+  .terminal[data-state="working"] .v-c .bottom .glyph,
+  .terminal[data-state="working"] .v-c .bottom .state { color: var(--green); }
+  .terminal[data-state="unread"] .v-c .bottom .glyph,
+  .terminal[data-state="unread"] .v-c .bottom .state { color: var(--teal); }
+  .terminal[data-state="unread"] .v-c .right { display: none; }
+  .terminal[data-state="setup"] .v-c .bottom .glyph,
+  .terminal[data-state="setup"] .v-c .bottom .state { color: var(--yellow); }
+
+  /* ---------- D: one line ---------- */
+  .v-d {
+    padding: 0.1em 0 0.15em;
+    border-bottom: 1px solid var(--surface0);
+    white-space: nowrap;
+  }
+  .v-d .line { display: flex; align-items: baseline; gap: 0.6ch; }
+  .v-d .chev { color: var(--mauve); }
+  .v-d .name { color: var(--text); font-weight: 700; }
+  .v-d .sep { color: var(--muted); }
+  .v-d .glyph { color: var(--muted); }
+  .v-d .state { color: var(--text); }
+  .v-d .right { margin-left: auto; color: var(--subtext); padding-right: 1ch; }
+  .terminal.is-selected .v-d { background: var(--surface0); }
+  .terminal[data-state="working"] .v-d .glyph,
+  .terminal[data-state="working"] .v-d .state { color: var(--green); }
+  .terminal[data-state="unread"] .v-d .glyph,
+  .terminal[data-state="unread"] .v-d .state { color: var(--teal); }
+  .terminal[data-state="unread"] .v-d .right { display: none; }
+  .terminal[data-state="setup"] .v-d .glyph,
+  .terminal[data-state="setup"] .v-d .state { color: var(--yellow); }
+
+  .variant { display: none; }
+  .terminal[data-variant="A"] .v-a,
+  .terminal[data-variant="B"] .v-b,
+  .terminal[data-variant="C"] .v-c,
+  .terminal[data-variant="D"] .v-d { display: block; }
+
+  /* ---------- prototype switcher ---------- */
+  .switcher {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 9px;
+    border: 1px solid #3a3d4a;
+    border-radius: 999px;
+    background: #111218;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    z-index: 10;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .switcher button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #cfd2dc;
+    font: 600 16px/1 var(--mono);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .switcher button:hover { background: #252734; color: #fff; }
+  .switcher .current { min-width: 178px; text-align: center; color: #fff; }
+  .switcher .current small { color: #8f93a2; display: block; font-size: 10px; margin-top: 2px; }
+  .dots { display: flex; gap: 4px; padding: 0 4px; }
+  .dots button { width: 8px; height: 8px; border-radius: 50%; background: #3d4050; padding: 0; }
+  .dots button[aria-current="true"] { background: var(--mauve); }
+  .hintbar {
+    position: fixed;
+    left: 50%;
+    bottom: 2px;
+    transform: translateX(-50%);
+    color: #747887;
+    font: 11px/1.3 var(--mono);
+    white-space: nowrap;
+    z-index: 10;
+  }
+
+  @media (max-width: 860px) {
+    .body { grid-template-columns: 1fr; }
+    .sidebar { border-right: 0; border-bottom: 1px solid var(--surface0); }
+    .pane { display: none; }
+    .proto-head { align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+  <header class="proto-head">
+    <div>
+      <h1>Operator sidebar — four structures</h1>
+      <p>
+        <strong>Prototype only.</strong> Same 39-column sidebar and states; no Usage section.
+        Use <strong>←</strong> / <strong>→</strong> or the bottom switcher. Pick states above,
+        and flip <strong>Selected</strong> to see the open-Operator treatment.
+      </p>
+    </div>
+    <div class="state-picker" role="group" aria-label="Operator state">
+      <span class="label">State</span>
+      <button class="pill" data-state="off" aria-pressed="false">Off</button>
+      <button class="pill" data-state="idle" aria-pressed="true">Idle</button>
+      <button class="pill" data-state="working" aria-pressed="false">Working</button>
+      <button class="pill" data-state="unread" aria-pressed="false">Unread</button>
+      <button class="pill" data-state="setup" aria-pressed="false">Set up</button>
+      <button class="pill secondary" id="selected-toggle" aria-pressed="false">Selected</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="terminal" id="terminal" data-variant="A" data-state="idle">
+      <div class="titlebar">
+        <span>◈ OVRCR</span>
+        <span class="right">[Commands] [Menu]</span>
+      </div>
+      <div class="body">
+        <aside class="sidebar" aria-label="Sidebar prototype">
+          <div class="attention">? 1 needs input <span class="ready">· ✓ 2 ready</span></div>
+
+          <div class="operator-slot">
+            <!-- A: command card -->
+            <section class="variant v-a" data-v="A" aria-label="Operator command card">
+              <div class="row head"><span class="rail">┃</span><span class="pad"> </span><span class="icon">◈</span><span>Operator</span></div>
+              <div class="row status"><span class="rail">┃</span><span class="pad"> </span><span class="glyph js-glyph">·</span><span>&nbsp;</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
+              <div class="row detail"><span class="rail">┃</span><span class="pad"> </span><span class="js-detail">o open · Ctrl-o quick message</span></div>
+            </section>
+
+            <!-- B: status strip -->
+            <section class="variant v-b" data-v="B" aria-label="Operator status strip">
+              <div class="line"><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="name">Operator</span><span class="right js-right">last reply 10h</span></div>
+              <div class="hint js-detail">o open · Ctrl-o quick message</div>
+            </section>
+
+            <!-- C: command tile -->
+            <section class="variant v-c" data-v="C" aria-label="Operator command tile">
+              <div class="top"><span class="icon">◈</span><span class="name">Operator</span><span class="key">o</span></div>
+              <div class="bottom"><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
+            </section>
+
+            <!-- D: one line -->
+            <section class="variant v-d" data-v="D" aria-label="Operator one-line row">
+              <div class="line"><span class="chev">›</span><span class="name">Operator</span><span class="sep">·</span><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
+            </section>
+          </div>
+          <div class="op-gap"></div>
+
+          <div class="tree">
+            <div class="project">CONSIGINT <span class="project-rule">────────────────────────</span></div>
+            <div class="workspace"><span class="root">root</span><span class="glyph">⌁</span> main</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="workspace"><span class="glyph">⌁</span> gui-consigint-auth-handoff</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">review auth handoff</span> <span class="label">grok:4.6</span></div>
+            <div class="workspace"><span class="glyph">⌁</span> gui-worktree-lifecycle</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">implement lifecycle</span> <span class="label claude">claude</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">review websocket</span> <span class="label claude">claude</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">plan restore</span> <span class="label pi">pi</span></div>
+            <div class="tree-gap"></div>
+            <div class="project">SPACELIFT-AGENT <span class="project-rule">──────────────────</span></div>
+            <div class="workspace"><span class="root">root</span><span class="glyph">⌁</span> main</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="workspace"><span class="glyph">⌁</span> gui-pipeline-progress</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">build pipeline</span> <span class="label claude">claude</span></div>
+            <div class="workspace"><span class="glyph">⌁</span> gui-scope-quality</div>
+            <div class="session"><span class="glyph">$</span> <span class="title">local</span></div>
+            <div class="session"><span class="glyph">-</span> <span class="title">review scope quality</span> <span class="label codex">codex</span></div>
+          </div>
+
+          <div class="resources">
+            <div class="section-head">RESOURCES <span class="rule">──────────────────</span></div>
+            <div class="resource-line">cpu&nbsp;&nbsp;&nbsp;──────────────── 31%</div>
+            <div class="resource-line">mem&nbsp;&nbsp;&nbsp;────────── 31.4/48G</div>
+          </div>
+
+          <div class="quota">
+            <div class="section-head">QUOTA LEFT <span class="rule">─────────────────</span></div>
+            <div class="quota-line"><span class="name claude">Claude</span> 7d ━━━━━━━━━ 92%</div>
+            <div class="quota-line"><span class="name codex">Codex</span>&nbsp; 7d ━━━━━━━ 75%</div>
+            <div class="quota-line"><span class="name grok">Grok</span>&nbsp;&nbsp; wk ━━━━━━━━ 99%</div>
+          </div>
+        </aside>
+
+        <main class="pane">
+          <div class="pane-head"><span>local (#1) &nbsp; shell · 16m</span><span class="pid">pid 18854</span></div>
+          <div class="pane-body"><span class="prompt">consigint ›</span> <span class="muted">▌</span></div>
+        </main>
+      </div>
+      <div class="footer">
+        <span class="keys">BROWSE&nbsp; Space Menu&nbsp; : Commands&nbsp; ? Help</span>
+        <span class="dim">consigint / main</span>
+      </div>
+    </div>
+  </main>
+
+  <nav class="switcher" aria-label="Variant switcher">
+    <button id="prev" aria-label="Previous variant">‹</button>
+    <div class="current"><span id="variant-label">A · Command card</span><small>← → to switch</small></div>
+    <div class="dots" role="group" aria-label="Variants">
+      <button data-variant="A" aria-current="true" aria-label="Variant A"></button>
+      <button data-variant="B" aria-current="false" aria-label="Variant B"></button>
+      <button data-variant="C" aria-current="false" aria-label="Variant C"></button>
+      <button data-variant="D" aria-current="false" aria-label="Variant D"></button>
+    </div>
+    <button id="next" aria-label="Next variant">›</button>
+  </nav>
+  <div class="hintbar">Prototype · not production UI · state: <span id="state-note">idle</span> · selected: <span id="selected-note">no</span></div>
+
+<script>
+(() => {
+  const terminal = document.getElementById('terminal');
+  const params = new URLSearchParams(location.search);
+  const variants = ['A', 'B', 'C', 'D'];
+  const names = { A: 'Command card', B: 'Status strip', C: 'Command tile', D: 'One line' };
+  const states = ['off', 'idle', 'working', 'unread', 'setup'];
+
+  const data = {
+    off: {
+      glyph: '·', label: 'Off', right: '',
+      detail: 'o open · Ctrl-o quick message',
+    },
+    idle: {
+      glyph: '·', label: 'Idle', right: 'last reply 10h',
+      detail: 'o open · Ctrl-o quick message',
+    },
+    working: {
+      glyph: '⠹', label: 'Responding', right: '12s',
+      detail: 'running ovrcr terminal list',
+    },
+    unread: {
+      glyph: '✓', label: 'Reply ready · 1 unread', right: 'last reply 2m',
+      detail: 'o open to review · Ctrl-o message',
+    },
+    setup: {
+      glyph: '−', label: 'Not set up', right: '',
+      detail: 'run ovrcr operator setup',
+    },
+  };
+
+  let variant = variants.includes(params.get('variant')) ? params.get('variant') : 'A';
+  let state = states.includes(params.get('state')) ? params.get('state') : 'idle';
+  let selected = params.get('selected') === '1';
+
+  const setParam = (key, value) => {
+    params.set(key, value);
+    history.replaceState(null, '', `${location.pathname}?${params.toString()}`);
+  };
+
+  const render = () => {
+    terminal.dataset.variant = variant;
+    terminal.dataset.state = state;
+    terminal.classList.toggle('is-selected', selected);
+    const row = data[state];
+    document.querySelectorAll('.js-glyph').forEach(el => { el.textContent = row.glyph; });
+    document.querySelectorAll('.js-label').forEach(el => { el.textContent = row.label; });
+    document.querySelectorAll('.js-right').forEach(el => { el.textContent = row.right; });
+    document.querySelectorAll('.js-detail').forEach(el => { el.textContent = row.detail; });
+    document.getElementById('variant-label').textContent = `${variant} · ${names[variant]}`;
+    document.querySelectorAll('.dots button').forEach(button => {
+      button.setAttribute('aria-current', button.dataset.variant === variant ? 'true' : 'false');
+    });
+    document.querySelectorAll('.state-picker .pill[data-state]').forEach(button => {
+      button.setAttribute('aria-pressed', button.dataset.state === state ? 'true' : 'false');
+    });
+    document.getElementById('selected-toggle').setAttribute('aria-pressed', selected ? 'true' : 'false');
+    document.getElementById('state-note').textContent = state;
+    document.getElementById('selected-note').textContent = selected ? 'yes' : 'no';
+  };
+
+  const cycle = (delta) => {
+    const index = variants.indexOf(variant);
+    variant = variants[(index + delta + variants.length) % variants.length];
+    setParam('variant', variant);
+    render();
+  };
+
+  document.getElementById('prev').addEventListener('click', () => cycle(-1));
+  document.getElementById('next').addEventListener('click', () => cycle(1));
+  document.querySelectorAll('.dots button').forEach(button => {
+    button.addEventListener('click', () => {
+      variant = button.dataset.variant;
+      setParam('variant', variant);
+      render();
+    });
+  });
+
+  document.querySelectorAll('.state-picker .pill[data-state]').forEach(button => {
+    button.addEventListener('click', () => {
+      state = button.dataset.state;
+      setParam('state', state);
+      render();
+    });
+  });
+
+  document.getElementById('selected-toggle').addEventListener('click', () => {
+    selected = !selected;
+    setParam('selected', selected ? '1' : '0');
+    render();
+  });
+
+  window.addEventListener('keydown', (event) => {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+    if (event.key === 'ArrowLeft') { event.preventDefault(); cycle(-1); }
+    if (event.key === 'ArrowRight') { event.preventDefault(); cycle(1); }
+    if (event.key === 's') { selected = !selected; setParam('selected', selected ? '1' : '0'); render(); }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
