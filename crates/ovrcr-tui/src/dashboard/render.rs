@@ -2025,26 +2025,26 @@ mod harness_agent_label_tests {
                 .trim_end()
                 .to_owned()
         };
-        // The three-row Operator section and its blank row precede the tree.
+        // The two-row Operator section and its blank row precede the tree.
         assert!(
-            row(7).contains("review") && row(7).ends_with("claude:sonnet-4"),
+            row(6).contains("review") && row(6).ends_with("claude:sonnet-4"),
             "{}",
+            row(6)
+        );
+        assert!(
+            row(7).contains("implement lifecycle") && row(7).ends_with(" claude"),
+            "model first: {}",
             row(7)
         );
         assert!(
-            row(8).contains("implement lifecycle") && row(8).ends_with(" claude"),
-            "model first: {}",
+            row(8).ends_with("implement the lifecycle overhaul"),
+            "then the agent: {}",
             row(8)
         );
         assert!(
-            row(9).ends_with("implement the lifecycle overhaul"),
-            "then the agent: {}",
-            row(9)
-        );
-        assert!(
-            row(10).ends_with("implement the whole lifecycle o…"),
+            row(9).ends_with("implement the whole lifecycle o…"),
             "only then the title: {}",
-            row(10)
+            row(9)
         );
     }
 

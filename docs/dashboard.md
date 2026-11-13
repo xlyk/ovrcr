@@ -51,7 +51,7 @@ you are away waits for you. A notice that waited behind it shows next.
 ## Operator chat
 
 OVRCR has one Operator conversation, run by the installed pi agent. The sidebar
-shows attention first when needed, then a tinted three-row **Operator** card
+shows attention first when needed, then a tinted two-row **Operator** card
 before the project tree, followed by Resources and quota. Click anywhere in the
 card or press `o` in Browse to open the conversation with the composer focused.
 There are no Operator controls in the title bar.
@@ -61,10 +61,10 @@ executable is available and **Not set up** when it is missing. If Pi is missing
 when opening begins, the singleton remains **Not set up**, including when its
 journal already has replies. A queued Open with Pi available shows **Idle** until
 the first response. A known Pi setup error after opening also shows **Not set up**. After opening, it
-shows **Working** with elapsed time and current activity, **Reply ready · 1 unread**,
-or **Idle** with the last reply time. It never repeats reply text as a session
-title; idle and unread states keep an action hint instead. The card omits the
-model and harness. Drawing it never reviews a reply or starts a worker. The
+shows **Working** with elapsed time, **Reply ready · 1 unread**, or **Idle** with
+the last reply time. It never repeats reply text as a session title, shows no
+keyboard-shortcut copy, and keeps the setup action on the right. The card omits
+the model and harness. Drawing it never reviews a reply or starts a worker. The
 `operator.sidebar` setting controls the section and is on by default.
 
 **Quick message** remains in Commands. `Ctrl-o` opens it for the same conversation
@@ -448,7 +448,7 @@ closing a pane restores the tree.
 
 ## Sidebar and status
 
-The attention line leads when any session needs you. The three-row **Operator**
+The attention line leads when any session needs you. The two-row **Operator**
 card follows it, then the project tree and quota. Each project is a section:
 its name in upper case with a rule to the sidebar edge, and a blank line before
 every project after the first. Workspaces follow
@@ -505,8 +505,8 @@ While the sidebar is hidden, `j` and `k` still move the selection, and
 The **Operator** card is its own tinted section, not another project heading:
 a rail, robot glyph and mixed-case `Operator` identity lead its state and timing.
 It shows whether the conversation is working, unread, idle, not yet opened, or
-not set up, plus its current activity or an action hint. It never repeats reply
-text as a session title, and it omits the model and harness. Click anywhere in
+not set up, plus its timing or setup action. It never repeats reply text as a
+session title, shows no keyboard-shortcut copy, and omits the model and harness. Click anywhere in
 the section or press `o` in Browse to open the conversation. The
 `operator.sidebar` setting controls this section and is on by default. A short
 sidebar drops section gaps, compacts Resources, quota and Operator, and hides

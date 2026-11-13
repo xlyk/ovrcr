@@ -241,7 +241,6 @@
   .v-a .status { color: var(--text); white-space: nowrap; }
   .v-a .status .state { font-weight: 500; }
   .v-a .right { margin-left: auto; color: var(--subtext); white-space: nowrap; }
-  .v-a .detail { color: var(--muted); white-space: nowrap; overflow: hidden; }
   .v-a .pad { width: 2ch; white-space: pre; }
   .terminal.is-selected .v-a { background: var(--surface0); }
   .terminal[data-state="working"] .v-a .status .state { color: var(--green); }
@@ -263,7 +262,6 @@
   .v-b .state { color: var(--text); font-weight: 700; }
   .v-b .name { color: var(--subtext); }
   .v-b .right { margin-left: auto; color: var(--subtext); padding-right: 1ch; }
-  .v-b .hint { color: var(--muted); padding-left: 2ch; white-space: nowrap; overflow: hidden; }
   .terminal.is-selected .v-b { background: var(--surface0); }
   .terminal[data-state="working"] .v-b .glyph,
   .terminal[data-state="working"] .v-b .state { color: var(--green); }
@@ -286,14 +284,6 @@
   .v-c .top, .v-c .bottom { display: flex; align-items: baseline; gap: 0.8ch; white-space: nowrap; }
   .v-c .icon { color: var(--mauve); }
   .v-c .name { color: var(--mauve); font-weight: 700; letter-spacing: 0.01em; }
-  .v-c .key {
-    margin-left: auto;
-    color: var(--subtext);
-    border: 1px solid var(--surface0);
-    background: var(--base);
-    padding: 0 0.8ch;
-    font-weight: 700;
-  }
   .v-c .bottom { margin-top: 0.2em; color: var(--text); }
   .v-c .bottom .glyph { color: var(--muted); }
   .v-c .bottom .state { font-weight: 500; }
@@ -397,7 +387,7 @@
     <div>
       <h1>Operator sidebar — four structures</h1>
       <p>
-        <strong>Prototype only.</strong> Same 39-column sidebar and states; no Usage section.
+        <strong>Prototype only.</strong> Same 39-column sidebar and states; no Usage section and no keyboard-shortcut copy.
         Use <strong>←</strong> / <strong>→</strong> or the bottom switcher. Pick states above,
         and flip <strong>Selected</strong> to see the open-Operator treatment.
       </p>
@@ -428,18 +418,16 @@
             <section class="variant v-a" data-v="A" aria-label="Operator command card">
               <div class="row head"><span class="rail">┃</span><span class="pad"> </span><span class="icon">◈</span><span>Operator</span></div>
               <div class="row status"><span class="rail">┃</span><span class="pad"> </span><span class="glyph js-glyph">·</span><span>&nbsp;</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
-              <div class="row detail"><span class="rail">┃</span><span class="pad"> </span><span class="js-detail">o open · Ctrl-o quick message</span></div>
             </section>
 
             <!-- B: status strip -->
             <section class="variant v-b" data-v="B" aria-label="Operator status strip">
               <div class="line"><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="name">Operator</span><span class="right js-right">last reply 10h</span></div>
-              <div class="hint js-detail">o open · Ctrl-o quick message</div>
             </section>
 
             <!-- C: command tile -->
             <section class="variant v-c" data-v="C" aria-label="Operator command tile">
-              <div class="top"><span class="icon">◈</span><span class="name">Operator</span><span class="key">o</span></div>
+              <div class="top"><span class="icon">◈</span><span class="name">Operator</span></div>
               <div class="bottom"><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
             </section>
 
@@ -524,23 +512,18 @@
   const data = {
     off: {
       glyph: '·', label: 'Off', right: '',
-      detail: 'o open · Ctrl-o quick message',
     },
     idle: {
       glyph: '·', label: 'Idle', right: 'last reply 10h',
-      detail: 'o open · Ctrl-o quick message',
     },
     working: {
       glyph: '⠹', label: 'Responding', right: '12s',
-      detail: 'running ovrcr terminal list',
     },
     unread: {
       glyph: '✓', label: 'Reply ready · 1 unread', right: 'last reply 2m',
-      detail: 'o open to review · Ctrl-o message',
     },
     setup: {
-      glyph: '−', label: 'Not set up', right: '',
-      detail: 'run ovrcr operator setup',
+      glyph: '−', label: 'Not set up', right: 'run ovrcr operator setup',
     },
   };
 
@@ -561,7 +544,6 @@
     document.querySelectorAll('.js-glyph').forEach(el => { el.textContent = row.glyph; });
     document.querySelectorAll('.js-label').forEach(el => { el.textContent = row.label; });
     document.querySelectorAll('.js-right').forEach(el => { el.textContent = row.right; });
-    document.querySelectorAll('.js-detail').forEach(el => { el.textContent = row.detail; });
     document.getElementById('variant-label').textContent = `${variant} · ${names[variant]}`;
     document.querySelectorAll('.dots button').forEach(button => {
       button.setAttribute('aria-current', button.dataset.variant === variant ? 'true' : 'false');

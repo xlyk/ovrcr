@@ -224,22 +224,22 @@ fn attention_and_operator_sections_lead_the_tree_and_leave_blank_rows() {
         "{rows:?}"
     );
     assert!(
-        rows[5].contains("Ctrl-o"),
-        "the detail gives the Off entry points: {rows:?}"
+        !rows[4].contains("Ctrl-o") && !rows[4].contains("o open"),
+        "the card carries no keyboard shortcut copy: {rows:?}"
     );
     assert!(
-        sidebar_line(&rows[6]).trim().is_empty(),
+        sidebar_line(&rows[5]).trim().is_empty(),
         "Operator has one blank row: {rows:?}"
     );
     assert!(
-        rows[7].contains("CONSIGINT"),
+        rows[6].contains("CONSIGINT"),
         "the tree follows Operator: {rows:?}"
     );
     let quota = rows
         .iter()
         .position(|row| row.contains("QUOTA LEFT"))
         .expect("Quota remains below the tree");
-    assert!(quota > 7, "{rows:?}");
+    assert!(quota > 6, "{rows:?}");
 }
 
 #[test]
@@ -269,11 +269,11 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "Operator follows attention: {full:?}"
     );
     assert!(
-        sidebar_line(&full[6]).trim().is_empty(),
+        sidebar_line(&full[5]).trim().is_empty(),
         "the Operator gap exists while roomy: {full:?}"
     );
     assert!(
-        full[7].contains("CONSIGINT"),
+        full[6].contains("CONSIGINT"),
         "tree follows Operator: {full:?}"
     );
     assert!(
@@ -421,8 +421,8 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     let rows = rendered_rows(&off, 120, 40);
     if rows[2].contains("Off") {
         assert!(
-            rows[3].contains("o open"),
-            "Off explains how to start: {rows:?}"
+            !rows[2].contains("Ctrl-o") && !rows[2].contains("o open"),
+            "Off carries no keyboard shortcut copy: {rows:?}"
         );
     } else {
         assert!(
@@ -430,7 +430,7 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
             "missing Pi is reported honestly: {rows:?}"
         );
         assert!(
-            rows[3].contains("run ovrcr operator setup"),
+            rows[2].contains("run ovrcr operator setup"),
             "setup action is clear: {rows:?}"
         );
     }
@@ -454,7 +454,7 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
         let rows = rendered_rows(&not_setup, 120, 40);
         assert!(rows[2].contains("Not set up"), "{failure}: {rows:?}");
         assert!(
-            rows[3].contains("run ovrcr operator setup"),
+            rows[2].contains("run ovrcr operator setup"),
             "{failure}: {rows:?}"
         );
     }
@@ -482,10 +482,6 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
         "the retained turn start provides elapsed time: {rows:?}"
     );
     assert!(
-        rows[3].contains("running ovrcr terminal list"),
-        "current command is shown: {rows:?}"
-    );
-    assert!(
         !rows[2].contains("pi") && !rows[2].contains("model"),
         "no harness or model: {rows:?}"
     );
@@ -505,8 +501,8 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
         "unread reply is counted: {rows:?}"
     );
     assert!(
-        rows[3].contains("o open to review") && !rows[3].contains('“'),
-        "the section offers review without echoing the reply as a title: {rows:?}"
+        !rows[2].contains("o open") && !rows[2].contains("Ctrl-o") && !rows[2].contains('“'),
+        "the section offers no shortcut or reply title: {rows:?}"
     );
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -522,8 +518,8 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
         "completed reply time is retained: {rows:?}"
     );
     assert!(
-        rows[3].contains("o open · Ctrl-o quick message") && !rows[3].contains('“'),
-        "idle keeps its action hint without a reply title: {rows:?}"
+        !rows[2].contains("o open") && !rows[2].contains("Ctrl-o") && !rows[2].contains('“'),
+        "idle has no shortcut or reply title: {rows:?}"
     );
 }
 
@@ -624,7 +620,7 @@ fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section()
         "live state follows server setup: {rows:?}"
     );
     assert!(
-        rows[5].contains("FIXTURE"),
+        rows[4].contains("FIXTURE"),
         "the real Server hierarchy follows Operator: {rows:?}"
     );
 
@@ -676,9 +672,9 @@ fn the_operator_section_precedes_the_tree_and_does_not_claim_title_space() {
         rows[2]
     );
     assert!(
-        rows[5].contains("CONSIGINT"),
+        rows[4].contains("CONSIGINT"),
         "the first project follows Operator: {:?}",
-        &rows[3..7]
+        &rows[3..6]
     );
     assert!(rows[39].starts_with("BROWSE"), "{:?}", rows[39]);
 }
@@ -771,7 +767,7 @@ fn both_ends_of_the_operator_section_open_the_same_conversation() {
     assert!(browse_rows[2].starts_with('┃'), "{:?}", browse_rows[2]);
     assert!(browse_rows[2].contains("Idle"), "{:?}", browse_rows[2]);
     assert!(
-        browse_rows[5].contains("CONSIGINT"),
+        browse_rows[4].contains("CONSIGINT"),
         "the tree is back: {:?}",
         &browse_rows[..3]
     );
@@ -813,7 +809,7 @@ fn representative_frames_keep_the_operator_section_before_the_tree() {
         assert!(
             frame
                 .iter()
-                .skip(4)
+                .skip(3)
                 .any(|row| sidebar_line(row).contains("CONSIGINT")),
             "{cols}x{rows}: tree follows Operator: {:?}",
             &frame[1..]
@@ -848,7 +844,7 @@ fn representative_frames_keep_the_operator_section_before_the_tree() {
                 shown[1].starts_with("┃ 󰚩 Operator")
                     && shown
                         .iter()
-                        .skip(4)
+                        .skip(3)
                         .any(|row| sidebar_line(row).contains("CONSIGINT")),
                 "{cols}x{rows}: Ctrl-l reveals the sidebar: {:?}",
                 &shown[..7]

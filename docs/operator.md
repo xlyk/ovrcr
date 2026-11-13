@@ -63,7 +63,7 @@ The setting is shared by full chat and Quick message and survives model changes.
 
 ## One conversation in the Dashboard
 
-The sidebar shows attention first when needed, then a three-row **Operator**
+The sidebar shows attention first when needed, then a two-row **Operator**
 section before the project tree and quota. Click anywhere in the section or
 press `o` in Browse to open the conversation with the composer focused. The title
 bar has no Operator controls.
@@ -74,9 +74,9 @@ when opening begins, the singleton remains **Not set up**, including when its
 journal already has replies. A queued Open with Pi available shows **Idle** until
 the first response.
 Known Pi setup errors after opening also show **Not set up**. The tinted card
-shows **Working** with elapsed time and current activity, **Reply ready · 1
-unread**, or **Idle** with the last reply time. It never repeats reply text as a
-session title; idle and unread states keep an action hint instead. The last reply
+shows **Working** with elapsed time, **Reply ready · 1 unread**, or **Idle** with
+the last reply time. It never repeats reply text as a session title and shows no
+keyboard-shortcut copy. The last reply
 and turn start times come from the Server's retained turn records; older turns
 without recorded times remain untimed. Drawing the section never reviews a reply
 or starts a worker. The `operator.sidebar` setting controls it and is on by

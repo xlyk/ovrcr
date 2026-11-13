@@ -1870,10 +1870,7 @@ mod tests {
             rects.attention.height, 0,
             "no counts means no attention row"
         );
-        assert_eq!(
-            row.height, 3,
-            "the section has title, status and detail rows"
-        );
+        assert_eq!(row.height, 2, "the section has title and status rows");
         assert_eq!(row.y, 1, "the section starts below the title");
         assert_eq!(
             rects.tree.y,
@@ -2930,8 +2927,8 @@ mod tests {
         let mut d = dashboard();
         opened(&mut d, busy());
         for (cols, rows, operator_height) in [
-            (140, 40, 3),
-            (100, 24, 3),
+            (140, 40, 2),
+            (100, 24, 2),
             (80, 24, 0),
             (60, 16, 0),
             (40, 12, 0),
@@ -3289,8 +3286,8 @@ mod tests {
             );
         }
         assert!(
-            sidebar.contains("o open"),
-            "the operator card keeps an action hint: {sidebar}"
+            !sidebar.contains("o open") && !sidebar.contains("Ctrl-o"),
+            "the operator card carries no keyboard shortcut copy: {sidebar}"
         );
     }
 

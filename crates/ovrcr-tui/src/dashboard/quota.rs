@@ -301,7 +301,7 @@ impl Dashboard {
         };
         let operator_enabled = sidebar.width > 0 && self.settings.operator.sidebar;
         let operator_heights = if operator_enabled {
-            vec![(3, 1), (3, 0), (1, 0), (0, 0)]
+            vec![(2, 1), (2, 0), (1, 0), (0, 0)]
         } else {
             vec![(0, 0)]
         };
@@ -1303,7 +1303,7 @@ mod layout_tests {
         assert_eq!(rects(&dashboard, 5), (0, 1, 3));
         assert_eq!(rects(&dashboard, 4), (0, 0, 3));
         dashboard.quotas = None;
-        assert_eq!(rects(&dashboard, 5), (0, 0, 4), "no snapshot, no line");
+        assert_eq!(rects(&dashboard, 5), (0, 0, 3), "no snapshot, no line");
         dashboard.quotas = Some(QuotaSnapshot::default());
         let session = crate::protocol::SessionSummary {
             scope: ovrcr_protocol::SessionScope::Workspace,

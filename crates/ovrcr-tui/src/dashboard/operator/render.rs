@@ -12,8 +12,6 @@ struct SidebarStatus {
     color: Color,
     label: String,
     right: String,
-    detail: String,
-    detail_color: Color,
 }
 
 fn elapsed(timestamp: Option<u64>, now: u64) -> String {
@@ -66,47 +64,6 @@ fn pi_available() -> bool {
     let executable = std::env::var_os("OVRCR_PI_EXECUTABLE").unwrap_or_else(|| "pi".into());
     let path = std::env::var_os("PATH").unwrap_or_default();
     super::super::agents::executable_available(&executable, &path)
-}
-
-fn current_activity(chat: &Chat) -> String {
-    if chat.submitting {
-        return "sending message".into();
-    }
-    if chat.stopping {
-        return "stopping the worker".into();
-    }
-    let Some(turn) = chat.summary.current_turn.as_ref() else {
-        return "responding".into();
-    };
-    let mut finished = std::collections::BTreeSet::new();
-    for message in chat
-        .messages
-        .iter()
-        .rev()
-        .filter(|message| message.turn == turn.identity.turn)
-    {
-        match &message.content {
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolOutput { id, .. }) => {
-                finished.insert(id.as_str());
-            }
-            OperatorMessageContent::Worker(OperatorWorkerEvent::ToolCall {
-                id,
-                name,
-                arguments,
-            }) if !finished.contains(id.as_str()) => {
-                let command = (name == "bash")
-                    .then(|| serde_json::from_str::<serde_json::Value>(arguments).ok())
-                    .flatten()
-                    .and_then(|arguments| arguments.get("command")?.as_str().map(str::to_owned));
-                return command.map_or_else(
-                    || format!("running {}", display_text(name)),
-                    |command| format!("running {}", display_text(&command)),
-                );
-            }
-            _ => {}
-        }
-    }
-    "responding".into()
 }
 
 fn activity(chat: &Chat) -> AgentActivity {
@@ -272,9 +229,7 @@ impl Dashboard {
                 glyph: '−',
                 color: PEACH(),
                 label: "Not set up".into(),
-                right: String::new(),
-                detail: "run ovrcr operator setup".into(),
-                detail_color: SUBTEXT(),
+                right: "run ovrcr operator setup".into(),
             };
         }
         let Some(chat) = &self.operator.chat else {
@@ -283,9 +238,7 @@ impl Dashboard {
                     glyph: '·',
                     color: MUTED(),
                     label: "Idle".into(),
-                    right: String::new(),
-                    detail: "No replies yet · o open".into(),
-                    detail_color: SUBTEXT(),
+                    right: "No replies yet".into(),
                 };
             }
             return SidebarStatus {
@@ -293,8 +246,6 @@ impl Dashboard {
                 color: MUTED(),
                 label: "Off".into(),
                 right: String::new(),
-                detail: "o open · Ctrl-o quick message".into(),
-                detail_color: SUBTEXT(),
             };
         };
         if activity(chat) == AgentActivity::Busy {
@@ -315,8 +266,6 @@ impl Dashboard {
                 color: TEAL(),
                 label: label.into(),
                 right: elapsed(chat.summary.current_turn_started_unix_ms, now),
-                detail: format!("↳ {}", current_activity(chat)),
-                detail_color: SUBTEXT(),
             };
         }
         if chat.unread.is_some() {
@@ -325,22 +274,18 @@ impl Dashboard {
                 color: GREEN(),
                 label: "Reply ready · 1 unread".into(),
                 right: format_age(chat.summary.last_reply_unix_ms, now),
-                detail: "o open to review · Ctrl-o message".into(),
-                detail_color: SUBTEXT(),
             };
         }
-        let detail = if chat.summary.last_reply_unix_ms.is_some() {
-            "o open · Ctrl-o quick message".into()
-        } else {
-            "No replies yet · o open".into()
-        };
+        let right = format_age(chat.summary.last_reply_unix_ms, now);
         SidebarStatus {
             glyph: '·',
             color: MUTED(),
             label: "Idle".into(),
-            right: format_age(chat.summary.last_reply_unix_ms, now),
-            detail,
-            detail_color: MUTED(),
+            right: if right.is_empty() {
+                "No replies yet".into()
+            } else {
+                right
+            },
         }
     }
     /// The Operator's own navigation card: state and timing on a tinted surface
@@ -421,27 +366,8 @@ impl Dashboard {
             Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(background)),
             Rect::new(area.x, area.y + 1, area.width, 1),
         );
-        if area.height >= 3 {
-            let detail = compose_row(
-                vec![
-                    rail,
-                    Span::raw(" "),
-                    Span::styled(
-                        clip_text(&status.detail, width.saturating_sub(2)),
-                        Style::default().fg(status.detail_color),
-                    ),
-                ],
-                Span::raw(" "),
-                Vec::new(),
-                width,
-                false,
-            );
-            frame.render_widget(
-                Paragraph::new(detail).style(Style::default().fg(TEXT()).bg(background)),
-                Rect::new(area.x, area.y + 2, area.width, 1),
-            );
-        }
     }
+
     pub(super) fn operator_sidebar_mouse(
         &mut self,
         mouse: MouseEvent,
