@@ -2934,6 +2934,7 @@ mod installed_pi {
                 "REQUEST_FIVE_AFTER_INTERRUPT",
                 "REQUEST_SIX_TWO_TOOLS",
                 "REQUEST_SEVEN_TIMEOUT",
+                "REQUEST_MARKDOWN",
                 "REQUEST_SKILL_SYSTEM",
                 "REQUEST_SKILL_QUICK",
                 "REQUEST_SKILL_CLI",
@@ -3157,6 +3158,11 @@ mod installed_pi {
                 // A second model request for this turn is the exact failure the
                 // test guards against; its text is unique and asserted absent.
                 ("REQUEST_SEVEN_TIMEOUT", 1) => Plan::text("TIMEOUT_CONTINUATION_MUST_NOT_APPEAR"),
+                // Native Markdown presentation: headings, emphasis, inline code,
+                // a table, a list and a fenced block all lose their source markers.
+                ("REQUEST_MARKDOWN", 0) => Plan::text(
+                    "## Operator report\n\n**Ready** with `cargo test`. *All checks pass.*\n\n| Area | Result |\n|---|---|\n| tests | **pass** |\n| docs | updated |\n\n- first item\n- second item\n\n```text\ncargo test -p ovrcr-tui\n```\n",
+                ),
                 ("REQUEST_SKILL_SYSTEM", 0) => Plan::text("SKILL_SYSTEM_ANSWER"),
                 ("REQUEST_SKILL_QUICK", 0) => Plan::text("SKILL_QUICK_ANSWER"),
                 ("REQUEST_SKILL_CLI", 0) => Plan::tool(

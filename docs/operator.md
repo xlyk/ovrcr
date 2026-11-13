@@ -68,9 +68,10 @@ journal already has replies. A queued Open with Pi available shows **Idle** unti
 the first response.
 Known Pi setup errors after opening also show **Not set up**. The section shows
 **Working** with elapsed time and current activity, **Reply ready · 1 unread**
-with a reply preview, or **Idle** with the latest reply. The last reply
-and turn start times come from the Server's retained turn records; older turns
-without recorded times remain untimed. Drawing the section never reviews a reply
+with a reply preview, or **Idle** with the latest reply. The reply preview is
+plain text rendered from the same Markdown, so it never shows source markers or
+table borders. The last reply and turn start times come from the Server's
+retained turn records; older turns without recorded times remain untimed. Drawing the section never reviews a reply
 or starts a worker. The `operator.sidebar` setting controls it and is on by
 default.
 
@@ -203,7 +204,7 @@ An open entry shows, in order:
   recognised is shown in the ordinary text colour and is never dimmed. The row
   ends with `running`, `exit N`, `failed`, `timed out` or `no result` when the
   command did not simply succeed;
-- the reply, wrapped at word boundaries;
+- the reply, rendered as Markdown and wrapped at word boundaries;
 - a failure message or the interruption notice.
 
 Enter or a click on a command shows the whole shell command after `$` (another
@@ -224,8 +225,11 @@ completion and reopening. Collapsed neighbours sit together, and a feed shorter
 than the pane sits against the composer.
 
 `PageUp` and `PageDown` scroll the feed, as does the wheel; a scrolled view keeps
-its row while a reply streams. Control characters in model or tool text are
-escaped before rendering.
+its row while a reply streams. Assistant replies render GitHub-flavored Markdown:
+headings, emphasis, links, lists, quotes, code blocks and tables are drawn with
+the active theme instead of showing their source markers. Requests, commands and
+tool output stay plain text. Control characters in model or tool text are escaped
+before rendering.
 
 `Ctrl-g` or `Esc` leaves Operator for the terminal panes in Browse, keeping the
 draft; `o` returns to the same conversation, history and draft. Completed replies

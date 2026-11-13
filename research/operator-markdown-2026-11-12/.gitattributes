@@ -1,0 +1,3 @@
+# Accessibility captures and provider logs retain literal terminal whitespace.
+native/**/*.ax.txt -whitespace
+logs/*.log -whitespace

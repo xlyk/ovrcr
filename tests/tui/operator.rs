@@ -1841,7 +1841,7 @@ fn paged_history_escapes_receipts_and_unread_waits_for_a_drawn_tail() {
                 delta(
                     3,
                     &(0..60)
-                        .map(|row| format!("BULK_ROW_{row:02}\n"))
+                        .map(|row| format!("BULK_ROW_{row:02}  \n"))
                         .collect::<String>(),
                 ),
                 message(
@@ -2787,7 +2787,7 @@ fn operator_activity_draw_tracks_real_responses_and_clock() {
                     messages: vec![message(
                         1,
                         OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
-                            format!("{}LATEST_DURABLE", "older history 界\n".repeat(50)),
+                            format!("{}LATEST_DURABLE", "older history 界  \n".repeat(50)),
                         )),
                     )],
                     next_after: None,

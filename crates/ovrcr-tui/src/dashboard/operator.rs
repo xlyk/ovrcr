@@ -2,6 +2,7 @@
 //! PTY input target. The shared sidebar row, the full view and the Quick
 //! message overlay all address that same singleton.
 mod feed;
+mod markdown;
 mod render;
 
 use super::text_cursor::TextCursor;
@@ -3220,6 +3221,72 @@ mod tests {
                 .any(|row| row.starts_with("▌   - session 13 (coordinator-alpha)")),
             "the open wake-up keeps its report: {rows:?}"
         );
+    }
+
+    #[test]
+    fn sidebar_reply_preview_uses_rendered_markdown_text() {
+        let mut d = loaded(
+            summary(),
+            vec![
+                request(1, "report"),
+                delta(2, "## Status\n\n**Ready** with `cargo test`."),
+                completed(3),
+            ],
+        );
+        let screen = frame_lines(&mut d, 140, 40);
+        assert!(!screen.contains("##"), "{screen}");
+        assert!(!screen.contains("**"), "{screen}");
+        assert!(screen.contains("Status"), "{screen}");
+        assert!(screen.contains("Ready"), "{screen}");
+    }
+
+    #[test]
+    fn markdown_replies_render_as_prose_and_tables_not_source() {
+        let mut chat = Chat::new(summary(), OperatorContext::default());
+        chat.messages = vec![
+            request(1, "report"),
+            delta(
+                2,
+                "## Status\n\n**Ready** and `cargo test` passed.\n\n```text\nall green\n```\n\n| Area | Result |\n| --- | --- |\n| tests | pass |\n",
+            ),
+            completed(3),
+        ];
+        let rows = transcript_rows(&chat, 100, 0);
+        let screen = rows
+            .iter()
+            .map(|row| row.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for source in ["##", "**", "```", "| ---"] {
+            assert!(!screen.contains(source), "raw {source:?}: {screen}");
+        }
+        for expected in [
+            "Status",
+            "Ready and cargo test passed.",
+            "all green",
+            "┌",
+            "pass",
+        ] {
+            assert!(screen.contains(expected), "missing {expected:?}: {screen}");
+        }
+        let style = |needle: &str| {
+            rows.iter()
+                .flat_map(|row| &row.line.spans)
+                .find(|span| span.content.contains(needle))
+                .unwrap_or_else(|| panic!("no span contains {needle:?}"))
+                .style
+        };
+        assert_eq!(style("Status").fg, Some(crate::theme::BLUE()));
+        assert!(
+            style("Ready")
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_eq!(style("cargo test").fg, Some(crate::theme::TEAL()));
+        assert_eq!(style("all green").fg, Some(crate::theme::TEAL()));
+        assert_eq!(style("Area").fg, Some(crate::theme::BLUE()));
+        let anchors: Vec<_> = rows.iter().filter_map(|row| row.anchor).collect();
+        assert!(anchors.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

@@ -69,20 +69,21 @@ fn pi_available() -> bool {
 }
 
 fn reply_preview(chat: &Chat, turn: ovrcr_protocol::OperatorTurnId) -> Option<String> {
-    let text = chat
-        .messages
-        .iter()
-        .filter(|message| message.turn == turn)
-        .filter_map(|message| match &message.content {
-            OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
-                Some(text.as_str())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("");
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    (!text.is_empty()).then(|| format!("“{}”", display_text(&text)))
+    // The sidebar clips this to one row; render only the head of a long reply.
+    const PREVIEW_SOURCE_LIMIT: usize = 4 * 1024;
+    let mut source = String::new();
+    for message in chat.messages.iter().filter(|message| message.turn == turn) {
+        if source.len() >= PREVIEW_SOURCE_LIMIT {
+            break;
+        }
+        if let OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) =
+            &message.content
+        {
+            source.push_str(text);
+        }
+    }
+    let text = super::markdown::preview(&source);
+    (!text.is_empty()).then(|| format!("“{text}”"))
 }
 
 fn latest_completed_turn(chat: &Chat) -> Option<ovrcr_protocol::OperatorTurnId> {

@@ -1,0 +1,42 @@
+{
+  "call_name": "app.getAXStateAndScreenshot",
+  "options": {
+    "disableDiffing": true,
+    "emit": false
+  },
+  "timestamps": {
+    "operator_open_capture_started_at": "2026-11-12T23:09:35.815Z",
+    "operator_open_capture_completed_at": "2026-11-12T23:09:36.391Z",
+    "request_submitted_at": "2026-11-12T23:09:51.806Z",
+    "reply_capture_started_at": "2026-11-12T23:10:09.024Z",
+    "reply_capture_completed_at": "2026-11-12T23:10:09.206Z"
+  },
+  "image_format": "JPEG",
+  "screenshot_byte_length": 296139,
+  "screenshot_sha256": "97031b2684afa2d43a0f144700bf3c1e65b5e701ead8e0c78dcdb06a61fd2737",
+  "ax_text_sha256": "a614e3ed380d11913be99d888dda72fa58fb56268f4827252d53974c649a626d",
+  "reply_complete": true,
+  "poll_interval_ms": 750,
+  "polls": [
+    {
+      "at": "2026-11-12T23:10:08.092Z",
+      "responding": true
+    },
+    {
+      "at": "2026-11-12T23:10:09.024Z",
+      "responding": false
+    }
+  ],
+  "ax_literal_markers": {
+    "##": true,
+    "**": true,
+    "```": false,
+    "|---|": false
+  },
+  "reply_body_literal_markers": {
+    "##": false,
+    "**": false,
+    "```": false,
+    "|---|": false
+  }
+}
