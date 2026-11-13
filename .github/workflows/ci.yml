@@ -73,6 +73,11 @@ jobs:
       - name: Lint
         if: matrix.shard == 1
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The GUI unit tests launch the real `ovrcr` CLI from target/debug. nextest
+      # builds the binaries' test executables, not the CLI itself, so build it
+      # before the GUI tests look for it.
+      - name: Build CLI for GUI unit tests
+        run: cargo build -p ovrcr --bin ovrcr --all-features
       # nextest retries timing-sensitive failures and reports them as FLAKY;
       # see .config/nextest.toml. Doc tests stay on cargo test below.
       # Hash partitioning assigns by binary ID and test name, so new tests and
