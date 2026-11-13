@@ -632,15 +632,28 @@ impl eframe::App for App {
     }
 }
 
+#[cfg(test)]
+fn test_cli_executable() -> anyhow::Result<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("OVRCR_TEST_EXECUTABLE") {
+        return Ok(path.into());
+    }
+    let current = std::env::current_exe()?;
+    for ancestor in current.ancestors().skip(1) {
+        let candidate = ancestor.join("ovrcr");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "locate ovrcr executable from {} (set OVRCR_TEST_EXECUTABLE)",
+        current.display()
+    )
+}
+
 #[test]
 fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyhow::Result<()> {
     let context = egui::Context::default();
-    let executable = std::env::current_exe()?
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("ovrcr");
+    let executable = test_cli_executable()?;
     let demo = Demo::start(&executable)?;
     let root = demo.root().to_owned();
     let terminal = demo.dashboard(24, 80, context.clone())?;
@@ -692,12 +705,7 @@ fn close_request_leaves_the_dashboard_running_until_outside_the_frame() -> anyho
 #[test]
 fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> {
     let context = egui::Context::default();
-    let executable = std::env::current_exe()?
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("ovrcr");
+    let executable = test_cli_executable()?;
     let demo = Demo::start(&executable)?;
     let root = demo.root().to_owned();
     let terminal = demo.dashboard(40, 120, context.clone())?;

@@ -84,6 +84,8 @@ jobs:
       # new binaries join a shard automatically, and the large pi_delegation
       # binary is divided rather than landing whole on one job.
       - name: Test (shard ${{ matrix.shard }} of 4)
+        env:
+          OVRCR_TEST_EXECUTABLE: ${{ github.workspace }}/target/debug/ovrcr
         run: |
           cargo nextest run --workspace --all-targets --all-features \
             --profile ci \
