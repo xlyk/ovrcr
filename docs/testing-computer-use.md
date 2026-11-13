@@ -368,15 +368,16 @@ Keep screenshots and accessibility text for each outcome.
 ### Operator
 
 The Operator is one durable conversation run by the installed pi agent. Start
-with a disposable fixture and no provider turn. Confirm the first project is
-directly below the title, and a single **Operator** dock sits below attention and
-quota, immediately above the footer. A closed idle dock says **Open chat**.
+with a disposable fixture and no provider turn. Confirm the three-row **Operator**
+section sits below attention when present and above the project tree and quota.
+Before opening, it says **Off** when Pi is available and **Not set up** when Pi
+is missing; opening with Pi available shows **Idle** until the first response.
 Confirm neither Operator shortcut appears in the title bar; clicking the retired
 positions opens neither Operator surface.
 
 Click each end of the dock, returning with `Ctrl-g` between opens. Confirm both
 open the same conversation with the composer focused. Type an unsent draft,
-return to Browse and confirm **Draft** in the dock. Select another session and
+return to Browse and confirm the draft is retained. Select another session and
 press `o`: confirm the text remains and the target above the composer now names
 that session. The open dock has a selection marker. Save Browse and conversation
 screenshots with matching accessibility text.
@@ -400,8 +401,11 @@ paths for this walkthrough. Preserve `CARGO_HOME` separately for the build cache
 Disable quota probes with `OVRCR_GUI_QUOTA_CONFIG`; the loopback provider seeds
 only the disposable instance's Operator profile and needs no personal account.
 
-Start the GUI provider helper against the launcher's fixture root. Bind that root
-to this task with a private ownership marker before starting the helper:
+Compile the helper before building/launching the matching GUI, retaining the test
+executable path from `cargo test -p ovrcr --features acceptance-diagnostics
+--test operator_e2e --no-run`. Once the GUI is live, run that artifact directly so
+Cargo cannot replace its CLI image. Start it against the launcher's fixture root.
+Bind that root to this task with a private ownership marker before starting the helper:
 
 ```sh
 export OVRCR_OPERATOR_GUI_HOME=/absolute/task-owned/ovrcr-gui-root
@@ -409,7 +413,7 @@ export OVRCR_OPERATOR_GUI_TOKEN=operator-gui-owned-fixture
 (umask 077; printf 'ovrcr-operator-gui-fixture v1\nroot=%s\ntoken=%s\n' \
   "$OVRCR_OPERATOR_GUI_HOME" "$OVRCR_OPERATOR_GUI_TOKEN" \
   > "$OVRCR_OPERATOR_GUI_HOME/operator-pi-fixture-owner")
-cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e operator_pi_gui_provider -- --ignored --nocapture
+/absolute/path/to/operator_e2e-TEST_HASH installed_pi::operator_pi_gui_provider --ignored --nocapture
 ```
 
 Wait for `OPERATOR_PI_GUI_READY` before sending.
@@ -444,9 +448,9 @@ otherwise it answers only `FIXTURE_FOLLOWUP_DONE`. Send this sequence:
 6. `REQUEST_FOUR_BACKGROUND` — a Bash command with a background child, held for
    the Stop check below.
 
-Confirm the sidebar row's activity clause tracks Sending, Responding, Waiting for
-`<tool>` result and Stop unconfirmed, and that the row is the only place the
-conversation appears.
+Confirm the section shows Working during the turn, Reply ready with one unread
+when its unseen reply completes, and Idle after review. The journal's activity
+row tracks Sending, Responding, Waiting for `<tool>` result and Stop unconfirmed.
 
 While `REQUEST_FOUR_BACKGROUND` runs, press `Ctrl-x` (or `Ctrl-c` in the empty
 full composer). The activity row says Stopping, the partial text and receipt stay
@@ -464,15 +468,27 @@ remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
 confirm the same conversation is attached (startup `Current` creates nothing).
 Keep fresh screenshots and AX text for every changed state.
 
-For thinking-block acceptance, use two fresh fixtures in both the native GUI and
-Terminal.app, with a fresh helper and no release marker for each fixture. Build
+For leased multi-session coordination, use the helper's
+`OVRCR_OPERATOR_GUI_COORDINATOR=1` scenario with a fresh private HOME and matching
+ownership marker. The [setup and exact request sequence](../research/operator-async-delegation-465/470-evidence.md#native-helper-instructions)
+dispatches to two managed Pi sessions on separate worktrees. Verify dispatch
+frees the composer, Ctrl-x rolls back only the held foreground turn, and warm
+chat uses the same worker/run with both delegates still active. Release both,
+then verify one batched AsyncWakeup, hidden one-unread state, the preserved Quick
+draft, inspected Git/check results, and delegates remaining open until cleanup.
+Record Running until rollback acknowledgement rather than requiring worker
+termination for a leased Stop. The [completed native proof](../research/operator-async-delegation-465/native/README.md)
+shows the required screenshots, AX and JSON records.
+
+For thinking-block acceptance, use two fresh native GUI fixtures, with a fresh
+helper and no release marker for each fixture. Build
 the `operator_e2e` helper first with `--no-run --message-format=json`, retain its
-test executable path, and finish GUI builds before starting Terminal fixtures.
+test executable path, and finish GUI builds before starting the fixtures.
 Run that exact helper executable directly so Cargo cannot replace a running
 Dashboard binary. Keep HOME, XDG paths, TMPDIR, provider profiles and sockets
 private; link only existing Regular/Bold/Italic/BoldItalic JetBrains Mono Nerd
 Font faces into the GUI's private `Library/Fonts`. Do not change system fonts
-or the user's Terminal profile.
+or terminal profiles.
 
 1. In fixture A, open Operator and send `REQUEST_THINKING_LONG_HELD`. Before
    toggling, confirm `▸ Thinking · showing last 6 of 40 lines`, only
@@ -490,10 +506,9 @@ or the user's Terminal profile.
    survives completion. The fresh fixture is required because overrides and the
    helper's release latch persist.
 
-A Terminal profile without italic must still show peach; record that limitation
-without changing its settings. Stop each helper with its owned `fixture-stop`
-marker, retain its exit result, and clean up only the owned GUI/Terminal
-instances. Reopen the conversation to confirm its journal remains. A text-only
+Stop each helper with its owned `fixture-stop` marker, retain its exit result,
+and clean up only the owned GUI instances. Reopen the conversation to confirm
+its journal remains. A text-only
 follow-up adds no empty Thinking block. The bundled CLI skill must never appear
 as a user message, tool result or visible journal entry.
 

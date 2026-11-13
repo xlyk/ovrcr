@@ -176,11 +176,21 @@ legacy recovery.
 
 Operator defaults are typed `Settings.operator` values in the same settings
 catalog, loader, editor and snapshots. It holds one optional `model` string
-(`provider/model`); unset uses the dedicated pi profile's current default before
-each turn, and an explicit value is captured per accepted Submit. Settings never
-contain credentials.
+(`provider/model`) and a typed `thinking_level`; unset model uses the dedicated
+Pi profile default captured at worker startup, and explicit choices are captured
+per accepted Submit, including warm turns. Settings never contain credentials.
 
 Schema version 30 adds the Operator turn's captured `thinking_level` (legacy
 turns default to `default`) and the conversation's optional Pi reasoning readback.
 It preserves existing journals and checkpoints. Protocol 78 adds the reasoning
 setting, worker bootstrap choice and `ReasoningSelected` metadata event.
+
+Schema version 33 (from 32) removes the unique conversation/run constraint on
+Operator turns, allowing leased warm user turns and asynchronous wakeups on one
+worker run. Migration preserves journal rows, receipts and sequence history;
+the singleton and one-Running-turn indexes remain. Legacy unit `Completed` JSON
+is read as unleased completion without rewriting stored messages. Protocol 85
+(from 84) carries run identity, live-worker summaries, warm turn dispatch,
+asynchronous turn admission and leased completion/abort semantics. The singleton
+Operator has a dedicated slot outside the 50 live Workspace session limit.
+See the [runtime reference](operator.md) for watch admission and rollback.

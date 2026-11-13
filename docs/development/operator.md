@@ -5,9 +5,10 @@ User setup and controls are in [Use the built-in operator](../operator.md).
 The Operator is one durable conversation per OVRCR instance, driven by the
 installed [pi](https://github.com/earendil-works/pi) coding agent 0.87.1 through
 its RPC protocol. There is no embedded model client, no Rig agent and no custom
-OAuth: pi owns authentication, model catalog, the agent loop, tool definitions,
-inference and context management. The Server stays synchronous; a managed
-same-executable worker owns pi for a cold run. When a completed turn carries a
+OAuth: pi owns authentication, model catalog, the agent loop, its four native
+tool definitions, inference and context management. OVRCR adds `watch_sessions`.
+The Server stays synchronous; a managed same-executable worker owns pi for a
+cold run. When a completed turn carries a
 work lease, that process stays live across warm user turns on the same run.
 
 ## Package layout
@@ -133,8 +134,10 @@ Server.
    provider/id must appear in `get_available_models`; `set_model` must return the
    same identity. Set `set_auto_retry` off and `set_auto_compaction` on, then
    commit `ModelSelected`, clearing the previous model's reasoning readback.
-   Apply the turn's captured `operator.thinking_level` unless it is `default`,
-   which leaves Pi's choice alone. Read `get_state.thinkingLevel`
+   Apply the turn's captured `operator.thinking_level`. `default` restores the
+   model-specific level captured when that model was first selected in the run,
+   so a previous explicit override cannot leak into a later Default turn.
+   Read `get_state.thinkingLevel`
    and `get_available_thinking_levels` (`{levels: [...]}`) back and commit
    `ReasoningSelected` with the effective level, supported list and captured
    request.
@@ -186,6 +189,10 @@ the turn table with foreign keys disabled and verifies dependent journal rows
 and IDs afterward. Wire protocol 85 carries `OperatorRunIdentity`,
 `worker_live`, warm `StartTurn`, prepared `AbortTurn`, and leased completion.
 `Open` and `Current` remain read-only and never create a worker.
+The migration is schema 32 → 33 and the wire change is 84 → 85. Older binaries
+refuse the newer schema; clients and Server require matching wire versions.
+The history reader accepts legacy `{"Worker":"Completed"}` rows as unleased
+completion without rewriting their stored payloads or batch receipts.
 
 ## Workspace coordination watches
 
@@ -203,6 +210,10 @@ deterministic poller wakes on a post-baseline Ready revision/identity change,
 `waiting_input`, a run change, or an exited/stopped/interrupted session. It
 batches reports received during another turn and starts one `AsyncWakeup` only
 when Pi is idle; queued reports keep the worker leased until that wakeup settles.
+Each non-overlapping poll runs every 2.5 seconds with a five-second CLI timeout.
+Before `sendUserMessage` or model work, the extension asks the worker to reserve
+`BeginAsyncTurn` on the Server. Only a confirmed reservation permits delivery;
+if user Submit wins, all reports remain queued for the next idle attempt.
 
 On wakeup, Operator reads only the watched session replies: Claude Code and
 Codex use `terminal transcript --json`, falling back to the terminal tail when a
@@ -285,6 +296,22 @@ pi's placeholder model object (`provider`/`id` both `unknown`) is normalized to
 
 ## Stop, failure and retirement
 
+Dashboard Stop first requests an authenticated per-turn abort from the exact live
+worker. With an active lease, it clears Pi's queue, aborts the foreground turn,
+and saves the partial native session as `session.partial.jsonl`. If records were
+appended, it copies and validates the last completed checkpoint into a fresh run
+file and calls `switch_session`; without a checkpoint it creates an empty native
+session. A zero-record attempt skips the switch. This rolls back model context,
+preserving external effects, journal entries and attempt files.
+
+The extension keeps watches, queued reports and poll state in process-global
+state across `session_shutdown(reason="resume")`, rebinds on session start, and
+cleans up on genuine shutdown. The worker acknowledges `AbortTurn` only after
+rollback. Until then the Server keeps the turn Running, so a reconnect cannot
+submit into a rolling-back worker. After acknowledgement a leased worker remains
+ready on the same run; an unleased worker retires. If it cannot settle within
+five seconds, the Server falls back to scoped process-group termination.
+
 Hard Stop remains a Server path: durably interrupt, revoke authority, release
 locks, terminate the owned group, record controlled-stop proof. The worker
 installs SIGTERM/SIGHUP flags and a 2-second watchdog; while shutting down it
@@ -293,8 +320,10 @@ authority is revoked. pi exit alone is never stop proof: only the Server's scope
 termination establishes `worker_stopped`. Stop frees the conversation for another
 turn; an OVRCR operation already accepted may finish.
 
-A worker-detected transport, provider or bootstrap failure commits the fixed
-`Failed` message and requests Retire. A tool timeout requests authenticated Stop.
+A recoverable provider failure or tool timeout while leased follows the same
+checkpoint rollback, preserves the failed attempt without promoting it, and
+keeps watches available for a later wakeup. An unleased failure commits the fixed
+`Failed` message and requests Retire; an unleased timeout requests Stop.
 A failed reporting commit blocks further admissions and requests Stop. The worker
 never launches a replacement child or resends a prompt, and an uncertain tool
 result holds the turn until the Server terminates it or the user stops it.
@@ -307,9 +336,10 @@ validated, deduplicated entries. An empty native list prints no invented
 defaults and points at `ovrcr operator setup`.
 
 `operator.model` is one optional `provider/model` string in the shared settings
-document. Empty/unset uses the dedicated profile's current default before each
-turn; an explicit value overrides it and is captured per accepted Submit. The
-legacy `operator.provider`, `operator.chat_gpt_model` and `operator.grok_model`
+document. Empty/unset uses the dedicated profile default captured at worker
+startup; an explicit value overrides it and is captured per accepted Submit,
+including warm turns. The legacy `operator.provider`, `operator.chat_gpt_model`
+and `operator.grok_model`
 keys are not translated; the unknown-setting findings identify them, and the
 document is never rewritten automatically.
 
@@ -319,8 +349,9 @@ document is never rewritten automatically.
 `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), defaulting to `default`.
 Submit captures it beside the model in the same durable transaction. A settings
 edit never reconfigures an accepted turn; the next turn applies it after model
-selection, including checkpoint resume. There is no per-conversation override
-and no step that restores the startup profile's reasoning level.
+selection, including checkpoint resume and warm turns. There is no
+per-conversation override. Returning to `default` restores the captured
+model-specific default instead of retaining an earlier explicit level.
 
 Pi can silently clamp `set_thinking_level` while reporting success. The worker
 reads `get_state.thinkingLevel` and `get_available_thinking_levels` after applying

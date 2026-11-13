@@ -129,7 +129,14 @@ This can remain a skill-only step if composed reads are sufficient: standup may 
 
 ## Decision gate before expanding parent authority
 
-No later phase in this roadmap is authorized by this plan. A later proposal must name the intended parent host and decide whether standup needs only best-effort composed reads or a consistent snapshot, whether provider-native child work needs tracking/bounds, and which optional support skills matter. A non-Pi parent requires a separate identity/authentication and idempotency design against the existing Server receipt path. A provider-native roster requires provider coverage, persistence, size/restart rules, and honest cost semantics. The built-in Operator is not a substitute parent: its turns run one managed worker with one Bash tool and have no workflow-controller authority.
+No later phase in this roadmap is authorized by this plan. A later proposal must name the intended parent host and decide whether standup needs only best-effort composed reads or a consistent snapshot, whether provider-native child work needs tracking/bounds, and which optional support skills matter. A non-Pi parent requires a separate identity/authentication and idempotency design against the existing Server receipt path. A provider-native roster requires provider coverage, persistence, size/restart rules, and honest cost semantics.
+
+**2026-11-11 update:** [PR #471](https://github.com/xlyk/ovrcr/pull/471) separately
+shipped built-in Operator coordination through ordinary Workspace Agent sessions,
+native tools and `watch_sessions`, with leased residency and asynchronous wakeups.
+This uses CLI/session observations rather than this roadmap's Server-owned
+workflow-controller authority. See [Operator](../../operator.md) and its
+[acceptance evidence](../../../research/operator-async-delegation-465/README.md).
 
 ## Deferred family mapping
 

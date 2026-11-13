@@ -79,7 +79,7 @@ Dashboard: `j`/`k` select, `Enter` focus, `Space s` opens pane actions, `Ctrl-g`
 ## Features
 
 - Up to four panes with directional focus, swap, and zoom; Browse, Terminal, Copy, and History modes.
-- [Built-in Operator](docs/operator.md): native saved conversations, concurrent token streaming, ChatGPT/Grok subscription sign-in, and Bash/CLI control.
+- [Built-in Operator](docs/operator.md): one persistent Pi conversation, streamed replies, native tools, and asynchronous coordination of visible Workspace Agent sessions.
 - After server restart, retained rows reopen a fresh shell in place; certified Claude conversations can resume by UUID. Terminal output is not restored across server restart.
 - 512 rows of scrollback; keyboard selection; OSC52 clipboard copy.
 - Pause / resume via SIGSTOP / SIGCONT on the session process group.
@@ -91,14 +91,14 @@ Dashboard: `j`/`k` select, `Enter` focus, `Space s` opens pane actions, `Ctrl-g`
 ## Requirements
 
 - macOS or Linux
-- Rust 1.97.1 or newer (edition 2024; the built-in operator’s Rig dependency sets the floor)
+- Rust 1.97.1 or newer (edition 2024)
 - Git
-- Optional: [Pi](docs/scheduled-tasks.md) for scheduled tasks; macOS [Bridge](native/bridge/README.md) for notifications
+- Optional: installed Pi 0.87.1 for [Operator](docs/operator.md) and [scheduled tasks](docs/scheduled-tasks.md); macOS [Bridge](native/bridge/README.md) for notifications
 
 ## Docs
 
 - [Dashboard](docs/dashboard.md) — modes, keys, notifications, quota, events
-- [Built-in Operator](docs/operator.md) — subscription setup, concurrent chats, history and Stop
+- [Built-in Operator](docs/operator.md) — dedicated Pi setup, Workspace coordination, history and Stop
 - [CLI reference](docs/cli-reference.md)
 - [Agent reporting](docs/agent-reporting.md) · [Claude setup](docs/claude-code-setup.md) · [Support matrix](docs/agent-reporting-support.md)
 - [Scheduled tasks](docs/scheduled-tasks.md) · [Provider quota](docs/provider-quota.md)
