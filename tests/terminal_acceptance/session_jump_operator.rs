@@ -67,8 +67,7 @@ fn operator_ctrl_g_uses_the_live_agent_and_preserves_its_unsent_draft() -> Resul
         .lines()
         .find(|line| {
             line.split('│').next().is_some_and(|sidebar| {
-                (sidebar.contains("OPERATOR") || sidebar.contains("Operator ·"))
-                    && !sidebar.contains("operator-agent")
+                sidebar.contains("󰚩 Operator") && !sidebar.contains("operator-agent")
             })
         })
         .context("fixed Operator navigation row")?;

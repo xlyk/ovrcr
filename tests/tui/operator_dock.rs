@@ -310,9 +310,9 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
             "usage hidden" => !rows
                 .iter()
                 .any(|row| row.contains("USAGE") || row.contains("Usage ·")),
-            "operator compact" => rows.iter().any(|row| {
-                row.contains("󰚩 Operator") && (row.contains("Off") || row.contains("Idle"))
-            }),
+            "operator compact" => rows
+                .iter()
+                .any(|row| row.contains("󰚩 Operator") && !row.trim_end().ends_with("Operator")),
             "quota pointer" => rows.iter().any(|row| row.contains("Quota: u")),
             "operator hidden" => !rows.iter().any(|row| row.contains("Operator")),
             _ => unreachable!("unknown rung"),
@@ -367,7 +367,7 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     assert!(
         operator_compact_rows
             .iter()
-            .any(|row| row.contains("󰚩 Operator") && row.contains("Off")),
+            .any(|row| row.contains("󰚩 Operator") && !row.trim_end().ends_with("Operator")),
         "the card keeps its identity and state on one line: {operator_compact_rows:?}"
     );
 

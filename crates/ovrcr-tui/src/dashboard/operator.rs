@@ -3263,6 +3263,11 @@ mod tests {
 
     #[test]
     fn sidebar_never_echoes_the_reply_as_a_session_title() {
+        if super::super::pi_available_test::run_with_pi_available(
+            "dashboard::operator::tests::sidebar_never_echoes_the_reply_as_a_session_title",
+        ) {
+            return;
+        }
         let mut d = loaded(
             summary(),
             vec![
