@@ -73,12 +73,12 @@ executable is available and **Not set up** when it is missing. If Pi is missing
 when opening begins, the singleton remains **Not set up**, including when its
 journal already has replies. A queued Open with Pi available shows **Idle** until
 the first response.
-Known Pi setup errors after opening also show **Not set up**. The section shows
-**Working** with elapsed time and current activity, **Reply ready · 1 unread**
-with a reply preview, or **Idle** with the latest reply. The reply preview is
-plain text rendered from the same Markdown, so it never shows source markers or
-table borders. The last reply and turn start times come from the Server's
-retained turn records; older turns without recorded times remain untimed. Drawing the section never reviews a reply
+Known Pi setup errors after opening also show **Not set up**. The tinted card
+shows **Working** with elapsed time and current activity, **Reply ready · 1
+unread**, or **Idle** with the last reply time. It never repeats reply text as a
+session title; idle and unread states keep an action hint instead. The last reply
+and turn start times come from the Server's retained turn records; older turns
+without recorded times remain untimed. Drawing the section never reviews a reply
 or starts a worker. The `operator.sidebar` setting controls it and is on by
 default.
 

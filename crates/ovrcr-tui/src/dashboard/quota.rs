@@ -1,6 +1,9 @@
 use super::{
     Dashboard, DashboardAction, InputMode,
-    render::{GREEN, RED, SUBTEXT, SURFACE2, TEXT, YELLOW, compose_row, label_color, sidebar_area},
+    render::{
+        GREEN, RED, SUBTEXT, SURFACE2, TEXT, YELLOW, clip_text, compose_row, label_color,
+        sidebar_area,
+    },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ovrcr_protocol::{
@@ -309,8 +312,14 @@ impl Dashboard {
         } else {
             vec![(0, 0)]
         };
+        let usage_full = if usage_enabled {
+            usage_content_height(&self.usage_counts(), sidebar.width)
+        } else {
+            0
+        };
         let usage_heights = if usage_enabled {
-            vec![(4, 1), (1, 0), (0, 0)]
+            // The compact one-line summary has no gap after it.
+            vec![(usage_full, u16::from(usage_full > 1)), (1, 0), (0, 0)]
         } else {
             vec![(0, 0)]
         };
@@ -422,35 +431,11 @@ impl Dashboard {
         }
 
         let elapsed = usage_elapsed(self.usage.server_started_unix_ms, now);
-        let lines = vec![
-            Line::from(vec![Span::styled(
-                format!("USAGE · {total} tokens · {elapsed}"),
-                Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
-            )]),
-            usage_counter_line(
-                &[
-                    (super::status::UsageState::Working, "⠹", "working"),
-                    (super::status::UsageState::NeedsInput, "?", "input"),
-                    (super::status::UsageState::Ready, "✓", "ready"),
-                ],
-                &counts,
-            ),
-            usage_counter_line(
-                &[
-                    (super::status::UsageState::Idle, "·", "idle"),
-                    (super::status::UsageState::Error, "!", "error"),
-                    (super::status::UsageState::Paused, "P", "paused"),
-                ],
-                &counts,
-            ),
-            usage_counter_line(
-                &[
-                    (super::status::UsageState::Exited, "·", "exited"),
-                    (super::status::UsageState::Unknown, "-", "unknown"),
-                ],
-                &counts,
-            ),
-        ];
+        let mut lines = vec![Line::from(vec![Span::styled(
+            format!("USAGE · {total} tokens · {elapsed}"),
+            Style::default().fg(SUBTEXT()).add_modifier(Modifier::BOLD),
+        )])];
+        lines.extend(usage_counter_rows(&counts, usize::from(area.width)));
         frame.render_widget(Paragraph::new(lines), area);
     }
 
@@ -532,20 +517,88 @@ impl Dashboard {
     }
 }
 
-fn usage_counter_line(
-    items: &[(super::status::UsageState, &str, &str)],
-    counts: &[usize; 8],
-) -> Line<'static> {
-    let mut spans = Vec::with_capacity(items.len() * 2);
-    for (index, (state, glyph, label)) in items.iter().enumerate() {
-        let count = counts[usage_state_index(*state)];
-        let style = usage_state_style(*state, count);
-        if index > 0 {
-            spans.push(Span::styled("  ", Style::default().fg(SUBTEXT())));
-        }
-        spans.push(Span::styled(format!("{glyph} {count} {label}"), style));
+/// Counters shown in the Usage summary, in the order a session becomes worth
+/// noticing. A zero counter says nothing, so it is left out rather than drawn
+/// as a dim placeholder.
+const USAGE_STATES: [(super::status::UsageState, &str); 8] = [
+    (super::status::UsageState::Working, "working"),
+    (super::status::UsageState::NeedsInput, "input"),
+    (super::status::UsageState::Ready, "ready"),
+    (super::status::UsageState::Idle, "idle"),
+    (super::status::UsageState::Error, "error"),
+    (super::status::UsageState::Paused, "paused"),
+    (super::status::UsageState::Exited, "exited"),
+    (super::status::UsageState::Unknown, "unknown"),
+];
+
+/// Below this width the counter rows would waste more space than they explain,
+/// so Usage keeps its one-line summary at any height.
+const USAGE_COUNTER_MIN_WIDTH: u16 = 28;
+/// At most this many counter rows; a rare all-state sidebar stops growing.
+const USAGE_COUNTER_MAX_ROWS: usize = 3;
+
+/// The Usage section's content height: its heading plus one line per non-zero
+/// counter row, or the one-line summary when the sidebar is too narrow.
+fn usage_content_height(counts: &[usize; 8], width: u16) -> u16 {
+    if width < USAGE_COUNTER_MIN_WIDTH {
+        return 1;
     }
-    Line::from(spans)
+    1 + usage_counter_rows(counts, usize::from(width)).len() as u16
+}
+
+fn usage_counter_rows(counts: &[usize; 8], width: usize) -> Vec<Line<'static>> {
+    let items: Vec<_> = USAGE_STATES
+        .iter()
+        .filter(|(state, _)| counts[usage_state_index(*state)] > 0)
+        .collect();
+    if items.is_empty() {
+        return vec![Line::from(Span::styled(
+            "no sessions",
+            Style::default().fg(super::render::MUTED()),
+        ))];
+    }
+    let mut rows = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    let mut next = 0usize;
+    while next < items.len() && rows.len() < USAGE_COUNTER_MAX_ROWS {
+        let (state, label) = items[next];
+        let text = format!("{} {label}", counts[usage_state_index(*state)]);
+        let text_width = Line::raw(&text).width();
+        let gap = if spans.is_empty() { 0 } else { 2 };
+        if !spans.is_empty() && used + gap + text_width > width {
+            rows.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+            continue;
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+            used += gap;
+        }
+        let text = if text_width > width {
+            clip_text(&text, width)
+        } else {
+            text
+        };
+        used = used.saturating_add(Line::raw(&text).width());
+        spans.push(Span::styled(
+            text,
+            usage_state_style(*state, counts[usage_state_index(*state)]),
+        ));
+        next += 1;
+    }
+    if !spans.is_empty() {
+        rows.push(Line::from(spans));
+    }
+    if next < items.len()
+        && let Some(last) = rows.last_mut()
+    {
+        last.spans.push(Span::styled(
+            format!("  +{}", items.len() - next),
+            Style::default().fg(super::render::MUTED()),
+        ));
+    }
+    rows
 }
 
 fn usage_state_index(state: super::status::UsageState) -> usize {
@@ -1296,6 +1349,56 @@ where
         format!("{} ago", span((now - stamp) / 60_000))
     };
     format!("{} ({distance})", time.format(pattern))
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    fn all_counts(count: usize) -> [usize; 8] {
+        [count; 8]
+    }
+
+    #[test]
+    fn zero_counters_are_left_out_and_no_sessions_has_its_own_line() {
+        let mut counts = [0usize; 8];
+        counts[usage_state_index(super::super::status::UsageState::Error)] = 2;
+        counts[usage_state_index(super::super::status::UsageState::Unknown)] = 1;
+        let rows = usage_counter_rows(&counts, 39);
+        let text = rows
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, "2 error  1 unknown");
+        assert!(!text.contains("working") && !text.contains("0 "), "{text}");
+
+        let empty = usage_counter_rows(&[0usize; 8], 39);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].to_string(), "no sessions");
+    }
+
+    #[test]
+    fn counters_fit_bounded_rows_at_every_live_width() {
+        for width in usize::from(USAGE_COUNTER_MIN_WIDTH)..=60 {
+            let rows = usage_counter_rows(&all_counts(1), width);
+            assert!(rows.len() <= USAGE_COUNTER_MAX_ROWS, "width {width}");
+            for row in rows {
+                assert!(
+                    row.width() <= width,
+                    "width {width}, row {row:?} ({} cells)",
+                    row.width()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn content_height_uses_the_one_line_summary_below_the_counter_floor() {
+        assert_eq!(usage_content_height(&all_counts(1), 27), 1);
+        assert!(usage_content_height(&all_counts(1), 28) > 1);
+        assert_eq!(usage_content_height(&[0usize; 8], 39), 2);
+    }
 }
 
 #[cfg(test)]

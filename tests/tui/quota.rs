@@ -214,9 +214,9 @@ fn quota_wrapped_rows_preserve_last_tree_selection_and_exclude_quota_mouse_hits(
         .position(|row| row.contains("RESOURCES"))
         .expect("Resources follows Usage");
     assert_eq!(
-        usage_row + 5,
+        usage_row + 1,
         resources_row,
-        "Resources follows Usage's four content rows and blank"
+        "a narrow sidebar keeps Usage's one-line summary with no gap"
     );
     assert_eq!(
         resources_row + 4,

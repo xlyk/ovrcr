@@ -3224,7 +3224,45 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_reply_preview_uses_rendered_markdown_text() {
+    fn operator_sidebar_is_its_own_card_not_a_project_heading() {
+        let mut d = dashboard();
+        d.install_area(Rect::new(0, 0, 140, 40));
+        let rect = d.sidebar_rects(d.outer_area).operator;
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, &d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, rect.y)].symbol(), "┃");
+        assert_eq!(
+            buffer[(0, rect.y)].bg,
+            crate::theme::CRUST(),
+            "the closed card has its own surface"
+        );
+        let title: String = (0..rect.width)
+            .map(|column| buffer[(column, rect.y)].symbol())
+            .collect();
+        assert!(title.contains("Operator"), "{title:?}");
+        assert!(
+            !title.contains("OPERATOR") && !title.contains('─'),
+            "the card is not a project heading: {title:?}"
+        );
+
+        d = loaded(summary(), Vec::new());
+        d.install_area(Rect::new(0, 0, 140, 40));
+        terminal
+            .draw(|frame| super::super::draw_dashboard_at(frame, &d, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(0, rect.y)].bg,
+            crate::theme::SURFACE0(),
+            "the selected card uses the selection surface"
+        );
+    }
+
+    #[test]
+    fn sidebar_never_echoes_the_reply_as_a_session_title() {
         let mut d = loaded(
             summary(),
             vec![
@@ -3234,10 +3272,21 @@ mod tests {
             ],
         );
         let screen = frame_lines(&mut d, 140, 40);
-        assert!(!screen.contains("##"), "{screen}");
-        assert!(!screen.contains("**"), "{screen}");
-        assert!(screen.contains("Status"), "{screen}");
-        assert!(screen.contains("Ready"), "{screen}");
+        let sidebar: String = screen
+            .lines()
+            .map(|line| line.chars().take(39).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for reply_text in ["Status", "Ready", "cargo test"] {
+            assert!(
+                !sidebar.contains(reply_text),
+                "the sidebar repeats reply text {reply_text:?}: {sidebar}"
+            );
+        }
+        assert!(
+            sidebar.contains("o open"),
+            "the operator card keeps an action hint: {sidebar}"
+        );
     }
 
     #[test]

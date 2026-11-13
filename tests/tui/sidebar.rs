@@ -420,6 +420,67 @@ fn usage_section_renders_eight_canonical_session_counts_and_server_total() {
 }
 
 #[test]
+fn usage_puts_four_nonzero_counters_on_one_line_without_zeroes() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.usage = ovrcr_protocol::UsageSnapshot {
+        total_tokens: 0,
+        server_started_unix_ms: 0,
+    };
+    let states = [
+        ("working", SessionPhase::Running, AgentActivity::Busy),
+        ("error", SessionPhase::Running, AgentActivity::Error),
+        (
+            "exited",
+            SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            },
+            AgentActivity::Unknown,
+        ),
+        ("unknown", SessionPhase::Running, AgentActivity::Unknown),
+    ];
+    hierarchy.projects[0].workspaces[0].sessions = states
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, phase, activity))| {
+            let mut session = session_summary(
+                index as u64 + 1,
+                "spacelift-agent",
+                "progress",
+                name,
+                "sh",
+                Some(index as u32 + 1),
+                0,
+            );
+            session.phase = phase;
+            session.activity = activity;
+            session
+        })
+        .collect();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(hierarchy);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let sidebar = (0..40)
+        .map(|row| sidebar_row_at_width(&terminal, row, sidebar_text_width(&terminal)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        sidebar.contains("1 working  1 error  2 exited  4 unknown"),
+        "four counts share one row: {sidebar}"
+    );
+    for zero in ["0 working", "0 input", "0 ready", "0 idle", "0 paused"] {
+        assert!(!sidebar.contains(zero), "zero counter {zero:?}: {sidebar}");
+    }
+}
+
+#[test]
 fn usage_compacts_to_one_line_and_then_hides_when_the_sidebar_is_short() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.usage = ovrcr_protocol::UsageSnapshot {
@@ -460,7 +521,7 @@ fn usage_compacts_to_one_line_and_then_hides_when_the_sidebar_is_short() {
 }
 
 #[test]
-fn usage_zero_counters_are_dimmed_and_the_setting_can_hide_the_section() {
+fn usage_omits_zero_counters_and_the_setting_can_hide_the_section() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.usage = ovrcr_protocol::UsageSnapshot {
         total_tokens: 0,
@@ -476,15 +537,24 @@ fn usage_zero_counters_are_dimmed_and_the_setting_can_hide_the_section() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let (zero_x, zero_y) = rendered_cell_sequence(&terminal, "⠹ 0 working", 120, 40).unwrap();
-    let (positive_x, positive_y) =
-        rendered_cell_sequence(&terminal, "- 4 unknown", 120, 40).unwrap();
-    assert_ne!(
-        terminal.backend().buffer()[(zero_x, zero_y)].fg,
-        terminal.backend().buffer()[(positive_x, positive_y)].fg,
-        "a zero counter should use the dim color"
-    );
-
+    let screen = (0..40)
+        .map(|row| sidebar_row_at_width(&terminal, row, sidebar_text_width(&terminal)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for zero in [
+        "0 working",
+        "0 input",
+        "0 ready",
+        "0 idle",
+        "0 error",
+        "0 paused",
+        "0 exited",
+        "0 unknown",
+    ] {
+        assert!(!screen.contains(zero), "zero counter {zero:?}: {screen}");
+    }
+    assert!(screen.contains("1 exited"), "{screen}");
+    assert!(screen.contains("4 unknown"), "{screen}");
     dashboard.install_settings(ovrcr::protocol::Settings {
         usage: ovrcr::protocol::UsageSettings { sidebar: false },
         ..Default::default()

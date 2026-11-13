@@ -1,8 +1,8 @@
 //! The shared sidebar is the sole conversation list and hit-test geometry.
 use super::*;
 use crate::dashboard::render::{
-    BASE, BLUE, GREEN, MAUVE, MUTED, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEAL, TEXT, clip_text,
-    compose_row,
+    BASE, BLUE, CRUST, GREEN, MAUVE, MUTED, PEACH, SUBTEXT, SURFACE0, SURFACE2, TEAL, TEXT,
+    clip_text, compose_row,
 };
 use ovrcr_protocol::AgentActivity;
 use ratatui::style::Color;
@@ -66,42 +66,6 @@ fn pi_available() -> bool {
     let executable = std::env::var_os("OVRCR_PI_EXECUTABLE").unwrap_or_else(|| "pi".into());
     let path = std::env::var_os("PATH").unwrap_or_default();
     super::super::agents::executable_available(&executable, &path)
-}
-
-fn reply_preview(chat: &Chat, turn: ovrcr_protocol::OperatorTurnId) -> Option<String> {
-    // The sidebar clips this to one row; render only the head of a long reply.
-    const PREVIEW_SOURCE_LIMIT: usize = 4 * 1024;
-    let mut source = String::new();
-    for message in chat.messages.iter().filter(|message| message.turn == turn) {
-        if source.len() >= PREVIEW_SOURCE_LIMIT {
-            break;
-        }
-        if let OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) =
-            &message.content
-        {
-            source.push_str(text);
-        }
-    }
-    let text = super::markdown::preview(&source);
-    (!text.is_empty()).then(|| format!("“{text}”"))
-}
-
-fn latest_completed_turn(chat: &Chat) -> Option<ovrcr_protocol::OperatorTurnId> {
-    chat.messages
-        .iter()
-        .rev()
-        .find(|message| {
-            matches!(
-                message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
-            )
-        })
-        .map(|message| message.turn)
-        .or_else(|| {
-            chat.summary.current_turn.as_ref().and_then(|turn| {
-                (turn.state == OperatorTurnState::Complete).then_some(turn.identity.turn)
-            })
-        })
 }
 
 fn current_activity(chat: &Chat) -> String {
@@ -320,7 +284,7 @@ impl Dashboard {
                     color: MUTED(),
                     label: "Idle".into(),
                     right: String::new(),
-                    detail: "↳ No replies yet".into(),
+                    detail: "No replies yet · o open".into(),
                     detail_color: SUBTEXT(),
                 };
             }
@@ -329,7 +293,7 @@ impl Dashboard {
                 color: MUTED(),
                 label: "Off".into(),
                 right: String::new(),
-                detail: "o opens Operator · Ctrl-o quick message".into(),
+                detail: "o open · Ctrl-o quick message".into(),
                 detail_color: SUBTEXT(),
             };
         };
@@ -355,21 +319,21 @@ impl Dashboard {
                 detail_color: SUBTEXT(),
             };
         }
-        if let Some(turn) = chat.unread {
-            let preview =
-                reply_preview(chat, turn).unwrap_or_else(|| "No reply text available".into());
+        if chat.unread.is_some() {
             return SidebarStatus {
                 glyph: '✓',
                 color: GREEN(),
                 label: "Reply ready · 1 unread".into(),
                 right: format_age(chat.summary.last_reply_unix_ms, now),
-                detail: format!("↳ {preview}"),
-                detail_color: TEXT(),
+                detail: "o open to review · Ctrl-o message".into(),
+                detail_color: SUBTEXT(),
             };
         }
-        let detail = latest_completed_turn(chat)
-            .and_then(|turn| reply_preview(chat, turn))
-            .map_or_else(|| "↳ No replies yet".into(), |reply| format!("↳ {reply}"));
+        let detail = if chat.summary.last_reply_unix_ms.is_some() {
+            "o open · Ctrl-o quick message".into()
+        } else {
+            "No replies yet · o open".into()
+        };
         SidebarStatus {
             glyph: '·',
             color: MUTED(),
@@ -379,8 +343,9 @@ impl Dashboard {
             detail_color: MUTED(),
         }
     }
-    /// Three-row navigation section with the conversation's state, activity
-    /// and last reply. It deliberately omits harness and model metadata.
+    /// The Operator's own navigation card: state and timing on a tinted surface
+    /// that does not read as a project heading or a session row. It deliberately
+    /// omits harness and model metadata, and never echoes reply text as a title.
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
         if !self.settings.operator.sidebar {
             return;
@@ -392,39 +357,42 @@ impl Dashboard {
         let width = usize::from(area.width);
         let selected = self.operator.visible;
         let status = self.operator_sidebar_status(now);
+        let background = if selected { SURFACE0() } else { CRUST() };
+        frame.render_widget(
+            Block::default().style(Style::default().bg(background)),
+            area,
+        );
+        let rail = Span::styled("┃", Style::default().fg(MAUVE()));
+        let identity = Span::styled(
+            "󰚩 Operator",
+            Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+        );
         if area.height == 1 {
             let compact = compose_row(
-                vec![Span::raw(" Operator")],
+                vec![rail, Span::raw(" "), identity],
                 Span::raw(" "),
                 vec![Span::styled(
                     format!("{} {}", status.glyph, status.label),
                     Style::default().fg(status.color),
                 )],
                 width,
-                selected,
+                false,
             );
             frame.render_widget(
-                Paragraph::new(compact).style(Style::default().fg(TEXT()).bg(if selected {
-                    SURFACE0()
-                } else {
-                    BASE()
-                })),
+                Paragraph::new(compact).style(Style::default().fg(TEXT()).bg(background)),
                 area,
             );
             return;
         }
         let title = compose_row(
-            vec![Span::styled(
-                " OPERATOR ",
-                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
-            )],
-            Span::styled("─", Style::default().fg(SURFACE2())),
+            vec![rail.clone(), Span::raw(" "), identity],
+            Span::raw(" "),
             Vec::new(),
             width,
             false,
         );
         frame.render_widget(
-            Paragraph::new(title).style(Style::default().fg(TEXT()).bg(BASE())),
+            Paragraph::new(title).style(Style::default().fg(TEXT()).bg(background)),
             Rect::new(area.x, area.y, area.width, 1),
         );
 
@@ -438,41 +406,38 @@ impl Dashboard {
         };
         let status_line = compose_row(
             vec![
-                Span::raw("  "),
+                rail.clone(),
+                Span::raw(" "),
                 Span::styled(status.glyph.to_string(), Style::default().fg(status.color)),
                 Span::raw(" "),
-                Span::styled(status.label, Style::default().fg(status.color)),
+                Span::styled(status.label.clone(), Style::default().fg(status.color)),
             ],
             Span::raw(" "),
             right,
             width,
-            selected,
+            false,
         );
         frame.render_widget(
-            Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(if selected {
-                SURFACE0()
-            } else {
-                BASE()
-            })),
+            Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(background)),
             Rect::new(area.x, area.y + 1, area.width, 1),
         );
         if area.height >= 3 {
             let detail = compose_row(
-                vec![Span::styled(
-                    clip_text(&status.detail, width),
-                    Style::default().fg(status.detail_color),
-                )],
+                vec![
+                    rail,
+                    Span::raw(" "),
+                    Span::styled(
+                        clip_text(&status.detail, width.saturating_sub(2)),
+                        Style::default().fg(status.detail_color),
+                    ),
+                ],
                 Span::raw(" "),
                 Vec::new(),
                 width,
                 false,
             );
             frame.render_widget(
-                Paragraph::new(detail).style(Style::default().fg(TEXT()).bg(if selected {
-                    SURFACE0()
-                } else {
-                    BASE()
-                })),
+                Paragraph::new(detail).style(Style::default().fg(TEXT()).bg(background)),
                 Rect::new(area.x, area.y + 2, area.width, 1),
             );
         }
