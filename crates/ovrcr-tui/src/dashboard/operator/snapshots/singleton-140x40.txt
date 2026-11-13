@@ -1,8 +1,8 @@
 󰚩 OVRCR                                                                                                                    [Commands] [Menu]
-┃ 󰚩 Operator                           │Operator · pi · openai/gpt-6.1-sol · ready                                  [Reasoning — ▾ Ctrl-t]
-┃ · Idle                No replies yet │
-                                       │
-                                       │
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│Operator · pi · openai/gpt-6.1-sol · ready                                  [Reasoning — ▾ Ctrl-t]
+┃ Operator                            ┃│
+┃· Idle                 No replies yet┃│
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│
                                        │
                                        │
                                        │

@@ -5785,8 +5785,11 @@ fn duplicate_branch_labels_include_distinguishing_paths() {
     );
     assert!(!one.contains("worktree-two"), "{one}");
     assert!(!two.contains("worktree-one"), "{two}");
+    // The taller Operator tile pushes the renamed workspaces down; use a taller
+    // screen so the duplicate labels remain visible behind the form.
+    dashboard.install_area(Rect::new(0, 0, 88, 50));
     open_new_terminal_from_menu(&mut dashboard);
-    let form = palette_text(&dashboard);
+    let form = rendered_rows(&dashboard, 120, 50).join("\n");
     assert!(
         form.contains("/private/var/folders") && form.contains("worktree-one"),
         "picker keeps the full path when there is room: {form}"

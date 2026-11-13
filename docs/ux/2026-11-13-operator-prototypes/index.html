@@ -237,7 +237,6 @@
   .v-a .row { display: flex; align-items: baseline; min-height: 1.38em; }
   .v-a .rail { color: var(--mauve); white-space: pre; }
   .v-a .head { color: var(--mauve); font-weight: 700; }
-  .v-a .head .icon { padding: 0 0.55ch 0 0.55ch; }
   .v-a .status { color: var(--text); white-space: nowrap; }
   .v-a .status .state { font-weight: 500; }
   .v-a .right { margin-left: auto; color: var(--subtext); white-space: nowrap; }
@@ -282,7 +281,6 @@
     padding: 0.45em 0.7ch 0.5em;
   }
   .v-c .top, .v-c .bottom { display: flex; align-items: baseline; gap: 0.8ch; white-space: nowrap; }
-  .v-c .icon { color: var(--mauve); }
   .v-c .name { color: var(--mauve); font-weight: 700; letter-spacing: 0.01em; }
   .v-c .bottom { margin-top: 0.2em; color: var(--text); }
   .v-c .bottom .glyph { color: var(--muted); }
@@ -416,7 +414,7 @@
           <div class="operator-slot">
             <!-- A: command card -->
             <section class="variant v-a" data-v="A" aria-label="Operator command card">
-              <div class="row head"><span class="rail">┃</span><span class="pad"> </span><span class="icon">◈</span><span>Operator</span></div>
+              <div class="row head"><span class="rail">┃</span><span class="pad"> </span><span>Operator</span></div>
               <div class="row status"><span class="rail">┃</span><span class="pad"> </span><span class="glyph js-glyph">·</span><span>&nbsp;</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
             </section>
 
@@ -427,7 +425,7 @@
 
             <!-- C: command tile -->
             <section class="variant v-c" data-v="C" aria-label="Operator command tile">
-              <div class="top"><span class="icon">◈</span><span class="name">Operator</span></div>
+              <div class="top"><span class="name">Operator</span></div>
               <div class="bottom"><span class="glyph js-glyph">·</span><span class="state js-label">Idle</span><span class="right js-right">last reply 10h</span></div>
             </section>
 

@@ -503,7 +503,7 @@ While the sidebar is hidden, `j` and `k` still move the selection, and
 `Space v`, `?` and the palette offer **Show sidebar**.
 
 The **Operator** card is its own tinted section, not another project heading:
-a rail, robot glyph and mixed-case `Operator` identity lead its state and timing.
+a rail and mixed-case `Operator` identity lead its state and timing.
 It shows whether the conversation is working, unread, idle, not yet opened, or
 not set up, plus its timing or setup action. It never repeats reply text as a
 session title, shows no keyboard-shortcut copy, and omits the model and harness. Click anywhere in

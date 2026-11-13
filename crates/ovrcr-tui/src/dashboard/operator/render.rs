@@ -273,7 +273,7 @@ impl Dashboard {
                 glyph: '✓',
                 color: GREEN(),
                 label: "Reply ready · 1 unread".into(),
-                right: format_age(chat.summary.last_reply_unix_ms, now),
+                right: String::new(),
             };
         }
         let right = format_age(chat.summary.last_reply_unix_ms, now);
@@ -288,9 +288,9 @@ impl Dashboard {
             },
         }
     }
-    /// The Operator's own navigation card: state and timing on a tinted surface
-    /// that does not read as a project heading or a session row. It deliberately
-    /// omits harness and model metadata, and never echoes reply text as a title.
+    /// The Operator's own command tile: a bordered two-row surface that does
+    /// not read as a project heading or a session row. It deliberately omits
+    /// harness, model, keyboard-shortcut and reply-title text.
     pub(in crate::dashboard) fn draw_operator_sidebar(&self, frame: &mut Frame<'_>, now: u64) {
         if !self.settings.operator.sidebar {
             return;
@@ -303,18 +303,14 @@ impl Dashboard {
         let selected = self.operator.visible;
         let status = self.operator_sidebar_status(now);
         let background = if selected { SURFACE0() } else { CRUST() };
-        frame.render_widget(
-            Block::default().style(Style::default().bg(background)),
-            area,
-        );
-        let rail = Span::styled("┃", Style::default().fg(MAUVE()));
         let identity = Span::styled(
-            "󰚩 Operator",
+            "Operator",
             Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
         );
+
         if area.height == 1 {
             let compact = compose_row(
-                vec![rail, Span::raw(" "), identity],
+                vec![Span::raw(" "), identity],
                 Span::raw(" "),
                 vec![Span::styled(
                     format!("{} {}", status.glyph, status.label),
@@ -329,42 +325,103 @@ impl Dashboard {
             );
             return;
         }
+
+        // A two-row border box needs four rows. Intermediate heights only occur
+        // while a caller is shrinking; keep them readable without a border.
+        if area.height < 4 {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(background)),
+                area,
+            );
+            let title = compose_row(
+                vec![Span::raw(" "), identity],
+                Span::raw(" "),
+                Vec::new(),
+                width,
+                false,
+            );
+            frame.render_widget(
+                Paragraph::new(title).style(Style::default().fg(TEXT()).bg(background)),
+                Rect::new(area.x, area.y, area.width, 1),
+            );
+            if area.height >= 2 {
+                let right = if status.right.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Span::styled(
+                        format!("{} ", status.right),
+                        Style::default().fg(SUBTEXT()),
+                    )]
+                };
+                let status_line = compose_row(
+                    vec![
+                        Span::styled(status.glyph.to_string(), Style::default().fg(status.color)),
+                        Span::raw(" "),
+                        Span::styled(status.label.clone(), Style::default().fg(status.color)),
+                    ],
+                    Span::raw(" "),
+                    right,
+                    width,
+                    false,
+                );
+                frame.render_widget(
+                    Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(background)),
+                    Rect::new(area.x, area.y + 1, area.width, 1),
+                );
+            }
+            return;
+        }
+
+        let border = if selected {
+            MAUVE()
+        } else if status.color == MUTED() {
+            SURFACE2()
+        } else {
+            status.color
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(ratatui::symbols::border::THICK)
+            .border_style(Style::default().fg(border))
+            .style(Style::default().bg(background));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if inner.height < 2 {
+            return;
+        }
         let title = compose_row(
-            vec![rail.clone(), Span::raw(" "), identity],
+            vec![Span::raw(" "), identity],
             Span::raw(" "),
             Vec::new(),
-            width,
+            usize::from(inner.width),
             false,
         );
         frame.render_widget(
             Paragraph::new(title).style(Style::default().fg(TEXT()).bg(background)),
-            Rect::new(area.x, area.y, area.width, 1),
+            Rect::new(inner.x, inner.y, inner.width, 1),
         );
-
         let right = if status.right.is_empty() {
             Vec::new()
         } else {
             vec![Span::styled(
-                format!("{} ", status.right),
+                status.right.clone(),
                 Style::default().fg(SUBTEXT()),
             )]
         };
         let status_line = compose_row(
             vec![
-                rail.clone(),
-                Span::raw(" "),
                 Span::styled(status.glyph.to_string(), Style::default().fg(status.color)),
                 Span::raw(" "),
                 Span::styled(status.label.clone(), Style::default().fg(status.color)),
             ],
             Span::raw(" "),
             right,
-            width,
+            usize::from(inner.width),
             false,
         );
         frame.render_widget(
             Paragraph::new(status_line).style(Style::default().fg(TEXT()).bg(background)),
-            Rect::new(area.x, area.y + 1, area.width, 1),
+            Rect::new(inner.x, inner.y + 1, inner.width, 1),
         );
     }
 

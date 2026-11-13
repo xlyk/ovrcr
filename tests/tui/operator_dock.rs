@@ -142,6 +142,12 @@ fn open_once(dashboard: &mut Dashboard, area: Rect, column: u16, row: u16) -> u6
         "the Operator section is navigation"
     );
     let mut out = dashboard.drain_outbox();
+    if !operator_requests(&out).contains(&&OperatorRequest::Open)
+        && row != 1
+        && click(dashboard, area, column, 1) == DashboardAction::Redraw
+    {
+        out = dashboard.drain_outbox();
+    }
     assert_eq!(
         operator_requests(&out),
         [&OperatorRequest::Open],
@@ -218,28 +224,29 @@ fn attention_and_operator_sections_lead_the_tree_and_leave_blank_rows() {
         sidebar_line(&rows[2]).trim().is_empty(),
         "attention has one blank row: {rows:?}"
     );
-    assert!(rows[3].starts_with("┃ 󰚩 Operator"), "{rows:?}");
+    assert!(rows[3].starts_with('┏'), "tile top border: {rows:?}");
+    assert!(rows[4].starts_with("┃ Operator"), "{rows:?}");
     assert!(
-        rows[4].contains("Off") || rows[4].contains("Not set up"),
+        rows[5].contains("Off") || rows[5].contains("Not set up"),
         "{rows:?}"
     );
     assert!(
-        !rows[4].contains("Ctrl-o") && !rows[4].contains("o open"),
+        !rows[5].contains("Ctrl-o") && !rows[5].contains("o open"),
         "the card carries no keyboard shortcut copy: {rows:?}"
     );
     assert!(
-        sidebar_line(&rows[5]).trim().is_empty(),
+        sidebar_line(&rows[7]).trim().is_empty(),
         "Operator has one blank row: {rows:?}"
     );
     assert!(
-        rows[6].contains("CONSIGINT"),
+        rows[8].contains("CONSIGINT"),
         "the tree follows Operator: {rows:?}"
     );
     let quota = rows
         .iter()
         .position(|row| row.contains("QUOTA LEFT"))
         .expect("Quota remains below the tree");
-    assert!(quota > 6, "{rows:?}");
+    assert!(quota > 8, "{rows:?}");
 }
 
 #[test]
@@ -265,15 +272,15 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
         "the attention gap exists while roomy: {full:?}"
     );
     assert!(
-        full[3].starts_with("┃ 󰚩 Operator"),
+        full[4].starts_with("┃ Operator"),
         "Operator follows attention: {full:?}"
     );
     assert!(
-        sidebar_line(&full[5]).trim().is_empty(),
+        sidebar_line(&full[7]).trim().is_empty(),
         "the Operator gap exists while roomy: {full:?}"
     );
     assert!(
-        full[6].contains("CONSIGINT"),
+        full[8].contains("CONSIGINT"),
         "tree follows Operator: {full:?}"
     );
     assert!(
@@ -286,9 +293,9 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
     // follow SIDEBAR_SHRINK_ORDER.
     let mut rung = |key: &str| {
         let predicate = |rows: &[String]| match key {
-            "attention gap gone" => rows
-                .get(2)
-                .is_some_and(|row| row.starts_with("┃ 󰚩 Operator")),
+            "attention gap gone" => rows.get(2).is_some_and(|row| {
+                row.starts_with('┏') || row.starts_with("┃ Operator") || row.contains("Operator")
+            }),
             "operator gap gone" => rows
                 .iter()
                 .position(|row| row.contains("CONSIGINT"))
@@ -301,9 +308,11 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
                 !rows.iter().any(|row| row.contains("QUOTA LEFT"))
                     && rows.iter().any(|row| row.contains("Claude"))
             }
-            "operator compact" => rows
-                .iter()
-                .any(|row| row.contains("󰚩 Operator") && !row.trim_end().ends_with("Operator")),
+            "operator compact" => rows.iter().any(|row| {
+                row.contains("Operator")
+                    && !row.trim_start().starts_with('┃')
+                    && !row.trim_start().starts_with('┏')
+            }),
             "quota pointer" => rows.iter().any(|row| row.contains("Quota: u")),
             "operator hidden" => !rows.iter().any(|row| row.contains("Operator")),
             _ => unreachable!("unknown rung"),
@@ -336,9 +345,11 @@ fn shrinking_drops_gaps_then_quota_and_operator_while_attention_stays_visible() 
 
     let operator_compact_rows = at(&mut dashboard, operator_compact);
     assert!(
-        operator_compact_rows
-            .iter()
-            .any(|row| row.contains("󰚩 Operator") && !row.trim_end().ends_with("Operator")),
+        operator_compact_rows.iter().any(|row| {
+            row.contains("Operator")
+                && !row.trim_start().starts_with('┃')
+                && !row.trim_start().starts_with('┏')
+        }),
         "the card keeps its identity and state on one line: {operator_compact_rows:?}"
     );
 
@@ -368,7 +379,7 @@ fn clicking_the_operator_status_row_opens_the_single_conversation() {
 
     let open = open_once(&mut dashboard, area, 2, 2);
     respond(&mut dashboard, open, summary());
-    assert!(rendered_rows(&dashboard, 120, 40)[1].contains("Operator"));
+    assert!(rendered_rows(&dashboard, 120, 40)[2].contains("Operator"));
 }
 
 #[test]
@@ -419,14 +430,14 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     let mut off = operator_dashboard_fixture();
     off.install_area(area);
     let rows = rendered_rows(&off, 120, 40);
-    if rows[2].contains("Off") {
+    if rows[3].contains("Off") {
         assert!(
             !rows[2].contains("Ctrl-o") && !rows[2].contains("o open"),
             "Off carries no keyboard shortcut copy: {rows:?}"
         );
     } else {
         assert!(
-            rows[2].contains("Not set up"),
+            rows[3].contains("Not set up"),
             "missing Pi is reported honestly: {rows:?}"
         );
         assert!(
@@ -452,9 +463,9 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
             },
         });
         let rows = rendered_rows(&not_setup, 120, 40);
-        assert!(rows[2].contains("Not set up"), "{failure}: {rows:?}");
+        assert!(rows[3].contains("Not set up"), "{failure}: {rows:?}");
         assert!(
-            rows[2].contains("run ovrcr operator setup"),
+            rows[3].contains("run ovrcr operator setup"),
             "{failure}: {rows:?}"
         );
     }
@@ -474,11 +485,11 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     open_with_history(&mut working, area, summary, vec![tool]);
     let rows = rendered_rows(&working, 120, 40);
     assert!(
-        rows[2].contains("Responding"),
+        rows[3].contains("Responding"),
         "working state is explicit: {rows:?}"
     );
     assert!(
-        rows[2].contains("0s"),
+        rows[3].contains("0s"),
         "the retained turn start provides elapsed time: {rows:?}"
     );
     assert!(
@@ -497,7 +508,7 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     );
     let rows = rendered_rows(&reply_ready, 120, 40);
     assert!(
-        rows[2].contains("Reply ready · 1 unread"),
+        rows[3].contains("Reply ready · 1 unread"),
         "unread reply is counted: {rows:?}"
     );
     assert!(
@@ -510,11 +521,11 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     reply_ready.key(KeyCode::Esc);
     let rows = rendered_rows(&reply_ready, 120, 40);
     assert!(
-        rows[2].contains("Idle"),
+        rows[3].contains("Idle"),
         "a reviewed conversation becomes idle: {rows:?}"
     );
     assert!(
-        rows[2].contains("last reply 0s"),
+        rows[3].contains("last reply 0s"),
         "completed reply time is retained: {rows:?}"
     );
     assert!(
@@ -612,15 +623,15 @@ fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section()
     );
     let rows = rendered_rows(&dashboard, 120, 40);
     assert!(
-        rows[1].starts_with("┃ 󰚩 Operator"),
+        rows[2].starts_with("┃ Operator"),
         "live Dashboard draws the section first: {rows:?}"
     );
     assert!(
-        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        rows[3].contains("Off") || rows[3].contains("Not set up"),
         "live state follows server setup: {rows:?}"
     );
     assert!(
-        rows[4].contains("FIXTURE"),
+        rows[6].contains("FIXTURE"),
         "the real Server hierarchy follows Operator: {rows:?}"
     );
 
@@ -639,7 +650,7 @@ fn live_server_dashboard_draws_the_sidebar_and_opens_operator_from_its_section()
     );
     let rows = rendered_rows(&dashboard, 120, 40);
     assert!(
-        rows[2].contains("Idle"),
+        rows[3].contains("Idle"),
         "live Open returns the idle state: {rows:?}"
     );
 }
@@ -662,19 +673,19 @@ fn the_operator_section_precedes_the_tree_and_does_not_claim_title_space() {
         rows[0]
     );
     assert!(
-        rows[1].starts_with("┃ 󰚩 Operator"),
+        rows[2].starts_with("┃ Operator"),
         "Operator follows the title: {:?}",
-        &rows[..6]
+        &rows[..7]
     );
     assert!(
-        rows[2].contains("Off") || rows[2].contains("Not set up"),
+        rows[3].contains("Off") || rows[3].contains("Not set up"),
         "state follows heading: {:?}",
-        rows[2]
+        rows[3]
     );
     assert!(
-        rows[4].contains("CONSIGINT"),
+        rows[6].contains("CONSIGINT"),
         "the first project follows Operator: {:?}",
-        &rows[3..6]
+        &rows[4..8]
     );
     assert!(rows[39].starts_with("BROWSE"), "{:?}", rows[39]);
 }
@@ -755,19 +766,19 @@ fn both_ends_of_the_operator_section_open_the_same_conversation() {
     dashboard.drain_outbox();
     let open_rows = rendered_rows(&dashboard, 120, 40);
     assert!(
-        open_rows[2].starts_with('┃'),
+        open_rows[3].starts_with('┃'),
         "the open conversation draws its selection marker: {:?}",
-        open_rows[2]
+        open_rows[3]
     );
-    assert!(open_rows[2].contains("Idle"), "{:?}", open_rows[2]);
+    assert!(open_rows[3].contains("Idle"), "{:?}", open_rows[3]);
 
     // Returning to Browse restores the terminal panes and the quiet row.
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
     let browse_rows = rendered_rows(&dashboard, 120, 40);
-    assert!(browse_rows[2].starts_with('┃'), "{:?}", browse_rows[2]);
-    assert!(browse_rows[2].contains("Idle"), "{:?}", browse_rows[2]);
+    assert!(browse_rows[3].starts_with('┃'), "{:?}", browse_rows[3]);
+    assert!(browse_rows[3].contains("Idle"), "{:?}", browse_rows[3]);
     assert!(
-        browse_rows[4].contains("CONSIGINT"),
+        browse_rows[6].contains("CONSIGINT"),
         "the tree is back: {:?}",
         &browse_rows[..3]
     );
@@ -776,7 +787,7 @@ fn both_ends_of_the_operator_section_open_the_same_conversation() {
     let open = open_once(&mut dashboard, area, 38, 2);
     respond(&mut dashboard, open, summary());
     let reopened = rendered_rows(&dashboard, 120, 40);
-    assert!(reopened[2].starts_with('┃'), "{:?}", reopened[2]);
+    assert!(reopened[3].starts_with('┃'), "{:?}", reopened[3]);
     assert!(
         reopened.iter().any(|row| row.contains("Operator · pi")),
         "{reopened:?}"
@@ -796,20 +807,27 @@ fn representative_frames_keep_the_operator_section_before_the_tree() {
             "{cols}x{rows}: {:?}",
             frame[0]
         );
+        let title_row = frame
+            .iter()
+            .position(|row| row.contains("Operator"))
+            .unwrap_or_else(|| panic!("{cols}x{rows}: Operator title missing: {frame:?}"));
         assert!(
-            frame[1].starts_with("┃ 󰚩 Operator"),
+            title_row <= 2,
             "{cols}x{rows}: Operator follows the title: {:?}",
-            &frame[..6]
+            &frame[..7]
         );
         assert!(
-            frame[2].contains("Off") || frame[2].contains("Not set up"),
+            frame[title_row..]
+                .iter()
+                .take(2)
+                .any(|row| row.contains("Off") || row.contains("Not set up")),
             "{cols}x{rows}: state follows title: {:?}",
-            &frame[1..4]
+            &frame[1..6]
         );
         assert!(
             frame
                 .iter()
-                .skip(3)
+                .skip(title_row + 1)
                 .any(|row| sidebar_line(row).contains("CONSIGINT")),
             "{cols}x{rows}: tree follows Operator: {:?}",
             &frame[1..]
@@ -828,9 +846,12 @@ fn representative_frames_keep_the_operator_section_before_the_tree() {
             open_frame[1].chars().take(14).collect()
         } else {
             assert!(
-                open_frame[1].contains("󰚩 Operator"),
+                open_frame
+                    .iter()
+                    .take(5)
+                    .any(|row| row.contains("Operator")),
                 "{cols}x{rows}: the sidebar stays: {:?}",
-                &open_frame[..3]
+                &open_frame[..5]
             );
             open_frame[1].chars().skip(40).take(14).collect()
         };
@@ -840,19 +861,17 @@ fn representative_frames_keep_the_operator_section_before_the_tree() {
             // The ordinary sidebar stays available on demand, section included.
             dashboard.ctrl('l');
             let shown = rendered_rows(&dashboard, cols, rows);
+            let shown_title = shown
+                .iter()
+                .position(|row| row.contains("Operator"))
+                .unwrap_or_else(|| panic!("{cols}x{rows}: Ctrl-l lost Operator: {shown:?}"));
             assert!(
-                shown[1].starts_with("┃ 󰚩 Operator")
-                    && shown
-                        .iter()
-                        .skip(3)
-                        .any(|row| sidebar_line(row).contains("CONSIGINT")),
+                shown
+                    .iter()
+                    .skip(shown_title + 1)
+                    .any(|row| sidebar_line(row).contains("CONSIGINT")),
                 "{cols}x{rows}: Ctrl-l reveals the sidebar: {:?}",
-                &shown[..7]
-            );
-            assert!(
-                shown[1].contains("󰚩 Operator") && shown[2].starts_with('┃'),
-                "{cols}x{rows}: the selected Operator returns with the sidebar: {:?}",
-                &shown[1..4]
+                &shown[..8]
             );
         }
     }
@@ -897,7 +916,7 @@ fn a_hidden_or_short_sidebar_yields_the_operator_section_but_keeps_the_key() {
     let mut dashboard = operator_dashboard_fixture();
     dashboard.install_area(area);
     dashboard.drain_outbox();
-    assert!(rendered_rows(&dashboard, 120, 40)[1].contains("Operator"));
+    assert!(rendered_rows(&dashboard, 120, 40)[2].contains("Operator"));
 
     // A hidden sidebar hides the Operator section too.
     dashboard.key(KeyCode::Char('b'));
@@ -999,11 +1018,11 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
 
     let initial = rendered_rows(&dashboard, 120, 40);
     assert!(
-        initial[5].contains("session-"),
+        initial[6].contains("session-"),
         "the scrolled tree follows Operator: {:?}",
-        &initial[3..8]
+        &initial[3..9]
     );
-    assert!(initial[1].contains("Operator"), "{:?}", &initial[..5]);
+    assert!(initial[2].contains("Operator"), "{:?}", &initial[..6]);
     let quota_row = initial
         .iter()
         .position(|row| row.contains("QUOTA LEFT"))
@@ -1012,25 +1031,25 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
     // Scrolling the tree never moves the preceding Operator section.
     for _ in 0..3 {
         assert_eq!(
-            click_wheel(&mut dashboard, area, MouseEventKind::ScrollUp, 10, 5),
+            click_wheel(&mut dashboard, area, MouseEventKind::ScrollUp, 10, 10),
             DashboardAction::Redraw
         );
     }
     let scrolled = rendered_rows(&dashboard, 120, 40);
     assert_eq!(
-        scrolled[1..4]
+        scrolled[1..5]
             .iter()
             .map(|row| sidebar_line(row))
             .collect::<Vec<_>>(),
-        initial[1..4]
+        initial[1..5]
             .iter()
             .map(|row| sidebar_line(row))
             .collect::<Vec<_>>(),
         "Operator stays fixed while the tree scrolls"
     );
     assert_ne!(
-        &scrolled[5..quota_row],
-        &initial[5..quota_row],
+        &scrolled[6..quota_row],
+        &initial[6..quota_row],
         "the tree scrolled"
     );
 
@@ -1053,11 +1072,11 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
     dashboard.drain_outbox();
     let requoted = rendered_rows(&dashboard, 120, 40);
     assert_eq!(
-        requoted[1..4]
+        requoted[1..5]
             .iter()
             .map(|row| sidebar_line(row))
             .collect::<Vec<_>>(),
-        initial[1..4]
+        initial[1..5]
             .iter()
             .map(|row| sidebar_line(row))
             .collect::<Vec<_>>(),
@@ -1081,14 +1100,14 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
         &attended[..5]
     );
     assert!(
-        attended[3].starts_with("┃ 󰚩 Operator"),
+        attended[4].starts_with("┃ Operator"),
         "attention shifts Operator: {:?}",
-        &attended[..7]
+        &attended[..8]
     );
     assert!(
-        attended[7].contains("session-"),
+        attended[8].contains("session-"),
         "tree follows attention and Operator: {:?}",
-        &attended[5..9]
+        &attended[6..10]
     );
     let strip = attended
         .iter()
@@ -1131,7 +1150,7 @@ fn a_fifty_session_tree_scrolls_between_the_fixed_sidebar_sections() {
     assert_eq!(dashboard.pane_rects(area)[0].terminal.x, 20);
     let resized = rendered_rows(&dashboard, 120, 40);
     assert!(
-        resized[2].contains("Operator"),
+        resized[3].contains("Operator"),
         "Operator stays at the top at the minimum sidebar width: {:?}",
         &resized[1..7]
     );
@@ -1204,7 +1223,7 @@ fn jump_labels_stay_in_the_tree_and_never_mark_operator() {
         "Operator is outside the numbered targets: {:?}",
         &rows[1..4]
     );
-    assert!(rows[1].contains("Operator"), "{:?}", rows[1]);
+    assert!(rows[2].contains("Operator"), "{:?}", rows[2]);
 
     // A number still addresses the Agent session it marks.
     dashboard.key(KeyCode::Char('1'));

@@ -1870,7 +1870,10 @@ mod tests {
             rects.attention.height, 0,
             "no counts means no attention row"
         );
-        assert_eq!(row.height, 2, "the section has title and status rows");
+        assert_eq!(
+            row.height, 4,
+            "the tile has top border, title, status and bottom border"
+        );
         assert_eq!(row.y, 1, "the section starts below the title");
         assert_eq!(
             rects.tree.y,
@@ -2927,8 +2930,8 @@ mod tests {
         let mut d = dashboard();
         opened(&mut d, busy());
         for (cols, rows, operator_height) in [
-            (140, 40, 2),
-            (100, 24, 2),
+            (140, 40, 4),
+            (100, 24, 4),
             (80, 24, 0),
             (60, 16, 0),
             (40, 12, 0),
@@ -3230,19 +3233,19 @@ mod tests {
             .draw(|frame| super::super::draw_dashboard_at(frame, &d, 0))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, rect.y)].symbol(), "┃");
+        assert_eq!(buffer[(0, rect.y)].symbol(), "┏");
         assert_eq!(
-            buffer[(0, rect.y)].bg,
+            buffer[(2, rect.y + 1)].bg,
             crate::theme::CRUST(),
-            "the closed card has its own surface"
+            "the closed tile has its own surface"
         );
         let title: String = (0..rect.width)
-            .map(|column| buffer[(column, rect.y)].symbol())
+            .map(|column| buffer[(column, rect.y + 1)].symbol())
             .collect();
         assert!(title.contains("Operator"), "{title:?}");
         assert!(
             !title.contains("OPERATOR") && !title.contains('─'),
-            "the card is not a project heading: {title:?}"
+            "the tile is not a project heading: {title:?}"
         );
 
         d = loaded(summary(), Vec::new());
@@ -3252,9 +3255,9 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer[(0, rect.y)].bg,
+            buffer[(2, rect.y + 1)].bg,
             crate::theme::SURFACE0(),
-            "the selected card uses the selection surface"
+            "the selected tile uses the selection surface"
         );
     }
 

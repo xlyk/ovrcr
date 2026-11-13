@@ -350,13 +350,22 @@ fn dock_rows(rows: &[String]) -> Vec<String> {
         .collect();
     let start = left
         .iter()
-        .position(|row| row.contains("󰚩 Operator"))
+        .position(|row| row.contains("Operator"))
         .expect("the Operator section is drawn");
-    let height = if left[start].trim_end().ends_with("Operator") {
-        2
-    } else {
-        1
-    };
+    let has_status = left.get(start + 1).is_some_and(|row| {
+        [
+            "Off",
+            "Idle",
+            "Responding",
+            "Stopping",
+            "Sending",
+            "Reply ready",
+            "Not set up",
+        ]
+        .iter()
+        .any(|word| row.contains(word))
+    });
+    let height = if has_status { 2 } else { 1 };
     left.into_iter().skip(start).take(height).collect()
 }
 
@@ -366,11 +375,7 @@ fn dock_row(rows: &[String]) -> String {
 
 fn dock_status_row(rows: &[String]) -> String {
     let rows = dock_rows(rows);
-    if rows[0].trim_end().ends_with("Operator") {
-        rows[1].clone()
-    } else {
-        rows[0].clone()
-    }
+    rows.get(1).cloned().unwrap_or_else(|| rows[0].clone())
 }
 
 #[test]
@@ -996,9 +1001,9 @@ fn operator_section_click_opens_the_singleton_from_its_right_edge() {
 
     let rows = rendered_rows(&dashboard, 120, 40);
     // Attention is empty, so Operator leads the sidebar before the tree.
-    assert!(rows[1].contains("Operator"), "{rows:?}");
-    assert!(rows[2].contains("Off"), "{rows:?}");
-    assert!(rows[4].contains("CONSIGINT"), "{rows:?}");
+    assert!(rows[2].contains("Operator"), "{rows:?}");
+    assert!(rows[3].contains("Off"), "{rows:?}");
+    assert!(rows[6].contains("CONSIGINT"), "{rows:?}");
     let screen = rows.join("\n");
     for removed in [
         "New Conversation",
@@ -2527,7 +2532,7 @@ fn operator_navigation_is_never_a_jump_target() {
     );
     let operator_row = held
         .iter()
-        .find(|row| row.contains("󰚩 Operator") && !row.contains("operator-agent"))
+        .find(|row| row.contains("Operator") && !row.contains("operator-agent"))
         .unwrap_or_else(|| panic!("the fixed Operator navigation row: {held:?}"));
     assert!(
         !operator_row.contains("[1]"),
