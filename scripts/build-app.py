@@ -31,27 +31,36 @@ def publish(stage, destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--install", action="store_true", help="publish to ~/Applications")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--run", action="store_true", help="refresh the development install and run the Swift app")
+    mode.add_argument("--install", action="store_true", help="publish to ~/Applications")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("OVRCR.app requires macOS")
 
     target = (ROOT / os.environ.get("CARGO_TARGET_DIR", "target")).resolve()
-    destination = (Path.home() / "Applications" if args.install else target) / "OVRCR.app"
+    destination = (Path.home() / "Applications" if args.install or args.run else target) / "OVRCR.app"
     package = ROOT / "native/app"
     env = os.environ.copy()
     clt = Path("/Library/Developer/CommandLineTools")
     if clt.is_dir():
         env.setdefault("DEVELOPER_DIR", str(clt))
-    subprocess.run(["cargo", "build", "--locked", "-p", "ovrcr", "--bin", "ovrcr", "--release",
-                    "--target-dir", target], cwd=ROOT, check=True)
-    cli = target / "release/ovrcr"
-    swift = ["xcrun", "swift", "build", "--package-path", package, "--configuration", "release",
-             "--only-use-versions-from-resolved-file"]
+    local_bridge = args.run and env.get("OVRCR_BRIDGE_LOCAL_DEVELOPMENT") == "1"
+    if args.run:
+        subprocess.run(["bash", ROOT / "scripts/prepare-run.sh"], cwd=ROOT, check=True)
+        cli = target / "debug/ovrcr"
+        payload = cli.parent / ("ovrcr-startup-local-development" if local_bridge else "ovrcr-startup")
+    else:
+        subprocess.run(["cargo", "build", "--locked", "-p", "ovrcr", "--bin", "ovrcr", "--release",
+                        "--target-dir", target], cwd=ROOT, check=True)
+        cli = target / "release/ovrcr"
+        payload = target / "startup-assets/ovrcr-startup"
+        subprocess.run(["sh", ROOT / "scripts/package-startup.sh", payload, cli], check=True)
+
+    swift = ["xcrun", "swift", "build", "--package-path", package, "--configuration",
+             "debug" if args.run else "release", "--only-use-versions-from-resolved-file"]
     subprocess.run([*swift, "--product", "OVRCRApp"], env=env, check=True)
     products = Path(subprocess.check_output([*swift, "--show-bin-path"], text=True, env=env).strip())
-    payload = target / "startup-assets/ovrcr-startup"
-    subprocess.run(["sh", ROOT / "scripts/package-startup.sh", payload, cli], check=True)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".ovrcr-build-", dir=destination.parent) as temp:
@@ -62,7 +71,7 @@ def main():
         resources.mkdir()
         shutil.copy2(products / "OVRCRApp", bin_dir / "OVRCRApp")
         shutil.copy2(cli, bin_dir / "ovrcr")
-        shutil.copytree(payload, contents / "lib/ovrcr")
+        shutil.copytree(payload, contents / "lib" / ("ovrcr-local-development" if local_bridge else "ovrcr"))
         for license_path in [ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md", package / "SwiftTerm-LICENSE"]:
             shutil.copy2(license_path, resources)
         with (contents / "Info.plist").open("wb") as info:
@@ -73,7 +82,10 @@ def main():
         subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)
         subprocess.run(["codesign", "--verify", app], check=True)
         publish(app, destination)
-    print(destination)
+    print(destination, flush=True)
+    if args.run:
+        executable = destination / "Contents/MacOS/OVRCRApp"
+        os.execl(executable, str(executable))
 
 
 if __name__ == "__main__":

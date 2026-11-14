@@ -48,7 +48,7 @@ just install-app
 open ~/Applications/OVRCR.app
 ```
 
-You can also open **OVRCR** from Finder or the Dock. For development, `just app` builds and opens the bundle in `target/`. The app starts or attaches to your regular OVRCR Server and shows your projects and sessions. Detach an open terminal Dashboard with `q` before switching. ⌘W hides the window. Reopening it from the Dock restores the Dashboard. ⌘Q detaches and leaves the Server and session processes running. **OVRCR → Settings…** (⌘,) saves the font and point size. Notifications use the optional Bridge.
+You can also open **OVRCR** from Finder or the Dock. For development, run `just run-app` from the checkout. It refreshes the same debug CLI, Bridge assets, and Cursor SDK as `just run`, installs the matching Swift app in `~/Applications`, and runs it until you quit. `just app` builds and opens a release bundle in `target/`. The app starts or attaches to your regular OVRCR Server and shows your projects and sessions. Detach an open terminal Dashboard with `q` before switching. ⌘W hides the window. Reopening it from the Dock restores the Dashboard. ⌘Q detaches and leaves the Server and session processes running. **OVRCR → Settings…** (⌘,) saves the font and point size. Notifications use the optional Bridge.
 
 ### CLI and full installation
 
