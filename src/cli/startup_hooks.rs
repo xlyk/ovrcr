@@ -288,7 +288,7 @@ fn refusal(provider: &str, path: &Path, error: &anyhow::Error) -> String {
 fn prompt(changes: &[Change]) -> String {
     let providers: Vec<&str> = changes.iter().map(|change| change.provider).collect();
     let description = if providers.contains(&"Antigravity hooks")
-        && !ovrcr::protocol::AgentProvider::Agy.supports_readiness()
+        || providers.contains(&"Antigravity settings")
     {
         format!(
             "Lets OVRCR show session activity for your {} sessions.\n",

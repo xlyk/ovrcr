@@ -580,11 +580,7 @@ pub(super) fn doctor(
         "capabilities": {
             "managed_launch": true,
             "activity": if configured { "configured_native_delivery_unverified" } else { "needs_setup" },
-            "readiness": if AgentProvider::Agy.supports_readiness() {
-                if configured { "observed" } else { "needs_setup" }
-            } else {
-                "unavailable_pending_native_evidence"
-            },
+            "readiness": if configured { "observed" } else { "needs_setup" },
             "input_requests": "unavailable",
             "questions": "unavailable",
             "recovery": "unverified",
