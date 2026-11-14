@@ -12,7 +12,11 @@
 | Can assistive software read the shell? | The first build exposed only window controls. The revised host publishes visible rows on demand as a labelled AppKit text area. The accessibility value contained `NATIVE_AX_OK` after the shell printed it. [Original accessibility tree](https://github.com/xlyk/ovrcr/blob/1c26b31700b2809d9f7e237834f25369dcfa370c/experiments/swiftterm/evidence/zoom-shell-ax.txt) · [Revised tree](https://github.com/xlyk/ovrcr/blob/1c26b31700b2809d9f7e237834f25369dcfa370c/experiments/swiftterm/evidence/accessible-shell-ax.txt) |
 | Who owns the sessions when the window goes away? | Cmd-W hid the window and reopening preserved a shell variable. In the lifecycle test, a second Dashboard was refused while the app was attached. Quitting reaped the Dashboard child, both shell PIDs and run IDs survived, a real CLI Dashboard attached and detached, and the app reopened on the same Server. Teardown removed the fixture. [Lifecycle transcript](https://github.com/xlyk/ovrcr/blob/1c26b31700b2809d9f7e237834f25369dcfa370c/experiments/swiftterm/evidence/lifecycle.txt) |
 
-The prototype uses the macOS system monospace font, which resolved to SF Mono at 13 pt on the test Mac. Cmd-plus, Cmd-minus, and Cmd-0 adjust or reset the size for the current run. Choosing another font family currently requires changing the Swift host. [Font controls](https://github.com/xlyk/ovrcr/blob/1c26b31700b2809d9f7e237834f25369dcfa370c/experiments/swiftterm/host/Sources/SwiftTermPrototype/AppMain.swift#L136)
+## Font settings
+
+Open **SwiftTermPrototype → Settings…** (⌘,) to choose an installed monospaced font and a size from 8 to 32 pt. **Apply** reflows the current Dashboard and saves both preferences for future launches. The default on the test Mac was SF Mono at 13 pt. Cmd-plus and Cmd-minus zoom temporarily, and Cmd-0 restores the configured size. [Prototype instructions](https://github.com/xlyk/ovrcr/blob/46c2cd79c497cc80c6f99b1d404ee5febb6de8dd/experiments/swiftterm/README.md)
+
+On the test Mac, applying JetBrainsMono Nerd Font Mono at 18 pt reflowed the same running shell. Zoom Out followed by Cmd-0 restored its grid. After quitting and reopening the app, Settings showed the same family and size. The focused Swift check also covered fallback to System Monospaced when the saved family was unavailable. [Settings after relaunch](https://github.com/xlyk/ovrcr/blob/46c2cd79c497cc80c6f99b1d404ee5febb6de8dd/experiments/swiftterm/evidence/font-settings.jpg) · [Accessibility values](https://github.com/xlyk/ovrcr/blob/46c2cd79c497cc80c6f99b1d404ee5febb6de8dd/experiments/swiftterm/evidence/font-settings-ax.txt) · [Font settings check](https://github.com/xlyk/ovrcr/blob/46c2cd79c497cc80c6f99b1d404ee5febb6de8dd/experiments/swiftterm/host/Tests/SwiftTermPrototypeTests/TerminalFontSettingsTests.swift)
 
 ## Reproduce the build
 
@@ -20,12 +24,12 @@ From a clone of this repository, open the tested revision in a separate worktree
 
 ```sh
 git fetch origin codex/swiftterm-prototype
-git worktree add --detach ../ovrcr-swiftterm-try 1c26b31700b2809d9f7e237834f25369dcfa370c
+git worktree add --detach ../ovrcr-swiftterm-try 46c2cd79c497cc80c6f99b1d404ee5febb6de8dd
 cd ../ovrcr-swiftterm-try
 just swiftterm-prototype
 ```
 
-The launcher builds the Mac app and starts a private Server and disposable shell sessions. After Cmd-Q, type `reopen` in the launcher to return to the fixture or `teardown` to remove it. The recorded run used arm64 macOS 26.5.2 and SwiftTerm `d4f52faaae413b2e69c728ad79cd225cdbebc042`. Standalone Command Line Tools Swift 6.3.3 built that pin. Xcode’s Swift 6.2.4 stopped in SwiftTerm’s Powerline renderer. [Prototype runbook](https://github.com/xlyk/ovrcr/blob/1c26b31700b2809d9f7e237834f25369dcfa370c/experiments/swiftterm/README.md)
+The launcher builds the Mac app and starts a private Server and disposable shell sessions. After Cmd-Q, type `reopen` in the launcher to return to the fixture or `teardown` to remove it. The recorded run used arm64 macOS 26.5.2 and SwiftTerm `d4f52faaae413b2e69c728ad79cd225cdbebc042`. Standalone Command Line Tools Swift 6.3.3 built that pin. Xcode’s Swift 6.2.4 stopped in SwiftTerm’s Powerline renderer. [Prototype runbook](https://github.com/xlyk/ovrcr/blob/46c2cd79c497cc80c6f99b1d404ee5febb6de8dd/experiments/swiftterm/README.md)
 
 ## What decides adoption
 
