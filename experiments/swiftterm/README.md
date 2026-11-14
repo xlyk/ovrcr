@@ -10,6 +10,8 @@ just swiftterm-prototype
 
 Start with a shell selected. Press Return to type into it and Ctrl-G to return to Browse. Use Ctrl-O in Browse to open an Operator Quick draft. Shift-Return adds a line. Use local fixture text for clipboard checks.
 
+Open **SwiftTermPrototype → Settings…** (⌘,) to choose an installed monospaced font and a size from 8 to 32 pt. **Apply** reflows the current Dashboard and saves both choices in the app’s macOS preferences for future launches. **Cancel** discards edits. The default is System Monospaced at the macOS system font size. If a saved font is removed, the app uses System Monospaced at the saved size. View → Zoom In and Zoom Out are temporary. ⌘0 returns to the saved size.
+
 Shift-double-click a word to select it in SwiftTerm, then press Cmd-C. Option-drag selects a block of cells. An ordinary click goes to the Dashboard. For Rust’s own Copy mode, press `[` in Browse, move to the first cell, press `v`, extend the selection, and press `y`. Cmd-V pastes into the focused Dashboard control.
 
 After Cmd-Q, the launcher accepts `reopen` to attach the app to the same fixture or `teardown` to stop the private Server and remove its workspace. Closing runner stdin also tears down the fixture. The `SWIFTERM_FIXTURE_READY=` JSON record includes the private socket, bundle, CLI, and process identities for a terminal reattachment.
@@ -18,7 +20,7 @@ The runner honors `DEVELOPER_DIR`; when unset, it selects `/Library/Developer/Co
 
 | Try it | Look for |
 |---|---|
-| Run `stty size`, change the font size, and run it again. | The grid reflows and the shell reports its new rows and columns. Cmd-0 restores the original font size. |
+| Run `stty size`, change the font size, and run it again. | The grid reflows and the shell reports its new rows and columns. Cmd-0 restores the configured size. |
 | Press `v` in Browse to split a second pane. Run `for n in 1 2 3 4 5; do echo "$n"; sleep 1; done` in one shell while editing in the other. | The input stays in the selected pane while the other pane redraws. |
 | Open Quick and compose mid-line using a Japanese or Korean input source. Cancel once, then commit once. | The marked text and candidate window follow the caret. The adjacent text stays visible and the committed phrase appears exactly once. |
 | Use Cmd-W during shell output, reopen the window from the Dock, then quit with Cmd-Q. | Reopening the hidden window preserves its Dashboard. After quit, another Dashboard can attach to the runner’s fixture and use the same shells. |
@@ -29,6 +31,7 @@ The runner honors `DEVELOPER_DIR`; when unset, it selects `/Library/Developer/Co
 
 | Path | Result |
 |---|---|
+| Font settings | JetBrainsMono Nerd Font Mono at 18 pt reflowed the live shell and survived quitting and reopening the app. Zoom Out followed by ⌘0 restored the configured grid. [Settings after relaunch](evidence/font-settings.jpg) · [Accessibility labels and values](evidence/font-settings-ax.txt) |
 | Shell, font and layout | Cmd-plus changed the selected shell’s `stty size` from 39×85 to 37×71. Ctrl-C interrupted `sleep`, and the next command printed `INT_OK`. The fixture rendered CJK, an accented character, emoji, and box borders. Cmd-0 restored the original font and the Dashboard split into two panes. [Zoomed shell](evidence/zoom-shell.png) |
 | Input while another pane redraws | A multiline paste stayed in Quick. Shift-Return inserted a third line, and U.S. Option-E followed by E composed `é`. Return submitted one visible entry. The isolated Operator then reported that Pi was unavailable. [Draft during shell output](evidence/quick-during-output.png) · [Submitted entry](evidence/quick-submit.png) |
 | Dashboard Copy and History | Copied `CLIP_OK` from Dashboard Copy with `y`, then pasted that exact token into Quick using Cmd-V. Page Up opened the second shell’s frozen History. [Clipboard round trip](evidence/copy-roundtrip.png) · [History](evidence/history-key.png) |

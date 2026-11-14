@@ -1,0 +1,15 @@
+Window: "Unknown", App: SwiftTermPrototype.
+0 sheet Description: alert, Secondary Actions: Raise
+	1 text Terminal Settings Font
+	2 pop up button Description: Font family, Value: JetBrainsMono Nerd Font Mono
+	3 text Size
+	4 pop up button Description: Font size, Value: 18 pt
+	5 button Cancel, ID: action-button-2
+	6 button Apply, ID: action-button-1
+7 menu bar
+	8 SwiftTermPrototype
+	9 Edit
+	10 View
+	11 Window
+
+The focused UI element is 0 sheet Description: alert, Secondary Actions: Raise

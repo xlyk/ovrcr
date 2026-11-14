@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
     private var dashboardStarted = false
     private var terminationRequested = false
     private var pendingRuntimeAlert: (title: String, message: String)?
-    private var fontSize = NSFont.systemFontSize
+    private var fontSettings = TerminalFontSettings()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
             return
         }
 
-        let view = AccessibleTerminalView(frame: .zero)
+        let view = AccessibleTerminalView(frame: .zero, font: fontSettings.font(at: fontSettings.size), options: .default)
         view.optionAsMetaKey = false
         view.optionAsMetaKeyForFunctionalKeys = true
         view.pressAndHoldShowsAccentMenu = false
@@ -133,17 +133,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         presentPendingRuntimeAlert()
     }
 
+    @objc private func showSettings(_ sender: Any?) {
+        guard let window else { return }
+        showTerminalWindow()
+        guard window.attachedSheet == nil else { return }
+
+        let family = NSPopUpButton()
+        family.addItem(withTitle: "System Monospaced")
+        let families = NSFontManager.shared.availableFontFamilies.filter {
+            TerminalFontSettings.fixedPitchFont(family: $0, size: fontSettings.size) != nil
+        }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        family.addItems(withTitles: families)
+        if let selected = fontSettings.family { family.selectItem(withTitle: selected) }
+        family.setAccessibilityLabel("Font family")
+
+        let size = NSPopUpButton()
+        for points in TerminalFontSettings.sizes {
+            size.addItem(withTitle: "\(points) pt")
+            size.lastItem?.tag = points
+        }
+        size.selectItem(withTag: fontSettings.size)
+        size.setAccessibilityLabel("Font size")
+
+        let grid = NSGridView(views: [
+            [NSTextField(labelWithString: "Font"), family],
+            [NSTextField(labelWithString: "Size"), size],
+        ])
+        grid.column(at: 0).xPlacement = .trailing
+        grid.setFrameSize(grid.fittingSize)
+        let sheet = NSAlert()
+        sheet.messageText = "Terminal Settings"
+        sheet.accessoryView = grid
+        sheet.addButton(withTitle: "Apply")
+        sheet.addButton(withTitle: "Cancel")
+        sheet.beginSheetModal(for: window) { [self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            fontSettings.family = family.indexOfSelectedItem == 0 ? nil : family.titleOfSelectedItem
+            fontSettings.size = size.selectedTag()
+            fontSettings.save()
+            setFontSize(fontSettings.size)
+        }
+    }
+
     @objc private func zoomIn(_ sender: Any?) {
-        setFontSize(min(fontSize + 1, 32))
+        guard let terminalView else { return }
+        setFontSize(min(Int(terminalView.font.pointSize) + 1, TerminalFontSettings.sizes.upperBound))
     }
 
     @objc private func zoomOut(_ sender: Any?) {
-        setFontSize(max(fontSize - 1, 8))
+        guard let terminalView else { return }
+        setFontSize(max(Int(terminalView.font.pointSize) - 1, TerminalFontSettings.sizes.lowerBound))
     }
 
     @objc private func zoomReset(_ sender: Any?) {
-        fontSize = NSFont.systemFontSize
-        terminalView?.resetFontSize()
+        setFontSize(fontSettings.size)
     }
 
     private func installMenu(for terminalView: LocalProcessTerminalView, window: NSWindow) {
@@ -151,6 +194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "SwiftTerm Prototype")
+        appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",").targeted(self))
+        appMenu.addItem(.separator())
         let quit = NSMenuItem(
             title: "Quit SwiftTerm Prototype",
             action: #selector(NSApplication.terminate(_:)),
@@ -218,10 +263,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         dashboardStarted = true
     }
 
-    private func setFontSize(_ size: CGFloat) {
-        guard size != fontSize else { return }
-        fontSize = size
-        terminalView?.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    private func setFontSize(_ size: Int) {
+        let font = fontSettings.font(at: size)
+        if terminalView?.font != font { terminalView?.font = font }
     }
 
     private func showLaunchError(_ error: Error) {
