@@ -935,9 +935,9 @@ global switch. `ovrcr agent run` does the same when its native argv is bare, inc
 a `[[agents]]` preset that is itself a bare `agent run`. A preset that already names one
 of those flags is stored and launched as written; a raw command that does not go through
 `agent run` is not rewritten. Antigravity (`agy`) adds `--dangerously-skip-permissions` to managed interactive sessions by default. An explicit native mode or sandbox choice takes precedence. Grok, Hermes, and Cursor are not given a flag. This
-replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi and Oh My Pi
-deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
-never Confirmed settling). Claude/Codex Input-request support remains unavailable
+replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi, Oh My Pi, and Antigravity
+deliver Ready/Unread on their supported readiness paths (Claude and Antigravity
+Ready reports have Observed quality; they do not certify settling). Claude/Codex Input-request support remains unavailable
 until their dependent tickets. Missing hook configuration shows a one-time footer
 note such as `Claude and Codex status off — :connect to set up`, never an error;
 the palette's **Connect agent status**, listed until it succeeds, opens a

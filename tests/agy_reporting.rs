@@ -3,7 +3,9 @@
 mod live;
 
 use live::{Live, PROJECT};
-use ovrcr::protocol::{AgentActivity, Request, Response, SessionId, SessionSummary, TerminalSize};
+use ovrcr::protocol::{
+    AgentActivity, AgentProvider, Request, Response, SessionId, SessionSummary, TerminalSize,
+};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Instant;
@@ -165,6 +167,107 @@ read -r ignored
         std::fs::read_to_string(fixture.root.path().join("agy-reopened")).unwrap(),
         format!("{FIRST}\n")
     );
+}
+
+#[test]
+fn successful_stop_then_idle_creates_unread_through_the_managed_server_path() {
+    let fixture = Live::idle().bounded();
+    let db_dir = fixture
+        .root
+        .path()
+        .join(".gemini/antigravity-cli/conversations");
+    std::fs::create_dir_all(&db_dir).unwrap();
+    let db = rusqlite::Connection::open(db_dir.join(format!("{FIRST}.db"))).unwrap();
+    db.execute("CREATE TABLE trajectory_meta(cascade_id TEXT)", [])
+        .unwrap();
+    db.execute(
+        "INSERT INTO trajectory_meta(cascade_id) VALUES (?1)",
+        [FIRST],
+    )
+    .unwrap();
+
+    let native = fixture.root.path().join("agy");
+    let script = format!(
+        r#"#!/bin/sh
+printf '%s\n' '{{"conversation_id":"{FIRST}","agent_state":"working"}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+IFS= read -r event
+if [ "$event" = finish ]; then
+    printf '%s\n' '{{"conversationId":"{FIRST}","executionNum":0,"terminationReason":"NO_TOOL_CALL","fullyIdle":true,"continuationActive":false,"error":null}}' | "$OVRCR_TEST_AGY_CLI" report agy --stdin > "$HOME/stop-result.json"
+    printf '%s\n' '{{"conversation_id":"{FIRST}","agent_state":"idle"}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+    touch "$HOME/agy-ready-finished"
+fi
+read -r ignored
+"#
+    );
+    std::fs::write(&native, script).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    fixture.start_binary_env(&[("OVRCR_TEST_AGY_CLI", fixture.executable.as_os_str())]);
+    fixture.ready("feature/agy");
+    let session = create(&fixture, &native, &[]);
+    let busy = wait(&fixture, session, |row| {
+        row.activity == AgentActivity::Busy
+            && row.recovery.as_ref().is_some_and(|recovery| {
+                recovery.attached && recovery.conversation.as_deref() == Some(FIRST)
+            })
+    });
+
+    let mut dashboard = ovrcr::protocol::connect_server(&fixture.socket).unwrap();
+    assert!(matches!(
+        ovrcr::protocol::client::request(&mut dashboard, 1, Request::DashboardHello).unwrap(),
+        Response::Hierarchy(_)
+    ));
+    let selected = ovrcr::protocol::client::request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session,
+            size: TerminalSize { rows: 24, cols: 80 },
+        },
+    )
+    .unwrap();
+    assert!(
+        !matches!(selected, Response::Error { .. }),
+        "select failed: {selected:?}"
+    );
+    let input = ovrcr::protocol::client::request(
+        &mut dashboard,
+        3,
+        Request::Input {
+            session,
+            run: busy.run,
+            bytes: b"finish\n".to_vec(),
+        },
+    )
+    .unwrap();
+    assert!(
+        !matches!(input, Response::Error { .. }),
+        "input failed: {input:?}"
+    );
+
+    let marker = fixture.root.path().join("agy-ready-finished");
+    let end = Instant::now() + live::wait_deadline();
+    while !marker.is_file() {
+        assert!(
+            Instant::now() < end,
+            "Agy Stop and idle callbacks did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        std::fs::read(fixture.root.path().join("stop-result.json")).unwrap(),
+        b"{\"decision\":\"allow\"}\n"
+    );
+
+    let ready = wait(&fixture, session, |row| {
+        row.activity == AgentActivity::ResponseReady && row.unread.is_some()
+    });
+    let unread = ready
+        .unread
+        .expect("successful Agy response becomes unread");
+    assert_eq!(unread.binding.provider, AgentProvider::Agy);
+    assert_eq!(unread.binding.conversation, FIRST);
+    assert_eq!(unread.turn.as_deref(), Some("agy-cycle-1"));
+    assert!(unread.activity_revision > 0);
 }
 
 #[test]

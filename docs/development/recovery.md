@@ -1,6 +1,6 @@
 # Provider conversation recovery
 
-This contract enables #117, #118 and #119 to develop against the shared reopen path. Claude, Codex, Pi and Oh My Pi have installed recovery adapters. Grok retains a history reference for the title path only (see [Grok history retention](#grok-history-retention)). Other providers remain unavailable; a reference or reporting binding alone never advertises support. Codex and Pi/OMP native acceptance is still required independently in #128 and #129/#130.
+This contract enables #117, #118 and #119 to develop against the shared reopen path. Antigravity, Claude, Codex, Pi and Oh My Pi have installed recovery adapters. Grok retains a history reference for the title path only (see [Grok history retention](#grok-history-retention)). Other providers remain unavailable; a reference or reporting binding alone never advertises support. Codex and Pi/OMP native acceptance is still required independently in #128 and #129/#130.
 
 ## Antigravity CLI
 
@@ -11,6 +11,10 @@ Validate the matching `trajectory_meta.cascade_id` before constructing the manag
 can point at a different application directory. The native CLI's `--continue` also
 selects by workspace, which cannot distinguish concurrent sessions. See
 [Antigravity CLI](../agy-harness.md) for the launch contract.
+
+Opening the registry for writing upgrades it to schema 34. Schema 33 rows carry
+forward unchanged. Older OVRCR binaries refuse the newer registry before reading
+conversation references they cannot decode.
 
 ## Shared boundary
 
