@@ -10,6 +10,11 @@ use super::{AppResult, RuntimeError};
 
 pub(super) fn run_report(command: ReportCommand) -> AppResult<()> {
     match command {
+        ReportCommand::Agy { stdin } => super::agy::run_stop(stdin),
+        ReportCommand::AgyStatusline {
+            stdin_json,
+            render_command,
+        } => super::agy::run_statusline(stdin_json, render_command),
         ReportCommand::Hermes { stdin: _ } => {
             if std::env::var_os("OVRCR_AGENT_SOCKET").is_some() {
                 let deadline = Instant::now() + Duration::from_secs(2);

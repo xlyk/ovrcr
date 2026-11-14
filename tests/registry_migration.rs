@@ -670,13 +670,13 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     let connection = Connection::open(&database).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut version: i64 = 0;
-    while version != 33 && std::time::Instant::now() < deadline {
+    while version != 34 && std::time::Instant::now() < deadline {
         version = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(version, 33, "the application upgrades schema 28 to 33");
+    assert_eq!(version, 34, "the application upgrades schema 28 to 34");
     let columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
         .unwrap()

@@ -805,6 +805,13 @@ mod tests {
                 ReporterHealth::Connected,
                 true,
             ),
+            (
+                AgentProvider::Agy,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                true,
+            ),
         ] {
             let binding = AgentBinding {
                 provider,

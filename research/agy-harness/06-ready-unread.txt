@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ ✓ 1 ready                             │gui-consigint-auth-handoff  agy:Gemini 3.8 Flash (Low)  Ready · unread reply · 2m                                    pid 28830
+                                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┏━━━━━━━━━
+		3 text (settable) 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+		4 text (settable)  ✓ 1 ready                             │gui-consigint-auth-handoff  agy:Gemini 3.8 Flash (Low)  Ready · unread reply · 2m                                    pid 28830
+		5 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable) ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│
+		7 text (settable) ┃ Operator                            ┃│
+		8 text (settable) ┃· Off                                ┃│      ▄▀▀▄
+		9 text (settable) ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│     ▀▀▀▀▀▀
+		10 text (settable)                                        │    ▀▀▀▀▀▀▀▀
+		11 text (settable)  CONSIGINT ────────────────────────────│   ▄▀▀    ▀▀▄
+		12 text (settable)   󰘬 main                          root │  ▄▀▀      ▀▀▄
+		13 text (settable)      $ local                           │
+		14 text (settable)   󰘬 gui-consigint-auth-handoff         │  Antigravity CLI 1.5.9
+		15 text (settable)      $ local                           │  Gemini API key
+		16 text (settable)  [1] - review auth handoff             │  Gemini 3.8 Flash (Low)
+		17 text (settable)        └ grok:4.6                      │  /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-TugLOz/workspaces/consigint/gui-consigint-auth-handoff
+		18 text (settable) ▌[2] ✓ gui-consigint-auth-handoff      │
+		19 text (settable) ▌      └ agy:Gemini 3.8 Flash (Low)    │────────────────────────────────────────────────────────────
+		20 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │> Give the AGY_NATIVE_MARKER for this Dashboard session.
+		21 text (settable)      $ local                           │
+		22 text (settable)  [3] - implement lifecycle cleanup     │  AGY_NATIVE_MARKER
+		23 text (settable)        └ claude:sonnet-4               │
+		24 text (settable)  [4] - review websocket shutdown       │────────────────────────────────────────────────────────────
+		25 text (settable)        └ codex:gpt-5.4                 │> HOLD_FOR_INTERRUPT tell me the prior marker
+		26 text (settable)  [5] - plan snapshot restore           │
+		27 text (settable)        └ pi:grok-4.6                   │  AGY_NATIVE_CONTINUITY
+		28 text (settable)                                        │
+		29 text (settable)  SPACELIFT-AGENT ──────────────────────│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		30 text (settable)   󰘬 main                          root │>
+		31 text (settable)      $ local                           │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		32 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│? for shortcuts                                                                                         Gemini 3.8 Flash · low
+		33 text (settable)      $ local                           │
+		34 text (settable)  [6] - build pipeline progress         │
+		35 text (settable)        └ claude:opus-4                 │
+		36 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │
+		37 text (settable)      $ local                           │
+		38 text (settable)  [7] - review scope quality            │
+		39 text (settable)        └ codex:gpt-5.4                 │
+		40 text (settable)                                        │
+		41 text (settable)                                        │
+		42 text (settable)                                        │
+		43 text (settable)                                        │
+		44 text (settable)                                        │
+		45 text (settable)                                        │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)  RESOURCES ────────────────────────────│
+		63 text (settable)  cpu       ━━━━━━────────────────  26% │
+		64 text (settable)  mem       ━━━━━━━━━━━━────── 32.7/48G │
+		65 text (settable)                                        │
+		66 text (settable)  QUOTA LEFT ───────────────────────────│
+		67 text (settable) Claude · not signed in                 │
+		68 text (settable) Codex · unavailable · retry 1m         │
+		69 text (settable) Grok · not signed in · retry 7m        │
+		70 text (settable) Cursor · usage off                     │
+		71 text (settable)                                        │
+		72 text (settable) 1–9 jump  Ctrl-g/Esc cancel
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+ ✓ 1 ready                             │gui-consigint-auth-handoff  agy:Gemini 3.8 Flash (Low)  Ready · unread reply · 2m                                    pid 28830
+                                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┏━━━━━━━━━

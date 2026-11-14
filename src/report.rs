@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod agy;
 pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
@@ -12,6 +13,8 @@ pub mod omp;
 pub mod pi;
 pub mod reporter;
 pub mod versions;
+
+pub use agy::{send_agy_statusline, send_agy_stop};
 
 use crate::protocol::client;
 use crate::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response};

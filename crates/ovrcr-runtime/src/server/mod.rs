@@ -2869,6 +2869,7 @@ impl ServerState {
             .lock()
             .records()
             .filter(|record| {
+                let agy_db;
                 let history = match record.conversation.as_ref() {
                     Some(ovrcr_protocol::ConversationReference::Claude(reference)) => {
                         Some(&reference.history)
@@ -2882,6 +2883,13 @@ impl ServerState {
                     }
                     Some(ovrcr_protocol::ConversationReference::Grok(reference)) => {
                         Some(&reference.history)
+                    }
+                    Some(ovrcr_protocol::ConversationReference::Agy(reference)) => {
+                        agy_db = crate::agy_recovery::database_path(
+                            &reference.config_dir,
+                            &reference.conversation,
+                        );
+                        Some(&agy_db)
                     }
                     Some(ovrcr_protocol::ConversationReference::Hermes(reference)) => {
                         Some(&reference.state_db)

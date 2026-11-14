@@ -1,5 +1,7 @@
 # Agent reporting
 
+[Antigravity CLI](agy-harness.md) reports through its native foreground status line and Stop hook.
+
 OVRCR does not guess what an agent is doing. A provider hook reports activity and
 context occupancy explicitly. The dashboard shows the last accepted activity;
 context occupancy is available through session inspection.
@@ -118,12 +120,14 @@ and `ovrcr terminal list --json` carries it in `agent.activity`. The state is re
 until the next activity report, including across reconnects. Reporter health and process
 exit remain separate; Ready does not acknowledge unread output or imply known usage or cost.
 
-Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi, Claude)
+Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi, Claude,
+Antigravity)
 retain one unread identity for its latest root Ready observation. [Mark-reviewed](dashboard.md#unread-responses)
 is explicit and checks that identity before clearing it. Selecting or viewing a
 terminal, new Busy activity, and reporter loss do not clear unread state. The server
 retains it through dashboard reconnect but does not persist it across server death.
-Manual activity reports and other providers do not create unread observations.
+Manual activity reports and providers without a readiness adapter do not create
+unread observations.
 
 Reports without `--sequence` are accepted in arrival order; the first such report
 selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects

@@ -12,6 +12,7 @@ pub fn supported(provider: AgentProvider) -> bool {
             | AgentProvider::Omp
             | AgentProvider::Codex
             | AgentProvider::Hermes
+            | AgentProvider::Agy
     )
 }
 
@@ -43,10 +44,19 @@ pub fn unavailable(
         Some(ConversationReference::Codex(reference)) if reference.history.is_none() => Some(
             "Codex conversation has no verified native history file; resume is unavailable".into(),
         ),
+        Some(ConversationReference::Agy(reference))
+            if !crate::agy_recovery::is_exact_identity(&reference.conversation) =>
+        {
+            Some("Antigravity recovery requires an exact canonical UUID".into())
+        }
         Some(reference) if reference.provider() == provider => None,
         Some(_) => Some("Retained conversation provider does not match this session".into()),
         None if provider == AgentProvider::Hermes => Some(
             "Native resume is not available for hermes until a managed launch reports a session id"
+                .into(),
+        ),
+        None if provider == AgentProvider::Agy => Some(
+            "Native resume is not available for agy until a managed status line reports a conversation id"
                 .into(),
         ),
         None => None,
@@ -65,6 +75,7 @@ pub fn validate(reference: &ConversationReference) -> Result<()> {
         }
         ConversationReference::Grok(reference) => crate::grok_recovery::validate(reference),
         ConversationReference::Hermes(reference) => crate::hermes_recovery::validate(reference),
+        ConversationReference::Agy(reference) => crate::agy_recovery::validate(reference),
     }
 }
 
@@ -84,6 +95,7 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
         // `unavailable` refused it above; a Grok reference names a title source, not a resume.
         ConversationReference::Grok(_) => bail!("Native resume is not available for grok"),
         ConversationReference::Hermes(reference) => crate::hermes_recovery::resume_argv(reference),
+        ConversationReference::Agy(reference) => crate::agy_recovery::resume_argv(reference),
     }
 }
 

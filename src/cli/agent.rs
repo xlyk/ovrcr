@@ -30,6 +30,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             return match provider.as_str() {
                 "cursor-cloud" => super::cursor_cloud::setup(settings.as_deref()),
                 "cursor-agent" => super::cursor::setup(settings.as_deref()),
+                "agy" => super::agy::setup(settings.as_deref()),
                 "hermes" => super::hermes::setup(settings.as_deref()),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::setup(settings.as_deref()),
@@ -49,6 +50,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             return match provider.as_str() {
                 "cursor-cloud" => super::cursor_cloud::doctor(settings.as_deref()),
                 "cursor-agent" => super::cursor::doctor(settings.as_deref(), session, &executable),
+                "agy" => super::agy::doctor(settings.as_deref(), session, &executable),
                 "hermes" => super::hermes::doctor(settings.as_deref(), session, &executable),
                 "grok" => Err(grok_needs_no_setup()),
                 "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
@@ -149,6 +151,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             return None;
         }
         Some(match name.as_str() {
+            "agy" => ovrcr::report::agy::receiver(lease, native_argv),
             "cursor-agent" => ovrcr::report::cursor::receiver(lease, native_argv),
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
             "pi" => ovrcr::report::pi::receiver_with_environment(lease, native_argv, native_environment),

@@ -1,4 +1,5 @@
 pub mod agent_runner;
+pub mod agy_recovery;
 pub(crate) mod catalog_process;
 pub mod claude_delegation;
 pub mod claude_recovery;

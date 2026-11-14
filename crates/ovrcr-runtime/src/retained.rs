@@ -315,7 +315,15 @@ impl RetainedSession {
         if matches!(self.metadata.kind, SessionKind::Terminal) {
             return None;
         }
-        let conversation = self.conversation.as_ref()?.identity();
+        let reference = self.conversation.as_ref()?;
+        let conversation = reference.identity();
+        if let ovrcr_protocol::ConversationReference::Agy(native) = reference {
+            return native.title.clone().filter(|_| {
+                self.subjects
+                    .get(conversation)
+                    .is_none_or(|subject| !subject.dismissed)
+            });
+        }
         self.subjects
             .get(conversation)
             .filter(|subject| !subject.dismissed)
@@ -592,29 +600,49 @@ impl SessionStore {
         run: SessionRunId,
         reference: Option<&ovrcr_protocol::ConversationReference>,
     ) -> Result<()> {
-        let record = self.records.get(&id).context("session not found")?;
-        if record.run != run {
-            bail!("session run changed");
-        }
-        if record.identity_invalid && reference.is_some() {
-            bail!("Recovery identity was invalidated");
-        }
+        let previous_conversation = {
+            let record = self.records.get(&id).context("session not found")?;
+            if record.run != run {
+                bail!("session run changed");
+            }
+            if record.identity_invalid && reference.is_some() {
+                bail!("Recovery identity was invalidated");
+            }
+            record.conversation.clone()
+        };
         if reference.is_none() {
             // Fail closed in the running owner even if the durable write fails.
             // The caller receives failure and must retry until it is committed.
             self.records.get_mut(&id).unwrap().identity_invalid = true;
         }
-        let encoded = reference.map(serde_json::to_string).transpose()?;
+        let retained_reference = reference.cloned().map(|mut next| {
+            if let (
+                Some(ovrcr_protocol::ConversationReference::Agy(current)),
+                ovrcr_protocol::ConversationReference::Agy(next),
+            ) = (previous_conversation.as_ref(), &mut next)
+                && current.conversation == next.conversation
+                && current.config_dir == next.config_dir
+                && next.title.is_none()
+            {
+                next.title = current.title.clone();
+            }
+            next
+        });
+        let identity_invalid = retained_reference.is_none();
+        let encoded = retained_reference
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
         self.connection.execute(
             "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)
              ON CONFLICT(session) DO UPDATE SET reference = COALESCE(excluded.reference, reference), invalid = excluded.invalid",
-            params![sql_integer(id.0)?, encoded, reference.is_none()],
+            params![sql_integer(id.0)?, encoded, identity_invalid],
         )?;
         let record = self.records.get_mut(&id).unwrap();
-        if let Some(reference) = reference {
-            record.conversation = Some(reference.clone());
+        if let Some(reference) = retained_reference {
+            record.conversation = Some(reference);
         }
-        record.identity_invalid = reference.is_none();
+        record.identity_invalid = identity_invalid;
         Ok(())
     }
 
@@ -1844,6 +1872,121 @@ mod tests {
                 application_title: None,
             })
             .unwrap()
+    }
+
+    fn agy_record(store: &mut SessionStore, name: &str) -> RetainedSession {
+        store
+            .create(SessionMetadata {
+                scope: ovrcr_protocol::SessionScope::Workspace,
+                project: "p".into(),
+                workspace: "w".into(),
+                name: name.into(),
+                label: "agy".into(),
+                cwd: PathBuf::from("/tmp"),
+                kind: SessionKind::Agent { name: "agy".into() },
+                pinned_title: None,
+                application_title: None,
+            })
+            .unwrap()
+    }
+
+    fn agy_reference(
+        conversation: &str,
+        title: Option<&str>,
+    ) -> ovrcr_protocol::ConversationReference {
+        ovrcr_protocol::ConversationReference::Agy(ovrcr_protocol::AgyConversation {
+            conversation: conversation.into(),
+            executable: "/bin/agy".into(),
+            config_dir: "/home/user/.gemini/antigravity-cli".into(),
+            options: vec!["--dangerously-skip-permissions".into()],
+            title: title.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn agy_native_title_survives_same_conversation_resume_without_title() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("instance");
+        let mut store = SessionStore::open(&config).unwrap();
+        let record = agy_record(&mut store, "agy-session");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(
+                record.id,
+                run,
+                Some(&agy_reference(
+                    "01a08e5c-7480-7052-9964-9224aadebef0",
+                    Some("Native title"),
+                )),
+            )
+            .unwrap();
+
+        store
+            .update_titles(record.id, run, 1, Some("Manual title".into()), None)
+            .unwrap();
+        store
+            .retain_conversation(
+                record.id,
+                run,
+                Some(&agy_reference("01a08e5c-7480-7052-9964-9224aadebef0", None)),
+            )
+            .unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Manual title"),
+            "manual titles continue to take precedence"
+        );
+        store.update_titles(record.id, run, 2, None, None).unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Native title"),
+            "a title-less resume keeps the previous native title"
+        );
+        drop(store);
+
+        let mut store = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title().as_deref(),
+            Some("Native title"),
+            "the preserved native title survives restart"
+        );
+        store
+            .retain_conversation(
+                record.id,
+                run,
+                Some(&agy_reference("01a08e94-0deb-76c3-a2b5-540c4874a53f", None)),
+            )
+            .unwrap();
+        assert_eq!(
+            store.get(record.id).unwrap().effective_title(),
+            None,
+            "a title does not carry across conversation identities"
+        );
+    }
+
+    #[test]
+    fn agy_native_title_does_not_carry_across_profiles_with_reused_identity() {
+        let mut store = SessionStore::in_memory();
+        let record = agy_record(&mut store, "agy-profile-session");
+        let run = store.begin_run(record.id, record.run).unwrap().run;
+        store
+            .retain_conversation(
+                record.id,
+                run,
+                Some(&agy_reference(
+                    "01a08e5c-7480-7052-9964-9224aadebef0",
+                    Some("First profile title"),
+                )),
+            )
+            .unwrap();
+        let mut other_profile = agy_reference("01a08e5c-7480-7052-9964-9224aadebef0", None);
+        if let ovrcr_protocol::ConversationReference::Agy(reference) = &mut other_profile {
+            reference.config_dir = "/home/other/.gemini/antigravity-cli".into();
+        }
+        store
+            .retain_conversation(record.id, run, Some(&other_profile))
+            .unwrap();
+        assert_eq!(store.get(record.id).unwrap().effective_title(), None);
     }
 
     fn pi_reference(conversation: &str) -> ovrcr_protocol::ConversationReference {

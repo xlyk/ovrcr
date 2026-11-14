@@ -218,6 +218,24 @@ fn spawn_test_shell() -> Arc<Session> {
     session
 }
 
+#[test]
+fn initial_prompt_uses_native_grammar_and_keeps_agy_text_in_one_argument() {
+    let prompt = "-start here\nthen treat --mode=plan as prompt text";
+    assert_eq!(
+        initial_prompt_args(&SessionKind::Agent { name: "agy".into() }, prompt,),
+        vec![OsString::from(format!("--prompt-interactive={prompt}"))]
+    );
+    assert_eq!(
+        initial_prompt_args(
+            &SessionKind::Agent {
+                name: "claude".into(),
+            },
+            prompt,
+        ),
+        vec![OsString::from("--"), OsString::from(prompt)]
+    );
+}
+
 fn dispatch_test_events(
     session: Arc<Session>,
     rx: crate::server::ReportingReceiver<SessionEvent>,

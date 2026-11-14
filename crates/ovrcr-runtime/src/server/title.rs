@@ -795,6 +795,8 @@ impl Candidate {
             return None;
         }
         match reference {
+            // The authenticated foreground callback already supplies the native title.
+            ConversationReference::Agy(_) => None,
             ConversationReference::Claude(reference) => Some(Self {
                 provider: AgentProvider::Claude,
                 conversation: reference.conversation.clone(),
@@ -878,7 +880,10 @@ fn excerpt(candidate: &Candidate) -> Result<Option<String>> {
         AgentProvider::Hermes => {
             return hermes_title(&candidate.history, &candidate.conversation);
         }
-        AgentProvider::Cursor | AgentProvider::CursorCloud | AgentProvider::Operator => {
+        AgentProvider::Cursor
+        | AgentProvider::CursorCloud
+        | AgentProvider::Operator
+        | AgentProvider::Agy => {
             return Ok(None);
         }
     }

@@ -1353,7 +1353,7 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
     // The Server sends native navigation context before its settings reading.
     // Require it on macOS; elsewhere a hello without context keeps the direct
     // settings path. A present context must identify this fixture's Server/CLI.
-    let message = next_skipping_quota(&mut stream);
+    let message = next_greeting_frame(&mut stream);
     #[cfg(target_os = "macos")]
     assert!(
         matches!(
@@ -1383,13 +1383,11 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
                 .expect("hash the fixture CLI for the received Bridge context")
             });
             assert_eq!(context.callback_executable_sha256, expected_callback_sha256);
-            next_skipping_quota(&mut stream)
+            next_greeting_frame(&mut stream)
         }
         message => message,
     };
-    // The Server's settings reading follows every hello. Quota snapshots and
-    // recorded quota transitions may interleave it and the Select responses,
-    // so skip those telemetry messages while retaining the expected ordering.
+    // Background collectors can publish notices between the greeting and Select replies.
     match message {
         ServerMessage::Event(ovrcr::protocol::ServerEvent::SettingsChanged(_)) => {}
         message => panic!("expected the settings reading after hello: {message:?}"),
@@ -1405,7 +1403,7 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         },
     )
     .unwrap();
-    match next_skipping_quota(&mut stream) {
+    match next_response_frame(&mut stream) {
         ServerMessage::Response {
             request_id: 2,
             response: Response::Screen {
@@ -1414,7 +1412,7 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => assert_eq!(selected, session),
         response => panic!("unexpected select response: {response:?}"),
     }
-    match next_skipping_quota(&mut stream) {
+    match next_response_frame(&mut stream) {
         ServerMessage::Response {
             request_id: 2,
             response: Response::Ok,
@@ -1424,7 +1422,19 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
     stream
 }
 
-fn next_skipping_quota(stream: &mut UnixStream) -> ServerMessage {
+// A Select can race ordinary Dashboard updates. Keep every response so a
+// wrong request ID, wrong response type or out-of-order acknowledgement fails.
+fn next_response_frame(stream: &mut UnixStream) -> ServerMessage {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if let message @ ServerMessage::Response { .. } = read_frame(stream).unwrap() {
+            return message;
+        }
+    }
+    panic!("no Select response before the fixture deadline");
+}
+
+fn next_greeting_frame(stream: &mut UnixStream) -> ServerMessage {
     use ovrcr::protocol::{Event, EventComponent, ServerEvent};
 
     loop {
@@ -1434,13 +1444,18 @@ fn next_skipping_quota(stream: &mut UnixStream) -> ServerMessage {
                 component: EventComponent::Quota,
                 ..
             })) => {}
+            ServerMessage::Event(ServerEvent::Recorded(Event {
+                component: EventComponent::Titles,
+                message,
+                ..
+            })) if message == "no title_model" => {}
             message => return message,
         }
     }
 }
 
 #[test]
-fn dashboard_selection_frames_skip_only_quota_telemetry() {
+fn dashboard_selection_frames_skip_background_collector_notices() {
     use ovrcr::protocol::{
         BridgeContext, Event, EventComponent, ServerEvent, SessionRunId, SettingsReport,
     };
@@ -1489,8 +1504,27 @@ fn dashboard_selection_frames_skip_only_quota_telemetry() {
         )
         .unwrap();
         if index >= 2 {
-            // Force the CI ordering: a collector finishes after the settings
-            // reading, before the Screen response or final acknowledgement.
+            // Collector completion can publish hierarchy and status updates while Select is in flight.
+            write_frame(
+                &mut writer,
+                &ServerMessage::Event(ServerEvent::HierarchyChanged(
+                    ovrcr::protocol::HierarchySnapshot {
+                        usage: Default::default(),
+                        projects: Vec::new(),
+                    },
+                )),
+            )
+            .unwrap();
+            write_frame(
+                &mut writer,
+                &ServerMessage::Event(ServerEvent::Recorded(Event {
+                    time_unix_ms: 1,
+                    component: EventComponent::Titles,
+                    subject: Some("7".into()),
+                    message: "no title_model".into(),
+                })),
+            )
+            .unwrap();
             write_frame(
                 &mut writer,
                 &ServerMessage::Event(ServerEvent::Recorded(Event {
@@ -1504,13 +1538,18 @@ fn dashboard_selection_frames_skip_only_quota_telemetry() {
         }
         write_frame(&mut writer, message).unwrap();
     }
-    for message in expected {
-        assert_eq!(next_skipping_quota(&mut reader), message);
+    for (index, message) in expected.into_iter().enumerate() {
+        let received = if index < 2 {
+            next_greeting_frame(&mut reader)
+        } else {
+            next_response_frame(&mut reader)
+        };
+        assert_eq!(received, message);
     }
 }
 
 #[test]
-fn quota_filter_preserves_other_events_and_responses() {
+fn selection_greeting_filter_preserves_other_events_and_responses() {
     use ovrcr::protocol::{Event, EventComponent, HierarchySnapshot, ServerEvent, SessionRunId};
 
     let (mut writer, mut reader) = UnixStream::pair().unwrap();
@@ -1557,7 +1596,7 @@ fn quota_filter_preserves_other_events_and_responses() {
         write_frame(&mut writer, message).unwrap();
     }
     for message in expected {
-        assert_eq!(next_skipping_quota(&mut reader), message);
+        assert_eq!(next_greeting_frame(&mut reader), message);
     }
 }
 

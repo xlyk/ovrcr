@@ -194,3 +194,7 @@ is read as unleased completion without rewriting stored messages. Protocol 85
 asynchronous turn admission and leased completion/abort semantics. The singleton
 Operator has a dedicated slot outside the 50 live Workspace session limit.
 See the [runtime reference](operator.md) for watch admission and rollback.
+
+Schema version 34 adds the Antigravity conversation reference. The upgrade
+preserves existing reference bytes and fences older readers. Protocol 87 adds
+the managed provider and exact conversation reference to the wire format.

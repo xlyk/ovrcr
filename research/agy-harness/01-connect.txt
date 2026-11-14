@@ -1,0 +1,32 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:
+ OVRCR · startup
+
+  Connect agent status
+  Lets OVRCR show when your Claude, Codex and Antigravity sessions are working, need you or are done.
+  Adds or updates OVRCR hooks in:
+    /private/tmp/ovrcr-agy-native-01/home/.claude/settings.json
+    /private/tmp/ovrcr-agy-native-01/home/.codex/config.toml
+    /private/tmp/ovrcr-agy-native-01/home/.gemini/config/hooks.json
+  Adds or updates the Antigravity status line in:
+    /private/tmp/ovrcr-agy-
+		3 text (settable)  OVRCR · startup
+		4 text (settable)   Connect agent status
+		5 text (settable)   Lets OVRCR show when your Claude, Codex and Antigravity sessions are working, need you or are done.
+		6 text (settable)   Adds or updates OVRCR hooks in:
+		7 text (settable)     /private/tmp/ovrcr-agy-native-01/home/.claude/settings.json
+		8 text (settable)     /private/tmp/ovrcr-agy-native-01/home/.codex/config.toml
+		9 text (settable)     /private/tmp/ovrcr-agy-native-01/home/.gemini/config/hooks.json
+		10 text (settable)   Adds or updates the Antigravity status line in:
+		11 text (settable)     /private/tmp/ovrcr-agy-native-01/home/.gemini/antigravity-cli/settings.json
+		12 text (settable)   Your other settings, status line and approvals stay as they are.
+		13 text (settable)   Codex asks you to trust the new hooks the next time it starts.
+		14 text (settable)   [y] Connect  [n] Not now  ›
+	15 close button
+	16 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	17 minimize button
+	18 text OVRCR GUI
+19 menu bar
+	20 OVRCR GUI

@@ -1,0 +1,88 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│consigint / gui-consigint-auth-handoff
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off
+		3 text (settable) 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+		4 text (settable) ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│consigint / gui-consigint-auth-handoff
+		5 text (settable) ┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable) ┃· Off                                ┃│/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-TugLOz/workspaces/consigint/gui-consigint-auth-handoff
+		7 text (settable) ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│
+		8 text (settable)                                        │Sessions
+		9 text (settable)  CONSIGINT ────────────────────────────│  $ local (#4)                     0m
+		10 text (settable)   󰘬 main                          root │  - review auth handoff  grok:4.6  0m
+		11 text (settable)      $ local                           │
+		12 text (settable) ▌ 󰘬 gui-consigint-auth-handoff         │  j        open local (#4)
+		13 text (settable)      $ local                           │  n        new agent session
+		14 text (settable)      - review auth handoff    grok:4.6 │  w        create branch
+		15 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │  Space w  more
+		16 text (settable)      $ local                           │
+		17 text (settable)      - implement lifecycle cleanup     │
+		18 text (settable)      - review websocket shutdown       │
+		19 text (settable)      - plan snapshot restore        pi │
+		20 text (settable)                                        │
+		21 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		22 text (settable)   󰘬 main                          root │
+		23 text (settable)      $ local                           │
+		24 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│
+		25 text (settable)      $ local                           │
+		26 text (settable)      - build pipeline progress  claude │
+		27 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │
+		28 text (settable)      $ local                           │
+		29 text (settable)      - review scope quality      codex │       ┌ New agent session ───────────────────────────────────────────────────┐
+		30 text (settable)                                        │       │Project                                                               │
+		31 text (settable)                                        │       │  consigint                                                           │
+		32 text (settable)                                        │       │Branch                                                                │
+		33 text (settable)                                        │       │  gui-consigint-auth-handoff                                          │
+		34 text (settable)                                        │       │consigint / gui-consigint-auth-handoff                                │
+		35 text (settable)                                        │       │1 running agent(s) share this checkout: review auth handoff           │
+		36 text (settable)                                        │       │Agent harness                       Model                             │
+		37 text (settable)                                        │       │  agy                               › gemini-3.8-flash-low▏           │
+		38 text (settable)                                        │       │Prompt (optional)  ┌─────────────────────────────────────────────────┐│
+		39 text (settable)                                        │       │  What should the a│  › gemini-3.8-flash-low · Gemini 3.8 Flash (Low)││
+		40 text (settable)                                        │       │                   └─────────────────────────────────────────────────┘│
+		41 text (settable)                                        │       │↑/↓ choose · type filter · Enter accept                               │
+		42 text (settable)                                        │       │Tab fields · Alt-Enter start · Esc close picker                       │
+		43 text (settable)                                        │       │Ctrl-U clear filter                                                   │
+		44 text (settable)                                        │       │[Start agent] [Cancel]                                                │
+		45 text (settable)                                        │       └──────────────────────────────────────────────────────────────────────┘
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)  RESOURCES ────────────────────────────│
+		63 text (settable)  cpu       ━━━━━━━━━─────────────  41% │
+		64 text (settable)  mem       ━━━━━━━━━━━━━───── 33.7/48G │
+		65 text (settable)                                        │
+		66 text (settable)  QUOTA LEFT ───────────────────────────│
+		67 text (settable) Claude · not signed in                 │
+		68 text (settable) Codex · checking                       │
+		69 text (settable) Grok · not signed in · retry 10m       │
+		70 text (settable) Cursor · usage off                     │
+		71 text (settable)                                        │
+		72 text (settable) BROWSE  Space Menu  : Commands  ? Help  m Recent activity
+	73 close button
+	74 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	75 minimize button
+	76 text OVRCR GUI
+77 menu bar
+	78 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│consigint / gui-consigint-auth-handoff
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off

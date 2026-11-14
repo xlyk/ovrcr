@@ -1,10 +1,11 @@
-//! Default auto-trust flags for managed Claude, Codex, Pi, and Oh My Pi launches.
+//! Default auto-trust flags for managed agent launches.
 //!
 //! Callers append one flag only when argv has none of the permission, approve,
 //! auto-trust, or dangerously-* family. An existing flag in that family wins.
 //!
 //! Codex defaults to `--approve-for-me` (Codex CLI >=0.155). Obsolete `--full-auto`
 //! remains in the family presence check so a saved argv never gets a second flag.
+use crate::is_exact_agy_conversation_id;
 use std::ffi::OsString;
 
 /// The flag a managed launch adds when the caller omitted the permission family.
@@ -14,6 +15,7 @@ pub fn default_auto_trust_flag(provider: &str) -> Option<&'static str> {
         "codex" => Some("--approve-for-me"),
         "pi" => Some("--approve"),
         "omp" => Some("--auto-approve"),
+        "agy" => Some("--dangerously-skip-permissions"),
         _ => None,
     }
 }
@@ -24,7 +26,7 @@ pub fn default_auto_trust_flag(provider: &str) -> Option<&'static str> {
 /// that family. `--yolo` is Oh My Pi's alias of `--auto-approve`. Codex keeps obsolete
 /// `--full-auto` in the family so old saved argv does not also receive `--approve-for-me`.
 fn auto_trust_family_present(provider: &str, argv: &[OsString]) -> bool {
-    argv.iter().any(|arg| {
+    argv.iter().take_while(|arg| *arg != "--").any(|arg| {
         let Some(text) = arg.to_str() else {
             return false;
         };
@@ -47,6 +49,118 @@ fn auto_trust_family_present(provider: &str, argv: &[OsString]) -> bool {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgyTrustDecision {
+    Unsupported,
+    ExplicitPermissionChoice,
+    AddDefault,
+}
+
+fn agy_trust_decision(argv: &[OsString]) -> AgyTrustDecision {
+    if argv.is_empty() || argv.iter().any(|arg| arg.to_str().is_none()) {
+        return AgyTrustDecision::Unsupported;
+    }
+
+    let mut args = argv.iter().skip(1);
+    let mut conversation_seen = false;
+    let mut prompt_seen = false;
+    let mut explicit_permission_choice = false;
+    while let Some(arg) = args.next().and_then(|arg| arg.to_str()) {
+        if arg == "--" {
+            // A trailing terminator is harmless, but Agy has no positional-prompt
+            // grammar. Never reinterpret or trust trailing positional arguments.
+            if args.next().is_some() {
+                return AgyTrustDecision::Unsupported;
+            }
+            return if explicit_permission_choice {
+                AgyTrustDecision::ExplicitPermissionChoice
+            } else {
+                AgyTrustDecision::AddDefault
+            };
+        }
+        let (name, inline_value) = arg
+            .split_once('=')
+            .map_or((arg, None), |(name, value)| (name, Some(value)));
+        match name {
+            // Consume values so names such as "models" are not mistaken for
+            // subcommands or options.
+            "--conversation" => {
+                if conversation_seen {
+                    return AgyTrustDecision::Unsupported;
+                }
+                conversation_seen = true;
+                let Some(value) = agy_option_value(inline_value, &mut args, false) else {
+                    return AgyTrustDecision::Unsupported;
+                };
+                if !is_exact_agy_conversation_id(value) {
+                    return AgyTrustDecision::Unsupported;
+                }
+            }
+            "--prompt-interactive" | "-i" => {
+                if prompt_seen {
+                    return AgyTrustDecision::Unsupported;
+                }
+                prompt_seen = true;
+                if agy_option_value(inline_value, &mut args, true).is_none() {
+                    return AgyTrustDecision::Unsupported;
+                }
+            }
+            "--add-dir" | "--agent" | "--effort" | "--model" => {
+                if agy_option_value(inline_value, &mut args, false).is_none() {
+                    return AgyTrustDecision::Unsupported;
+                }
+            }
+            "--continue" | "-c" | "--new-project" => {
+                if inline_value.is_some() {
+                    return AgyTrustDecision::Unsupported;
+                }
+            }
+            // Explicit permission choices suppress the managed bypass default.
+            "--mode" => {
+                let Some(value) = agy_option_value(inline_value, &mut args, false) else {
+                    return AgyTrustDecision::Unsupported;
+                };
+                if !matches!(value, "accept-edits" | "auto" | "plan") {
+                    return AgyTrustDecision::Unsupported;
+                }
+                explicit_permission_choice = true;
+            }
+            "--sandbox" => {
+                if !matches!(inline_value, None | Some("true" | "false")) {
+                    return AgyTrustDecision::Unsupported;
+                }
+                explicit_permission_choice = true;
+            }
+            "--dangerously-skip-permissions" => {
+                if inline_value.is_some() {
+                    return AgyTrustDecision::Unsupported;
+                }
+                explicit_permission_choice = true;
+            }
+            // A positional token selects a subcommand or an unsupported mode.
+            // Unknown flags also fail closed instead of gaining trust.
+            _ => return AgyTrustDecision::Unsupported,
+        }
+    }
+    if explicit_permission_choice {
+        AgyTrustDecision::ExplicitPermissionChoice
+    } else {
+        AgyTrustDecision::AddDefault
+    }
+}
+
+fn agy_option_value<'a>(
+    inline_value: Option<&'a str>,
+    args: &mut impl Iterator<Item = &'a OsString>,
+    allow_leading_hyphen: bool,
+) -> Option<&'a str> {
+    let value = match inline_value {
+        Some(value) => value,
+        None => args.next()?.to_str()?,
+    };
+    (!value.is_empty() && (allow_leading_hyphen || !value.starts_with('-'))).then_some(value)
+}
+
 /// Append [`default_auto_trust_flag`] unless that family is already present.
 ///
 /// The flag is inserted before a `--` prompt separator so admission still sees
@@ -55,13 +169,24 @@ pub fn apply_default_auto_trust(provider: &str, argv: &mut Vec<OsString>) {
     let Some(flag) = default_auto_trust_flag(provider) else {
         return;
     };
-    if argv.is_empty()
-        || argv.iter().any(|arg| arg.to_str().is_none())
-        || auto_trust_family_present(provider, argv)
-    {
+    if argv.is_empty() || argv.iter().any(|arg| arg.to_str().is_none()) {
+        return;
+    }
+    if provider == "agy" {
+        if agy_trust_decision(argv) != AgyTrustDecision::AddDefault {
+            return;
+        }
+    } else if auto_trust_family_present(provider, argv) {
         return;
     }
     let flag = OsString::from(flag);
+    if provider == "agy" {
+        // Insert after the executable. Agy accepts options before or after native
+        // selectors, and this avoids mistaking an opaque prompt value of `--` for
+        // a top-level separator.
+        argv.insert(1, flag);
+        return;
+    }
     if let Some(index) = argv.iter().position(|arg| arg == "--") {
         argv.insert(index, flag);
     } else {
@@ -84,6 +209,7 @@ mod tests {
             ("codex", "--approve-for-me"),
             ("pi", "--approve"),
             ("omp", "--auto-approve"),
+            ("agy", "--dangerously-skip-permissions"),
         ];
         for (provider, flag) in cases {
             let mut argv = args(&["/opt/bin/agent"]);
@@ -121,6 +247,12 @@ mod tests {
             ("omp", &["omp", "--auto-approve"]),
             ("omp", &["omp", "--yolo"]),
             ("omp", &["omp", "--approval-mode", "always-ask"]),
+            ("agy", &["agy", "--mode", "plan"]),
+            ("agy", &["agy", "--mode", "accept-edits"]),
+            ("agy", &["agy", "--mode=auto"]),
+            ("agy", &["agy", "--sandbox"]),
+            ("agy", &["agy", "--sandbox=false"]),
+            ("agy", &["agy", "--dangerously-skip-permissions"]),
         ];
         for (provider, original) in cases {
             let mut argv = args(original);
@@ -167,6 +299,111 @@ mod tests {
             claude,
             args(&["claude", "-a", "--dangerously-skip-permissions"])
         );
+    }
+
+    #[test]
+    fn agy_trust_defaults_only_to_interactive_launches_and_prompt_text_is_not_an_option() {
+        let mut interactive = args(&["agy", "--model", "gemini-3.8-flash-low"]);
+        apply_default_auto_trust("agy", &mut interactive);
+        assert_eq!(
+            interactive,
+            args(&[
+                "agy",
+                "--dangerously-skip-permissions",
+                "--model",
+                "gemini-3.8-flash-low"
+            ])
+        );
+
+        for argv in [
+            args(&["agy", "-p", "hello"]),
+            args(&["agy", "--prompt=hello"]),
+            args(&["agy", "models"]),
+            args(&["agy", "acp"]),
+            args(&["agy", "agent"]),
+            args(&["agy", "agents"]),
+            args(&["agy", "changelog"]),
+            args(&["agy", "help"]),
+            args(&["agy", "install"]),
+            args(&["agy", "mcp"]),
+            args(&["agy", "mic-serve"]),
+            args(&["agy", "plugin"]),
+            args(&["agy", "plugins"]),
+            args(&["agy", "remote-control", "status"]),
+            args(&["agy", "update"]),
+            args(&["agy", "--help"]),
+            args(&["agy", "--version"]),
+            args(&["agy", "--remote-agent"]),
+            args(&["agy", "--remote-control"]),
+            args(&["agy", "--settings"]),
+            args(&["agy", "--settings", "settings.json"]),
+            args(&["agy", "--settings=settings.json"]),
+            args(&["agy", "--project", "local"]),
+            args(&[
+                "agy",
+                "--conversation",
+                "01a08e5c-7480-7052-9964-9224aadebef0",
+                "--conversation",
+                "01a08e5c-7480-7052-9964-9224aadebef0",
+            ]),
+            args(&[
+                "agy",
+                "--prompt-interactive=one",
+                "--prompt-interactive=two",
+            ]),
+            args(&["agy", "--prompt-interactive="]),
+            args(&["agy", "--conversation", "not-a-uuid"]),
+            args(&["agy", "--unknown-option"]),
+        ] {
+            let mut argv = argv.clone();
+            let original = argv.clone();
+            apply_default_auto_trust("agy", &mut argv);
+            assert_eq!(argv, original);
+        }
+
+        let mut option_value_named_like_a_subcommand = args(&["agy", "--model", "models"]);
+        apply_default_auto_trust("agy", &mut option_value_named_like_a_subcommand);
+        assert_eq!(
+            option_value_named_like_a_subcommand,
+            args(&["agy", "--dangerously-skip-permissions", "--model", "models"])
+        );
+
+        let mut exact_resume =
+            args(&["agy", "--conversation=01a08e5c-7480-7052-9964-9224aadebef0"]);
+        apply_default_auto_trust("agy", &mut exact_resume);
+        assert_eq!(
+            exact_resume,
+            args(&[
+                "agy",
+                "--dangerously-skip-permissions",
+                "--conversation=01a08e5c-7480-7052-9964-9224aadebef0",
+            ])
+        );
+
+        let mut standalone_separator = args(&["agy", "--"]);
+        apply_default_auto_trust("agy", &mut standalone_separator);
+        assert_eq!(
+            standalone_separator,
+            args(&["agy", "--dangerously-skip-permissions", "--"])
+        );
+
+        for prompt in [
+            args(&["agy", "--prompt-interactive", "--"]),
+            args(&["agy", "--prompt-interactive=--"]),
+            args(&["agy", "--prompt-interactive=--mode=plan"]),
+            args(&["agy", "-i", "--mode"]),
+        ] {
+            let mut argv = prompt.clone();
+            apply_default_auto_trust("agy", &mut argv);
+            let mut expected = prompt;
+            expected.insert(1, "--dangerously-skip-permissions".into());
+            assert_eq!(argv, expected);
+        }
+
+        let mut unsupported_positionals = args(&["agy", "--", "--mode=plan"]);
+        let original = unsupported_positionals.clone();
+        apply_default_auto_trust("agy", &mut unsupported_positionals);
+        assert_eq!(unsupported_positionals, original);
     }
 
     #[test]

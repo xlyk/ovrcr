@@ -165,8 +165,6 @@ fn operator_cli_is_the_native_profile_entry_point() {
 
 #[test]
 fn an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly() {
-    let event_log = PathBuf::from("/private/tmp/ovrcr-468-async-wakeup-fake-pi-retry.log");
-    let _ = std::fs::remove_file(&event_log);
     let mut scenario = Scenario::new();
     scenario.steps(vec![
         Step::WatchStatus(1),
@@ -177,7 +175,6 @@ fn an_idle_async_wakeup_is_journaled_once_on_the_leased_run_and_retires_cleanly(
             "I reviewed the completed session.",
         ),
     ]);
-    scenario.set("log", event_log.display().to_string());
     let (live, fake, mut client) = fixture(&scenario);
     let opened = client.open();
     let first = client.submit_turn(&opened, "start watcher");
@@ -971,8 +968,6 @@ fn leased_failure_with_native_changes_rolls_back_and_keeps_the_partial_journal()
 fn leased_tool_timeout_rolls_back_before_accepting_an_async_wakeup() {
     let marker_dir = tempfile::tempdir().unwrap();
     let release_wakeup = marker_dir.path().join("release-wakeup");
-    let fake_log = PathBuf::from("/private/tmp/ovrcr-469-tool-timeout-fake-pi.jsonl");
-    let _ = std::fs::remove_file(&fake_log);
     let mut scenario = Scenario::new();
     scenario.prompt_steps(vec![
         vec![
@@ -1004,7 +999,6 @@ fn leased_tool_timeout_rolls_back_before_accepting_an_async_wakeup() {
             "release_file": release_wakeup.display().to_string(),
         }),
     );
-    scenario.set("log", fake_log.display().to_string());
     let (live, fake, mut client) = fixture(&scenario);
     let opened = client.open();
     let first = client.submit_turn(&opened, "create timeout rollback checkpoint");

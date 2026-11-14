@@ -378,19 +378,15 @@ impl InitialPromptLaunchRequest {
         {
             return Err("initial-prompt launch requires a selected agent harness".into());
         }
-        if !self.prompt.trim().is_empty()
-            && (!matches!(self.launch.session.kind, SessionKind::Agent { ref name } if matches!(name.as_str(), "claude" | "pi" | "codex" | "omp"))
-                || !matches!(
-                    self.launch.session.label.as_deref(),
-                    Some("claude" | "pi" | "codex" | "omp")
-                )
-                || !matches!(
-                    (&self.launch.session.kind, self.launch.session.label.as_deref()),
-                    (SessionKind::Agent { name }, Some(label)) if name == label
-                ))
-        {
+        let supported_prompt_harness = matches!(
+            (&self.launch.session.kind, self.launch.session.label.as_deref()),
+            (SessionKind::Agent { name }, Some(label))
+                if name == label
+                    && matches!(name.as_str(), "claude" | "pi" | "codex" | "omp" | "agy")
+        );
+        if !self.prompt.trim().is_empty() && !supported_prompt_harness {
             return Err(
-                "initial prompts require a detected Claude Code, Pi, Codex, or Oh My Pi launcher"
+                "initial prompts require a matching detected Claude Code, Pi, Codex, Oh My Pi, or Antigravity CLI launcher"
                     .into(),
             );
         }
@@ -1091,6 +1087,15 @@ mod wire_snapshot {
         request
             .validate()
             .expect("OMP accepts a nonblank Initial prompt request");
+
+        request.launch.session.name = "agy".into();
+        request.launch.session.label = Some("agy".into());
+        request.launch.session.argv =
+            vec!["ovrcr".into(), "agent".into(), "run".into(), "agy".into()];
+        request.launch.session.kind = SessionKind::Agent { name: "agy".into() };
+        request
+            .validate()
+            .expect("Antigravity CLI accepts a nonblank Initial prompt request");
 
         request.launch.session.name = "codex".into();
         request.launch.session.label = Some("codex".into());
@@ -2037,6 +2042,7 @@ mod wire_snapshot {
                 crate::AgentProvider::Cursor,
                 crate::AgentProvider::CursorCloud,
                 crate::AgentProvider::Operator,
+                crate::AgentProvider::Agy,
             ]
             .iter()
             .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
@@ -2097,6 +2103,16 @@ mod wire_snapshot {
                     state_db: "/home/state.db".into(),
                 },
             )),
+        ));
+        all.push((
+            "ConversationReference::Agy".into(),
+            encode(&crate::ConversationReference::Agy(crate::AgyConversation {
+                conversation: "native".into(),
+                executable: "/bin/agy".into(),
+                config_dir: "/config".into(),
+                options: vec![],
+                title: Some("title".into()),
+            })),
         ));
         all.push((
             "WorkspaceRecord".into(),
@@ -4066,13 +4082,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0456017301630168016c0104",
+            "2a0457017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0456017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0457017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4122,18 +4138,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04560000"),
+        ("Response::NotificationNavigation", "0d04570000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0456017301630168016c0104",
+            "0e01016e0457017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010456017301630168016c0164",
+            "0f0107080901016901010457017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004560107080901016901010456017301630168016c0164",
+            "1004570107080901016901010457017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4173,7 +4189,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0456017301630168016c0104",
+            "08016e0457017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4339,6 +4355,7 @@ mod wire_snapshot {
         ("AgentProvider::Cursor", "06"),
         ("AgentProvider::CursorCloud", "07"),
         ("AgentProvider::Operator", "08"),
+        ("AgentProvider::Agy", "09"),
         ("ITermFocusStatus::Authorized", "00"),
         ("ITermFocusStatus::SelectionRequested", "01"),
         ("ITermFocusStatus::AuthorizationRequired", "02"),
@@ -4363,6 +4380,10 @@ mod wire_snapshot {
         (
             "ConversationReference::Hermes",
             "051632303236313030365f3130313530305f6162313263640b2f62696e2f6865726d65730e2f686f6d652f73746174652e6462",
+        ),
+        (
+            "ConversationReference::Agy",
+            "06066e6174697665082f62696e2f616779072f636f6e6669670001057469746c65",
         ),
         (
             "WorkspaceRecord",

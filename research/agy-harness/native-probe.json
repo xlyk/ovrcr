@@ -1,0 +1,256 @@
+{
+  "platform": "macOS",
+  "interactive_version": "1.5.9",
+  "provider": "task-owned Gemini-compatible loopback",
+  "foreground_callbacks": [
+    {
+      "source": "status",
+      "agent_state": "initializing"
+    },
+    {
+      "source": "status",
+      "agent_state": "initializing"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 0,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "initializing"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 0,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 0,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle",
+      "conversation_title": "AGY_NATIVE_MARKER"
+    },
+    {
+      "source": "status",
+      "agent_state": "working",
+      "conversation_title": "AGY_NATIVE_MARKER"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 0,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "working",
+      "conversation_title": "AGY_NATIVE_MARKER"
+    },
+    {
+      "source": "status",
+      "agent_state": "idle",
+      "conversation_title": "AGY_NATIVE_MARKER"
+    }
+  ],
+  "hook_continuation_callbacks": [
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 0,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "status",
+      "agent_state": "working"
+    },
+    {
+      "source": "Stop",
+      "terminationReason": "NO_TOOL_CALL",
+      "executionNum": 1,
+      "fullyIdle": true,
+      "continuationActive": false,
+      "has_error": false
+    },
+    {
+      "source": "status",
+      "agent_state": "idle"
+    }
+  ],
+  "accepted_turn": [
+    {
+      "id": 13,
+      "run": 1,
+      "state": "idle",
+      "unread_revision": null,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 1,
+      "state": "busy",
+      "unread_revision": null,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 1,
+      "state": "response_ready",
+      "unread_revision": 5,
+      "attached": true,
+      "same_uuid": true
+    }
+  ],
+  "interrupted_turn": [
+    {
+      "id": 13,
+      "run": 1,
+      "state": "response_ready",
+      "unread_revision": 7,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 1,
+      "state": "busy",
+      "unread_revision": 7,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 1,
+      "state": "idle",
+      "unread_revision": 7,
+      "attached": true,
+      "same_uuid": true
+    }
+  ],
+  "exact_reopen": [
+    {
+      "id": 13,
+      "run": 2,
+      "state": "idle",
+      "unread_revision": null,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 2,
+      "state": "busy",
+      "unread_revision": null,
+      "attached": true,
+      "same_uuid": true
+    },
+    {
+      "id": 13,
+      "run": 2,
+      "state": "response_ready",
+      "unread_revision": 4,
+      "attached": true,
+      "same_uuid": true
+    }
+  ],
+  "same_checkout": {
+    "two_installed_sessions_same_checkout": true,
+    "rows": [
+      13,
+      14
+    ],
+    "distinct_verified_uuids": true,
+    "reopened_run": [
+      2,
+      3
+    ],
+    "peer_run": [
+      1,
+      1
+    ],
+    "peer_retained_original_uuid": true
+  }
+}

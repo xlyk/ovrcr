@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 33;
+pub(crate) const SCHEMA_VERSION: i64 = 34;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -469,6 +469,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         }
         transaction.pragma_update(None, "user_version", 33)?;
     }
+    if schema_identity(&transaction)?.1 < 34 {
+        // Older readers cannot decode a retained Antigravity conversation reference.
+        transaction.pragma_update(None, "user_version", 34)?;
+    }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
@@ -529,6 +533,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 30
                 | 31
                 | 32
+                | 33
                 | SCHEMA_VERSION
         )
     {
@@ -915,6 +920,48 @@ mod tests {
         assert!(
             table_has_column(&Connection::open(&database).unwrap(), "workspaces", "name").unwrap()
         );
+    }
+
+    #[test]
+    fn schema_33_retained_reference_survives_offline_read_and_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let db = open_writable_registry(home).unwrap();
+        db.execute_batch(
+            r#"PRAGMA user_version = 33;
+            INSERT INTO retained_sessions(id,run,project,workspace,name,label,cwd,kind,title_revision,stopped)
+            VALUES(42,7,'demo','root','saved','grok',X'2f746d70','{"Agent":{"name":"grok"}}',0,1);"#,
+        )
+        .unwrap();
+        let reference = r#"{"Grok":{"conversation":"prior","history":"/tmp/prior.jsonl"}}"#;
+        db.execute(
+            "INSERT INTO agent_conversations VALUES(42,?1,0)",
+            [reference],
+        )
+        .unwrap();
+        drop(db);
+
+        let summaries = crate::retained::load_session_summaries(home).unwrap();
+        assert_eq!(
+            summaries[0]
+                .recovery
+                .as_ref()
+                .unwrap()
+                .conversation
+                .as_deref(),
+            Some("prior")
+        );
+        assert_eq!(schema_version(&database_path(home)), 33);
+        let db = open_writable_registry(home).unwrap();
+        assert_eq!(schema_identity(&db).unwrap().1, 34);
+        let saved: String = db
+            .query_row(
+                "SELECT reference FROM agent_conversations WHERE session=42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved, reference);
     }
 
     #[test]
