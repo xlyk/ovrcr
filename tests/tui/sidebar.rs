@@ -324,6 +324,8 @@ fn assert_selected_sidebar_row(terminal: &Terminal<TestBackend>, text: &str) {
         sidebar_row(terminal, row)
     );
 }
+
+#[cfg(target_os = "macos")]
 fn rendered_cell_sequence(
     terminal: &Terminal<TestBackend>,
     needle: &str,
