@@ -425,3 +425,12 @@ optional native-hook or Bridge offers described above; decline recognized offers
 with `n` and wait for the alternate-screen Dashboard before sending input. The
 native walkthrough in [computer-use testing](../testing-computer-use.md) is the
 place for the real keyboard/mouse receipts.
+
+For the SwiftTerm macOS Dashboard, run `just app-check`. It builds the release
+bundle, verifies its signature, checks font preferences and launch environment,
+and opens the actual app twice with a temporary HOME and socket. A competing
+Dashboard must be refused and the same shell PID and run must survive app quit
+and reattachment. For a visual check, launch with `NO_COLOR=1` in the parent
+environment and inspect the selected Dashboard theme. The [original monochrome
+sidebar](../../native/app/checks/evidence/before-colors.jpg) and the [corrected
+sidebar](../../native/app/checks/evidence/dashboard-colors.jpg) show the regression.

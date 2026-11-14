@@ -6,35 +6,13 @@ default:
 # Build, refresh the PATH-installed CLI, then launch it.
 run *args:
     #!/usr/bin/env bash
-    set -euo pipefail
-    bridge_package_flag=""
-    payload_name="ovrcr-startup"
-    case "${OVRCR_BRIDGE_LOCAL_DEVELOPMENT-}" in
-      ""|0) ;;
-      1)
-        bridge_package_flag="--local-development"
-        payload_name="ovrcr-startup-local-development"
-        ;;
-      *)
-        echo "OVRCR_BRIDGE_LOCAL_DEVELOPMENT must be unset, 0 or 1" >&2
-        exit 64
-        ;;
-    esac
-    rtk proxy cargo build -p ovrcr --bin ovrcr --target-dir "${CARGO_TARGET_DIR:-target}"
-    if [[ "$(uname -s)" == Darwin ]]; then
-      rtk proxy sh scripts/package-startup.sh ${bridge_package_flag:+"$bridge_package_flag"} "${CARGO_TARGET_DIR:-target}/debug/$payload_name" "${CARGO_TARGET_DIR:-target}/debug/ovrcr"
-      sh scripts/publish-startup-assets.sh ${bridge_package_flag:+"$bridge_package_flag"} "${CARGO_TARGET_DIR:-target}/debug/$payload_name"
-      python3 -I scripts/install-cursor-bridge.py ${OVRCR_CURSOR_BRIDGE_ARCHIVE:+"$OVRCR_CURSOR_BRIDGE_ARCHIVE"}
-    fi
-    mkdir -p "$HOME/.local/bin"
-    pending="$(mktemp "$HOME/.local/bin/.ovrcr.XXXXXX")"
-    trap 'rm -f "$pending"' EXIT
-    install -m 755 "${CARGO_TARGET_DIR:-target}/debug/ovrcr" "$pending"
-    mv -f "$pending" "$HOME/.local/bin/ovrcr"
-    ovrcr_bin="$HOME/.local/bin/ovrcr"
+    set -eu
+    bash scripts/prepare-run.sh
+    exec "$HOME/.local/bin/ovrcr" "$@"
 
-    # Startup checks belong to the client; callbacks and inspection skip them.
-    "$ovrcr_bin" "$@"
+# Refresh the development CLI and its assets, build the Swift app, and run it.
+run-app:
+    rtk proxy python3 -I scripts/build-app.py --run
 
 run-release *args:
     rtk proxy cargo run -p ovrcr --release -- "$@"
@@ -86,6 +64,7 @@ install-release:
     mv -f "$pending" "$HOME/.local/bin/ovrcr"
     if [[ "$(uname -s)" == Darwin ]]; then
       just install-startup-assets "$HOME/.local/bin/ovrcr"
+      just install-app
     fi
 
 # Install only the pinned Cursor SDK archive; optional explicit offline archive.
@@ -129,6 +108,28 @@ test *args:
     rtk proxy cargo test --workspace --all-targets --all-features "$@"
 
 verify: fmt-check check lint test
+
+# Build the Finder-launchable macOS Dashboard at target/OVRCR.app.
+app-build:
+    rtk proxy python3 -I scripts/build-app.py
+
+# Install the macOS Dashboard in ~/Applications.
+install-app:
+    rtk proxy python3 -I scripts/build-app.py --install
+
+# Build and open the native Dashboard for the current OVRCR instance.
+app: app-build
+    #!/usr/bin/env bash
+    set -eu
+    launch_args=(--env "PATH=$PATH")
+    for key in HOME OVRCR_HOME OVRCR_SOCKET OVRCR_CONFIG OVRCR_SERVER_EXECUTABLE OVRCR_DASHBOARD_CONFIG; do
+      if [[ -n "${!key-}" ]]; then launch_args+=(--env "$key=${!key}"); fi
+    done
+    open "${launch_args[@]}" "${CARGO_TARGET_DIR:-target}/OVRCR.app"
+
+# Exercise the release bundle against a private Server and two native launches.
+app-check: app-build
+    sh native/app/checks/check.sh "${CARGO_TARGET_DIR:-target}/OVRCR.app"
 
 # Launch the optional macOS terminal test helper with a disposable demo.
 gui:
