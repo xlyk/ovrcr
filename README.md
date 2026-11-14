@@ -39,7 +39,20 @@ OVRCR is for a pile of coding-agent PTYs across a pile of worktrees. Register a 
 
 ## Install
 
-Pre-1.0. Build from source:
+### macOS app
+
+Install the native Dashboard from a checkout with Rust, just, and the Swift 6.3 Command Line Tools:
+
+```sh
+just install-app
+open ~/Applications/OVRCR.app
+```
+
+You can also open **OVRCR** from Finder or the Dock. For development, `just app` builds and opens the bundle in `target/`. The app starts or attaches to your regular OVRCR Server and shows your projects and sessions. Detach an open terminal Dashboard with `q` before switching. ⌘W hides the window. Reopening it from the Dock restores the Dashboard. ⌘Q detaches and leaves the Server and session processes running. **OVRCR → Settings…** (⌘,) saves the font and point size. Notifications use the optional Bridge.
+
+### CLI and full installation
+
+Build from source:
 
 ```sh
 git clone https://github.com/xlyk/ovrcr.git
@@ -49,7 +62,7 @@ ovrcr --version
 ```
 
 `just install-release` builds and installs the CLI at `~/.local/bin/ovrcr`.
-On macOS it also packages optional notification [Bridge](native/bridge/README.md)
+On macOS it also installs `~/Applications/OVRCR.app`, packages optional notification [Bridge](native/bridge/README.md)
 startup assets into `~/.local/lib/ovrcr` and installs the pinned official Cursor
 SDK archive into the separate `~/.local/lib/ovrcr-cursor-sdk/1.0.40` directory.
 The first Cursor dependency install needs `python3`, `curl` and GitHub access;

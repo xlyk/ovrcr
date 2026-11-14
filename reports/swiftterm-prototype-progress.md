@@ -2,6 +2,8 @@
 
 **November 13, 2026. Keep SwiftTerm as the leading candidate.** One native Mac window ran the existing Rust Dashboard, rendered two live panes, and let a terminal Dashboard reconnect to the same shells after the app quit. Three input and accessibility checks remain before choosing the engine for the shipping app. [Original acceptance criteria](../docs/superpowers/plans/2026-11-13-swiftterm-prototype.md)
 
+For the installable macOS Dashboard, see the [macOS app instructions](../README.md#macos-app). The results below describe the original experiment.
+
 ## What worked in the native window
 
 | Question | Observed result |

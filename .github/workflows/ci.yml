@@ -113,6 +113,11 @@ jobs:
           name: nextest-selection-${{ github.run_id }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/nextest-selection.json
           retention-days: 7
+      - name: Build and exercise the macOS Dashboard app
+        if: matrix.shard == 2
+        run: |
+          python3 -I scripts/build-app.py
+          sh native/app/checks/check.sh target/OVRCR.app
       - name: Relocated macOS startup assets
         if: matrix.shard == 1
         run: |

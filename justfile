@@ -86,6 +86,7 @@ install-release:
     mv -f "$pending" "$HOME/.local/bin/ovrcr"
     if [[ "$(uname -s)" == Darwin ]]; then
       just install-startup-assets "$HOME/.local/bin/ovrcr"
+      just install-app
     fi
 
 # Install only the pinned Cursor SDK archive; optional explicit offline archive.
@@ -129,6 +130,28 @@ test *args:
     rtk proxy cargo test --workspace --all-targets --all-features "$@"
 
 verify: fmt-check check lint test
+
+# Build the Finder-launchable macOS Dashboard at target/OVRCR.app.
+app-build:
+    rtk proxy python3 -I scripts/build-app.py
+
+# Install the macOS Dashboard in ~/Applications.
+install-app:
+    rtk proxy python3 -I scripts/build-app.py --install
+
+# Build and open the native Dashboard for the current OVRCR instance.
+app: app-build
+    #!/usr/bin/env bash
+    set -eu
+    launch_args=(--env "PATH=$PATH")
+    for key in HOME OVRCR_HOME OVRCR_SOCKET OVRCR_CONFIG OVRCR_SERVER_EXECUTABLE OVRCR_DASHBOARD_CONFIG; do
+      if [[ -n "${!key-}" ]]; then launch_args+=(--env "$key=${!key}"); fi
+    done
+    open "${launch_args[@]}" "${CARGO_TARGET_DIR:-target}/OVRCR.app"
+
+# Exercise the release bundle against a private Server and two native launches.
+app-check: app-build
+    sh native/app/checks/check.sh "${CARGO_TARGET_DIR:-target}/OVRCR.app"
 
 # Launch the optional macOS terminal test helper with a disposable demo.
 gui:

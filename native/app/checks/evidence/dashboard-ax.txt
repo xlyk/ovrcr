@@ -1,0 +1,3 @@
+The focused UI element is 1 text entry area Description: OVRCR Dashboard terminal, Value: 󰚩 OVRCR                                                                                                                                                                                [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│main  opencode  starting… · 0m                                                                                                                         pid 87893
+┃ Operator                            ┃│─────────────────────────────────────────────────────────────────────
