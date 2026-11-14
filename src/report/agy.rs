@@ -91,21 +91,6 @@ fn eligible_launch(argv: &[OsString]) -> Option<Launch> {
                     return None;
                 }
             }
-            // A project can name a remote project, and recovery is rooted in the
-            // trusted local profile, so it cannot safely be retained or replayed.
-            "--project"
-            | "--settings"
-            | "--remote-agent"
-            | "--remote-control"
-            | "--print"
-            | "--prompt"
-            | "-p"
-            | "--input-format"
-            | "--output-format"
-            | "--print-timeout"
-            | "--json-schema"
-            | "--disable-slash-commands" => return None,
-            _ if !raw.starts_with('-') => return None,
             _ => return None,
         }
         index += 1;
@@ -585,13 +570,9 @@ impl Events {
         if active_foreground_state(native_state) {
             let continued_after_stop = self.successful_stop_cycle.is_some();
             let new_submission = !self.cycle_active && !continued_after_stop;
-            if continued_after_stop {
-                // A later active state proves that a successful-looking Stop
-                // continued instead of settling. Start a new segment but preserve
-                // execution-number dedup so a delayed duplicate Stop cannot qualify.
-            } else if new_submission {
-                // An active state after idle begins an independent submission, for
-                // which Antigravity may reset executionNum to zero.
+            if new_submission {
+                // Antigravity restarts execution numbers on a new submission.
+                // A continued submission must keep rejecting already seen Stops.
                 self.seen_stop_execution_nums.clear();
                 self.stop_tracking_exhausted = false;
             }
@@ -616,6 +597,13 @@ impl Events {
             self.successful_stop_cycle = None;
             self.cycle_active = false;
         } else if native_state == "error" {
+            self.cycle_active = false;
+            self.successful_stop_cycle = None;
+            self.completion_candidate = false;
+        } else if matches!(native_state, "initializing" | "authenticating") {
+            // Startup and authentication can report Busy without a user response
+            // turn. They retire old candidates and require a later foreground work
+            // state before a Stop can qualify.
             self.cycle_active = false;
             self.successful_stop_cycle = None;
             self.completion_candidate = false;
@@ -1232,6 +1220,44 @@ mod tests {
                 .filter(|(_, _, state, _, _)| *state == AgentActivity::ResponseReady)
                 .count(),
             usize::from(AgentProvider::Agy.supports_readiness())
+        );
+    }
+
+    #[test]
+    fn canceled_initializing_submission_without_stop_retires_prior_ready_candidate() {
+        let (mut events, mut reporter, supervisor, _profile) = start(None);
+        drive(&mut events, &mut reporter, &status(A, "working"));
+        drive(
+            &mut events,
+            &mut reporter,
+            &stop(A, 0, "NO_TOOL_CALL", true, false, false),
+        );
+        drive(&mut events, &mut reporter, &status(A, "idle"));
+        assert!(events.completion_candidate);
+
+        // A new request can be interrupted during initialization, before a native
+        // work state is observed. This startup Busy signal retires the old candidate
+        // but cannot admit Stop as evidence of a response turn.
+        drive(&mut events, &mut reporter, &status(A, "initializing"));
+        assert!(!events.completion_candidate);
+        assert!(!events.cycle_active);
+        drive(
+            &mut events,
+            &mut reporter,
+            &stop(A, 1, "NO_TOOL_CALL", true, false, false),
+        );
+        drive(&mut events, &mut reporter, &status(A, "idle"));
+        assert!(!events.completion_candidate);
+
+        let observed = supervisor.observed();
+        let ready = Supervisor::activity(&observed)
+            .iter()
+            .filter(|(_, _, state, _, _)| *state == AgentActivity::ResponseReady)
+            .count();
+        assert_eq!(
+            ready,
+            usize::from(AgentProvider::Agy.supports_readiness()),
+            "cancellation without Stop cannot create another Ready"
         );
     }
 

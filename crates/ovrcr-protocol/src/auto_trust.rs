@@ -137,22 +137,6 @@ fn agy_trust_decision(argv: &[OsString]) -> AgyTrustDecision {
                 }
                 explicit_permission_choice = true;
             }
-            // Settings, remote, print, and native management commands do not
-            // receive managed interactive defaults.
-            "--settings"
-            | "--project"
-            | "--remote-agent"
-            | "--remote-control"
-            | "--print"
-            | "--prompt"
-            | "-p"
-            | "--input-format"
-            | "--output-format"
-            | "--print-timeout"
-            | "--json-schema"
-            | "--disable-slash-commands" => {
-                return AgyTrustDecision::Unsupported;
-            }
             // A positional token selects a subcommand or an unsupported mode.
             // Unknown flags also fail closed instead of gaining trust.
             _ => return AgyTrustDecision::Unsupported,
@@ -381,7 +365,7 @@ mod tests {
         apply_default_auto_trust("agy", &mut option_value_named_like_a_subcommand);
         assert_eq!(
             option_value_named_like_a_subcommand,
-            args(&["agy", "--model", "models", "--dangerously-skip-permissions"])
+            args(&["agy", "--dangerously-skip-permissions", "--model", "models"])
         );
 
         let mut exact_resume =
@@ -391,8 +375,8 @@ mod tests {
             exact_resume,
             args(&[
                 "agy",
+                "--dangerously-skip-permissions",
                 "--conversation=01a08e5c-7480-7052-9964-9224aadebef0",
-                "--dangerously-skip-permissions"
             ])
         );
 
@@ -409,26 +393,10 @@ mod tests {
             args(&["agy", "--prompt-interactive=--mode=plan"]),
             args(&["agy", "-i", "--mode"]),
         ] {
-            let expected = match prompt.as_slice() {
-                [_, selector, value] if selector == "--prompt-interactive" || selector == "-i" => {
-                    args(&[
-                        "agy",
-                        "--dangerously-skip-permissions",
-                        selector.to_str().unwrap(),
-                        value.to_str().unwrap(),
-                    ])
-                }
-                [_, selector] if selector.to_str().unwrap().starts_with("--prompt-interactive=") => {
-                    args(&[
-                        "agy",
-                        "--dangerously-skip-permissions",
-                        selector.to_str().unwrap(),
-                    ])
-                }
-                _ => unreachable!("prompt test has a native prompt selector"),
-            };
-            let mut argv = prompt;
+            let mut argv = prompt.clone();
             apply_default_auto_trust("agy", &mut argv);
+            let mut expected = prompt;
+            expected.insert(1, "--dangerously-skip-permissions".into());
             assert_eq!(argv, expected);
         }
 
