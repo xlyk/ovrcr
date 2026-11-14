@@ -131,7 +131,7 @@ fn targets() -> Vec<(&'static str, Result<PathBuf, String>)> {
             })
         })
     };
-    PROVIDERS
+    let mut targets = PROVIDERS
         .into_iter()
         .filter(|(_, harness, ..)| installed(harness))
         .map(|(provider, _, variable, directory, filename)| {
@@ -145,7 +145,22 @@ fn targets() -> Vec<(&'static str, Result<PathBuf, String>)> {
             });
             (provider, path)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if installed("agy") {
+        targets.push((
+            "Antigravity hooks",
+            super::agy::hooks_path().map_err(|_| {
+                "Couldn't connect Antigravity hooks status: HOME is unavailable".to_owned()
+            }),
+        ));
+        targets.push((
+            "Antigravity settings",
+            super::agy::settings_path(None).map_err(|_| {
+                "Couldn't connect Antigravity settings status: HOME is unavailable".to_owned()
+            }),
+        ));
+    }
+    targets
 }
 
 /// Says why any target cannot be changed, then asks once for every file that needs
@@ -206,6 +221,14 @@ fn prepare(
             Err(error) => refused.push((provider, refusal(provider, &path, &error))),
         }
     }
+    if refused
+        .iter()
+        .any(|(provider, _)| provider.starts_with("Antigravity "))
+    {
+        // The status line and Stop hook are one provider connection. Do not
+        // offer a half-installed pair when either native document is unsafe.
+        changes.retain(|change| !change.provider.starts_with("Antigravity "));
+    }
     (changes, refused, notes)
 }
 
@@ -223,6 +246,12 @@ fn read(
     let (next, note) = match provider {
         "Claude" => super::agent_setup::compose(text, executable),
         "Codex" => super::codex_setup::compose(text, executable).map(|next| (next, None)),
+        "Antigravity settings" => super::agy::compose_settings(text, executable)
+            .and_then(|value| serde_json::to_string_pretty(&value).map_err(Into::into))
+            .map(|next| (format!("{next}\n"), None)),
+        "Antigravity hooks" => super::agy::compose_hooks(text, executable)
+            .and_then(|value| serde_json::to_string_pretty(&value).map_err(Into::into))
+            .map(|next| (format!("{next}\n"), None)),
         _ => unreachable!("only providers with global hooks are offered"),
     }
     .map_err(|_| {
@@ -258,11 +287,38 @@ fn refusal(provider: &str, path: &Path, error: &anyhow::Error) -> String {
 
 fn prompt(changes: &[Change]) -> String {
     let providers: Vec<&str> = changes.iter().map(|change| change.provider).collect();
-    let mut text = format!(
-        "Connect agent status\nLets OVRCR show when your {} sessions are working, need you or are done.\nAdds or updates OVRCR hooks in:\n",
-        names(&providers)
-    );
-    for change in changes {
+    let description = if providers.contains(&"Antigravity hooks")
+        && !ovrcr::protocol::AgentProvider::Agy.supports_readiness()
+    {
+        format!(
+            "Lets OVRCR show session activity for your {} sessions.\n",
+            names(&providers)
+        )
+    } else {
+        format!(
+            "Lets OVRCR show when your {} sessions are working, need you or are done.\n",
+            names(&providers)
+        )
+    };
+    let mut text = format!("Connect agent status\n{description}");
+    let hook_changes = changes
+        .iter()
+        .filter(|change| change.provider != "Antigravity settings");
+    let hook_changes = hook_changes.collect::<Vec<_>>();
+    if !hook_changes.is_empty() {
+        text.push_str("Adds or updates OVRCR hooks in:\n");
+    }
+    for change in hook_changes {
+        text.push_str(&format!("  {}\n", change.path.display()));
+    }
+    let settings_changes = changes
+        .iter()
+        .filter(|change| change.provider == "Antigravity settings")
+        .collect::<Vec<_>>();
+    if !settings_changes.is_empty() {
+        text.push_str("Adds or updates the Antigravity status line in:\n");
+    }
+    for change in settings_changes {
         text.push_str(&format!("  {}\n", change.path.display()));
     }
     text.push_str("Your other settings, status line and approvals stay as they are.");
@@ -281,7 +337,26 @@ fn connected_line(providers: &[&str]) -> String {
 }
 
 fn names(providers: &[&str]) -> String {
-    providers.join(" and ")
+    let mut names = Vec::new();
+    for provider in providers {
+        let name = match *provider {
+            "Antigravity hooks" | "Antigravity settings" => "Antigravity",
+            name => name,
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    match names.as_slice() {
+        [] => String::new(),
+        [name] => (*name).to_owned(),
+        [first, second] => format!("{first} and {second}"),
+        _ => format!(
+            "{} and {}",
+            names[..names.len() - 1].join(", "),
+            names[names.len() - 1]
+        ),
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -483,6 +558,7 @@ fn resolve_missing(path: &Path) -> anyhow::Result<(PathBuf, PathBuf, Metadata)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::cell::RefCell;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -698,6 +774,35 @@ mod tests {
             "{}",
             screen(&dashboard)
         );
+        assert_eq!(status_off(), None);
+
+        // An installed Antigravity CLI offers both its distinct global files on
+        // one confirmation, and Snapshot creates their missing parent directories.
+        std::fs::remove_file(bin.join("claude")).unwrap();
+        std::fs::remove_file(bin.join("codex")).unwrap();
+        let agy = bin.join("agy");
+        std::fs::write(&agy, "#!/bin/sh\nexit 83\n").unwrap();
+        std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let clean_home = root.path().join("agy-home");
+        std::fs::create_dir(&clean_home).unwrap();
+        unsafe { std::env::set_var("HOME", &clean_home) };
+        let agy_settings = clean_home.join(".gemini/antigravity-cli/settings.json");
+        let agy_hooks = clean_home.join(".gemini/config/hooks.json");
+        let off = Some("Antigravity status off — :connect to set up".to_owned());
+        assert_eq!(status_off(), off);
+        let ovrcr_tui::ConnectStatus::Confirm(text) = connect(false) else {
+            panic!("Antigravity files must be confirmed before creation")
+        };
+        assert!(text.contains(agy_settings.to_str().unwrap()), "{text}");
+        assert!(text.contains(agy_hooks.to_str().unwrap()), "{text}");
+        assert!(!clean_home.join(".gemini").exists());
+        assert_eq!(
+            connect(true),
+            ovrcr_tui::ConnectStatus::Done(Ok(
+                "Antigravity status connected for new sessions".into()
+            ))
+        );
+        assert!(agy_settings.is_file() && agy_hooks.is_file());
         assert_eq!(status_off(), None);
     }
 
@@ -1001,6 +1106,209 @@ mod tests {
             assert!(repaired.contains("/replacement/ovrcr"));
             assert!(!repaired.contains("/installed/ovrcr"));
         }
+    }
+
+    #[test]
+    fn antigravity_connect_creates_both_global_documents_in_a_clean_home() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let settings = home.join(".gemini/antigravity-cli/settings.json");
+        let hooks = home.join(".gemini/config/hooks.json");
+        let targets = || {
+            vec![
+                ("Antigravity hooks", Ok(hooks.clone())),
+                ("Antigravity settings", Ok(settings.clone())),
+            ]
+        };
+        let mut prompts = Vec::new();
+        offer(
+            targets(),
+            "/installed/ovrcr",
+            &mut |prompt| {
+                prompts.push(prompt.to_owned());
+                Ok(false)
+            },
+            &mut |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(
+            prompts[0].contains("your Antigravity sessions"),
+            "{}",
+            prompts[0]
+        );
+        assert!(prompts[0].contains("session activity"), "{}", prompts[0]);
+        assert!(
+            !prompts[0].contains("need you or are done"),
+            "{}",
+            prompts[0]
+        );
+        assert_eq!(
+            names(&["Claude", "Codex", "Antigravity hooks"]),
+            "Claude, Codex and Antigravity"
+        );
+        assert!(prompts[0].contains(settings.to_str().unwrap()));
+        assert!(prompts[0].contains(hooks.to_str().unwrap()));
+        assert!(prompts[0].contains("status line and approvals stay as they are"));
+        assert!(
+            !home.join(".gemini").exists(),
+            "preview must not create directories"
+        );
+
+        offer(
+            targets(),
+            "/installed/ovrcr",
+            &mut |_| Ok(true),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        assert!(settings.is_file());
+        assert!(hooks.is_file());
+        let status: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        let hook_doc: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        assert_eq!(status["statusLine"]["stack_with_default"], true);
+        assert!(
+            status["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("report agy-statusline --stdin-json")
+        );
+        assert!(
+            hook_doc["ovrcr-agent-status"]["Stop"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|handler| handler["command"] == "exec '/installed/ovrcr' report agy --stdin")
+        );
+        assert_eq!(
+            std::fs::metadata(&settings).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&hooks).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn antigravity_connect_preserves_user_hook_handlers_and_statusline_rendering() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = root.path().join("settings.json");
+        let hooks = root.path().join("hooks.json");
+        let old_settings = r#"{"statusLine":{"command":"printf '%s' \"my line\"","padding":2,"enabled":true},"notifications":true}"#;
+        let old_hooks = r#"{"user-hook":{"Stop":[{"type":"command","command":"./user-stop"}],"PreInvocation":[{"type":"command","command":"./before"}]}}"#;
+        std::fs::write(&settings, old_settings).unwrap();
+        std::fs::write(&hooks, old_hooks).unwrap();
+        let targets = || {
+            vec![
+                ("Antigravity hooks", Ok(hooks.clone())),
+                ("Antigravity settings", Ok(settings.clone())),
+            ]
+        };
+        offer(
+            targets(),
+            "/installed/ovrcr",
+            &mut |_| Ok(true),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        let settings_doc: Value =
+            serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        let hook_doc: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        assert_eq!(settings_doc["notifications"], true);
+        assert_eq!(settings_doc["statusLine"]["padding"], 2);
+        assert_eq!(settings_doc["statusLine"]["enabled"], true);
+        assert_eq!(
+            super::super::agy::owned_statusline_renderer(
+                settings_doc["statusLine"]["command"].as_str().unwrap()
+            )
+            .unwrap()
+            .as_deref(),
+            Some("printf '%s' \"my line\"")
+        );
+        assert_eq!(hook_doc["user-hook"]["Stop"][0]["command"], "./user-stop");
+        assert_eq!(
+            hook_doc["user-hook"]["PreInvocation"][0]["command"],
+            "./before"
+        );
+        let statusline = settings_doc["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let hook_stop_count = hook_doc["ovrcr-agent-status"]["Stop"]
+            .as_array()
+            .unwrap()
+            .len();
+
+        offer(
+            targets(),
+            "/replacement/ovrcr",
+            &mut |_| Ok(true),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        let repaired_settings: Value =
+            serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        let repaired_hooks: Value =
+            serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        let command = repaired_settings["statusLine"]["command"].as_str().unwrap();
+        assert!(command.starts_with("OVRCR_AGENT_STATUS=agy '/replacement/ovrcr'"));
+        assert_eq!(
+            super::super::agy::owned_statusline_renderer(command)
+                .unwrap()
+                .as_deref(),
+            Some("printf '%s' \"my line\"")
+        );
+        assert_eq!(
+            repaired_hooks["ovrcr-agent-status"]["Stop"]
+                .as_array()
+                .unwrap()
+                .len(),
+            hook_stop_count
+        );
+        assert_eq!(
+            repaired_hooks["user-hook"]["Stop"][0]["command"],
+            "./user-stop"
+        );
+        assert_ne!(
+            statusline, command,
+            "the helper executable should be refreshed"
+        );
+    }
+
+    #[test]
+    fn antigravity_connect_refuses_both_files_when_either_document_is_invalid() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = root.path().join("settings.json");
+        let hooks = root.path().join("hooks.json");
+        let original_settings = r#"{"notifications":true}"#;
+        let original_hooks = "{PRIVATE";
+        std::fs::write(&settings, original_settings).unwrap();
+        std::fs::write(&hooks, original_hooks).unwrap();
+        let mut notices = Vec::new();
+        offer(
+            vec![
+                ("Antigravity hooks", Ok(hooks.clone())),
+                ("Antigravity settings", Ok(settings.clone())),
+            ],
+            "/installed/ovrcr",
+            &mut |_| panic!("an invalid pair must not prompt for a partial connection"),
+            &mut |line, success| notices.push((line.to_owned(), success)),
+        )
+        .unwrap();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(!notices[0].1);
+        assert!(
+            notices[0]
+                .0
+                .starts_with("Couldn't connect Antigravity hooks status:")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            original_settings
+        );
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), original_hooks);
     }
 
     #[test]

@@ -284,7 +284,10 @@ fn discover_capabilities(
             "Only detected launchers can expose verified model choices.",
         );
     }
-    if !matches!(input.preset.as_str(), "claude" | "pi" | "codex" | "omp") {
+    if !matches!(
+        input.preset.as_str(),
+        "claude" | "pi" | "codex" | "omp" | "agy"
+    ) {
         return unsupported(
             input.preset.clone(),
             "Verified explicit model selection is not available for this harness yet.",
@@ -388,13 +391,14 @@ fn harness_label(preset: &str) -> &'static str {
         "pi" => "Pi",
         "codex" => "Codex",
         "omp" => "Oh My Pi",
+        "agy" => "Antigravity CLI",
         _ => "Agent",
     }
 }
 
 fn native_argv(preset: &str, executable: &Path) -> anyhow::Result<Vec<std::ffi::OsString>> {
     anyhow::ensure!(
-        matches!(preset, "claude" | "pi" | "codex" | "omp"),
+        matches!(preset, "claude" | "pi" | "codex" | "omp" | "agy"),
         "detected model selection is not supported for this harness"
     );
     let mut argv = vec![executable.as_os_str().to_owned()];
@@ -463,8 +467,121 @@ fn dashboard_catalog(
                 owner,
             )
         }),
+        "agy" => catalog_queue.with_process_owner(|owner| {
+            agy_dashboard_catalog(executable, native_argv, cwd, cancelled, owner)
+        }),
         _ => anyhow::bail!("verified model discovery is not available for this harness"),
     }
+}
+
+const AGY_CATALOG_LIMIT: usize = 512 * 1024;
+const AGY_DIAGNOSTIC_LIMIT: usize = 64 * 1024;
+
+fn agy_dashboard_catalog(
+    executable: &Path,
+    native_argv: &[std::ffi::OsString],
+    cwd: &Path,
+    cancelled: &AtomicBool,
+    owner: &mut crate::catalog_process::CatalogProcessOwner,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let mut expected = vec![executable.as_os_str().to_owned()];
+    ovrcr_protocol::apply_default_auto_trust("agy", &mut expected);
+    anyhow::ensure!(
+        native_argv == expected,
+        "Antigravity CLI launch options are not the detected managed configuration"
+    );
+    let executable = executable
+        .canonicalize()
+        .context("native Antigravity CLI executable unavailable")?;
+    anyhow::ensure!(
+        executable.is_file(),
+        "native Antigravity CLI executable unavailable"
+    );
+    let cwd = cwd
+        .canonicalize()
+        .context("Antigravity CLI workspace is unavailable")?;
+    anyhow::ensure!(cwd.is_dir(), "Antigravity CLI workspace is unavailable");
+
+    // Native model discovery is a separate `agy models` command. Do not pass
+    // interactive permission flags or OVRCR's session/reporting authority.
+    let mut command = std::process::Command::new(&executable);
+    command.current_dir(cwd).arg("models");
+    for name in [
+        "OVRCR_AGENT_SOCKET",
+        "OVRCR_AGENT_TOKEN",
+        "OVRCR_HOOK_SOCKET",
+        "OVRCR_HOOK_TOKEN",
+        "OVRCR_SESSION_ID",
+        "OVRCR_DELEGATION_SESSION",
+        "OVRCR_DELEGATION_TOKEN",
+        "OVRCR_DELEGATION_SOCKET",
+        "OVRCR_DELEGATION_HOME",
+        "OVRCR_CLAUDE_ARTIFACTS",
+    ] {
+        command.env_remove(name);
+    }
+
+    let output = owner.run_command(
+        "Antigravity CLI",
+        &mut command,
+        AGY_CATALOG_LIMIT,
+        AGY_DIAGNOSTIC_LIMIT,
+        std::time::Duration::from_secs(20),
+        cancelled,
+    )?;
+    let text = String::from_utf8(output.stdout)
+        .context("native Antigravity CLI model catalog is not UTF-8")?;
+    parse_agy_model_list(&text)
+}
+
+fn parse_agy_model_list(output: &str) -> anyhow::Result<Vec<(String, String)>> {
+    anyhow::ensure!(
+        output.len() <= AGY_CATALOG_LIMIT,
+        "native Antigravity CLI model discovery output bound"
+    );
+    let mut models = std::collections::BTreeMap::new();
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        anyhow::ensure!(
+            line.len() <= 4096,
+            "native Antigravity CLI model catalog line bound"
+        );
+        let Some((id, label)) = line.split_once('\t') else {
+            anyhow::bail!("native Antigravity CLI model catalog is not tab-separated");
+        };
+        anyhow::ensure!(
+            !label.contains('\t') && valid_agy_model_id(id),
+            "native Antigravity CLI model catalog contains an invalid model ID"
+        );
+        anyhow::ensure!(
+            !label.is_empty()
+                && label.len() <= 1024
+                && label.trim() == label
+                && !label.chars().any(char::is_control),
+            "native Antigravity CLI model catalog contains an invalid display label"
+        );
+        anyhow::ensure!(
+            models.len() < 8192,
+            "native Antigravity CLI model catalog entry bound"
+        );
+        anyhow::ensure!(
+            models.insert(id.to_owned(), label.to_owned()).is_none(),
+            "native Antigravity CLI model catalog contains a duplicate model ID"
+        );
+    }
+    Ok(models.into_iter().collect())
+}
+
+fn valid_agy_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id.as_bytes()[0].is_ascii_alphanumeric()
+        && id.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/' | b'@' | b'+')
+        })
 }
 
 /// Detected managed argv has a fixed wrapper layout. Compare every argument
@@ -478,10 +595,20 @@ pub(super) fn launch_matches(
     if expected.len() < 6 {
         return false;
     }
-    let has_task = allow_task
+    let has_standard_task = allow_task
         && selected.len() == expected.len() + 2
         && selected.get(expected.len()).is_some_and(|arg| arg == "--");
-    if selected.len() != expected.len() && !has_task {
+    let has_agy_task = allow_task
+        && expected.get(3).is_some_and(|arg| arg == "agy")
+        && selected.len() == expected.len() + 1
+        && selected
+            .get(expected.len())
+            .and_then(|arg| arg.to_str())
+            .is_some_and(|arg| {
+                arg.strip_prefix("--prompt-interactive=")
+                    .is_some_and(|prompt| !prompt.is_empty())
+            });
+    if selected.len() != expected.len() && !has_standard_task && !has_agy_task {
         return false;
     }
     let Some(selected_launcher) = selected
@@ -525,7 +652,7 @@ pub(super) fn prepare_initial_prompt_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp" | "agy"))
         .context("Initial prompts require a supported detected harness")?;
     anyhow::ensure!(
         !state
@@ -618,7 +745,7 @@ pub(super) fn prepare_session(
         .session
         .label
         .as_deref()
-        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
+        .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp" | "agy"))
         .context("explicit model selection is not supported for this harness")?;
     anyhow::ensure!(
         matches!(request.session.kind, SessionKind::Agent { ref name } if name == preset),
@@ -718,6 +845,70 @@ mod tests {
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn agy_catalog_parser_requires_bounded_unique_tsv_ids_and_labels() {
+        assert_eq!(
+            parse_agy_model_list(
+                "gemini-4-argon-high\tGemini 4 Argon (High)\n\
+                 gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n"
+            )
+            .unwrap(),
+            vec![
+                (
+                    "gemini-3.8-flash-low".into(),
+                    "Gemini 3.8 Flash (Low)".into()
+                ),
+                ("gemini-4-argon-high".into(), "Gemini 4 Argon (High)".into()),
+            ]
+        );
+
+        for malformed in [
+            "Fetching available models...\n",
+            "model\t\n",
+            "-leading-hyphen\tInvalid ID\n",
+            "gemini-4\tLabel\textra\n",
+            "gemini-4\t Label with padding \n",
+            "gemini-4\tLabel\ngemini-4\tDuplicate\n",
+        ] {
+            assert!(
+                parse_agy_model_list(malformed).is_err(),
+                "malformed native output must fail closed: {malformed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn agy_managed_launch_match_accepts_one_prompt_interactive_argument() {
+        let root = tempfile::tempdir().unwrap();
+        let wrapper = root.path().join("ovrcr");
+        let native = root.path().join("agy");
+        executable(&wrapper);
+        executable(&native);
+        let mut native_argv = vec![native.into_os_string()];
+        ovrcr_protocol::apply_default_auto_trust("agy", &mut native_argv);
+        let mut expected = vec![
+            wrapper.into_os_string(),
+            "agent".into(),
+            "run".into(),
+            "agy".into(),
+            "--".into(),
+        ];
+        expected.extend(native_argv);
+        let prompt = "-fix first\nthen treat --mode=plan as text";
+        let mut selected = expected.clone();
+        selected.push(format!("--prompt-interactive={prompt}").into());
+
+        assert!(launch_matches(&selected, &expected, true));
+        assert!(!launch_matches(&selected, &expected, false));
+        selected.pop();
+        selected.push("--prompt-interactive=".into());
+        assert!(!launch_matches(&selected, &expected, true));
+        selected.pop();
+        selected.push("--prompt-interactive=one".into());
+        selected.push("--prompt-interactive=two".into());
+        assert!(!launch_matches(&selected, &expected, true));
     }
 
     #[test]

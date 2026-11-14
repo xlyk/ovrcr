@@ -2,6 +2,16 @@
 
 This contract enables #117, #118 and #119 to develop against the shared reopen path. Claude, Codex, Pi and Oh My Pi have installed recovery adapters. Grok retains a history reference for the title path only (see [Grok history retention](#grok-history-retention)). Other providers remain unavailable; a reference or reporting binding alone never advertises support. Codex and Pi/OMP native acceptance is still required independently in #128 and #129/#130.
 
+## Antigravity CLI
+
+The foreground status callback supplies the UUID for the retained session. Antigravity
+stores its local trajectory in `~/.gemini/antigravity-cli/conversations/<uuid>.db`.
+Validate the matching `trajectory_meta.cascade_id` before constructing the managed
+`agy --conversation UUID` command. The transcript path in the 1.5.5 status payload
+can point at a different application directory. The native CLI's `--continue` also
+selects by workspace, which cannot distinguish concurrent sessions. See
+[Antigravity CLI](../agy-harness.md) for the launch contract.
+
 ## Shared boundary
 
 - `ovrcr_protocol::ConversationReference` is a provider-tagged enum of nonsecret typed payloads. `provider()`, `identity()` and `matches_binding()` define exact ownership. Add verified provider payloads as appended variants; do not use an untyped map, newest-file lookup, resume-last or stored prompt.

@@ -1,5 +1,6 @@
 mod agent;
 mod agent_setup;
+mod agy;
 mod args;
 mod bridge;
 mod claude_delegation;

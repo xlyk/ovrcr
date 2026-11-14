@@ -1,6 +1,6 @@
 //! Live, production-path Initial prompt intent regressions.
 //!
-//! The owned `claude`, `pi`, and `omp` executables below are native CLI stand-ins.
+//! The owned `claude`, `pi`, `omp`, and `agy` executables below are native CLI stand-ins.
 //! Their captures prove what OVRCR passed to those processes; they are not
 //! provider acceptance evidence.
 #[path = "support/live.rs"]
@@ -37,6 +37,9 @@ const PI_RELEASE_ENV: &str = "OVRCR_TEST_FAKE_PI_RELEASE";
 const OMP_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_OMP_CAPTURE";
 const OMP_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_OMP_CATALOG";
 const FAKE_OMP_LAUNCH_MARKER: &str = "__OVRCR_FAKE_OMP_LAUNCH__";
+const AGY_CAPTURE_ENV: &str = "OVRCR_TEST_FAKE_AGY_CAPTURE";
+const AGY_CATALOG_ENV: &str = "OVRCR_TEST_FAKE_AGY_CATALOG";
+const FAKE_AGY_LAUNCH_MARKER: &str = "__OVRCR_FAKE_AGY_LAUNCH__";
 const BRANCH: &str = "feature/initial-prompt-intent";
 
 fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
@@ -259,6 +262,73 @@ fn start_server_with_omp(
         live.start_binary_logged(&environment, log);
     } else {
         live.start_binary_env(&environment);
+    }
+}
+
+fn install_fake_agy(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
+    let bin = live.root.path().join("fake-agy-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let executable = bin.join("agy");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_AGY_CATALOG__' >> \"${AGY_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${AGY_CAPTURE_ENV}\"; done\n    printf 'Fetching available models...\\n' >&2\n    cat \"${AGY_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_AGY_LAUNCH_MARKER}' >> \"${AGY_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${AGY_CAPTURE_ENV}\"; done\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let capture = live.root.path().join("fake-agy-argv.txt");
+    let catalog = live.root.path().join("fake-agy-models.tsv");
+    std::fs::write(
+        &catalog,
+        "gemini-4-argon-high\tGemini 4 Argon (High)\n\
+         gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n",
+    )
+    .unwrap();
+    (executable, capture, catalog)
+}
+
+fn start_server_with_agy(live: &Live, fake_agy: &Path, capture: &Path, catalog: &Path) {
+    let mut entries = vec![fake_agy.parent().unwrap().to_path_buf()];
+    entries.extend(std::env::split_paths(&live.path()));
+    let path = std::env::join_paths(entries).unwrap();
+    live.start_binary_env(&[
+        ("PATH", path.as_os_str()),
+        (AGY_CAPTURE_ENV, capture.as_os_str()),
+        (AGY_CATALOG_ENV, catalog.as_os_str()),
+    ]);
+}
+
+fn detected_agy_launch(
+    live: &Live,
+    fake_agy: &Path,
+    name: &str,
+    model_policy: AgentModelPolicy,
+) -> CreateAgentSessionRequest {
+    let mut native = vec![fake_agy.canonicalize().unwrap().into_os_string()];
+    ovrcr::protocol::apply_default_auto_trust("agy", &mut native);
+    let mut argv = vec![
+        live.executable.canonicalize().unwrap().into_os_string(),
+        "agent".into(),
+        "run".into(),
+        "agy".into(),
+        "--".into(),
+    ];
+    argv.extend(native);
+    CreateAgentSessionRequest {
+        session: CreateSessionRequest {
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
+            name: name.into(),
+            label: Some("agy".into()),
+            argv,
+            kind: SessionKind::Agent { name: "agy".into() },
+        },
+        model_policy,
+        model_binding: None,
+        expected_model: None,
     }
 }
 
@@ -733,6 +803,169 @@ fn query_omp_models(
             } => panic!("unexpected Dashboard response {event_id}: {response:?}"),
         }
     }
+}
+
+fn query_agy_models(
+    connection: &mut UnixStream,
+    request_id: u64,
+    launch: &CreateAgentSessionRequest,
+) -> ovrcr::protocol::AgentModelCapabilities {
+    assert_eq!(
+        client::request(
+            connection,
+            request_id,
+            Request::QueryAgentModels {
+                preset: "agy".into(),
+                origin: ovrcr::protocol::AgentLaunchOrigin::Detected,
+                argv: launch.session.argv.clone(),
+                project: launch.session.project.clone(),
+                workspace: launch.session.workspace.clone(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    loop {
+        match read_frame::<ServerMessage>(connection).expect("read Antigravity model event") {
+            ServerMessage::Event(ServerEvent::AgentModels {
+                request_id: event_id,
+                capabilities,
+            }) if event_id == request_id => return capabilities,
+            ServerMessage::Event(_) => {}
+            ServerMessage::Response {
+                request_id: event_id,
+                response,
+            } => panic!("unexpected Dashboard response {event_id}: {response:?}"),
+        }
+    }
+}
+
+#[test]
+fn agy_model_catalog_and_initial_prompt_use_detected_interactive_grammar() {
+    let live = Live::idle().bounded();
+    let (fake_agy, capture, catalog) = install_fake_agy(&live);
+    write_settings(&live, "agents = []\n[quota]\nenabled = false\n");
+    start_server_with_agy(&live, &fake_agy, &capture, &catalog);
+    live.ready(BRANCH);
+
+    let mut dashboard = dashboard(&live);
+    let mut launch = detected_agy_launch(
+        &live,
+        &fake_agy,
+        "agy-explicit-prompt-session",
+        AgentModelPolicy::HarnessDefault,
+    );
+    let capabilities = query_agy_models(&mut dashboard, 3, &launch);
+    assert_eq!(capabilities.preset, "agy");
+    assert!(capabilities.reason.is_none(), "{capabilities:?}");
+    let binding = capabilities
+        .binding
+        .expect("detected Antigravity choices carry a launch binding");
+    assert_eq!(
+        capabilities.models,
+        vec![
+            ovrcr::protocol::AgentModelOption {
+                alias: "gemini-3.8-flash-low".into(),
+                resolved: "Gemini 3.8 Flash (Low)".into(),
+            },
+            ovrcr::protocol::AgentModelOption {
+                alias: "gemini-4-argon-high".into(),
+                resolved: "Gemini 4 Argon (High)".into(),
+            },
+        ],
+        "the model picker exposes catalog IDs while retaining native display labels"
+    );
+
+    let intent = allocate_intent(&mut dashboard);
+    launch.model_policy = AgentModelPolicy::Explicit("gemini-3.8-flash-low".into());
+    launch.model_binding = Some(binding);
+    launch.expected_model = Some("Gemini 3.8 Flash (Low)".into());
+    let prompt = "-fix the parser first\nthen treat --mode=plan as literal prompt text";
+    let request = InitialPromptLaunchRequest {
+        intent: intent.clone(),
+        launch,
+        prompt: prompt.into(),
+    };
+    assert_eq!(
+        client::request(
+            &mut dashboard,
+            4,
+            Request::CreateAgentSessionWithPrompt(request.clone()),
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let mut request_id = 5;
+    let accepted = wait_for_intent(
+        &mut dashboard,
+        &intent,
+        InitialPromptIntentState::LaunchAccepted,
+        &mut request_id,
+    );
+    assert_eq!(accepted.name, "agy-explicit-prompt-session");
+    assert_eq!(accepted.recoverable_prompt, None);
+    let session = accepted.session.expect("intent names the started session");
+    assert!(accepted.run.is_some(), "intent names the exact started run");
+
+    let output = wait_for_capture(&capture, "literal prompt text");
+    assert_eq!(
+        output.matches(FAKE_AGY_LAUNCH_MARKER).count(),
+        1,
+        "one detected native process received the initial prompt"
+    );
+    let launch_output = output
+        .split_once(FAKE_AGY_LAUNCH_MARKER)
+        .expect("the detected Antigravity CLI process started")
+        .1;
+    assert!(
+        launch_output.contains(
+            "ARG:--model\nARG:gemini-3.8-flash-low\nARG:--dangerously-skip-permissions\n"
+        ),
+        "the exact selected model and managed interactive permission default reach agy: {launch_output:?}"
+    );
+    assert!(
+        launch_output.contains(&format!("ARG:--prompt-interactive={prompt}\n")),
+        "the complete leading-hyphen multiline prompt is one --prompt-interactive argument"
+    );
+    assert!(
+        !launch_output.contains("ARG:--\n"),
+        "agy's prompt is not sent with the generic separator grammar"
+    );
+    assert_eq!(
+        output.matches("__OVRCR_FAKE_AGY_CATALOG__").count(),
+        2,
+        "model capabilities and launch each revalidate the current catalog"
+    );
+    assert_eq!(
+        output.matches("CATALOG_ARG:models\n").count(),
+        2,
+        "the native catalog command uses exactly the models subcommand"
+    );
+    assert!(
+        !output.contains("CATALOG_ARG:--dangerously-skip-permissions"),
+        "the interactive trust flag is not passed to catalog discovery"
+    );
+
+    let duplicate = client::request(
+        &mut dashboard,
+        request_id,
+        Request::CreateAgentSessionWithPrompt(request),
+    )
+    .unwrap();
+    assert_eq!(duplicate, Response::InitialPromptIntents(vec![accepted]));
+    let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
+        panic!("expected retained session inventory")
+    };
+    assert_eq!(
+        sessions.iter().filter(|entry| entry.id == session).count(),
+        1,
+        "the accepted intent identifies exactly one retained session"
+    );
+    assert_public_stores_exclude(&live, "literal prompt text");
+
+    drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
 }
 
 fn next_settings_report(connection: &mut UnixStream) -> SettingsReport {

@@ -5,7 +5,7 @@ pub use crate::protocol::AgentLaunchOrigin as AgentOrigin;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const KNOWN_AGENTS: [&str; 12] = [
+const KNOWN_AGENTS: [&str; 13] = [
     "claude",
     "codex",
     "grok",
@@ -18,12 +18,14 @@ const KNOWN_AGENTS: [&str; 12] = [
     "amp",
     "cursor-agent",
     "hermes",
+    "agy",
 ];
 /// Detected agents OVRCR launches through `agent run <name> --` so managed reporting
 /// (Grok retains history for titles; Hermes has process supervision only). Claude, Codex,
-/// Pi, and Oh My Pi defaults also carry that provider's auto-trust flag. Explicit custom
-/// overrides keep their stored argv unchanged; a raw shell command is never adopted silently.
-pub const MANAGED_AGENTS: [&str; 7] = [
+/// Pi, Oh My Pi, and Antigravity defaults also carry that provider's auto-trust flag.
+/// Explicit custom overrides keep their stored argv unchanged; a raw shell command is never
+/// adopted silently.
+pub const MANAGED_AGENTS: [&str; 8] = [
     "claude",
     "codex",
     "pi",
@@ -31,25 +33,26 @@ pub const MANAGED_AGENTS: [&str; 7] = [
     "grok",
     "hermes",
     "cursor-agent",
+    "agy",
 ];
 
-/// Agents whose interactive CLI takes a first message as a positional argument after `--`,
-/// checked against the installed `--help` (claude 2.1.318, codex 0.164.0, pi 0.87.1,
-/// grok 1.0.70, omp 18.10.3). Hermes (`-z` is one-shot), Cursor (a prompt turns its
-/// reporting off) and OpenCode are left out: a task only names their session.
-pub const TASK_AGENTS: [&str; 5] = ["claude", "codex", "pi", "omp", "grok"];
+/// Agents that accept a first message from the Dashboard's task field.
+pub const TASK_AGENTS: [&str; 6] = ["claude", "codex", "pi", "omp", "grok", "agy"];
 
 /// Whether `agent` starts with a task as its first message.
 pub fn takes_task(agent: &str) -> bool {
     TASK_AGENTS.contains(&agent)
 }
 
-/// `argv` with `task` as the agent's first message. The explicit `--` keeps a task that
-/// looks like a flag or a subcommand a message, and every recovery parser stops at it,
-/// so the task is never retained for resume.
+/// `argv` with `task` as the agent's first message.
 pub fn with_task(agent: &str, mut argv: Vec<OsString>, task: &str) -> Vec<OsString> {
     if !task.is_empty() && takes_task(agent) {
-        argv.extend(["--".into(), task.into()]);
+        if agent == "agy" {
+            argv.push(format!("--prompt-interactive={task}").into());
+        } else {
+            // The explicit separator keeps flag-like text inside the prompt.
+            argv.extend(["--".into(), task.into()]);
+        }
     }
     argv
 }
@@ -237,6 +240,7 @@ mod tests {
             "grok",
             "hermes",
             "cursor-agent",
+            "agy",
         ] {
             write_stub(dir.path(), name, 0o755);
         }
@@ -246,12 +250,19 @@ mod tests {
         for entry in &agents {
             let argv = with_task(&entry.name, entry.argv.clone(), task);
             if TASK_AGENTS.contains(&entry.name.as_str()) {
-                // The wrapper's own `--` comes first; the task is the native
-                // command's single message after a second one.
                 let mut expected = entry.argv.clone();
-                expected.extend(["--".into(), task.into()]);
+                if entry.name == "agy" {
+                    expected.push(format!("--prompt-interactive={task}").into());
+                } else {
+                    // The wrapper's own `--` comes first; the task is the
+                    // native command's single message after a second one.
+                    expected.extend(["--".into(), task.into()]);
+                }
                 assert_eq!(argv, expected, "{}", entry.name);
-                assert_eq!(argv.iter().filter(|arg| *arg == "--").count(), 2);
+                assert_eq!(
+                    argv.iter().filter(|arg| *arg == "--").count(),
+                    if entry.name == "agy" { 1 } else { 2 }
+                );
             } else {
                 assert_eq!(argv, entry.argv, "{}", entry.name);
             }
@@ -261,6 +272,16 @@ mod tests {
             with_task("claude", claude.argv.clone(), ""),
             claude.argv,
             "no task, no change"
+        );
+        let agy = agents.iter().find(|entry| entry.name == "agy").unwrap();
+        let multiline_leading_hyphen = "-do this first\nthen explain --mode=plan";
+        assert_eq!(
+            with_task("agy", agy.argv.clone(), multiline_leading_hyphen),
+            [
+                agy.argv.clone(),
+                vec![format!("--prompt-interactive={multiline_leading_hyphen}").into()]
+            ]
+            .concat()
         );
         assert!(!takes_task("opencode") && !takes_task("cursor-cloud:work"));
     }
@@ -394,6 +415,7 @@ mod tests {
             "grok",
             "hermes",
             "cursor-agent",
+            "agy",
             "gemini",
         ] {
             write_stub(dir.path(), name, 0o755);
@@ -413,6 +435,7 @@ mod tests {
             "codex" => Some("--approve-for-me"),
             "pi" => Some("--approve"),
             "omp" => Some("--auto-approve"),
+            "agy" => Some("--dangerously-skip-permissions"),
             _ => None,
         };
         for name in MANAGED_AGENTS {
@@ -459,6 +482,16 @@ mod tests {
                     name: "pi".into(),
                     argv: vec!["/custom/pi".into()],
                 },
+                AgentOverride {
+                    name: "agy".into(),
+                    argv: vec![
+                        "/custom/agy".into(),
+                        "--mode".into(),
+                        "plan".into(),
+                        "--settings".into(),
+                        "custom.json".into(),
+                    ],
+                },
             ],
         );
         assert_eq!(
@@ -475,6 +508,16 @@ mod tests {
         assert_eq!(
             overridden.iter().find(|e| e.name == "pi").unwrap().argv,
             vec![OsString::from("/custom/pi")]
+        );
+        assert_eq!(
+            overridden.iter().find(|e| e.name == "agy").unwrap().argv,
+            vec![
+                OsString::from("/custom/agy"),
+                OsString::from("--mode"),
+                OsString::from("plan"),
+                OsString::from("--settings"),
+                OsString::from("custom.json"),
+            ]
         );
     }
 

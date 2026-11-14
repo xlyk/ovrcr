@@ -18,6 +18,7 @@ pub enum AgentProvider {
     CursorCloud,
     /// Native Rig Operator worker. Appended to preserve existing wire indices.
     Operator,
+    Agy,
 }
 
 impl AgentProvider {
@@ -33,6 +34,7 @@ impl AgentProvider {
             Self::Cursor => "cursor-agent",
             Self::CursorCloud => "cursor-cloud",
             Self::Operator => "operator",
+            Self::Agy => "agy",
         }
     }
 
@@ -48,6 +50,7 @@ impl AgentProvider {
             "cursor-agent" => Self::Cursor,
             "cursor-cloud" => Self::CursorCloud,
             "operator" => Self::Operator,
+            "agy" => Self::Agy,
             _ => return None,
         })
     }
@@ -64,6 +67,7 @@ impl AgentProvider {
                 | AgentProvider::Hermes
                 | AgentProvider::CursorCloud
                 | AgentProvider::Operator
+                | AgentProvider::Agy
         )
     }
 
@@ -403,6 +407,7 @@ pub enum ConversationReference {
     Grok(GrokConversation),
     /// Appended as tag 5. Hermes session id plus the profile `state.db` that holds it.
     Hermes(HermesConversation),
+    Agy(AgyConversation),
 }
 
 impl ConversationReference {
@@ -414,6 +419,7 @@ impl ConversationReference {
             Self::Codex(_) => AgentProvider::Codex,
             Self::Grok(_) => AgentProvider::Grok,
             Self::Hermes(_) => AgentProvider::Hermes,
+            Self::Agy(_) => AgentProvider::Agy,
         }
     }
 
@@ -424,12 +430,35 @@ impl ConversationReference {
             Self::Codex(reference) => &reference.conversation,
             Self::Grok(reference) => &reference.conversation,
             Self::Hermes(reference) => &reference.conversation,
+            Self::Agy(reference) => &reference.conversation,
         }
     }
 
     pub fn matches_binding(&self, binding: &AgentBinding) -> bool {
         self.provider() == binding.provider && self.identity() == binding.conversation
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgyConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
+    pub options: Vec<String>,
+    pub title: Option<String>,
+}
+
+/// Whether a native Antigravity conversation identifier is a canonical lowercase UUID.
+pub fn is_exact_agy_conversation_id(identity: &str) -> bool {
+    let id = identity.as_bytes();
+    id.len() == 36
+        && id.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+            }
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -568,6 +597,18 @@ impl ProviderReport {
 pub(crate) mod tests {
     use super::*;
     use crate::{Request, Response, read_frame, write_frame};
+
+    #[test]
+    fn agy_conversation_ids_are_canonical_lowercase_uuids() {
+        assert!(is_exact_agy_conversation_id(
+            "01a08e5c-7480-7052-9964-9224aadebef0"
+        ));
+        assert!(!is_exact_agy_conversation_id(
+            "01A08E5C-7480-7052-9964-9224AADEBEF0"
+        ));
+        assert!(!is_exact_agy_conversation_id("../conversations/private.db"));
+    }
+
     fn metrics() -> MetricsSample {
         fn m<T>(value: T) -> Measurement<T> {
             Measurement {
@@ -797,7 +838,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn readiness_providers_are_codex_pi_omp_and_claude() {
+    fn readiness_providers_include_native_antigravity_completion() {
         for (provider, expected) in [
             (AgentProvider::Codex, true),
             (AgentProvider::Pi, true),
@@ -808,6 +849,7 @@ pub(crate) mod tests {
             (AgentProvider::Cursor, false),
             (AgentProvider::CursorCloud, true),
             (AgentProvider::Operator, true),
+            (AgentProvider::Agy, true),
         ] {
             assert_eq!(provider.supports_readiness(), expected, "{provider:?}");
         }
@@ -831,6 +873,7 @@ pub(crate) mod tests {
             AgentProvider::Omp,
             AgentProvider::Claude,
             AgentProvider::Hermes,
+            AgentProvider::Agy,
         ] {
             let ready = ReadyObservation {
                 binding: AgentBinding {

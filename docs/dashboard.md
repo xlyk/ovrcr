@@ -924,7 +924,7 @@ server-restart recovery. **New terminal** in `Space w t` opens this same form
 with Terminal already selected, so shell creation does not require changing
 Start. A selected root workspace with a warning blocks terminal creation;
 `n` still opens New agent session so you can choose an eligible checkout.
-Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes` and `cursor-agent`
+Detected `claude`, `codex`, `pi`, `omp`, `grok`, `hermes`, `agy` and `cursor-agent`
 entries launch through the managed `agent run` route; an
 `agents` override replaces the command entirely. Detected Claude, Codex, Pi, and Oh My Pi
 launches auto-trust by default: the argv gains `--dangerously-skip-permissions`,
@@ -934,7 +934,7 @@ in that family is left as written; nothing is appended or replaced, and there is
 global switch. `ovrcr agent run` does the same when its native argv is bare, including
 a `[[agents]]` preset that is itself a bare `agent run`. A preset that already names one
 of those flags is stored and launched as written; a raw command that does not go through
-`agent run` is not rewritten. Grok, Hermes, and Cursor are not given a flag. This
+`agent run` is not rewritten. Antigravity (`agy`) adds `--dangerously-skip-permissions` to managed interactive sessions by default. An explicit native mode or sandbox choice takes precedence. Grok, Hermes, and Cursor are not given a flag. This
 replaces the earlier non-goal that managed launches would not add a trust bypass. Claude, Codex, Pi and Oh My Pi
 deliver Ready/Unread on their supported readiness paths (Claude Ready is Observed,
 never Confirmed settling). Claude/Codex Input-request support remains unavailable
@@ -952,13 +952,15 @@ row keeps the published reason.
 The optional **Initial prompt** is a separate multiline field. Leave it blank to
 open the detected Claude Code, Codex, Pi, or Oh My Pi launcher interactively. A
 nonblank prompt is passed to one of those exact detected launchers as a native
-positional argument after `--`. It is transient launch input, not a session name
+positional argument after `--`. Detected Antigravity uses `--prompt-interactive` for the same field. It is transient launch input, not a session name
 or branch: OVRCR does not retain it in the session's base argv or metadata, or
 add it to the remembered launch choice. Configured launcher overrides keep
 their stored arguments and cannot use this prompt path.
 
+Antigravity lists account models with `agy models`. Select **Connect agent status** to enable foreground activity and exact conversation recovery. See the [Antigravity harness guide](agy-harness.md).
+
 The **Model** field starts at **Harness default**, which leaves model choice to
-the native launcher. Detected Claude Code, Codex, Pi, and Oh My Pi launches can
+the native launcher. Detected Claude Code, Codex, Pi, Oh My Pi, and Antigravity launches can
 offer current catalog choices for a registered workspace. OVRCR checks the
 launch binding and rereads the catalog before Start, refusing a changed or
 missing choice. Configured and cloud launchers keep their existing model policy.
@@ -1375,7 +1377,7 @@ that exist. An `[[agents]]` row whose name matches a detected agent replaces its
 argv; a new name becomes an Agent preset. The argv is used as configured; a preset
 name alone does not prove what program it launches or whether reporting is supported.
 
-For detected Claude Code, Codex, Pi, and Oh My Pi launchers, the Agent form can
+For detected Claude Code, Codex, Pi, Oh My Pi, and Antigravity launchers, the Agent form can
 offer verified model choices for an already registered workspace. The Server
 reads the launcher's current catalog and checks the selected model and launch
 binding again before launch. Configured and cloud launchers keep their existing
@@ -1388,7 +1390,7 @@ terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
 Agent entries may include `model_policy = "HarnessDefault"` or
 `model_policy = { Explicit = "opus" }`. The default leaves model selection to
 the native launcher. A concrete model choice is offered only for a detected
-Claude Code, Codex, Pi, or Oh My Pi launcher whose current native catalog is
+Claude Code, Codex, Pi, Oh My Pi, or Antigravity launcher whose current native catalog is
 available; the Server checks the selected model and launch binding again before
 starting the session. Pi choices are exact provider/model IDs, although Pi's
 native resolver may fuzzy-match if the catalog changes after OVRCR's final

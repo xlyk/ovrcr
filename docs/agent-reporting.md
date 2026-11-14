@@ -1,5 +1,7 @@
 # Agent reporting
 
+[Antigravity CLI](agy-harness.md) reports through its native foreground status line and Stop hook.
+
 OVRCR does not guess what an agent is doing. A provider hook reports activity and
 context occupancy explicitly. The dashboard shows the last accepted activity;
 context occupancy is available through session inspection.

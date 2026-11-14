@@ -315,7 +315,15 @@ impl RetainedSession {
         if matches!(self.metadata.kind, SessionKind::Terminal) {
             return None;
         }
-        let conversation = self.conversation.as_ref()?.identity();
+        let reference = self.conversation.as_ref()?;
+        let conversation = reference.identity();
+        if let ovrcr_protocol::ConversationReference::Agy(native) = reference {
+            return native.title.clone().filter(|_| {
+                self.subjects
+                    .get(conversation)
+                    .is_none_or(|subject| !subject.dismissed)
+            });
+        }
         self.subjects
             .get(conversation)
             .filter(|subject| !subject.dismissed)

@@ -98,6 +98,14 @@ fn group_leader_timeout(raw: Option<&str>) -> Duration {
         .map_or(GROUP_LEADER_TIMEOUT, Duration::from_millis)
 }
 
+fn initial_prompt_args(kind: &SessionKind, prompt: &str) -> Vec<OsString> {
+    if matches!(kind, SessionKind::Agent { name } if name == "agy") {
+        vec![format!("--prompt-interactive={prompt}").into()]
+    } else {
+        vec!["--".into(), prompt.into()]
+    }
+}
+
 /// Kill and reap a child that never became a usable session.
 ///
 /// `kill` only delivers a signal, so without the wait the failed spawn would
@@ -577,8 +585,7 @@ impl Session {
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
         if let Some(prompt) = &spec.initial_prompt {
-            command.arg("--");
-            command.arg(prompt);
+            command.args(initial_prompt_args(&spec.kind, prompt));
         }
         #[cfg(test)]
         let initial_cwd = spec.cwd.clone();

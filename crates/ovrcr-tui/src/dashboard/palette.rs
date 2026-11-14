@@ -1261,12 +1261,21 @@ fn remember_launch(
         },
     ));
     let mut launch = launch;
+    let is_task_agent = launch
+        .session
+        .label
+        .as_deref()
+        .is_some_and(super::agents::takes_task);
+    let agy_prompt_arg = format!("--prompt-interactive={task}");
     if !task.is_empty()
-        && launch
-            .session
-            .label
-            .as_deref()
-            .is_some_and(super::agents::takes_task)
+        && is_task_agent
+        && launch.session.label.as_deref() == Some("agy")
+        && launch.session.argv.last().and_then(|arg| arg.to_str()) == Some(agy_prompt_arg.as_str())
+    {
+        // Keep explicit recovery retries from retaining the one-off first message.
+        launch.session.argv.pop();
+    } else if !task.is_empty()
+        && is_task_agent
         && launch.session.argv.len() >= 2
         && launch.session.argv[launch.session.argv.len() - 2] == "--"
         && launch.session.argv.last().is_some_and(|arg| arg == task)
@@ -1431,7 +1440,7 @@ fn model_query_target_with_branch_fallback(
         }
         AgentOrigin::Detected => {}
     }
-    if !matches!(preset.as_str(), "claude" | "pi" | "codex" | "omp") {
+    if !matches!(preset.as_str(), "claude" | "pi" | "codex" | "omp" | "agy") {
         return Err(
             "Verified explicit model selection is not available for this harness yet.".into(),
         );
@@ -5050,7 +5059,7 @@ impl Dashboard {
                                     && !self.supports_initial_prompt_launch(&prompt_launch)
                                 {
                                     palette.error = Some(
-                                        "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.".into(),
+                                        "Initial prompts require a current detected Claude Code, Pi, Codex, Oh My Pi, or Antigravity CLI launcher. Clear the prompt or choose one of those detected launchers.".into(),
                                     );
                                     self.palette = Some(palette);
                                     return action;
@@ -6494,7 +6503,7 @@ impl Dashboard {
             && !self.supports_initial_prompt_launch(launch)
         {
             palette.error = Some(
-                "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.".into(),
+                "Initial prompts require a current detected Claude Code, Pi, Codex, Oh My Pi, or Antigravity CLI launcher. Clear the prompt or choose one of those detected launchers.".into(),
             );
             return DashboardAction::Redraw;
         }
@@ -6580,7 +6589,7 @@ impl Dashboard {
             .session
             .label
             .as_deref()
-            .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp"))
+            .filter(|preset| matches!(*preset, "claude" | "pi" | "codex" | "omp" | "agy"))
         else {
             return false;
         };
@@ -6618,12 +6627,12 @@ impl Dashboard {
             if let Some(mut form) = form {
                 form.pending = None;
                 form.error = Some(
-                    "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.".into(),
+                    "Initial prompts require a current detected Claude Code, Pi, Codex, Oh My Pi, or Antigravity CLI launcher. Clear the prompt or choose one of those detected launchers.".into(),
                 );
                 self.palette = Some(*form);
             } else {
                 self.set_error(
-                    "Initial prompts require a current detected Claude Code, Pi, Codex, or Oh My Pi launcher. Clear the prompt or choose one of those detected launchers.",
+                    "Initial prompts require a current detected Claude Code, Pi, Codex, Oh My Pi, or Antigravity CLI launcher. Clear the prompt or choose one of those detected launchers.",
                 );
             }
             return;
@@ -10001,6 +10010,81 @@ mod codex_adapter_tests {
         let mut changed = launch;
         changed.session.argv.push("--profile".into());
         assert!(!dashboard.supports_initial_prompt_launch(&changed));
+
+        let configured = super::super::agents::AgentEntry {
+            origin: AgentOrigin::Configured,
+            source: AgentSource::Detected,
+            ..entry
+        };
+        assert!(model_query_target(&Command::CreateTerminal, &fields, &[configured]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod agy_adapter_tests {
+    use super::*;
+
+    fn detected_agy_entry() -> super::super::agents::AgentEntry {
+        super::super::agents::AgentEntry {
+            name: "agy".into(),
+            argv: vec![
+                "/fixture/ovrcr".into(),
+                "agent".into(),
+                "run".into(),
+                "agy".into(),
+                "--".into(),
+                "/fixture/agy".into(),
+                "--dangerously-skip-permissions".into(),
+            ],
+            source: AgentSource::Detected,
+            origin: AgentOrigin::Detected,
+        }
+    }
+
+    #[test]
+    fn agy_model_discovery_prompt_and_task_use_detected_interactive_grammar() {
+        let entry = detected_agy_entry();
+        let fields = vec![
+            text_field("Start", "Agent".into(), false),
+            text_field("Agent", "agy".into(), false),
+            text_field("Workspace", "demo/root".into(), false),
+        ];
+        let target = model_query_target(
+            &Command::CreateTerminal,
+            &fields,
+            std::slice::from_ref(&entry),
+        )
+        .unwrap()
+        .expect("detected Antigravity exposes a model catalog target");
+        assert_eq!(target.preset, "agy");
+        assert_eq!(target.argv, entry.argv);
+
+        let mut dashboard = Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        dashboard.model_agent_entries = Some(vec![entry.clone()]);
+        let launch = ovrcr_protocol::CreateAgentSessionRequest {
+            session: CreateSessionRequest {
+                project: "demo".into(),
+                workspace: "root".into(),
+                name: "agy-prompt".into(),
+                label: Some("agy".into()),
+                argv: entry.argv.clone(),
+                kind: SessionKind::Agent { name: "agy".into() },
+            },
+            model_policy: ovrcr_protocol::AgentModelPolicy::HarnessDefault,
+            model_binding: None,
+            expected_model: None,
+        };
+        assert!(dashboard.supports_initial_prompt_launch(&launch));
+
+        let task = "-fix this first\nthen treat --mode=plan as prompt text";
+        let task_argv = super::super::agents::with_task("agy", entry.argv.clone(), task);
+        assert_eq!(
+            task_argv.last().and_then(|arg| arg.to_str()),
+            Some(format!("--prompt-interactive={task}").as_str())
+        );
 
         let configured = super::super::agents::AgentEntry {
             origin: AgentOrigin::Configured,
