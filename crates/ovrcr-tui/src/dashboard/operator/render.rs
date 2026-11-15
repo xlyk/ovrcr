@@ -1293,7 +1293,7 @@ impl Dashboard {
     }
 }
 
-fn format_count(value: u64) -> String {
+pub(super) fn format_count(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (idx, ch) in digits.chars().enumerate() {

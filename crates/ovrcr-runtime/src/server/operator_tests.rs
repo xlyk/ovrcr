@@ -445,7 +445,25 @@ fn operator_worker_fixture() {
     assert_eq!(identity.conversation, run_identity.conversation);
     assert_eq!(identity.session, run_identity.session);
     assert_eq!(identity.run, run_identity.run);
-    assert_eq!(start.text, "fixture prompt");
+    let initial_events = match &start.submission {
+        OperatorWorkerSubmission::Prompt { text, .. } => {
+            assert_eq!(text, "fixture prompt");
+            vec![
+                OperatorWorkerEvent::AssistantDelta("partial".into()),
+                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                    provider: "fixture".into(),
+                    id: "offline".into(),
+                }),
+            ]
+        }
+        OperatorWorkerSubmission::Compact { .. } => {
+            assert!(
+                start.checkpoint_turn.is_some(),
+                "compact must always resume a checkpoint"
+            );
+            vec![OperatorWorkerEvent::CompactionStarted]
+        }
+    };
     assert!(
         start.model.is_none(),
         "no operator.model setting was configured"
@@ -469,19 +487,7 @@ fn operator_worker_fixture() {
         })
     };
     assert!(matches!(
-        worker_exchange(
-            &mut stream,
-            batch(
-                1,
-                vec![
-                    OperatorWorkerEvent::AssistantDelta("partial".into()),
-                    OperatorWorkerEvent::ModelSelected(OperatorModel {
-                        provider: "fixture".into(),
-                        id: "offline".into(),
-                    }),
-                ]
-            )
-        ),
+        worker_exchange(&mut stream, batch(1, initial_events)),
         Response::OperatorExchange(_)
     ));
     let abort_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1983,4 +1989,152 @@ wait
         .parse()
         .unwrap();
     wait_until(|| unsafe { libc::kill(pid, 0) != 0 });
+}
+
+#[test]
+fn operator_compact_refuses_empty_or_busy_and_dispatches_cold_and_warm_submissions() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Non-dashboard client cannot invoke Compact.
+    assert!(matches!(
+        live.control(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: c.run,
+            instructions: None,
+        })),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+
+    // Before the first completed turn, Compact is refused cleanly without starting a worker.
+    let Response::Error { code, message } =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: c.run,
+            instructions: None,
+        }))
+    else {
+        panic!("expected refusal before first completed turn")
+    };
+    assert_eq!(code, ErrorCode::Conflict);
+    assert!(
+        message.contains("before the first completed turn"),
+        "{message}"
+    );
+    assert!(live.history(&c).messages.is_empty());
+
+    // Start turn 1 and verify Compact refuses while turn 1 is Running.
+    let turn1 = live.submit(&c);
+    let _auth1 = live.ready(&c);
+    let Response::Error {
+        code: busy_code,
+        message: busy_msg,
+    } = live.request(Request::Operator(OperatorRequest::Compact {
+        conversation: c.id,
+        expected_run: turn1.identity.run,
+        instructions: None,
+    }))
+    else {
+        panic!("expected busy refusal while turn 1 is running")
+    };
+    assert_eq!(busy_code, ErrorCode::Conflict);
+    assert!(busy_msg.contains("busy"), "{busy_msg}");
+
+    // Complete turn 1 with a warm lease (`complete-leased`), then submit warm Compact.
+    live.command(&c, "complete-leased");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    let leased_summary = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Submitted(warm_compact)) =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: leased_summary.run,
+            instructions: Some("keep open branch names".into()),
+        }))
+    else {
+        panic!("expected warm Compact submission")
+    };
+    assert_eq!(warm_compact.identity.run, leased_summary.run);
+    let warm_history = live.history(&c);
+    assert_eq!(
+        warm_history.messages.last().map(|m| &m.content),
+        Some(&OperatorMessageContent::Compaction {
+            instructions: Some("keep open branch names".into()),
+        })
+    );
+
+    // Interrupt and retire the warm worker, then verify cold Compact spawns a new run.
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: warm_compact.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let stopped_summary = live.current().unwrap();
+    let _ = fs::remove_file(live.root.path().join(format!("ready-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("acked-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("complete-leased-{}", c.id.0)));
+    let Response::Operator(OperatorResponse::Submitted(cold_compact)) =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: stopped_summary.run,
+            instructions: None,
+        }))
+    else {
+        panic!("expected cold Compact submission")
+    };
+    assert_eq!(cold_compact.identity.run.0, stopped_summary.run.0 + 1);
+    let _cold_auth = live.ready(&c);
+    let cold_history = live.history(&c);
+    assert!(cold_history.messages.iter().any(|m| {
+        m.turn == cold_compact.identity.turn
+            && m.content == OperatorMessageContent::Compaction { instructions: None }
+    }));
+    assert!(cold_history.messages.iter().any(|m| {
+        m.turn == cold_compact.identity.turn
+            && m.content == OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+    }));
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: cold_compact.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+
+    // After /new resets onto epoch 1, Compact is refused again until a turn completes in epoch 1.
+    let before_new = live.current().unwrap();
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: before_new.run,
+        })),
+        Response::Operator(OperatorResponse::Conversation(_))
+    ));
+    let after_new = live.current().unwrap();
+    let Response::Error {
+        code: post_new_code,
+        message: post_new_msg,
+    } = live.request(Request::Operator(OperatorRequest::Compact {
+        conversation: c.id,
+        expected_run: after_new.run,
+        instructions: None,
+    }))
+    else {
+        panic!("expected refusal after /new")
+    };
+    assert_eq!(post_new_code, ErrorCode::Conflict);
+    assert!(
+        post_new_msg.contains("before the first completed turn"),
+        "{post_new_msg}"
+    );
 }

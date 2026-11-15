@@ -236,7 +236,14 @@ impl Reporter {
                 start,
             )) => {
                 if start.as_ref().is_some_and(|start| {
-                    !identity.matches_turn(&start.identity) || !start.async_wakeup
+                    !identity.matches_turn(&start.identity)
+                        || !matches!(
+                            start.submission,
+                            ovrcr_protocol::OperatorWorkerSubmission::Prompt {
+                                async_wakeup: true,
+                                ..
+                            }
+                        )
                 }) {
                     anyhow::bail!("async turn bootstrap identity changed");
                 }

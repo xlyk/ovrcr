@@ -74,6 +74,10 @@ impl Scenario {
         self.set("prompt_response", json!(mode))
     }
 
+    pub fn compact_mode(&mut self, mode: &str) -> &mut Self {
+        self.set("compact", json!(mode))
+    }
+
     pub fn default_model(&mut self, provider: &str, id: &str) -> &mut Self {
         self.set(
             "default_model",

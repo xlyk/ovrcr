@@ -233,9 +233,11 @@ an active composer remain ordinary text.
 scroll/follow-tail and completion Unread state. Selecting a terminal does not
 change a message that is already being composed or sent; the captured target
 travels with each message, and reopening either composer captures the current
-selection for the next one. `operator::feed` draws the journal as one entry per `User` or `AsyncWakeup`
+selection for the next one. `operator::feed` draws the journal as one entry per `User`, `Compaction` or `AsyncWakeup`
 message, with the worker events of that turn folded into it; worker events with
-no opener (a legacy journal) form an `Operator` entry. Row anchors are
+no opener (a legacy journal) form an `Operator` entry. `CompactionSummary { summary, tokens_before }`
+renders inside a `Compaction` entry without setting `Entry.reply`, so `/copy`
+always targets the latest visible assistant reply. Row anchors are
 `(entry owner ordinal, part, offset)`, with parts in draw order (request, target,
 target detail, commands, reply, outcome, gap) and offsets that only grow under
 append (a command's index, a reply's byte offset), so a scrolled viewport keeps
@@ -370,8 +372,10 @@ Markdown of the latest visible assistant reply, bounded at 64 KiB),
 `/thinking <level>`, `/model default`, exact `/model <provider/id>` matches and
 `/new` (idle/unleased session-epoch reset) directly, while transitioning into
 full Operator for bare `/thinking`, bare `/model`, non-exact `/model <query>`
-filters or `/session` (dismissible read-only session inspection modal: `Esc`,
-`Enter` or `q` closes). `ModelPicker` queries the dedicated profile via
+filters, `/compact [instructions]` (manual context compaction with live
+`Compacting context…` activity, foreground `Stop` rollback and receipt) or
+`/session` (dismissible read-only session inspection modal: `Esc`, `Enter` or
+`q` closes). `ModelPicker` queries the dedicated profile via
 `OperatorRequest::Models`, lists `Harness default` ahead of `provider/id`
 entries, marks the active `Settings` snapshot selection, filters live
 case-insensitively by `provider/id` or display name, and writes the chosen model

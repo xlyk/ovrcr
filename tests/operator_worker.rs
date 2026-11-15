@@ -2349,3 +2349,379 @@ fn a_streaming_peer_cannot_defer_a_control_deadline() {
     assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
     client.wait_stopped(opened.id);
 }
+
+#[test]
+fn manual_compact_cold_and_with_instructions_promotes_compacted_checkpoint_and_updates_session_info()
+ {
+    let mut first = Scenario::new();
+    first.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    first.steps(vec![Step::assistant("First turn answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&first);
+    let opened = client.open();
+
+    // Before the first checkpoint, `/compact` is refused cleanly without spawning Pi.
+    match client.compact(&opened, None) {
+        ovrcr::protocol::Response::Error { message, .. } => {
+            assert!(
+                message.contains("before the first completed turn"),
+                "{message}"
+            );
+        }
+        other => panic!("expected refusal on empty conversation, got {other:?}"),
+    }
+    assert!(fake.log().is_empty());
+
+    let turn_one = client.submit_turn(&opened, "seed conversation");
+    client.wait_history(opened.id, |history| {
+        history.conversation.current_turn.as_ref().unwrap().state == OperatorTurnState::Complete
+    });
+    let seeded = client.wait_stopped(opened.id);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_one.identity.turn.0 as i64)
+    );
+
+    let mut compact_scenario = first.clone();
+    compact_scenario.compact_mode("ok");
+    compact_scenario.set("compact_tokens_before", json!(4200));
+    fake.script(&compact_scenario);
+
+    let turn_two = client.compact_turn(&seeded.conversation, Some("keep only test results"));
+    let compacted = client.wait_terminal(opened.id);
+    assert_eq!(
+        compacted.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{compacted:#?}\n{:#?}",
+        fake.log()
+    );
+    client.wait_stopped(opened.id);
+
+    let compacts = fake.events("compact");
+    assert_eq!(compacts.len(), 1, "{compacts:#?}");
+    assert_eq!(compacts[0]["customInstructions"], "keep only test results");
+
+    let turn_two_messages: Vec<_> = compacted
+        .messages
+        .iter()
+        .filter(|m| m.turn == turn_two.identity.turn)
+        .map(|m| &m.content)
+        .collect();
+    assert!(matches!(
+        turn_two_messages.first(),
+        Some(OperatorMessageContent::Compaction {
+            instructions: Some(instructions)
+        }) if instructions == "keep only test results"
+    ));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+    )));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded)
+    )));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+            summary,
+            tokens_before: 4200,
+        }) if summary == "Compacted summary (keep only test results)"
+    )));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_two.identity.turn.0 as i64)
+    );
+
+    // `/session` (`SessionInfo`) parses the compacted checkpoint cleanly: trailing
+    // compaction clears pre-compaction context_tokens while accumulating usage.
+    let session_info = match client.exchange(Request::Operator(
+        ovrcr::protocol::OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        },
+    )) {
+        ovrcr::protocol::Response::Operator(ovrcr::protocol::OperatorResponse::SessionInfo(
+            info,
+        )) => info,
+        other => panic!("expected SessionInfo, got {other:?}"),
+    };
+    assert_eq!(session_info.context_window.used_tokens, None);
+    assert_eq!(session_info.tokens.total, 1250 + 380);
+
+    // A subsequent prompt turn resumes from the compacted checkpoint cleanly.
+    let mut third = first.clone();
+    third.steps(vec![Step::assistant("Post-compact reply."), Step::Settle]);
+    fake.script(&third);
+    let summary = client.current().unwrap();
+    let turn_three = client.submit_turn(&summary, "after compaction");
+    let final_history = client.wait_terminal(opened.id);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .state,
+        OperatorTurnState::Complete
+    );
+    assert!(harness::has_assistant(
+        &final_history,
+        "Post-compact reply."
+    ));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_three.identity.turn.0 as i64)
+    );
+    client.wait_stopped(opened.id);
+}
+
+#[test]
+fn manual_compact_on_warm_watch_leased_worker_reuses_run_and_preserves_lease() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::assistant("Watching session."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch complete."),
+            Step::Settle,
+        ],
+    ]);
+    scenario.compact_mode("ok");
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    let turn_one = client.submit_turn(&opened, "start watch");
+    let leased = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|t| t.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+
+    let turn_two = client.compact_turn(&leased.conversation, None);
+    assert_eq!(turn_two.identity.run, turn_one.identity.run);
+    let compacted = client.wait_history(opened.id, |history| {
+        history.conversation.current_turn.as_ref().is_some_and(|t| {
+            t.identity.turn == turn_two.identity.turn && t.state == OperatorTurnState::Complete
+        })
+    });
+    assert!(
+        !compacted.conversation.worker_stopped,
+        "warm watch lease must survive /compact"
+    );
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "warm /compact must reuse the existing Pi process"
+    );
+    let compacts = fake.events("compact");
+    assert_eq!(compacts.len(), 1);
+    assert!(compacts[0]["customInstructions"].is_null());
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_two.identity.turn.0 as i64)
+    );
+
+    let turn_three = client.submit_turn(&compacted.conversation, "finish watch");
+    assert_eq!(turn_three.identity.run, turn_one.identity.run);
+    let finished = client.wait_stopped(opened.id);
+    assert_eq!(
+        finished.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert!(harness::has_assistant(&finished, "Watch complete."));
+}
+
+#[test]
+fn stop_during_manual_compact_aborts_pi_and_rolls_back_cold_and_warm_sessions() {
+    for (warm, abort_first) in [(false, false), (true, true)] {
+        let mut scenario = Scenario::new();
+        scenario.compact_mode("hold");
+        scenario.set("compact_dirty_before_abort", json!(true));
+        scenario.set("abort_before_compact_response", json!(abort_first));
+        if warm {
+            scenario.prompt_steps(vec![
+                vec![
+                    Step::WatchStatus(1),
+                    Step::assistant("Warm baseline."),
+                    Step::Settle,
+                ],
+                vec![
+                    Step::WatchStatus(0),
+                    Step::assistant("After stopped compact."),
+                    Step::Settle,
+                ],
+            ]);
+        } else {
+            scenario.steps(vec![Step::assistant("Cold baseline."), Step::Settle]);
+        }
+
+        let (live, fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        let turn_one = client.submit_turn(&opened, "seed");
+        let after_one = if warm {
+            client.wait_history(opened.id, |history| {
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && !history.conversation.worker_stopped
+            })
+        } else {
+            client.wait_history(opened.id, |history| {
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+            });
+            client.wait_stopped(opened.id)
+        };
+        let checkpoint_path = live
+            .config
+            .join("operator-pi/turns")
+            .join(turn_one.identity.turn.0.to_string())
+            .join("session.jsonl");
+        let baseline_bytes = std::fs::read(&checkpoint_path).unwrap();
+
+        let turn_two = client.compact_turn(&after_one.conversation, Some("focus on blockers"));
+        client.wait_history(opened.id, |history| {
+            history.messages.iter().any(|m| {
+                m.turn == turn_two.identity.turn
+                    && matches!(
+                        m.content,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+                    )
+            })
+        });
+        client.stop_turn(turn_two.identity);
+        let after_stop = if warm {
+            client.wait_history(opened.id, |history| {
+                history.conversation.current_turn.as_ref().is_some_and(|t| {
+                    t.identity.turn == turn_two.identity.turn
+                        && t.state == OperatorTurnState::Interrupted
+                })
+            })
+        } else {
+            client.wait_stopped(opened.id)
+        };
+
+        assert_eq!(
+            after_stop.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Interrupted
+        );
+        assert!(!after_stop.messages.iter().any(|m| {
+            m.turn == turn_two.identity.turn
+                && matches!(
+                    m.content,
+                    OperatorMessageContent::Worker(
+                        OperatorWorkerEvent::CompactionEnded
+                            | OperatorWorkerEvent::CompactionSummary { .. }
+                    )
+                )
+        }));
+        assert_eq!(
+            Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_one.identity.turn.0 as i64)
+        );
+        assert_eq!(std::fs::read(&checkpoint_path).unwrap(), baseline_bytes);
+
+        if warm {
+            assert!(
+                !after_stop.conversation.worker_stopped,
+                "warm lease must stay alive after Stop rollback on /compact"
+            );
+            let turn_three = client.submit_turn(&after_stop.conversation, "continue after stop");
+            assert_eq!(turn_three.identity.run, turn_one.identity.run);
+            let finished = client.wait_stopped(opened.id);
+            assert!(harness::has_assistant(&finished, "After stopped compact."));
+        }
+        let _ = fake;
+    }
+}
+
+#[test]
+fn manual_compact_failures_and_corrupt_snapshot_roll_back_without_promoting_or_leaking_provider_errors()
+ {
+    for (mode, expected_message) in [
+        (
+            "already_compacted",
+            "Operator context is already compacted.",
+        ),
+        ("too_small", "Operator context has nothing to compact yet."),
+        (
+            "error",
+            "Pi request failed; inspect the partial journal before retrying.",
+        ),
+        (
+            "corrupt_session",
+            "Operator Pi context is unavailable; saved data was preserved.",
+        ),
+    ] {
+        let mut scenario = Scenario::new();
+        scenario.steps(vec![Step::assistant("Seed turn."), Step::Settle]);
+        scenario.compact_mode(mode);
+        scenario.set("compact_error", json!(format!("provider boom {SENTINEL}")));
+        let (live, _fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        let turn_one = client.submit_turn(&opened, "seed");
+        client.wait_history(opened.id, |history| {
+            history.conversation.current_turn.as_ref().unwrap().state == OperatorTurnState::Complete
+        });
+        let seeded = client.wait_stopped(opened.id);
+        let checkpoint_path = live
+            .config
+            .join("operator-pi/turns")
+            .join(turn_one.identity.turn.0.to_string())
+            .join("session.jsonl");
+        let baseline_bytes = std::fs::read(&checkpoint_path).unwrap();
+
+        let turn_two = client.compact_turn(&seeded.conversation, None);
+        let failed = client.wait_terminal(opened.id);
+        client.wait_stopped(opened.id);
+
+        assert_eq!(
+            failed.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Error,
+            "mode={mode}: {failed:#?}"
+        );
+        assert_eq!(
+            failed_text(&failed).as_deref(),
+            Some(expected_message),
+            "mode={mode}"
+        );
+        assert!(!harness::history_text(&failed).contains(SENTINEL));
+        assert!(!failed.messages.iter().any(|m| {
+            m.turn == turn_two.identity.turn
+                && matches!(
+                    m.content,
+                    OperatorMessageContent::Worker(
+                        OperatorWorkerEvent::CompactionSummary { .. }
+                            | OperatorWorkerEvent::Completed { .. }
+                    )
+                )
+        }));
+        assert_eq!(
+            Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_one.identity.turn.0 as i64),
+            "mode={mode}: pre-compaction checkpoint must remain authoritative"
+        );
+        assert_eq!(std::fs::read(&checkpoint_path).unwrap(), baseline_bytes);
+    }
+}

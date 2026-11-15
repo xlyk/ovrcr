@@ -287,6 +287,11 @@ pub enum OperatorWorkerEvent {
     /// remain represented by the turn's terminal event/state, never by an end.
     CompactionEnded,
     ReasoningSelected(OperatorReasoning),
+    /// Durable receipt emitted when manual `/compact` finishes summarizing prior context.
+    CompactionSummary {
+        summary: String,
+        tokens_before: u64,
+    },
 }
 impl OperatorWorkerEvent {
     pub fn is_terminal(&self) -> bool {
@@ -319,6 +324,12 @@ impl OperatorEventBatch {
                 OperatorWorkerEvent::Completed { .. }
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded => {}
+                OperatorWorkerEvent::CompactionSummary { summary, .. } => {
+                    if summary.len() > MAX_OPERATOR_TEXT_BYTES || summary.contains('\0') {
+                        return Err("invalid operator compaction summary".into());
+                    }
+                    bytes += summary.len();
+                }
                 OperatorWorkerEvent::AssistantDelta(text)
                 | OperatorWorkerEvent::Failed(text)
                 | OperatorWorkerEvent::ThinkingDelta(text) => {
@@ -394,6 +405,10 @@ pub enum OperatorMessageContent {
     /// A queued watched-session report admitted while the leased Pi worker was idle.
     AsyncWakeup {
         text: String,
+    },
+    /// User-initiated `/compact` turn opener with optional summarization instructions.
+    Compaction {
+        instructions: Option<String>,
     },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -476,6 +491,12 @@ pub enum OperatorRequest {
     SessionInfo {
         conversation: OperatorConversationId,
     },
+    /// Compacts the current-epoch Operator conversation context via Pi's native `compact` RPC.
+    Compact {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+        instructions: Option<String>,
+    },
 }
 impl OperatorRequest {
     pub fn validate(&self) -> Result<(), String> {
@@ -504,6 +525,22 @@ impl OperatorRequest {
                     return Err("empty operator message".into());
                 }
                 context.validate()
+            }
+            Self::Compact {
+                conversation,
+                instructions,
+                ..
+            } => {
+                if conversation.0 == 0 {
+                    return Err("zero conversation identity".into());
+                }
+                if let Some(instructions) = instructions {
+                    validate_text(instructions)?;
+                    if instructions.trim().is_empty() {
+                        return Err("empty compaction instructions".into());
+                    }
+                }
+                Ok(())
             }
             Self::Stop { identity } => identity.validate(),
             _ => Ok(()),
@@ -553,19 +590,30 @@ impl Default for OperatorSettings {
     }
 }
 
+/// Worker turn payload generalized across prompt, manual compaction, and future branch summary turns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperatorWorkerSubmission {
+    Prompt {
+        text: String,
+        context: OperatorContext,
+        /// Pi has already started this prompt through its native async input API.
+        async_wakeup: bool,
+    },
+    Compact {
+        instructions: Option<String>,
+    },
+}
+
 /// Immutable bootstrap data read only by the authenticated current worker.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerStart {
     pub identity: OperatorTurnIdentity,
-    /// The `operator.model` override captured when Submit was durably accepted.
+    /// The `operator.model` override captured when the turn was durably accepted.
     pub model: Option<String>,
-    pub text: String,
-    pub context: OperatorContext,
+    pub submission: OperatorWorkerSubmission,
     /// The last completed turn whose native session is this turn's context base.
     pub checkpoint_turn: Option<OperatorTurnId>,
     pub thinking_level: OperatorThinkingLevel,
-    /// Pi has already started this prompt through its native async input API.
-    pub async_wakeup: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
@@ -951,5 +999,115 @@ mod tests {
             MAX_OPERATOR_MODEL_CATALOG_ENTRIES + 1
         ];
         assert!(validate_operator_model_catalog(&oversized).is_err());
+    }
+
+    #[test]
+    fn compact_request_worker_submission_and_compaction_summary_validate_and_round_trip() {
+        assert!(
+            OperatorRequest::Compact {
+                conversation: OperatorConversationId(0),
+                expected_run: SessionRunId(1),
+                instructions: None,
+            }
+            .validate()
+            .is_err()
+        );
+        for invalid in [
+            Some(String::new()),
+            Some("   ".into()),
+            Some("bad\0text".into()),
+            Some("x".repeat(MAX_OPERATOR_TEXT_BYTES + 1)),
+        ] {
+            assert!(
+                OperatorRequest::Compact {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(1),
+                    instructions: invalid,
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for valid in [None, Some("preserve branches and open PR numbers".into())] {
+            let request = crate::Request::Operator(OperatorRequest::Compact {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(2),
+                instructions: valid.clone(),
+            });
+            if let crate::Request::Operator(inner) = &request {
+                assert!(inner.validate().is_ok());
+            }
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &request).unwrap();
+            let decoded: crate::Request =
+                crate::read_frame::<crate::Request>(&mut bytes.as_slice()).unwrap();
+            assert_eq!(request, decoded);
+
+            let message = OperatorMessageContent::Compaction {
+                instructions: valid.clone(),
+            };
+            let json = serde_json::to_string(&message).unwrap();
+            assert_eq!(
+                serde_json::from_str::<OperatorMessageContent>(&json).unwrap(),
+                message
+            );
+
+            let start = OperatorWorkerResult::Start(Box::new(OperatorWorkerStart {
+                identity: OperatorTurnIdentity {
+                    conversation: OperatorConversationId(1),
+                    turn: OperatorTurnId(3),
+                    session: SessionId(2),
+                    run: SessionRunId(4),
+                },
+                model: Some("openai/gpt-5.4".into()),
+                submission: OperatorWorkerSubmission::Compact {
+                    instructions: valid,
+                },
+                checkpoint_turn: Some(OperatorTurnId(2)),
+                thinking_level: OperatorThinkingLevel::Medium,
+            }));
+            let response = crate::Response::OperatorWorker(start);
+            let mut resp_bytes = Vec::new();
+            crate::write_frame(&mut resp_bytes, &response).unwrap();
+            let decoded_resp: crate::Response =
+                crate::read_frame::<crate::Response>(&mut resp_bytes.as_slice()).unwrap();
+            assert_eq!(response, decoded_resp);
+        }
+
+        let identity = OperatorTurnIdentity {
+            conversation: OperatorConversationId(1),
+            turn: OperatorTurnId(2),
+            session: SessionId(1),
+            run: SessionRunId(1),
+        };
+        let mut batch = OperatorEventBatch {
+            identity,
+            sequence: 1,
+            events: vec![
+                OperatorWorkerEvent::CompactionStarted,
+                OperatorWorkerEvent::CompactionEnded,
+                OperatorWorkerEvent::CompactionSummary {
+                    summary: "Kept active workspace decisions.".into(),
+                    tokens_before: 42_500,
+                },
+                OperatorWorkerEvent::Completed { leased: false },
+            ],
+        };
+        assert!(batch.validate().is_ok());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: String::new(),
+            tokens_before: 0,
+        };
+        assert!(batch.validate().is_ok());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: "bad\0summary".into(),
+            tokens_before: 10,
+        };
+        assert!(batch.validate().is_err());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
+            tokens_before: 10,
+        };
+        assert!(batch.validate().is_err());
     }
 }

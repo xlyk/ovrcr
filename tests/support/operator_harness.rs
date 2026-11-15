@@ -242,6 +242,29 @@ impl OperatorClient {
         }
     }
 
+    pub fn compact(
+        &mut self,
+        summary: &OperatorConversationSummary,
+        instructions: Option<&str>,
+    ) -> Response {
+        self.exchange(Request::Operator(OperatorRequest::Compact {
+            conversation: summary.id,
+            expected_run: summary.run,
+            instructions: instructions.map(str::to_owned),
+        }))
+    }
+
+    pub fn compact_turn(
+        &mut self,
+        summary: &OperatorConversationSummary,
+        instructions: Option<&str>,
+    ) -> OperatorTurn {
+        match self.compact(summary, instructions) {
+            Response::Operator(OperatorResponse::Submitted(turn)) => turn,
+            other => panic!("Compact response: {other:?}"),
+        }
+    }
+
     pub fn stop(&mut self, identity: OperatorTurnIdentity) -> Response {
         self.exchange(Request::Operator(OperatorRequest::Stop { identity }))
     }

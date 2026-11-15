@@ -104,6 +104,10 @@ function clampThinkingLevel(level) {
 }
 let promptRunning = false;
 let promptCount = 0;
+let compactRunning = false;
+let compactCount = 0;
+let compactAborted = false;
+let pendingCompactPromise = null;
 let aborted = false;
 let rollbackSwitchSeen = false;
 let rollbackWakeupOffered = false;
@@ -252,7 +256,7 @@ function stateData() {
     model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name ?? currentModel.id } : null,
     thinkingLevel,
     isStreaming: promptRunning,
-    isCompacting: false,
+    isCompacting: compactRunning,
     steeringMode: "all",
     followUpMode: "one-at-a-time",
     sessionFile: sessionFile ?? null,
@@ -900,6 +904,124 @@ function handleCommand(command) {
       }, 0);
       break;
     }
+    case "compact": {
+      const compactIndex = compactCount++;
+      const customInstructions = command.customInstructions ?? null;
+      record({ event: "compact", id, customInstructions });
+      const mode = scenario.compact_modes?.[compactIndex] ?? scenario.compact ?? "ok";
+      if (mode === "hang") break;
+      compactRunning = true;
+      compactAborted = false;
+      writeRecord({ type: "compaction_start", reason: "manual" });
+      pendingCompactPromise = (async () => {
+        try {
+          if (mode === "hold") {
+            if (scenario.compact_dirty_before_abort && sessionFile) {
+              appendSessionEntry({ type: "custom", customType: "dirty-compact", data: {} });
+            }
+            while (!compactAborted && !stdinClosed) {
+              if (scenario.compact_release_file && existsSync(scenario.compact_release_file)) break;
+              await sleep(15);
+            }
+            if (compactAborted || stdinClosed) {
+              compactRunning = false;
+              compactAborted = false;
+              writeRecord({
+                type: "compaction_end",
+                reason: "manual",
+                aborted: true,
+                willRetry: false,
+              });
+              writeRecord({
+                type: "response",
+                id,
+                command: "compact",
+                success: false,
+                error: "Compaction cancelled",
+              });
+              return;
+            }
+          }
+          if (mode === "already_compacted" || mode === "too_small" || mode === "error") {
+            const reason =
+              mode === "already_compacted"
+                ? "Already compacted"
+                : mode === "too_small"
+                  ? "Nothing to compact (session too small)"
+                  : (scenario.compact_error ?? "provider failure");
+            compactRunning = false;
+            writeRecord({
+              type: "compaction_end",
+              reason: "manual",
+              aborted: false,
+              willRetry: false,
+              errorMessage: `Compaction failed: ${reason}`,
+            });
+            writeRecord({
+              type: "response",
+              id,
+              command: "compact",
+              success: false,
+              error: reason,
+            });
+            return;
+          }
+          const summary =
+            scenario.compact_summary ??
+            (customInstructions
+              ? `Compacted summary (${customInstructions})`
+              : "Compacted summary of earlier context.");
+          const tokensBefore = scenario.compact_tokens_before ?? 4200;
+          const firstKeptEntryId = "kept-entry-1";
+          const usage = scenario.compact_usage ?? {
+            input: 300,
+            output: 80,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 380,
+            cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+          };
+          if (sessionFile) {
+            if (mode === "corrupt_session") {
+              appendLine(sessionFile, "not-valid-json");
+            } else {
+              appendSessionEntry({
+                type: "compaction",
+                summary,
+                firstKeptEntryId,
+                tokensBefore,
+                fromExtension: false,
+                usage,
+              });
+            }
+          }
+          const result = {
+            summary,
+            firstKeptEntryId,
+            tokensBefore,
+            usage,
+          };
+          compactRunning = false;
+          writeRecord({
+            type: "compaction_end",
+            reason: "manual",
+            result,
+            aborted: false,
+            willRetry: false,
+          });
+          writeRecord({
+            type: "response",
+            id,
+            command: "compact",
+            success: true,
+            data: result,
+          });
+        } finally {
+          pendingCompactPromise = null;
+        }
+      })();
+      break;
+    }
     case "clear_queue":
       record({ event: "command", command: "clear_queue", id });
       respond("clear_queue", id, { steering: [], followUp: [] }, scenario.clear_queue_result !== "error");
@@ -911,6 +1033,14 @@ function handleCommand(command) {
         break;
       }
       if (promptRunning) aborted = true;
+      if (compactRunning) compactAborted = true;
+      if (pendingCompactPromise && scenario.abort_before_compact_response !== true) {
+        void pendingCompactPromise.then(() => {
+          respond("abort", id);
+          for (const raw of scenario.abort_records ?? []) writeRaw(raw);
+        });
+        break;
+      }
       respond("abort", id);
       for (const raw of scenario.abort_records ?? []) writeRaw(raw);
       break;

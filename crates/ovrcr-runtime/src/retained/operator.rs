@@ -597,6 +597,26 @@ impl SessionStore {
         self.submit_operator_turn_inner(id, expected_run, text, context, settings, true)
     }
 
+    pub(crate) fn submit_operator_compact_turn(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        instructions: Option<String>,
+        settings: OperatorSettings,
+    ) -> Result<OperatorTurn> {
+        self.submit_operator_compact_turn_inner(id, expected_run, instructions, settings, false)
+    }
+
+    pub(crate) fn submit_operator_compact_turn_warm(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        instructions: Option<String>,
+        settings: OperatorSettings,
+    ) -> Result<OperatorTurn> {
+        self.submit_operator_compact_turn_inner(id, expected_run, instructions, settings, true)
+    }
+
     /// Persists an idle watch report as its own turn on the currently leased
     /// run. The Server holds `mutation_lock` across this call and the native
     /// Pi confirmation, so a competing human Submit cannot own the same slot.
@@ -693,6 +713,53 @@ impl SessionStore {
         }
         .validate()
         .map_err(anyhow::Error::msg)?;
+        self.submit_operator_message_inner(
+            id,
+            expected_run,
+            OperatorMessageContent::User {
+                text: text.into(),
+                context,
+            },
+            settings,
+            warm_worker,
+            false,
+        )
+    }
+
+    fn submit_operator_compact_turn_inner(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        instructions: Option<String>,
+        settings: OperatorSettings,
+        warm_worker: bool,
+    ) -> Result<OperatorTurn> {
+        OperatorRequest::Compact {
+            conversation: id,
+            expected_run,
+            instructions: instructions.clone(),
+        }
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+        self.submit_operator_message_inner(
+            id,
+            expected_run,
+            OperatorMessageContent::Compaction { instructions },
+            settings,
+            warm_worker,
+            true,
+        )
+    }
+
+    fn submit_operator_message_inner(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        opener: OperatorMessageContent,
+        settings: OperatorSettings,
+        warm_worker: bool,
+        require_epoch_checkpoint: bool,
+    ) -> Result<OperatorTurn> {
         self.require_current_operator(id)?;
         if let Some(model) = &settings.model {
             validate_operator_model(model).map_err(anyhow::Error::msg)?;
@@ -704,6 +771,25 @@ impl SessionStore {
             .is_some_and(|t| t.state == OperatorTurnState::Running)
         {
             bail!("operator conversation is busy");
+        }
+        if require_epoch_checkpoint {
+            let checkpoint: Option<i64> = self
+                .connection
+                .query_row(
+                    "SELECT c.pi_checkpoint_turn
+                     FROM operator_conversations c
+                     JOIN operator_turns t ON t.id=c.pi_checkpoint_turn AND t.conversation=c.id
+                     WHERE c.id=?1 AND c.singleton=1 AND t.session_epoch=c.session_epoch",
+                    [sql_integer(id.0)?],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            if checkpoint.is_none_or(|turn| turn <= 0) {
+                bail!(
+                    "Cannot compact Operator context before the first completed turn in this session."
+                );
+            }
         }
         let row = self
             .records
@@ -764,10 +850,7 @@ impl SessionStore {
             &transaction,
             sql_integer(id.0)?,
             sql_integer(turn.0)?,
-            &OperatorMessageContent::User {
-                text: text.into(),
-                context,
-            },
+            &opener,
         )?;
         transaction.commit()?;
         if !warm_worker {
@@ -973,46 +1056,68 @@ impl SessionStore {
             [sql_integer(identity.turn.0)?],
             |r| r.get(0),
         )?;
-        let checkpoint_turn: Option<i64> = self.connection.query_row(
-            "SELECT pi_checkpoint_turn FROM operator_conversations WHERE id=?1 AND singleton=1",
-            [sql_integer(identity.conversation.0)?],
-            |r| r.get(0),
-        )?;
+        let checkpoint_row: Option<(Option<i64>, i64, Option<i64>)> = self
+            .connection
+            .query_row(
+                "SELECT c.pi_checkpoint_turn, c.session_epoch, t.session_epoch
+                 FROM operator_conversations c
+                 LEFT JOIN operator_turns t ON t.id=c.pi_checkpoint_turn AND t.conversation=c.id
+                 WHERE c.id=?1 AND c.singleton=1",
+                [sql_integer(identity.conversation.0)?],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
         let raw: String = self.connection.query_row(
             "SELECT content FROM operator_messages WHERE turn=?1 ORDER BY ordinal LIMIT 1",
             [sql_integer(identity.turn.0)?],
             |r| r.get(0),
         )?;
-        let (text, context, async_wakeup) = match serde_json::from_str(&raw)? {
-            OperatorMessageContent::User { text, context } => (text, context, false),
-            OperatorMessageContent::AsyncWakeup { text } => {
-                (text, OperatorContext::default(), true)
+        let submission = match serde_json::from_str(&raw)? {
+            OperatorMessageContent::User { text, context } => OperatorWorkerSubmission::Prompt {
+                text,
+                context,
+                async_wakeup: false,
+            },
+            OperatorMessageContent::AsyncWakeup { text } => OperatorWorkerSubmission::Prompt {
+                text,
+                context: OperatorContext::default(),
+                async_wakeup: true,
+            },
+            OperatorMessageContent::Compaction { instructions } => {
+                OperatorWorkerSubmission::Compact { instructions }
             }
             _ => bail!("operator submission missing"),
         };
-        let checkpoint_turn = checkpoint_turn
-            .map(|turn| -> Result<OperatorTurnId> {
-                let turn: u64 = turn
+        let checkpoint_turn = match checkpoint_row {
+            Some((Some(raw_turn), conv_epoch, turn_epoch)) => {
+                let turn: u64 = raw_turn
                     .try_into()
                     .context("saved operator checkpoint turn is invalid")?;
                 if turn == 0 {
                     bail!("saved operator checkpoint turn is invalid");
                 }
-                Ok(OperatorTurnId(turn))
-            })
-            .transpose()?;
+                let Some(turn_epoch) = turn_epoch else {
+                    bail!("saved operator checkpoint turn is invalid");
+                };
+                (turn_epoch == conv_epoch).then_some(OperatorTurnId(turn))
+            }
+            _ => None,
+        };
+        if matches!(submission, OperatorWorkerSubmission::Compact { .. })
+            && checkpoint_turn.is_none()
+        {
+            bail!("operator compact turn is missing a current-epoch checkpoint");
+        }
         Ok(OperatorWorkerStart {
             identity,
             model,
-            text,
-            context,
+            submission,
             checkpoint_turn,
             thinking_level: serde_json::from_str(&self.connection.query_row(
                 "SELECT thinking_level FROM operator_turns WHERE id=?1",
                 [sql_integer(identity.turn.0)?],
                 |r| r.get::<_, String>(0),
             )?)?,
-            async_wakeup,
         })
     }
 
@@ -1391,11 +1496,16 @@ mod tests {
             .begin_async_operator_turn(run, "watched session 23 is ready")
             .unwrap()
             .expect("the leased completed run owns an idle slot");
-        assert!(wakeup.async_wakeup);
         assert_eq!(wakeup.identity.run, first.identity.run);
         assert_eq!(wakeup.identity.session, first.identity.session);
-        assert_eq!(wakeup.text, "watched session 23 is ready");
-        assert_eq!(wakeup.context, OperatorContext::default());
+        assert_eq!(
+            wakeup.submission,
+            OperatorWorkerSubmission::Prompt {
+                text: "watched session 23 is ready".into(),
+                context: OperatorContext::default(),
+                async_wakeup: true,
+            }
+        );
         let history = store
             .read_operator_history(conversation.id, 0, 100)
             .unwrap();
@@ -2037,8 +2147,15 @@ mod tests {
             .unwrap();
         assert_eq!(fresh.identity.run.0, t.identity.run.0 + 1);
         assert_eq!(
-            store.operator_worker_start(fresh.identity).unwrap().text,
-            "fresh"
+            store
+                .operator_worker_start(fresh.identity)
+                .unwrap()
+                .submission,
+            OperatorWorkerSubmission::Prompt {
+                text: "fresh".into(),
+                context: OperatorContext::default(),
+                async_wakeup: false,
+            }
         );
         assert_eq!(
             store
@@ -3329,5 +3446,146 @@ mod tests {
         store.mark_stopped(c.session, leased.run).unwrap();
         let (reset, _) = store.reset_operator_session(c.id, leased.run).unwrap();
         assert_eq!(reset.session_epoch, 1);
+    }
+
+    #[test]
+    fn compact_turn_refuses_missing_epoch_checkpoint_busy_or_stale_run_and_supports_cold_and_warm()
+    {
+        let mut store = SessionStore::in_memory();
+        let c = open(&mut store);
+
+        // 1. Refuse before any completed turn in epoch 0.
+        let err = store
+            .submit_operator_compact_turn(c.id, c.run, None, OperatorSettings::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("before the first completed turn"),
+            "unexpected error: {err}"
+        );
+
+        // 2. While turn 1 is Running, refuse as busy.
+        let turn1 = store
+            .submit_operator_turn(
+                c.id,
+                c.run,
+                "first prompt",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        let busy_err = store
+            .submit_operator_compact_turn(
+                c.id,
+                turn1.identity.run,
+                None,
+                OperatorSettings::default(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(busy_err.contains("busy"), "unexpected error: {busy_err}");
+
+        // Complete turn 1 with warm lease = true first to verify warm compaction.
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: turn1.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::AssistantDelta("first reply".into()),
+                    OperatorWorkerEvent::Completed { leased: true },
+                ],
+            })
+            .unwrap();
+        let after_turn1 = store.operator_conversation(c.id).unwrap();
+
+        // Stale expected_run must be rejected.
+        assert!(
+            store
+                .submit_operator_compact_turn_warm(
+                    c.id,
+                    SessionRunId(99),
+                    None,
+                    OperatorSettings::default(),
+                )
+                .is_err()
+        );
+
+        // 3. Warm compact turn keeps the same leased run and reconstructs Compact submission.
+        let warm_compact = store
+            .submit_operator_compact_turn_warm(
+                c.id,
+                after_turn1.run,
+                Some("keep branch names".into()),
+                OperatorSettings {
+                    thinking_level: OperatorThinkingLevel::High,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(warm_compact.identity.run, after_turn1.run);
+        let warm_start = store.operator_worker_start(warm_compact.identity).unwrap();
+        assert_eq!(warm_start.checkpoint_turn, Some(turn1.identity.turn));
+        assert_eq!(warm_start.thinking_level, OperatorThinkingLevel::High);
+        assert_eq!(
+            warm_start.submission,
+            OperatorWorkerSubmission::Compact {
+                instructions: Some("keep branch names".into()),
+            }
+        );
+
+        // Complete warm compaction with CompactionSummary and release the lease.
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: warm_compact.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::CompactionStarted,
+                    OperatorWorkerEvent::CompactionEnded,
+                    OperatorWorkerEvent::CompactionSummary {
+                        summary: "Compacted branch context.".into(),
+                        tokens_before: 18_400,
+                    },
+                    OperatorWorkerEvent::Completed { leased: false },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(warm_compact.identity.session, warm_compact.identity.run)
+            .unwrap();
+
+        // 4. Cold compact turn advances the run and uses the newly promoted checkpoint.
+        let after_warm = store.operator_conversation(c.id).unwrap();
+        let cold_compact = store
+            .submit_operator_compact_turn(c.id, after_warm.run, None, OperatorSettings::default())
+            .unwrap();
+        assert_eq!(
+            cold_compact.identity.run.0,
+            after_warm.run.0 + 1,
+            "cold compact must allocate next run"
+        );
+        let cold_start = store.operator_worker_start(cold_compact.identity).unwrap();
+        assert_eq!(cold_start.checkpoint_turn, Some(warm_compact.identity.turn));
+        assert_eq!(
+            cold_start.submission,
+            OperatorWorkerSubmission::Compact { instructions: None }
+        );
+        store
+            .interrupt_operator_turn(cold_compact.identity, false)
+            .unwrap();
+        store
+            .mark_stopped(cold_compact.identity.session, cold_compact.identity.run)
+            .unwrap();
+
+        // 5. Immediately after /new, compact is refused again because epoch 1 has no checkpoint.
+        let after_stop = store.operator_conversation(c.id).unwrap();
+        let (reset, _) = store.reset_operator_session(c.id, after_stop.run).unwrap();
+        let post_new_err = store
+            .submit_operator_compact_turn(c.id, reset.run, None, OperatorSettings::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            post_new_err.contains("before the first completed turn"),
+            "unexpected error after /new: {post_new_err}"
+        );
     }
 }

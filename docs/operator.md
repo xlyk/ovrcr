@@ -293,9 +293,19 @@ availability is checked against the profile's own catalog; there is no fallback 
 another model. A missing model is fixed with `ovrcr operator setup`, not by editing
 an identifier you guessed.
 
-pi compacts the conversation automatically when its context fills. When you want
-to start fresh explicitly, run `/new` in the full composer or Quick message once
-no turn is running and no `watch_sessions` warm-worker lease is active: `/new`
+pi compacts the conversation automatically when its context fills. To compact
+context on demand before hitting model limits, run `/compact` or
+`/compact <instructions>` in the full composer or Quick message once at least
+one turn has completed in the current session epoch and no turn is running:
+Operator shows `Compacting context…`, sends pi's native `compact` RPC (with
+optional custom instructions), records a concise compaction receipt with the
+pre-compaction token count and summary without overwriting `/copy`'s last
+assistant reply, promotes the compacted checkpoint on completion, and preserves
+any active `watch_sessions` warm-worker lease. Pressing **Stop** (`Ctrl-x`)
+during `/compact` aborts compaction and rolls back cleanly to the pre-compaction
+checkpoint. When you want to start fresh explicitly, run `/new` in the full
+composer or Quick message once no turn is running and no `watch_sessions`
+warm-worker lease is active: `/new`
 advances the conversation's session epoch, clears the visible feed and active
 checkpoint so the next turn starts cold with empty model context, and preserves
 prior-epoch journal rows in SQLite. Run `/session` to open a read-only modal

@@ -4876,3 +4876,377 @@ fn slash_model_opens_searchable_picker_switches_default_and_exact_and_routes_qui
         "empty catalog must surface clear setup guidance:\n{empty_catalog_screen}"
     );
 }
+
+#[test]
+fn slash_compact_menu_completion_and_empty_or_busy_refusal() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    d.key(KeyCode::Char('/'));
+    let menu = draw_text(&mut d, 120, 30);
+    for entry in [
+        "/copy",
+        "/thinking",
+        "/model",
+        "/new",
+        "/session",
+        "/compact",
+    ] {
+        assert!(
+            menu.contains(entry),
+            "expected `{entry}` in slash menu:\n{menu}"
+        );
+    }
+    assert!(
+        !menu.contains("/tree"),
+        "`/tree` belongs to #489 and must not be registered here:\n{menu}"
+    );
+
+    // `/co` matches `/copy` then `/compact`; Down + Tab completes `/compact ` with trailing space.
+    d.event_action(Event::Paste("co".into()));
+    let filtered = draw_text(&mut d, 120, 30);
+    assert!(
+        filtered.contains("/copy") && filtered.contains("/compact"),
+        "{filtered}"
+    );
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Tab);
+    let completed_draft = draw_text(&mut d, 120, 30);
+    assert!(
+        completed_draft.contains("> /compact ▏"),
+        "expected trailing space on `/compact` Tab completion:\n{completed_draft}"
+    );
+
+    // Brand-new conversation (`current_turn: None`) refuses `/compact` and keeps draft.
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        d.drain_outbox().is_empty(),
+        "empty-epoch `/compact` must refuse without sending Submit or Compact"
+    );
+    let empty_refusal = draw_text(&mut d, 120, 30);
+    assert!(
+        empty_refusal.contains("> /compact ▏"),
+        "draft preserved on refusal:\n{empty_refusal}"
+    );
+    assert!(
+        empty_refusal.contains("before the first completed turn"),
+        "expected empty-epoch refusal:\n{empty_refusal}"
+    );
+
+    // Busy (`Running`) conversation also refuses `/compact` and keeps draft.
+    let mut busy_dash = dashboard_fixture();
+    open_and_settle(&mut busy_dash, busy());
+    busy_dash.event_action(Event::Paste("/compact".into()));
+    busy_dash.key(KeyCode::Enter);
+    assert!(busy_dash.drain_outbox().is_empty());
+    let busy_screen = draw_text(&mut busy_dash, 120, 30);
+    assert!(busy_screen.contains("> /compact▏"), "{busy_screen}");
+    assert!(
+        busy_screen.to_lowercase().contains("busy"),
+        "expected busy refusal:\n{busy_screen}"
+    );
+}
+
+#[test]
+fn slash_compact_dispatches_across_composer_and_quick_renders_activity_receipt_and_stop_without_clobbering_copy()
+ {
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(2);
+    seeded.current_turn = Some(turn(1, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Prior assistant reply markdown."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+
+    // 1. Composer `/compact keep test failures` sends OperatorRequest::Compact.
+    d.event_action(Event::Paste("/compact keep test failures".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let compact_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(2),
+                    instructions: Some(instructions),
+                }) if instructions == "keep test failures"
+            )
+        })
+        .expect("expected OperatorRequest::Compact");
+
+    // Server error keeps draft intact and renders error.
+    d.handle_server_message(ServerMessage::Response {
+        request_id: compact_req.request_id,
+        response: Response::Error {
+            code: ovrcr_protocol::ErrorCode::Conflict,
+            message:
+                "Cannot compact Operator context before the first completed turn in this session."
+                    .into(),
+        },
+    });
+    let err_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        err_screen.contains("> /compact keep test failures▏")
+            && err_screen.contains("before the first completed turn"),
+        "{err_screen}"
+    );
+
+    // Retry and accept turn 2 (`Running`): draft clears, activity shows `Compacting context…`,
+    // and `Ctrl-x` sends foreground `Stop`.
+    d.key(KeyCode::Enter);
+    let compact_req2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Compact { .. })
+            )
+        })
+        .expect("retry Compact");
+    let mut running_turn = turn(2, OperatorTurnState::Running);
+    running_turn.identity.run = SessionRunId(3);
+    let follow = respond(
+        &mut d,
+        compact_req2.request_id,
+        OperatorResponse::Submitted(running_turn.clone()),
+    );
+    let mut running_summary = seeded.clone();
+    running_summary.run = SessionRunId(3);
+    running_summary.worker_stopped = false;
+    running_summary.current_turn = Some(running_turn.clone());
+    let read_running = read_request(&follow);
+    respond(
+        &mut d,
+        read_running.request_id,
+        history_of(
+            running_summary.clone(),
+            vec![
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::Compaction {
+                        instructions: Some("keep test failures".into()),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+                ),
+            ],
+            None,
+        ),
+    );
+    let compacting_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        compacting_screen.contains("> ▏")
+            && compacting_screen.contains("Compacting context…")
+            && compacting_screen.contains("Compact context · keep test failures"),
+        "expected live compaction activity & header:\n{compacting_screen}"
+    );
+
+    // Stop (`Ctrl-x`) during manual compaction sends `OperatorRequest::Stop`.
+    d.ctrl('x');
+    let stop_out = d.drain_outbox();
+    let stop_req = stop_out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Stop { identity })
+                    if identity == running_turn.identity
+            )
+        })
+        .expect("Ctrl-x during /compact sends Stop");
+    let mut interrupted_turn = running_turn.clone();
+    interrupted_turn.state = OperatorTurnState::Interrupted;
+    let follow_stop = respond(
+        &mut d,
+        stop_req.request_id,
+        OperatorResponse::Stopped(interrupted_turn.clone()),
+    );
+    let mut interrupted_summary = running_summary.clone();
+    interrupted_summary.worker_stopped = true;
+    interrupted_summary.current_turn = Some(interrupted_turn);
+    let read_stop = read_request(&follow_stop);
+    respond(
+        &mut d,
+        read_stop.request_id,
+        history_of(
+            interrupted_summary.clone(),
+            vec![turn_message(2, 6, OperatorMessageContent::Interrupted)],
+            None,
+        ),
+    );
+    let stopped_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        stopped_screen.contains("previous context preserved"),
+        "expected truthful interrupted compaction receipt:\n{stopped_screen}"
+    );
+
+    // 2. Menu `Enter` on `/compact` executes zero-arg `/compact` and renders completed receipt
+    //    with `tokens_before` + summary while preserving `/copy` of the prior assistant reply!
+    d.event_action(Event::Paste("/compact".into()));
+    let menu_compact = draw_text(&mut d, 120, 30);
+    assert!(menu_compact.contains("/compact"), "{menu_compact}");
+    d.key(KeyCode::Enter);
+    let compact_req3 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    instructions: None,
+                    ..
+                })
+            )
+        })
+        .expect("menu Enter executes zero-arg Compact");
+    let mut turn3 = turn(3, OperatorTurnState::Running);
+    turn3.identity.run = SessionRunId(4);
+    let follow3 = respond(
+        &mut d,
+        compact_req3.request_id,
+        OperatorResponse::Submitted(turn3.clone()),
+    );
+    let mut complete_summary = interrupted_summary;
+    complete_summary.run = SessionRunId(4);
+    complete_summary.worker_stopped = true;
+    turn3.state = OperatorTurnState::Complete;
+    complete_summary.current_turn = Some(turn3);
+    let read3 = read_request(&follow3);
+    respond(
+        &mut d,
+        read3.request_id,
+        history_of(
+            complete_summary,
+            vec![
+                turn_message(
+                    3,
+                    7,
+                    OperatorMessageContent::Compaction { instructions: None },
+                ),
+                turn_message(
+                    3,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+                ),
+                turn_message(
+                    3,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded),
+                ),
+                turn_message(
+                    3,
+                    10,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+                        summary: "Compacted summary body.".into(),
+                        tokens_before: 4_200,
+                    }),
+                ),
+                turn_message(
+                    3,
+                    11,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let receipt_screen = draw_text(&mut d, 120, 30);
+    for expected in ["Compact context", "4,200 tokens", "Compacted summary body."] {
+        assert!(
+            receipt_screen.contains(expected),
+            "expected `{expected}` in compaction receipt:\n{receipt_screen}"
+        );
+    }
+
+    // `/copy` copies the prior assistant reply, NOT the compaction summary!
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText("Prior assistant reply markdown.".into())
+    );
+
+    // 3. Cold Quick message (`Ctrl-o`) `/compact concise` refuses empty-epoch conversations
+    //    keeping Quick open, and transitions into full Operator when a checkpoint exists.
+    let mut cold_empty = dashboard_fixture();
+    cold_empty.ctrl('o');
+    cold_empty.event_action(Event::Paste("/compact concise".into()));
+    cold_empty.key(KeyCode::Enter);
+    let open_req = cold_empty
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/compact` opens singleton");
+    respond(
+        &mut cold_empty,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let cold_empty_screen = draw_text(&mut cold_empty, 120, 30);
+    assert!(
+        cold_empty_screen.contains("Quick message · Ctrl-o")
+            && cold_empty_screen.contains("/compact concise")
+            && cold_empty_screen.contains("before the first completed turn"),
+        "cold Quick `/compact` on empty epoch must preserve Quick overlay and draft:\n{cold_empty_screen}"
+    );
+
+    let mut cold_ready = dashboard_fixture();
+    cold_ready.ctrl('o');
+    cold_ready.event_action(Event::Paste("/compact concise".into()));
+    cold_ready.key(KeyCode::Enter);
+    let open_req = cold_ready
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/compact` opens singleton");
+    let next = respond(
+        &mut cold_ready,
+        open_req.request_id,
+        OperatorResponse::Opened(seeded.clone()),
+    );
+    let quick_compact = next
+        .iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    instructions: Some(instructions),
+                    ..
+                }) if instructions == "concise"
+            )
+        })
+        .expect("Opened triggers Compact");
+    let mut q_turn = turn(2, OperatorTurnState::Running);
+    q_turn.identity.run = SessionRunId(3);
+    respond(
+        &mut cold_ready,
+        quick_compact.request_id,
+        OperatorResponse::Submitted(q_turn),
+    );
+    let transitioned = draw_text(&mut cold_ready, 120, 30);
+    assert!(
+        !transitioned.contains("Quick message · Ctrl-o")
+            && transitioned.contains("Compacting context…"),
+        "accepted Quick `/compact` transitions into full Operator:\n{transitioned}"
+    );
+}

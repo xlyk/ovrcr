@@ -2024,7 +2024,7 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
     );
     ui.dashboard.key(KeyCode::Esc);
 
-    // 2. Full Operator `/` menu shows registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`) and
+    // 2. Full Operator `/` menu shows registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`, `/compact`) and
     //    dismisses cleanly on `Esc` without leaving Operator.
     ui.dashboard.event_action(Event::Paste("/".into()));
     let menu_screen = ui.render();
@@ -2034,7 +2034,8 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
             && menu_screen.contains("/model [provider/id | default]")
             && menu_screen.contains("/new")
             && menu_screen.contains("/session")
-            && !menu_screen.contains("/compact"),
+            && menu_screen.contains("/compact [instructions]")
+            && !menu_screen.contains("/tree"),
         "{menu_screen}"
     );
     assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
@@ -2548,173 +2549,182 @@ fn dashboard_slash_model_picker_and_switching_work_end_to_end() {
     );
 }
 
-#[test]
-fn dashboard_slash_new_and_zero_spawn_session_work_end_to_end() {
-    use crossterm::event::{Event, KeyCode};
-    use ovrcr::protocol::{
-        self, ClientMessage, ErrorCode, OperatorConversationId, OperatorHistory, OperatorResponse,
-        ServerMessage, Settings, TerminalSize,
-    };
-    use ovrcr::tui::{Dashboard, DashboardAction};
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-    use std::{collections::VecDeque, os::unix::fs::PermissionsExt};
+struct LiveDashboard {
+    stream: std::os::unix::net::UnixStream,
+    dashboard: ovrcr::tui::Dashboard,
+    pending: std::collections::VecDeque<ovrcr::protocol::ClientMessage>,
+    next_probe_id: u64,
+}
 
-    struct LiveDashboard {
-        stream: std::os::unix::net::UnixStream,
-        dashboard: Dashboard,
-        pending: VecDeque<ClientMessage>,
-        next_probe_id: u64,
+impl LiveDashboard {
+    fn connect(live: &Live) -> Self {
+        use ovrcr::protocol::{self, Settings, TerminalSize};
+        use ovrcr::tui::Dashboard;
+        use ratatui::layout::Rect;
+        use std::collections::VecDeque;
+
+        let mut stream = protocol::connect_server(&live.socket).unwrap();
+        let budget = Duration::from_secs(5);
+        stream.set_read_timeout(Some(budget)).unwrap();
+        stream.set_write_timeout(Some(budget)).unwrap();
+        let hierarchy =
+            match protocol::client::request(&mut stream, 910_000, Request::DashboardHello).unwrap()
+            {
+                Response::Hierarchy(hierarchy) => hierarchy,
+                other => panic!("Dashboard handshake: {other:?}"),
+            };
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 160,
+        });
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_area(Rect::new(0, 0, 160, 40));
+        dashboard.install_settings(Settings::default());
+        Self {
+            stream,
+            dashboard,
+            pending: VecDeque::new(),
+            next_probe_id: 910_001,
+        }
     }
 
-    impl LiveDashboard {
-        fn connect(live: &Live) -> Self {
-            let mut stream = protocol::connect_server(&live.socket).unwrap();
-            let budget = Duration::from_secs(5);
-            stream.set_read_timeout(Some(budget)).unwrap();
-            stream.set_write_timeout(Some(budget)).unwrap();
-            let hierarchy =
-                match protocol::client::request(&mut stream, 910_000, Request::DashboardHello)
-                    .unwrap()
-                {
-                    Response::Hierarchy(hierarchy) => hierarchy,
-                    other => panic!("Dashboard handshake: {other:?}"),
-                };
-            let mut dashboard = Dashboard::new(TerminalSize {
-                rows: 40,
-                cols: 160,
-            });
-            dashboard.install_hierarchy(hierarchy);
-            dashboard.install_area(Rect::new(0, 0, 160, 40));
-            dashboard.install_settings(Settings::default());
-            Self {
-                stream,
-                dashboard,
-                pending: VecDeque::new(),
-                next_probe_id: 910_001,
+    fn exchange(&mut self, request: Request) -> Response {
+        use ovrcr::protocol::{self, ClientMessage, ServerMessage};
+
+        self.next_probe_id += 1;
+        let id = self.next_probe_id;
+        protocol::write_frame(
+            &mut self.stream,
+            &ClientMessage {
+                request_id: id,
+                request,
+            },
+        )
+        .unwrap();
+        loop {
+            let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+            let matched = match &incoming {
+                ServerMessage::Response {
+                    request_id,
+                    response,
+                } if *request_id == id => Some(response.clone()),
+                _ => None,
+            };
+            self.pending
+                .extend(self.dashboard.handle_server_message(incoming));
+            self.pending.extend(self.dashboard.drain_outbox());
+            if let Some(response) = matched {
+                self.flush();
+                return response;
             }
         }
+    }
 
-        fn exchange(&mut self, request: Request) -> Response {
-            self.next_probe_id += 1;
-            let id = self.next_probe_id;
-            protocol::write_frame(
-                &mut self.stream,
-                &ClientMessage {
-                    request_id: id,
-                    request,
-                },
-            )
-            .unwrap();
-            loop {
-                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
-                let matched = match &incoming {
-                    ServerMessage::Response {
-                        request_id,
-                        response,
-                    } if *request_id == id => Some(response.clone()),
-                    _ => None,
-                };
-                self.pending
-                    .extend(self.dashboard.handle_server_message(incoming));
-                self.pending.extend(self.dashboard.drain_outbox());
-                if let Some(response) = matched {
-                    self.flush();
-                    return response;
-                }
+    fn flush(&mut self) {
+        use ovrcr::protocol::{self, ServerMessage};
+
+        for _ in 0..200 {
+            self.pending.extend(self.dashboard.drain_outbox());
+            if self.pending.is_empty() {
+                return;
             }
-        }
-
-        fn flush(&mut self) {
-            for _ in 0..200 {
-                self.pending.extend(self.dashboard.drain_outbox());
-                if self.pending.is_empty() {
-                    return;
-                }
-                while let Some(message) = self.pending.pop_front() {
-                    let id = message.request_id;
-                    protocol::write_frame(&mut self.stream, &message).unwrap();
-                    loop {
-                        let incoming: ServerMessage =
-                            protocol::read_frame(&mut self.stream).unwrap();
-                        let done = matches!(
-                            &incoming,
-                            ServerMessage::Response { request_id, .. } if *request_id == id
-                        );
-                        self.pending
-                            .extend(self.dashboard.handle_server_message(incoming));
-                        self.pending.extend(self.dashboard.drain_outbox());
-                        if done {
-                            break;
-                        }
+            while let Some(message) = self.pending.pop_front() {
+                let id = message.request_id;
+                protocol::write_frame(&mut self.stream, &message).unwrap();
+                loop {
+                    let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                    let done = matches!(
+                        &incoming,
+                        ServerMessage::Response { request_id, .. } if *request_id == id
+                    );
+                    self.pending
+                        .extend(self.dashboard.handle_server_message(incoming));
+                    self.pending.extend(self.dashboard.drain_outbox());
+                    if done {
+                        break;
                     }
                 }
             }
-            panic!("Dashboard outbox did not converge");
         }
+        panic!("Dashboard outbox did not converge");
+    }
 
-        fn pump(&mut self) {
-            self.stream
-                .set_read_timeout(Some(Duration::from_millis(10)))
-                .unwrap();
-            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
-                self.pending
-                    .extend(self.dashboard.handle_server_message(message));
-            }
-            self.stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            self.pending.extend(self.dashboard.drain_outbox());
-            if !self.pending.is_empty() {
-                self.flush();
-            }
+    fn pump(&mut self) {
+        use ovrcr::protocol::{self, ServerMessage};
+
+        self.stream
+            .set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+            self.pending
+                .extend(self.dashboard.handle_server_message(message));
         }
-
-        fn wait_history(
-            &mut self,
-            conversation: OperatorConversationId,
-            predicate: impl Fn(&OperatorHistory) -> bool,
-        ) -> OperatorHistory {
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            loop {
-                self.pump();
-                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
-                    conversation,
-                    after: 0,
-                    limit: 100,
-                })) {
-                    Response::Operator(OperatorResponse::History(history)) => history,
-                    other => panic!("expected history, got {other:?}"),
-                };
-                if predicate(&history) {
-                    self.pump();
-                    return history;
-                }
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "timed out waiting for history predicate: {history:#?}"
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-
-        fn render(&mut self) -> String {
-            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
-            terminal
-                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
-                .unwrap();
-            let buffer = terminal.backend().buffer();
-            (0..40)
-                .map(|y| {
-                    (0..160)
-                        .map(|x| buffer[(x, y)].symbol())
-                        .collect::<String>()
-                        .trim_end()
-                        .to_owned()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        self.pending.extend(self.dashboard.drain_outbox());
+        if !self.pending.is_empty() {
+            self.flush();
         }
     }
+
+    fn wait_history(
+        &mut self,
+        conversation: ovrcr::protocol::OperatorConversationId,
+        predicate: impl Fn(&ovrcr::protocol::OperatorHistory) -> bool,
+    ) -> ovrcr::protocol::OperatorHistory {
+        use ovrcr::protocol::OperatorResponse;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                conversation,
+                after: 0,
+                limit: 100,
+            })) {
+                Response::Operator(OperatorResponse::History(history)) => history,
+                other => panic!("expected history, got {other:?}"),
+            };
+            if predicate(&history) {
+                self.pump();
+                return history;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for history predicate: {history:#?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn render(&mut self) -> String {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..40)
+            .map(|y| {
+                (0..160)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[test]
+fn dashboard_slash_new_and_zero_spawn_session_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{ErrorCode, OperatorResponse};
+    use ovrcr::tui::DashboardAction;
+    use std::os::unix::fs::PermissionsExt;
 
     let live = Live::idle().bounded();
     let fake = FakePi::install(&live.config, live.root.path());
@@ -3073,6 +3083,275 @@ fn dashboard_slash_new_and_zero_spawn_session_work_end_to_end() {
             .count(),
         0,
         "epoch-1 cold turn must not switch_session to epoch-0 checkpoint"
+    );
+}
+
+#[test]
+fn dashboard_slash_compact_and_stop_rollback_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::OperatorResponse;
+    use ovrcr::tui::DashboardAction;
+    use std::os::unix::fs::PermissionsExt;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let models_json = fake.profile.join("models.json");
+    std::fs::write(
+        &models_json,
+        serde_json::to_vec_pretty(&json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "SECRET_DO_NOT_LEAK_488",
+                    "models": [
+                        {
+                            "id": "default",
+                            "name": "Fixture Default",
+                            "contextWindow": 100_000
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&models_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut scenario = Scenario::new();
+    scenario.set("compact_modes", json!(["hold", "ok"]));
+    scenario.set("compact_tokens_before", json!(4_200));
+    scenario.set("compact_summary", json!("Compacted context summary."));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1_250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::assistant("Pre-compact warm reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Post-compact follow-up reply."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `/compact` before any completed turn refuses without spawning Pi.
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.dashboard.event_action(Event::Paste("/compact".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let cold_refused = ui.render();
+    assert!(
+        cold_refused.contains(
+            "Cannot compact Operator context before the first completed turn in this session."
+        ),
+        "{cold_refused}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "empty-epoch `/compact` must never spawn Pi"
+    );
+    ui.dashboard.ctrl('c');
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Seed turn 1 under an active `watch_sessions` warm-worker lease (`WatchStatus(1)`).
+    ui.dashboard
+        .event_action(Event::Paste("Seed warm session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let seeded_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.conversation.worker_live
+            && !history.conversation.worker_stopped
+    });
+    let warm_run = seeded_history.conversation.run;
+    let registry = Registry::of(&live);
+    let seed_turn_id = registry
+        .checkpoint(conversation_id.0)
+        .expect("seed checkpoint");
+
+    // 3. Dispatch `/compact cancel me` from `Ctrl-o` Quick message (`compact: "hold"`),
+    //    observe live `"Compacting context…"`, then press `Ctrl-x` (`Stop`) and verify rollback.
+    ui.dashboard.key(KeyCode::Esc);
+    ui.flush();
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/compact cancel me".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != seed_turn_id as u64
+                    && turn.state == OperatorTurnState::Running
+            })
+            && history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+                )
+            })
+    });
+    let running_screen = ui.render();
+    assert!(
+        !running_screen.contains("Quick message · Ctrl-o")
+            && running_screen.contains("Compact context · cancel me")
+            && running_screen.contains("Compacting context…"),
+        "running `/compact` screen unexpected:\n{running_screen}"
+    );
+
+    ui.dashboard.ctrl('x');
+    ui.flush();
+    let rolled_back_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Interrupted)
+            && history.conversation.worker_live
+            && !history.conversation.worker_stopped
+    });
+    assert_eq!(rolled_back_history.conversation.run, warm_run);
+    assert_eq!(
+        registry.checkpoint(conversation_id.0),
+        Some(seed_turn_id),
+        "Stop during `/compact` must preserve pre-compaction checkpoint"
+    );
+    let cancelled_screen = ui.render();
+    assert!(
+        cancelled_screen
+            .contains("Interrupted · compaction cancelled; previous context preserved."),
+        "{cancelled_screen}"
+    );
+
+    // 4. Run `/compact focus on rust tests` (`compact_modes[1] == "ok"`) on the same warm worker.
+    ui.dashboard
+        .event_action(Event::Paste("/compact focus on rust tests".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let compacted_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary { .. })
+                )
+            })
+    });
+    assert_eq!(compacted_history.conversation.run, warm_run);
+    assert!(
+        compacted_history.conversation.worker_live
+            && !compacted_history.conversation.worker_stopped,
+        "warm watch lease must survive completed `/compact`"
+    );
+    let compacted_turn_id = registry
+        .checkpoint(conversation_id.0)
+        .expect("promoted compacted checkpoint");
+    assert_ne!(compacted_turn_id, seed_turn_id);
+    let receipt_screen = ui.render();
+    assert!(
+        receipt_screen.contains("Compact context · focus on rust tests")
+            && receipt_screen.contains("Compacted from 4,200 tokens")
+            && receipt_screen.contains("Compacted context summary."),
+        "completed `/compact` receipt unexpected:\n{receipt_screen}"
+    );
+
+    // `/copy` still copies the prior assistant reply, never the compaction summary.
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    match ui.dashboard.key(KeyCode::Enter) {
+        DashboardAction::CopyText(text) => assert_eq!(text, "Pre-compact warm reply."),
+        other => panic!("expected CopyText of assistant reply after `/compact`, got {other:?}"),
+    }
+
+    // Zero-spawn `/session` reads the compacted checkpoint cleanly without spawning another Pi.
+    let starts_before_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_before_session, 1);
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let session_modal = ui.render();
+    assert!(
+        session_modal.contains("Operator session · /session")
+            && session_modal.contains("checkpoint turn #3")
+            && session_modal.contains("3 total (2 completed)")
+            && session_modal.contains("1,630 total (in 1,100 · out 230)")
+            && session_modal.contains("0 / 100,000 tokens (0.0%)")
+            && !session_modal.contains("SECRET_DO_NOT_LEAK_488"),
+        "compacted `/session` modal unexpected:\n{session_modal}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        1,
+        "`/session` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // 5. Follow-up prompt on the warm worker succeeds on the compacted session and releases the lease.
+    ui.dashboard
+        .event_action(Event::Paste("Finish watch after compact".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let settled_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Post-compact follow-up reply.")
+            && history.conversation.worker_stopped
+    });
+    assert_eq!(settled_history.conversation.run, warm_run);
+
+    // 6. `/new` advances `session_epoch`, after which `/compact` refuses again without spawning Pi.
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.event_action(Event::Paste("/compact".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        ui.render().contains(
+            "Cannot compact Operator context before the first completed turn in this session."
+        ),
+        "post-`/new` `/compact` must refuse cleanly"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        1,
+        "post-`/new` refused `/compact` must not spawn Pi"
     );
 }
 

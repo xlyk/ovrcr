@@ -162,11 +162,18 @@ struct QuickSubmission {
     text: String,
     context: OperatorContext,
 }
-/// Why an Open was sent: the full view, or the first explicit Quick Send / `/new`.
+/// Why an Open was sent: the full view, or the first explicit Quick Send / `/new` / `/compact`.
 enum OpenOrigin {
     Manual,
     Quick(QuickSubmission),
-    QuickNew { generation: u64 },
+    QuickNew {
+        generation: u64,
+    },
+    QuickCompact {
+        generation: u64,
+        draft: String,
+        instructions: Option<String>,
+    },
 }
 #[derive(Clone, Copy)]
 enum SubmitOrigin {
@@ -198,6 +205,7 @@ struct Chat {
     follow: bool,
     unread: Option<OperatorTurnId>,
     reviewed: Option<OperatorTurnId>,
+    compact_turn: Option<OperatorTurnId>,
     /// Wrapped journal rows, reused until an input in their key changes.
     rows: std::cell::RefCell<Option<(render::RowsKey, Vec<render::TranscriptRow>)>>,
 }
@@ -225,6 +233,7 @@ impl Chat {
             follow: true,
             unread: None,
             reviewed: None,
+            compact_turn: None,
             rows: std::cell::RefCell::new(None),
         }
     }
@@ -236,6 +245,17 @@ impl Chat {
                 .current_turn
                 .as_ref()
                 .is_none_or(|turn| turn.state != OperatorTurnState::Running)
+    }
+    fn can_compact(&self) -> Result<(), &'static str> {
+        if !self.can_submit() || self.stopping {
+            return Err(BUSY_REASON);
+        }
+        if self.summary.current_turn.is_none() {
+            return Err(
+                "Cannot compact Operator context before the first completed turn in this session.",
+            );
+        }
+        Ok(())
     }
     fn can_reset_session(&self) -> Result<(), &'static str> {
         if self.submitting || self.stopping {
@@ -286,6 +306,14 @@ enum Pending {
     Submit {
         id: Id,
         text: String,
+        session: SessionId,
+        expected_run: SessionRunId,
+        warm: bool,
+        origin: SubmitOrigin,
+    },
+    Compact {
+        id: Id,
+        draft: String,
         session: SessionId,
         expected_run: SessionRunId,
         warm: bool,
@@ -427,6 +455,17 @@ fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
                     label: "Stop unconfirmed".into(),
                     animated: false,
                 }
+            });
+        }
+        if chat.compact_turn == Some(turn.identity.turn)
+            || chat.messages.iter().any(|message| {
+                message.turn == turn.identity.turn
+                    && matches!(message.content, OperatorMessageContent::Compaction { .. })
+            })
+        {
+            return Some(ConversationActivity {
+                label: "Compacting context…".into(),
+                animated: true,
             });
         }
         let caught_up = !chat.reading && !chat.dirty && chat.confirmed_tail == Some(chat.ordinal);
@@ -631,6 +670,9 @@ impl Dashboard {
                             slash::SlashCommandKind::New => self.operator_run_new(args, true),
                             slash::SlashCommandKind::Session => {
                                 self.operator_run_session(args, true)
+                            }
+                            slash::SlashCommandKind::Compact => {
+                                self.operator_run_compact(args, true)
                             }
                         };
                     }
@@ -1263,6 +1305,111 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    fn operator_send_compact(&mut self, instructions: Option<String>, origin: SubmitOrigin) {
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return;
+        };
+        let id = chat.summary.id;
+        let session = chat.summary.session;
+        let expected_run = chat.summary.run;
+        let warm = chat.summary.worker_live;
+        let draft = match origin {
+            SubmitOrigin::Composer => chat.draft.clone(),
+            SubmitOrigin::Quick { generation } => self
+                .operator
+                .quick
+                .as_ref()
+                .filter(|quick| quick.generation == generation)
+                .map_or_else(|| chat.draft.clone(), |quick| quick.text.clone()),
+        };
+        chat.submitting = true;
+        chat.error = None;
+        chat.notice = None;
+        if matches!(origin, SubmitOrigin::Composer) {
+            self.operator.slash_dismissed_for = Some(draft.clone());
+        }
+        self.operator_request(
+            Pending::Compact {
+                id,
+                draft,
+                session,
+                expected_run,
+                warm,
+                origin,
+            },
+            OperatorRequest::Compact {
+                conversation: id,
+                expected_run,
+                instructions,
+            },
+        );
+    }
+
+    fn operator_run_compact(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        let trimmed = args.trim();
+        let instructions = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+        if let Some(ref text) = instructions
+            && (text.len() > MAX_OPERATOR_TEXT_BYTES || text.contains('\0'))
+        {
+            let error = "Compaction instructions exceed maximum length.";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if from_quick {
+            let Some(quick_snapshot) = self
+                .operator
+                .quick
+                .as_ref()
+                .map(|q| (q.generation, q.text.clone()))
+            else {
+                return DashboardAction::Redraw;
+            };
+            let (generation, quick_draft) = quick_snapshot;
+            if let Some(chat) = self.operator.chat.as_ref() {
+                if let Err(reason) = chat.can_compact() {
+                    if let Some(quick) = &mut self.operator.quick {
+                        quick.error = Some(reason.into());
+                    }
+                    return DashboardAction::Redraw;
+                }
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.seeded = true;
+                    quick.phase = QuickPhase::Submitting;
+                }
+                self.operator_send_compact(instructions, SubmitOrigin::Quick { generation });
+            } else {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.phase = QuickPhase::Opening;
+                }
+                self.operator_open(OpenOrigin::QuickCompact {
+                    generation,
+                    draft: quick_draft,
+                    instructions,
+                });
+            }
+            return DashboardAction::Redraw;
+        }
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return DashboardAction::Redraw;
+        };
+        if let Err(reason) = chat.can_compact() {
+            let dismissed = chat.draft.clone();
+            chat.notice = None;
+            chat.error = Some(reason.into());
+            self.operator.slash_dismissed_for = Some(dismissed);
+            return DashboardAction::Redraw;
+        }
+        self.operator_send_compact(instructions, SubmitOrigin::Composer);
+        DashboardAction::Redraw
+    }
+
     fn operator_open_session_info(&mut self) {
         self.operator.pending_session_info = false;
         let Some(id) = self.operator.chat.as_ref().map(|chat| chat.summary.id) else {
@@ -1632,6 +1779,7 @@ impl Dashboard {
                         slash::SlashCommandKind::Model => self.operator_run_model("", false),
                         slash::SlashCommandKind::New => self.operator_run_new("", false),
                         slash::SlashCommandKind::Session => self.operator_run_session("", false),
+                        slash::SlashCommandKind::Compact => self.operator_run_compact("", false),
                     };
                 }
                 _ => {}
@@ -1801,6 +1949,7 @@ impl Dashboard {
                         slash::SlashCommandKind::Model => self.operator_run_model(args, false),
                         slash::SlashCommandKind::New => self.operator_run_new(args, false),
                         slash::SlashCommandKind::Session => self.operator_run_session(args, false),
+                        slash::SlashCommandKind::Compact => self.operator_run_compact(args, false),
                     };
                 }
                 self.operator_submit();
@@ -1978,7 +2127,7 @@ impl Dashboard {
                     chat.reading = false;
                 }
             }
-            Pending::Submit { .. } => {
+            Pending::Submit { .. } | Pending::Compact { .. } => {
                 if let Some(chat) = self.operator.chat.as_mut() {
                     chat.submitting = false;
                 }
@@ -2030,9 +2179,15 @@ impl Dashboard {
                     origin: OpenOrigin::Quick(submission),
                 } => self.operator_quick_failed(submission.generation, message),
                 Pending::Open {
-                    origin: OpenOrigin::QuickNew { generation },
+                    origin:
+                        OpenOrigin::QuickNew { generation }
+                        | OpenOrigin::QuickCompact { generation, .. },
                 }
                 | Pending::Submit {
+                    origin: SubmitOrigin::Quick { generation },
+                    ..
+                }
+                | Pending::Compact {
                     origin: SubmitOrigin::Quick { generation },
                     ..
                 }
@@ -2046,6 +2201,7 @@ impl Dashboard {
                 pending,
                 Pending::Read { .. }
                     | Pending::Submit { .. }
+                    | Pending::Compact { .. }
                     | Pending::Stop { .. }
                     | Pending::NewSession { .. }
                     | Pending::SessionInfo { .. }
@@ -2134,9 +2290,9 @@ impl Dashboard {
             }
             (Pending::Open { origin }, Response::Operator(OperatorResponse::Opened(summary))) => {
                 let context = match &origin {
-                    OpenOrigin::Manual | OpenOrigin::QuickNew { .. } => {
-                        self.operator.context.clone()
-                    }
+                    OpenOrigin::Manual
+                    | OpenOrigin::QuickNew { .. }
+                    | OpenOrigin::QuickCompact { .. } => self.operator.context.clone(),
                     OpenOrigin::Quick(submission) => submission.context.clone(),
                 };
                 if !self.operator_attach(summary.clone(), context) {
@@ -2149,7 +2305,8 @@ impl Dashboard {
                         OpenOrigin::Quick(submission) => {
                             self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON)
                         }
-                        OpenOrigin::QuickNew { generation } => {
+                        OpenOrigin::QuickNew { generation }
+                        | OpenOrigin::QuickCompact { generation, .. } => {
                             self.operator_quick_failed(generation, UNAVAILABLE_REASON)
                         }
                     }
@@ -2198,6 +2355,34 @@ impl Dashboard {
                         self.operator_send_new_session(SubmitOrigin::Quick {
                             generation: *generation,
                         });
+                    }
+                    OpenOrigin::QuickCompact {
+                        generation,
+                        draft,
+                        instructions,
+                    } => {
+                        let Some(chat) = self.operator.chat.as_mut() else {
+                            return true;
+                        };
+                        if let Err(reason) = chat.can_compact() {
+                            self.operator_quick_failed(*generation, reason);
+                            return true;
+                        }
+                        chat.draft = draft.clone();
+                        chat.cursor = TextCursor::default();
+                        if let Some(quick) = &mut self.operator.quick
+                            && quick.generation == *generation
+                        {
+                            quick.seeded = true;
+                            quick.phase = QuickPhase::Submitting;
+                        }
+                        self.operator_send_compact(
+                            instructions.clone(),
+                            SubmitOrigin::Quick {
+                                generation: *generation,
+                            },
+                        );
+                        self.operator_read();
                     }
                     OpenOrigin::Quick(submission) => {
                         let Some(chat) = self.operator.chat.as_mut() else {
@@ -2309,6 +2494,76 @@ impl Dashboard {
                 }
                 self.operator_read();
             }
+            (
+                Pending::Compact {
+                    id,
+                    draft,
+                    session,
+                    expected_run,
+                    warm,
+                    origin,
+                },
+                Response::Operator(OperatorResponse::Submitted(turn)),
+            ) if turn.identity.conversation == id
+                && turn.identity.session == session
+                && (turn.identity.run == expected_run
+                    || (!warm && turn.identity.run.0 == expected_run.0.saturating_add(1)))
+                && turn.identity.validate().is_ok() =>
+            {
+                if let Some(chat) = self.operator.chat.as_mut() {
+                    if chat.summary.run.0 <= turn.identity.run.0
+                        && (chat.draft == draft || matches!(origin, SubmitOrigin::Quick { .. }))
+                    {
+                        chat.draft.clear();
+                        chat.cursor = TextCursor::default();
+                    }
+                    let current = chat.summary.current_turn.as_ref();
+                    if chat.summary.run.0 <= turn.identity.run.0
+                        && current.is_none_or(|current| {
+                            current.identity.run.0 < turn.identity.run.0
+                                || (current.identity.run == turn.identity.run
+                                    && current.identity.turn.0 < turn.identity.turn.0)
+                                || (current.identity == turn.identity
+                                    && current.sequence <= turn.sequence
+                                    && !chat.summary.worker_stopped)
+                        })
+                    {
+                        chat.summary.run = turn.identity.run;
+                        chat.summary.current_turn = Some(turn.clone());
+                        chat.summary.worker_stopped = false;
+                        chat.compact_turn = Some(turn.identity.turn);
+                    }
+                    chat.dirty = true;
+                    chat.follow = true;
+                    chat.scroll = 0;
+                    chat.anchor = None;
+                }
+                self.operator.slash_selected = 0;
+                self.operator.slash_dismissed_for = None;
+                if let SubmitOrigin::Quick { generation } = origin
+                    && self
+                        .operator
+                        .quick
+                        .as_ref()
+                        .is_some_and(|quick| quick.generation == generation)
+                {
+                    let quick = self.operator.quick.take().unwrap();
+                    if quick.visible
+                        && self
+                            .operator
+                            .chat
+                            .as_ref()
+                            .is_some_and(|c| c.summary.id == id)
+                    {
+                        self.operator.visible = true;
+                        self.operator.editing = true;
+                        self.operator.transcript_focus = false;
+                        self.mode = InputMode::Browse;
+                        self.retarget(super::state::PaneChange::Focus);
+                    }
+                }
+                self.operator_read();
+            }
             (Pending::Stop { identity }, Response::Operator(OperatorResponse::Stopped(turn)))
                 if turn.identity == identity =>
             {
@@ -2377,9 +2632,15 @@ impl Dashboard {
                         origin: OpenOrigin::Quick(submission),
                     } => self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON),
                     Pending::Open {
-                        origin: OpenOrigin::QuickNew { generation },
+                        origin:
+                            OpenOrigin::QuickNew { generation }
+                            | OpenOrigin::QuickCompact { generation, .. },
                     }
                     | Pending::Submit {
+                        origin: SubmitOrigin::Quick { generation },
+                        ..
+                    }
+                    | Pending::Compact {
                         origin: SubmitOrigin::Quick { generation },
                         ..
                     }
@@ -2458,6 +2719,7 @@ impl Dashboard {
             chat.follow = true;
             chat.unread = None;
             chat.reviewed = None;
+            chat.compact_turn = None;
             *chat.rows.borrow_mut() = None;
             self.operator.reasoning_picker = None;
             self.operator.model_picker = None;

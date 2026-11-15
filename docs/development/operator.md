@@ -115,8 +115,10 @@ Server.
    no turn identity comes from argv, and a refused Start creates no pi resources.
    Warm dispatch uses the same run identity; authenticated
    `StartTurn` returns the next accepted user turn without changing that run.
-   The returned `OperatorWorkerStart` carries the turn's captured `model`
-   override, text, context and `checkpoint_turn`.
+   The returned `OperatorWorkerStart` carries the turn's captured `model` and
+   `thinking_level` overrides, `checkpoint_turn`, and typed
+   `OperatorWorkerSubmission` (`Prompt { text, context, async_wakeup }` or
+   `Compact { instructions }`).
 2. Create the exclusive turn attempt and run directory, materialize the
    extension and coordinator skill, then launch pi. `get_state` resolves the
    fresh profile's model and thinking level; the
@@ -196,9 +198,16 @@ completion without rewriting their stored payloads or batch receipts.
 Registry schema 35 (protocol 88) adds monotonic `session_epoch` scoping on
 `operator_conversations` and `operator_turns` for `/new` (`NewSession`, gated on
 idle turn + unleased/stopped worker, removing superseded checkpoint files outside
-locks while keeping prior-epoch SQLite audit rows) and zero-spawn `/session`
+locks while keeping prior-epoch SQLite audit rows), zero-spawn `/session`
 (`SessionInfo`, reading SQLite + bounded `O_NOFOLLOW` regular-file `session.jsonl`
-and `models.json` outside locks without starting `pi`).
+and `models.json` outside locks without starting `pi`), and manual `/compact`
+(`Compact { conversation, expected_run, instructions }` +
+`OperatorWorkerSubmission::Compact { instructions }`, gated on an idle turn and
+an existing checkpoint in the current `session_epoch`, executing pi's `compact`
+RPC on cold or warm `watch_sessions`-leased workers, committing
+`CompactionSummary { summary, tokens_before }` atomically with checkpoint
+promotion, and rolling back to the pre-compaction checkpoint on foreground
+`Stop` or RPC failure).
 
 ## Workspace coordination watches
 

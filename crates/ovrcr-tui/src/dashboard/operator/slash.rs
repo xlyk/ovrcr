@@ -9,6 +9,7 @@ pub(super) enum SlashCommandKind {
     Model,
     New,
     Session,
+    Compact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +56,13 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         usage: "/session",
         description: "Inspect Operator session stats and usage",
         takes_args: false,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Compact,
+        name: "compact",
+        usage: "/compact [instructions]",
+        description: "Compact Operator conversation context",
+        takes_args: true,
     },
 ];
 

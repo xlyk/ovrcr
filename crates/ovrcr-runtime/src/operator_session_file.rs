@@ -601,4 +601,85 @@ mod tests {
             "cleanup must never delete symlink target"
         );
     }
+
+    #[test]
+    fn trailing_compaction_entry_clears_stale_context_tokens_while_accumulating_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let workdir = root.path().join("operator-workdir");
+        fs::create_dir_all(&workdir).unwrap();
+        fs::set_permissions(&workdir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let lines = [
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "operator-3",
+                "cwd": workdir.to_str().unwrap(),
+            }),
+            json!({
+                "type": "message",
+                "id": "m1",
+                "parentId": null,
+                "message": {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": "hello" }],
+                }
+            }),
+            json!({
+                "type": "message",
+                "id": "m2",
+                "parentId": "m1",
+                "message": {
+                    "role": "assistant",
+                    "provider": "fixture",
+                    "model": "operator-fixture",
+                    "stopReason": "stop",
+                    "content": [{ "type": "text", "text": "world" }],
+                    "usage": {
+                        "input": 20_000,
+                        "output": 1_000,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                        "totalTokens": 21_000,
+                        "cost": { "total": 0.05 }
+                    }
+                }
+            }),
+            json!({
+                "type": "compaction",
+                "id": "c1",
+                "parentId": "m2",
+                "firstKeptEntryId": "m1",
+                "tokensBefore": 21_000,
+                "summary": "Summarized turn 1.",
+                "usage": {
+                    "input": 1_500,
+                    "output": 300,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "totalTokens": 1_800,
+                    "cost": { "total": 0.004 }
+                }
+            }),
+        ];
+        let body = lines
+            .iter()
+            .map(|line| format!("{}\n", serde_json::to_string(line).unwrap()))
+            .collect::<String>();
+        let session_path = checkpoint_dir(root.path(), OperatorTurnId(2)).join("session.jsonl");
+        write_private(&session_path, &body);
+
+        let parsed =
+            read_promoted_checkpoint(root.path(), OperatorConversationId(3), OperatorTurnId(2))
+                .unwrap();
+        assert_eq!(parsed.user_messages, 1);
+        assert_eq!(parsed.assistant_messages, 1);
+        assert_eq!(parsed.total_messages, 2);
+        assert_eq!(parsed.tokens.total, 22_800);
+        assert_eq!(parsed.cost_usd_nanos, 54_000_000);
+        assert_eq!(
+            parsed.latest_context_tokens, None,
+            "trailing compaction entry must clear pre-compaction context tokens until a post-compaction assistant turn runs"
+        );
+    }
 }

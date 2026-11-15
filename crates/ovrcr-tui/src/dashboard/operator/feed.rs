@@ -273,6 +273,9 @@ enum Opener<'a> {
         /// The captured target differs from the previous request's.
         retargeted: bool,
     },
+    Compaction {
+        instructions: Option<&'a str>,
+    },
     Wake(&'a str),
     /// Worker events with no request before them, as in a legacy journal.
     Orphan,
@@ -301,6 +304,7 @@ struct Entry<'a> {
     steps: Vec<Step<'a>>,
     reply: String,
     replying: bool,
+    compaction_summary: Option<(&'a str, u64)>,
     /// The thinking that trails the journal; shown only while the turn runs.
     thought: String,
     failure: Option<&'a str>,
@@ -331,6 +335,9 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                     retargeted,
                 })
             }
+            OperatorMessageContent::Compaction { instructions } => Some(Opener::Compaction {
+                instructions: instructions.as_deref(),
+            }),
             OperatorMessageContent::AsyncWakeup { text } => Some(Opener::Wake(text)),
             _ if entries
                 .last()
@@ -349,6 +356,7 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                 steps: Vec::new(),
                 reply: String::new(),
                 replying: false,
+                compaction_summary: None,
                 thought: String::new(),
                 failure: None,
                 state: State::Done,
@@ -411,6 +419,12 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                         result,
                     }),
                 }
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+                summary,
+                tokens_before,
+            }) => {
+                entry.compaction_summary = Some((summary.as_str(), *tokens_before));
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. }) => {
                 (entry.state, entry.recorded) = (State::Done, true);
@@ -505,6 +519,10 @@ impl Entry<'_> {
     fn title(&self) -> String {
         match &self.opener {
             Opener::Request { text, .. } => display_text(text),
+            Opener::Compaction {
+                instructions: Some(instructions),
+            } => format!("Compact context · {}", display_text(instructions)),
+            Opener::Compaction { instructions: None } => "Compact context".into(),
             Opener::Wake(text) => display_text(&wake_title(text)),
             Opener::Orphan => "Operator".into(),
         }
@@ -523,6 +541,17 @@ impl Entry<'_> {
             ),
             State::Interrupted => ("interrupted".into(), PEACH()),
             State::Running | State::Done => {
+                if matches!(self.opener, Opener::Compaction { .. }) {
+                    if self.state == State::Running {
+                        return ("compacting".into(), SUBTEXT());
+                    }
+                    if let Some((_, tokens_before)) = self.compaction_summary {
+                        return (
+                            format!("from {} tokens", super::render::format_count(tokens_before)),
+                            SUBTEXT(),
+                        );
+                    }
+                }
                 let count =
                     |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
                 let changes = tiers
@@ -692,6 +721,22 @@ impl Entry<'_> {
                     );
                 }
             }
+            Opener::Compaction { .. } => {
+                if let Some((_, tokens_before)) = self.compaction_summary {
+                    lines(
+                        rows,
+                        &format!(
+                            "Compacted from {} tokens",
+                            super::render::format_count(tokens_before)
+                        ),
+                        2,
+                        quiet,
+                        CONTEXT,
+                        0,
+                        None,
+                    );
+                }
+            }
             Opener::Wake(text) => lines(rows, &display_text(text), 2, quiet, CONTEXT, 0, None),
             _ => {}
         }
@@ -738,14 +783,18 @@ impl Entry<'_> {
             index += run.max(1);
         }
 
-        let reply = self.reply.trim_end();
-        if !reply.is_empty() {
+        let body_markdown = if let Some((summary, _)) = self.compaction_summary {
+            summary.trim_end()
+        } else {
+            self.reply.trim_end()
+        };
+        if !body_markdown.is_empty() {
             if !self.steps.is_empty() {
                 rows.push(bar_row(color, Vec::new(), (self.owner, REPLY, 0), None));
             }
             // `tui-markdown` owns Markdown; the feed only adds its gutter and
             // a durable offset per rendered row.
-            for (offset, line) in super::markdown::lines(reply, width.saturating_sub(4))
+            for (offset, line) in super::markdown::lines(body_markdown, width.saturating_sub(4))
                 .into_iter()
                 .enumerate()
             {
@@ -766,7 +815,11 @@ impl Entry<'_> {
             ),
             State::Interrupted => lines(
                 rows,
-                "Interrupted · operations may finish; file changes remain.",
+                if matches!(self.opener, Opener::Compaction { .. }) {
+                    "Interrupted · compaction cancelled; previous context preserved."
+                } else {
+                    "Interrupted · operations may finish; file changes remain."
+                },
                 2,
                 Style::default().fg(PEACH()),
                 OUTCOME,

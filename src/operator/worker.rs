@@ -12,7 +12,8 @@ use crate::report::{reporter::Reporter, reserve_invocation_for};
 use anyhow::{Result, anyhow};
 use ovrcr_protocol::{
     AgentProvider, OperatorEventBatch, OperatorModel, OperatorRunIdentity, OperatorToolStatus,
-    OperatorTurnId, OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart, SessionRunId,
+    OperatorTurnId, OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart,
+    OperatorWorkerSubmission, SessionRunId,
 };
 use serde_json::{Value, json};
 use std::{
@@ -35,6 +36,8 @@ const MODEL_UNAVAILABLE: &str =
 const CONTEXT_UNAVAILABLE: &str = "Operator Pi context is unavailable; saved data was preserved.";
 const INTEGRATION_UNAVAILABLE: &str = "Pi Operator integration is unavailable; no prompt was sent.";
 const REQUEST_FAILED: &str = "Pi request failed; inspect the partial journal before retrying.";
+const ALREADY_COMPACTED: &str = "Operator context is already compacted.";
+const NOTHING_TO_COMPACT: &str = "Operator context has nothing to compact yet.";
 const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was stopped.";
 
 /// The trusted extension's startup contract and watch-lease status keys.
@@ -321,36 +324,59 @@ fn run_turn(
     turn: &OperatorWorkerStart,
     termination: &Termination,
 ) -> std::result::Result<bool, Failure> {
-    if turn.async_wakeup {
-        // `sendUserMessage` already started this exact Pi turn after the Server
-        // durably reserved its AsyncWakeup identity.
-        state.prompted = true;
-    } else {
-        let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
+    match &turn.submission {
+        OperatorWorkerSubmission::Prompt {
+            text,
+            context,
+            async_wakeup: true,
+        } => {
+            let _ = (text, context);
+            // `sendUserMessage` already started this exact Pi turn after the Server
+            // durably reserved its AsyncWakeup identity.
+            state.prompted = true;
         }
-        journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
-        let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
+        OperatorWorkerSubmission::Prompt {
+            text,
+            context,
+            async_wakeup: false,
+        } => {
+            let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+            let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+            let prompt = prompt_text(text, context)?;
+            state.prompted = true;
+            let response = connection.request(
+                journal,
+                state,
+                "prompt",
+                json!({ "message": prompt }),
+                CONTROL_DEADLINE,
+            )?;
+            if !response.success {
+                // An explicit negative response means Pi did not admit this user
+                // message into an agent turn. Do not wait for `agent_settled` while
+                // rolling back an unchanged native session.
+                state.prompted = false;
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
         }
-        journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-        let prompt = prompt_text(turn)?;
-        state.prompted = true;
-        let response = connection.request(
-            journal,
-            state,
-            "prompt",
-            json!({ "message": prompt }),
-            CONTROL_DEADLINE,
-        )?;
-        if !response.success {
-            // An explicit negative response means Pi did not admit this user
-            // message into an agent turn. Do not wait for `agent_settled` while
-            // rolling back an unchanged native session.
-            state.prompted = false;
-            return Err(Failure::Failed(REQUEST_FAILED));
+        OperatorWorkerSubmission::Compact { instructions } => {
+            return run_compact_turn(
+                connection,
+                journal,
+                state,
+                paths,
+                turn,
+                instructions.as_deref(),
+                termination,
+            );
         }
     }
     connection.stream(journal, state)?;
@@ -384,6 +410,135 @@ fn run_turn(
     }
     journal.commit(OperatorWorkerEvent::Completed { leased })?;
     Ok(leased)
+}
+
+fn run_compact_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+    instructions: Option<&str>,
+    termination: &Termination,
+) -> std::result::Result<bool, Failure> {
+    if turn.checkpoint_turn.is_none() {
+        return Err(Failure::Failed(NOTHING_TO_COMPACT));
+    }
+    let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+    let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+
+    let compact_id = format!("ovrcr-{}", connection.next_id);
+    connection.next_id += 1;
+    let mut payload = json!({
+        "id": &compact_id,
+        "type": "compact",
+    });
+    if let Some(instructions) = instructions {
+        payload["customInstructions"] = json!(instructions);
+    }
+    connection.send(&payload)?;
+    state.pending_compact_id = Some(compact_id.clone());
+
+    let mut drain_deadline: Option<Instant> = None;
+    let compact_response = loop {
+        let message = connection.next_message(journal, drain_deadline)?;
+        match message {
+            RpcMessage::Response(response) if response.id == compact_id => {
+                state.pending_compact_id = None;
+                break response;
+            }
+            RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+            RpcMessage::Event(event) => {
+                connection.event(journal, state, event)?;
+                if state.compaction_failed_event && drain_deadline.is_none() {
+                    drain_deadline = Some(Instant::now() + ROLLBACK_DEADLINE);
+                }
+            }
+        }
+    };
+
+    if !compact_response.success || state.compaction_failed_event {
+        return Err(compact_refusal_failure(compact_response.error.as_deref()));
+    }
+    if !state.compaction_started_seen
+        || !state.compaction_ended_seen
+        || state.compacting
+        || state.pending.is_some()
+    {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let raw_summary = compact_response.data["summary"]
+        .as_str()
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    let tokens_before = compact_response.data["tokensBefore"]
+        .as_u64()
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    let summary = sanitize_summary(raw_summary);
+
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    let leased = state.active_watches > 0;
+    if !leased {
+        connection.settle(journal, state, SHUTDOWN_GRACE)?;
+    }
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    snapshot_session(
+        &attempt_dir,
+        &state.session_root,
+        native,
+        &state.session_id,
+        &state.workdir,
+    )?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit_events(vec![
+        OperatorWorkerEvent::CompactionSummary {
+            summary,
+            tokens_before,
+        },
+        OperatorWorkerEvent::Completed { leased },
+    ])?;
+    Ok(leased)
+}
+
+fn compact_refusal_failure(error: Option<&str>) -> Failure {
+    match error {
+        Some(reason) if reason.contains("Already compacted") => Failure::Failed(ALREADY_COMPACTED),
+        Some(reason) if reason.contains("Nothing to compact") => {
+            Failure::Failed(NOTHING_TO_COMPACT)
+        }
+        _ => Failure::Failed(REQUEST_FAILED),
+    }
+}
+
+fn sanitize_summary(raw: &str) -> String {
+    let cleaned = raw.replace('\0', "\u{FFFD}");
+    let max_bytes = ovrcr_protocol::operator::MAX_OPERATOR_TEXT_BYTES;
+    if cleaned.len() <= max_bytes {
+        return cleaned;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_owned()
 }
 
 // ---------------------------------------------------------------- journal
@@ -430,13 +585,20 @@ impl<'a> Journal<'a> {
     }
 
     fn commit(&mut self, event: OperatorWorkerEvent) -> std::result::Result<(), Failure> {
+        self.commit_events(vec![event])
+    }
+
+    fn commit_events(
+        &mut self,
+        events: Vec<OperatorWorkerEvent>,
+    ) -> std::result::Result<(), Failure> {
         if self.poisoned {
             return Err(Failure::ReportFailed);
         }
         let batch = OperatorEventBatch {
             identity: self.identity,
             sequence: self.sequence,
-            events: vec![event],
+            events,
         };
         match self
             .reporter
@@ -698,9 +860,25 @@ impl Connection {
                         }
                         break;
                     }
+                    RpcMessage::Response(response)
+                        if state.pending_compact_id.as_deref() == Some(response.id.as_str()) =>
+                    {
+                        state.pending_compact_id = None;
+                    }
                     RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
                     RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
                 }
+            }
+        }
+        while state.pending_compact_id.is_some() {
+            match self.next_message(journal, Some(until))? {
+                RpcMessage::Response(response)
+                    if state.pending_compact_id.as_deref() == Some(response.id.as_str()) =>
+                {
+                    state.pending_compact_id = None;
+                }
+                RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+                RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
             }
         }
         while should_wait && !state.settled {
@@ -722,6 +900,10 @@ impl Connection {
             Some("agent_settled") => {
                 state.settled = true;
                 journal.flush()?;
+            }
+            Some("compaction_end") => {
+                state.compacting = false;
+                state.reset_stream();
             }
             Some("message_start") if event["message"]["role"] == "assistant" => {
                 state.reset_stream();
@@ -1154,13 +1336,21 @@ impl Connection {
                 journal.flush()?;
                 state.reset_stream();
                 state.compacting = true;
+                state.compaction_started_seen = true;
                 journal.commit(OperatorWorkerEvent::CompactionStarted)?;
             }
             Some("compaction_end") => {
                 if event.get("errorMessage").is_some() || event["aborted"] == true {
+                    state.compacting = false;
+                    state.reset_stream();
+                    if state.pending_compact_id.is_some() {
+                        state.compaction_failed_event = true;
+                        return Ok(());
+                    }
                     return Err(Failure::Failed(REQUEST_FAILED));
                 }
                 state.compacting = false;
+                state.compaction_ended_seen = true;
                 state.reset_stream();
                 journal.commit(OperatorWorkerEvent::CompactionEnded)?;
             }
@@ -1321,6 +1511,10 @@ struct TurnState {
     /// Pi's automatic compaction can replace context between assistant messages.
     /// Its summary stream is never journaled and never shares message state.
     compacting: bool,
+    pending_compact_id: Option<String>,
+    compaction_started_seen: bool,
+    compaction_ended_seen: bool,
+    compaction_failed_event: bool,
     last_assistant: Option<AssistantTurn>,
     /// Admitted tool-call ids whose ordinary execution end has not arrived yet.
     admitted: Vec<String>,
@@ -1376,6 +1570,10 @@ impl TurnState {
             deferred_runs: Vec::new(),
             deferred_bytes: 0,
             compacting: false,
+            pending_compact_id: None,
+            compaction_started_seen: false,
+            compaction_ended_seen: false,
+            compaction_failed_event: false,
             last_assistant: None,
             admitted: Vec::new(),
             pending: None,
@@ -1407,6 +1605,10 @@ impl TurnState {
         self.settled = false;
         self.prompted = false;
         self.compacting = false;
+        self.pending_compact_id = None;
+        self.compaction_started_seen = false;
+        self.compaction_ended_seen = false;
+        self.compaction_failed_event = false;
     }
 
     fn note_display(&mut self, index: usize) {
@@ -1884,14 +2086,15 @@ fn clean_stream_end(error: &pi::PiError) -> bool {
         && error.detail() == "Pi closed its output before a reply"
 }
 
-fn prompt_text(start: &OperatorWorkerStart) -> std::result::Result<String, Failure> {
-    let context =
-        serde_json::to_string(&start.context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+fn prompt_text(
+    text: &str,
+    context: &ovrcr_protocol::OperatorContext,
+) -> std::result::Result<String, Failure> {
+    let context = serde_json::to_string(context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
     // The captured context is always ahead of the user text so input such as `/new`
     // cannot become a native pi command.
     Ok(format!(
-        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{}",
-        start.text
+        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{text}"
     ))
 }
 
@@ -3101,21 +3304,7 @@ mod tests {
 
     #[test]
     fn prompt_text_always_keeps_the_context_ahead_of_user_text() {
-        let start = OperatorWorkerStart {
-            thinking_level: Default::default(),
-            identity: ovrcr_protocol::OperatorTurnIdentity {
-                conversation: ovrcr_protocol::OperatorConversationId(1),
-                turn: ovrcr_protocol::OperatorTurnId(1),
-                session: ovrcr_protocol::SessionId(1),
-                run: ovrcr_protocol::SessionRunId(1),
-            },
-            model: None,
-            text: "/new".into(),
-            context: ovrcr_protocol::OperatorContext::default(),
-            checkpoint_turn: None,
-            async_wakeup: false,
-        };
-        let prompt = prompt_text(&start).unwrap();
+        let prompt = prompt_text("/new", &ovrcr_protocol::OperatorContext::default()).unwrap();
         assert!(prompt.starts_with("Captured OVRCR context"));
         assert!(prompt.ends_with("User request:\n/new"));
     }

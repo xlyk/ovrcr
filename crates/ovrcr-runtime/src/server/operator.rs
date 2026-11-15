@@ -173,7 +173,8 @@ pub(super) fn dispatch_control(
     request: OperatorRequest,
 ) -> Option<Response> {
     let slot = match &request {
-        OperatorRequest::Submit { conversation, .. } => ControlSlot::Conversation(*conversation),
+        OperatorRequest::Submit { conversation, .. }
+        | OperatorRequest::Compact { conversation, .. } => ControlSlot::Conversation(*conversation),
         OperatorRequest::Stop { identity } => ControlSlot::Conversation(identity.conversation),
         OperatorRequest::Models => ControlSlot::Models,
         _ => return None,
@@ -353,45 +354,47 @@ impl ServerState {
                         })
                         .context("dashboard owner changed")??
                 };
-                if warm {
-                    self.operator_changed(conversation);
-                    return Ok(OperatorResponse::Submitted(turn));
-                }
-                let result = self.spawn_prepared_record_locked(
-                    turn.identity.session,
-                    turn.identity.run,
-                    operator_worker_argv(
-                        &self.operator.executable,
-                        OperatorRunIdentity {
-                            conversation: turn.identity.conversation,
-                            session: turn.identity.session,
-                            run: turn.identity.run,
-                        },
-                    ),
-                    SessionSpawnOptions {
-                        prepared: true,
-                        ..SessionSpawnOptions::default()
-                    },
-                );
-                if let Err(error) = result {
+                self.finish_submitted_operator_turn(conversation, turn, warm)
+            }
+            OperatorRequest::Compact {
+                conversation,
+                expected_run,
+                instructions,
+            } => {
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let warm = self.operator_warm_dispatchable(conversation, expected_run)?;
+                let settings = self
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .report
+                    .settings
+                    .operator
+                    .clone();
+                let turn = {
                     let mut retained = self.retained.lock();
-                    retained.apply_operator_batch(&OperatorEventBatch {
-                        identity: turn.identity,
-                        sequence: 1,
-                        events: vec![OperatorWorkerEvent::Failed(
-                            "Worker launch failed; inspect the retained session before retrying"
-                                .into(),
-                        )],
-                    })?;
-                    if error.is::<crate::session::NoProcessStarted>() {
-                        retained.mark_stopped(turn.identity.session, turn.identity.run)?;
-                    }
-                    drop(retained);
-                    self.operator_changed(conversation);
-                    return Err(error);
-                }
-                self.operator_changed(conversation);
-                Ok(OperatorResponse::Submitted(turn))
+                    self.dashboard
+                        .with_owned(owner, |_| {
+                            if warm {
+                                retained.submit_operator_compact_turn_warm(
+                                    conversation,
+                                    expected_run,
+                                    instructions,
+                                    settings,
+                                )
+                            } else {
+                                retained.submit_operator_compact_turn(
+                                    conversation,
+                                    expected_run,
+                                    instructions,
+                                    settings,
+                                )
+                            }
+                        })
+                        .context("dashboard owner changed")??
+                };
+                self.finish_submitted_operator_turn(conversation, turn, warm)
             }
             OperatorRequest::NewSession {
                 conversation,
@@ -585,6 +588,52 @@ impl ServerState {
                 }))
             }
         }
+    }
+
+    fn finish_submitted_operator_turn(
+        &self,
+        conversation: OperatorConversationId,
+        turn: OperatorTurn,
+        warm: bool,
+    ) -> Result<OperatorResponse> {
+        if warm {
+            self.operator_changed(conversation);
+            return Ok(OperatorResponse::Submitted(turn));
+        }
+        let result = self.spawn_prepared_record_locked(
+            turn.identity.session,
+            turn.identity.run,
+            operator_worker_argv(
+                &self.operator.executable,
+                OperatorRunIdentity {
+                    conversation: turn.identity.conversation,
+                    session: turn.identity.session,
+                    run: turn.identity.run,
+                },
+            ),
+            SessionSpawnOptions {
+                prepared: true,
+                ..SessionSpawnOptions::default()
+            },
+        );
+        if let Err(error) = result {
+            let mut retained = self.retained.lock();
+            retained.apply_operator_batch(&OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Failed(
+                    "Worker launch failed; inspect the retained session before retrying".into(),
+                )],
+            })?;
+            if error.is::<crate::session::NoProcessStarted>() {
+                retained.mark_stopped(turn.identity.session, turn.identity.run)?;
+            }
+            drop(retained);
+            self.operator_changed(conversation);
+            return Err(error);
+        }
+        self.operator_changed(conversation);
+        Ok(OperatorResponse::Submitted(turn))
     }
 
     fn operator_models(&self, owner: &Arc<()>) -> Result<Vec<OperatorModelCatalogEntry>> {
