@@ -239,10 +239,23 @@ fn normalized_model(value: &Value) -> Option<String> {
     Some(label.to_owned())
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatuslinePayload {
+    conversation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    agent_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quota: Option<ovrcr_runtime::server::SanitizedAgyStatuslineQuota>,
+}
+
 /// Normalize a native status-line object to only identity, title, model, state and
 /// sanitized allowance buckets. Transcript paths, prompts, account identity and arbitrary
 /// nested provider fields drop.
-fn statusline_payload(input: &[u8]) -> Option<Value> {
+fn statusline_payload(input: &[u8]) -> Option<StatuslinePayload> {
     if input.is_empty() || input.len() > super::HOOK_INPUT_LIMIT {
         return None;
     }
@@ -255,22 +268,16 @@ fn statusline_payload(input: &[u8]) -> Option<Value> {
     ) {
         return None;
     }
-    let mut payload = json!({
-        "conversation_id": conversation,
-        "agent_state": state,
-    });
-    if let Some(title) = safe_title(value.get("conversation_title")) {
-        payload["conversation_title"] = json!(title);
-    }
-    if let Some(model) = normalized_model(&value) {
-        payload["model"] = json!(model);
-    }
-    if let Some(raw_quota) = value.get("quota")
-        && let Some(quota) = ovrcr_runtime::server::sanitize_agy_statusline_quota(raw_quota)
-    {
-        payload["quota"] = quota;
-    }
-    Some(payload)
+    let quota = value
+        .get("quota")
+        .and_then(ovrcr_runtime::server::sanitize_agy_statusline_quota);
+    Some(StatuslinePayload {
+        conversation_id: conversation.to_owned(),
+        conversation_title: safe_title(value.get("conversation_title")),
+        model: normalized_model(&value),
+        agent_state: state.to_owned(),
+        quota,
+    })
 }
 
 fn has_error(value: &Value) -> bool {
@@ -519,10 +526,15 @@ impl Events {
         quota: Option<&Value>,
         deadline: Instant,
     ) -> Vec<u8> {
-        let Some(raw) = quota else {
+        let Some(raw) = quota.filter(|v| !v.is_null()) else {
             return reporter::IGNORED.to_vec();
         };
-        let Some(report) = ovrcr_runtime::server::normalize_agy_statusline_quota(raw) else {
+        let sanitized =
+            serde_json::from_value::<ovrcr_runtime::server::SanitizedAgyStatuslineQuota>(
+                raw.clone(),
+            )
+            .unwrap_or(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid);
+        let Some(report) = ovrcr_runtime::server::normalize_agy_statusline_quota(&sanitized) else {
             return reporter::IGNORED.to_vec();
         };
         if self.quota.as_ref() == Some(&report) {
@@ -778,7 +790,7 @@ mod tests {
         )
     }
 
-    fn frame(origin: &str, payload: Value) -> Vec<u8> {
+    fn frame(origin: &str, payload: impl serde::Serialize) -> Vec<u8> {
         serde_json::to_vec(&json!({"provider":"agy", "origin":origin, "payload":payload})).unwrap()
     }
 
@@ -826,12 +838,14 @@ mod tests {
             "unrelated":{"secret":"drop"}
         });
         let normalized = statusline_payload(&serde_json::to_vec(&input).unwrap()).unwrap();
-        assert_eq!(normalized["conversation_id"], A);
-        assert_eq!(normalized["conversation_title"], "Native topic");
-        assert_eq!(normalized["model"], "Gemini Pro");
-        assert_eq!(normalized["agent_state"], "working");
-        assert_eq!(normalized.as_object().unwrap().len(), 4);
-        let text = normalized.to_string();
+        let serialized = serde_json::to_value(&normalized).unwrap();
+        assert_eq!(serialized["conversation_id"], A);
+        assert_eq!(serialized["conversation_title"], "Native topic");
+        assert_eq!(serialized["model"], "Gemini Pro");
+        assert_eq!(serialized["agent_state"], "working");
+        assert_eq!(serialized.as_object().unwrap().len(), 4);
+        assert!(normalized.quota.is_none());
+        let text = serialized.to_string();
         assert!(!text.contains("secret"));
         assert!(!text.contains("private prompt"));
         assert!(
@@ -1337,6 +1351,7 @@ mod tests {
                     "reset_in_seconds": 7200,
                     "window": "5h",
                     "name": "Gemini (5-hour)",
+                    "remaining": {"remainingFraction": 0.5562, "secret": "nested-secret"},
                     "description": "secret plan description",
                     "email": "private-user@example.invalid",
                     "credits": 999
@@ -1351,20 +1366,19 @@ mod tests {
             }
         });
         let normalized = statusline_payload(&serde_json::to_vec(&input).unwrap()).unwrap();
-        assert_eq!(normalized["conversation_id"], A);
-        assert_eq!(normalized["conversation_title"], "Allowance topic");
-        assert_eq!(normalized["model"], "Gemini 2.5 Pro");
-        assert_eq!(normalized["agent_state"], "working");
-        let g5 = normalized["quota"]["gemini-5h"].as_object().unwrap();
-        assert_eq!(g5["remaining_fraction"], 0.5562);
-        assert_eq!(g5["reset_time"], "2026-11-15T20:00:00Z");
-        assert_eq!(g5["window"], "5h");
-        assert_eq!(g5["name"], "Gemini (5-hour)");
-        assert!(!g5.contains_key("reset_in_seconds"));
-        assert!(!g5.contains_key("description"));
-        assert!(!g5.contains_key("email"));
-        assert!(!g5.contains_key("credits"));
-        let serialized = normalized.to_string();
+        let serialized_value = serde_json::to_value(&normalized).unwrap();
+        assert_eq!(serialized_value["conversation_id"], A);
+        assert_eq!(serialized_value["conversation_title"], "Allowance topic");
+        assert_eq!(serialized_value["model"], "Gemini 2.5 Pro");
+        assert_eq!(serialized_value["agent_state"], "working");
+        let serialized = serde_json::to_string(&normalized).unwrap();
+        assert!(!serialized.contains("\"window\""));
+        assert!(!serialized.contains("\"name\""));
+        assert!(!serialized.contains("Gemini (5-hour)"));
+        assert!(!serialized.contains("\"displayName\""));
+        assert!(!serialized.contains("Claude + GPT (Weekly)"));
+        assert!(!serialized.contains("\"remaining\""));
+        assert!(!serialized.contains("nested-secret"));
         assert!(!serialized.contains("private-user@example.invalid"));
         assert!(!serialized.contains("private prompt"));
         assert!(!serialized.contains("secret plan description"));
@@ -1377,7 +1391,29 @@ mod tests {
         });
         let null_normalized =
             statusline_payload(&serde_json::to_vec(&null_quota).unwrap()).unwrap();
-        assert!(null_normalized.get("quota").is_none());
+        assert!(null_normalized.quota.is_none());
+
+        let ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Buckets(ref buckets) =
+            *normalized.quota.as_ref().unwrap()
+        else {
+            panic!("expected sanitized buckets");
+        };
+        assert_eq!(buckets.len(), 2);
+        for bucket_value in serialized_value["quota"]["buckets"]
+            .as_object()
+            .unwrap()
+            .values()
+        {
+            for key in bucket_value.as_object().unwrap().keys() {
+                assert!(
+                    matches!(
+                        key.as_str(),
+                        "remaining_fraction" | "reset_time" | "disabled"
+                    ),
+                    "unexpected retained bucket property: {key}"
+                );
+            }
+        }
 
         for bad_quota in [
             json!("raw-secret-string"),
@@ -1398,27 +1434,57 @@ mod tests {
             });
             let sanitized = statusline_payload(&serde_json::to_vec(&raw).unwrap())
                 .expect("malformed optional quota must never reject statusline callback");
-            assert_eq!(sanitized["conversation_id"], A);
-            assert_eq!(sanitized["conversation_title"], "Still accepted");
-            assert_eq!(sanitized["quota"], "invalid");
-            assert!(!sanitized.to_string().contains("secret"));
-        }
-
-        let mut too_many = serde_json::Map::new();
-        for idx in 0..33 {
-            too_many.insert(
-                format!("bucket-{idx}-5h"),
-                json!({"remaining_fraction": 0.5}),
+            assert_eq!(sanitized.conversation_id, A);
+            assert_eq!(
+                sanitized.conversation_title.as_deref(),
+                Some("Still accepted")
+            );
+            assert_eq!(
+                sanitized.quota,
+                Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid)
+            );
+            assert!(
+                !serde_json::to_string(&sanitized)
+                    .unwrap()
+                    .contains("secret")
             );
         }
+
+        let mut max_allowed = serde_json::Map::new();
+        for idx in 0..32 {
+            max_allowed.insert(
+                format!("bucket-{idx}-5h"),
+                json!({"remaining_fraction": 0.5, "disabled": idx >= 20}),
+            );
+        }
+        let exact_limit = json!({
+            "conversation_id": A,
+            "agent_state": "working",
+            "quota": Value::Object(max_allowed.clone())
+        });
+        let sanitized_exact =
+            statusline_payload(&serde_json::to_vec(&exact_limit).unwrap()).unwrap();
+        assert!(matches!(
+            sanitized_exact.quota,
+            Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Buckets(ref map))
+                if map.len() == 32
+        ));
+
+        max_allowed.insert(
+            "bucket-32-5h".into(),
+            json!({"remaining_fraction": 0.5, "disabled": true}),
+        );
         let oversized = json!({
             "conversation_id": A,
             "agent_state": "working",
-            "quota": Value::Object(too_many)
+            "quota": Value::Object(max_allowed)
         });
         let sanitized_oversized =
             statusline_payload(&serde_json::to_vec(&oversized).unwrap()).unwrap();
-        assert_eq!(sanitized_oversized["quota"], "invalid");
+        assert_eq!(
+            sanitized_oversized.quota,
+            Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid)
+        );
     }
 
     #[test]

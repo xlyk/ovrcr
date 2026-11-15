@@ -102,7 +102,6 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             DispatchMessage::ClaudeAccount(update) => {
                 super::quota::store_claude_account(&state, *update);
                 state.refresh_claude_quota();
-                state.refresh_agy_quota();
             }
             DispatchMessage::ClaudeProbe {
                 report,

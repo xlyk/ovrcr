@@ -51,7 +51,10 @@ pub mod operator;
 mod operator_tests;
 mod outbound;
 mod quota;
-pub use quota::{normalize_agy_statusline_quota, sanitize_agy_statusline_quota};
+pub use quota::{
+    AgyStatuslineBucket, AgyStatuslineResetTime, SanitizedAgyStatuslineQuota,
+    normalize_agy_statusline_quota, sanitize_agy_statusline_quota,
+};
 mod quota_probe;
 mod remote;
 mod reporting_queue;
@@ -194,28 +197,16 @@ fn dispatch_weight(message: &DispatchMessage) -> usize {
             bincode::serde::encode_to_vec(view, bincode::config::standard())
                 .map_or(0, |bytes| bytes.len())
         }
-        DispatchMessage::NativeQuota(update) => {
-            update.report.windows.as_ref().map_or(0, |windows| {
-                windows
-                    .iter()
-                    .map(|window| {
-                        std::mem::size_of_val(window) + window.id.len() + window.label.len()
-                    })
-                    .sum()
-            })
-        }
-        DispatchMessage::AgyQuota(update) => {
-            update.native.report.windows.as_ref().map_or(0, |windows| {
-                windows
-                    .iter()
-                    .map(|window| {
-                        std::mem::size_of_val(window) + window.id.len() + window.label.len()
-                    })
-                    .sum()
-            })
-        }
-        DispatchMessage::CursorQuota(update) => {
-            update.native.report.windows.as_ref().map_or(0, |windows| {
+        DispatchMessage::NativeQuota(_)
+        | DispatchMessage::AgyQuota(_)
+        | DispatchMessage::CursorQuota(_) => {
+            let report = match message {
+                DispatchMessage::NativeQuota(update) => &update.report,
+                DispatchMessage::AgyQuota(update) => &update.native.report,
+                DispatchMessage::CursorQuota(update) => &update.native.report,
+                _ => unreachable!(),
+            };
+            report.windows.as_ref().map_or(0, |windows| {
                 windows
                     .iter()
                     .map(|window| {
@@ -502,33 +493,22 @@ impl ServerState {
         use ovrcr_protocol::{AgentProvider, ReporterHealth};
         let focused = self.dashboard.view().and_then(|view| view.focused);
         let sessions: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
-        let eligible = |session: &Arc<Session>| -> Option<ovrcr_protocol::ProviderQuota> {
-            let summary = session.summary();
-            if !summary.phase.is_live() {
-                return None;
-            }
-            let agent = summary.agent.as_ref()?;
-            if agent.binding.provider != AgentProvider::Agy
-                || agent.health.state != ReporterHealth::Connected
-            {
-                return None;
-            }
-            session.quota_snapshot()
-        };
-        if let Some(focused_id) = focused
-            && let Some(session) = sessions.iter().find(|s| s.id() == focused_id)
-            && let Some(quota) = eligible(session)
-        {
-            return Some(quota);
-        }
-        sessions
-            .iter()
-            .filter_map(|session| {
-                let quota = eligible(session)?;
-                Some(((quota.observed_unix_ms.unwrap_or(0), session.id().0), quota))
-            })
-            .max_by_key(|(rank, _)| *rank)
-            .map(|(_, quota)| quota)
+        quota::select_agy_session_quota(
+            focused,
+            sessions.iter().filter_map(|session| {
+                let summary = session.summary();
+                if !summary.phase.is_live() {
+                    return None;
+                }
+                let agent = summary.agent.as_ref()?;
+                if agent.binding.provider != AgentProvider::Agy
+                    || agent.health.state != ReporterHealth::Connected
+                {
+                    return None;
+                }
+                Some((session.id(), session.quota_snapshot()?))
+            }),
+        )
     }
 
     /// The default (quota off, nothing reported) is what a new Dashboard

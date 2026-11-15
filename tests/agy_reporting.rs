@@ -737,3 +737,234 @@ done
         );
     }
 }
+
+#[test]
+fn focused_invalid_session_yields_to_unfocused_valid_windows_and_never_clobbers_settled_account_failure()
+ {
+    let fixture = Live::idle().bounded();
+    let db_dir = fixture
+        .root
+        .path()
+        .join(".gemini/antigravity-cli/conversations");
+    std::fs::create_dir_all(&db_dir).unwrap();
+    for id in [FIRST, SECOND] {
+        let db = rusqlite::Connection::open(db_dir.join(format!("{id}.db"))).unwrap();
+        db.execute("CREATE TABLE trajectory_meta(cascade_id TEXT)", [])
+            .unwrap();
+        db.execute("INSERT INTO trajectory_meta(cascade_id) VALUES (?1)", [id])
+            .unwrap();
+    }
+
+    let release_login_failure = fixture.root.path().join("release-login-failure");
+    let collector = fixture.root.path().join("agy-collector-fail");
+    let collector_script = format!(
+        r#"#!/bin/sh
+if [ "$*" = '-p /usage --output-format json --settings {{}}' ]; then
+    while [ ! -f '{}' ]; do
+        sleep 0.05
+    done
+    printf 'Authentication required. Please log in.\n' >&2
+    exit 1
+fi
+exit 2
+"#,
+        release_login_failure.display()
+    );
+    std::fs::write(&collector, collector_script).unwrap();
+    std::fs::set_permissions(&collector, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let settings_doc = fixture.config.join("dashboard.toml");
+    std::fs::create_dir_all(&fixture.config).unwrap();
+    std::fs::write(
+        &settings_doc,
+        format!(
+            "[quota]\nenabled = true\n\
+             [quota.codex]\ncommand = '/no-codex-fixture'\n\
+             [quota.grok]\ncommand = '/no-grok-fixture'\n\
+             [quota.agy]\ncommand = '{}'\n",
+            collector.display()
+        ),
+    )
+    .unwrap();
+
+    let native = fixture.root.path().join("agy");
+    let native_script = format!(
+        r#"#!/bin/sh
+id="{FIRST}"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --conversation) id="$2"; shift ;;
+        --model) [ "$2" != two ] || id="{SECOND}"; shift ;;
+    esac
+    shift
+done
+if [ "$id" = "{FIRST}" ]; then
+    printf '%s\n' '{{"conversation_id":"{FIRST}","conversation_title":"Unfocused Valid","agent_state":"working","quota":{{"gemini-5h":{{"remaining_fraction":0.62,"reset_time":"2099-01-01T00:00:00Z"}}}}}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+else
+    printf '%s\n' '{{"conversation_id":"{SECOND}","conversation_title":"Focused Invalid","agent_state":"working","quota":{{"gemini-5h":{{"remaining_fraction":1.5}}}}}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+fi
+while IFS= read -r event; do
+    case "$event" in
+        go_invalid)
+            printf '%s\n' '{{"conversation_id":"'"$id"'","conversation_title":"Now Invalid","agent_state":"idle","quota":{{"gemini-5h":{{"remaining_fraction":1.5}}}}}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+            ;;
+        go_valid)
+            printf '%s\n' '{{"conversation_id":"'"$id"'","conversation_title":"Recovered Valid","agent_state":"working","quota":{{"gemini-5h":{{"remaining_fraction":0.48,"reset_time":"2099-01-01T00:00:00Z"}}}}}}' | "$OVRCR_TEST_AGY_CLI" report agy-statusline --stdin-json --render-command cat >/dev/null
+            ;;
+    esac
+done
+"#
+    );
+    std::fs::write(&native, native_script).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    fixture.start_binary_env(&[("OVRCR_TEST_AGY_CLI", fixture.executable.as_os_str())]);
+    fixture.ready("feature/agy");
+
+    let mut dashboard = ovrcr::protocol::connect_server(&fixture.socket).unwrap();
+    assert!(matches!(
+        ovrcr::protocol::client::request(&mut dashboard, 1, Request::DashboardHello).unwrap(),
+        Response::Hierarchy(_)
+    ));
+
+    let unfocused_valid = create(&fixture, &native, &[]);
+    let first_snap = quota_until(
+        &mut dashboard,
+        "unfocused valid session did not populate Agy",
+        |q| {
+            q.agy.state == QuotaState::Current
+                && matches!(q.agy.source, Some(QuotaSource::Session { session: id, .. }) if id == unfocused_valid)
+        },
+    );
+    assert_eq!(
+        first_snap.agy.windows[0].remaining_basis_points(),
+        Some(6_200)
+    );
+
+    let focused_invalid = create(&fixture, &native, &["--conversation", SECOND]);
+    let focused_summary = wait(&fixture, focused_invalid, |row| {
+        row.display_name() == "Focused Invalid"
+    });
+    let selected = ovrcr::protocol::client::request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session: focused_invalid,
+            size: TerminalSize { rows: 24, cols: 80 },
+        },
+    )
+    .unwrap();
+    assert!(
+        !matches!(selected, Response::Error { .. }),
+        "select focused_invalid failed: {selected:?}"
+    );
+
+    // Trigger settings re-evaluation / refresh check via Inspect + current Hierarchy/Quota state:
+    // Focusing the windowless Invalid session must NOT displace the unfocused session's valid windows!
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    // Verify by sending another invalid update from the focused session and checking Inspector/QuotaChanged:
+    ovrcr::protocol::write_frame(
+        &mut dashboard,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 3,
+            request: Request::Input {
+                session: focused_invalid,
+                run: focused_summary.run,
+                bytes: b"go_invalid\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    wait(&fixture, focused_invalid, |row| {
+        row.display_name() == "Now Invalid"
+    });
+
+    // Toggle quota.enabled false -> true on dashboard to read the freshly recomputed Agy row!
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("false".into()),
+        }),
+        Response::Ok
+    );
+    quota_until(&mut dashboard, "disable Agy", |q| {
+        q.agy.state == QuotaState::Disabled
+    });
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("true".into()),
+        }),
+        Response::Ok
+    );
+    let after_focus = quota_until(
+        &mut dashboard,
+        "focused Invalid session clobbered unfocused valid Agy session windows",
+        |q| q.agy.state != QuotaState::Disabled,
+    );
+    assert_eq!(
+        after_focus.agy.state,
+        QuotaState::Current,
+        "focused Invalid session overrode unfocused session with valid windows: {after_focus:?}"
+    );
+    assert!(matches!(
+        after_focus.agy.source,
+        Some(QuotaSource::Session { session: id, .. }) if id == unfocused_valid
+    ));
+    assert_eq!(
+        after_focus.agy.windows[0].remaining_basis_points(),
+        Some(6_200)
+    );
+
+    // Now stop unfocused_valid so only the windowless Invalid session remains while /usage is Checking:
+    // With no valid windows anywhere, focused_invalid surfaces Invalid with empty windows.
+    fixture.request(Request::KillSession {
+        session: unfocused_valid,
+    });
+    wait(&fixture, unfocused_valid, |row| !row.phase.is_live());
+    let only_invalid = quota_until(
+        &mut dashboard,
+        "windowless Invalid session while /usage Checking did not surface Invalid",
+        |q| q.agy.state == QuotaState::Invalid,
+    );
+    assert!(only_invalid.agy.windows.is_empty());
+
+    // Release /usage collector so account settles into NotSignedIn ("not signed in") without windows:
+    // Windowless Invalid session MUST yield to the concrete account failure state and reason!
+    std::fs::write(&release_login_failure, b"ok\n").unwrap();
+    let settled_failure = quota_until(
+        &mut dashboard,
+        "settled NotSignedIn account failure was clobbered by windowless Invalid session",
+        |q| q.agy.state == QuotaState::NotSignedIn,
+    );
+    assert_eq!(settled_failure.agy.reason.as_deref(), Some("not signed in"));
+    assert!(matches!(
+        settled_failure.agy.source,
+        Some(QuotaSource::NativeProfile { .. })
+    ));
+
+    // Once focused_invalid reports valid non-empty windows, it DOES supplement the failed account!
+    ovrcr::protocol::write_frame(
+        &mut dashboard,
+        &ovrcr::protocol::ClientMessage {
+            request_id: 6,
+            request: Request::Input {
+                session: focused_invalid,
+                run: focused_summary.run,
+                bytes: b"go_valid\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    let supplemented_after_failure = quota_until(
+        &mut dashboard,
+        "valid session windows did not supplement failed windowless account",
+        |q| q.agy.state == QuotaState::Current,
+    );
+    assert_eq!(
+        supplemented_after_failure.agy.windows[0].remaining_basis_points(),
+        Some(4_800)
+    );
+    assert_eq!(supplemented_after_failure.agy.checked_unix_ms, None);
+    assert!(supplemented_after_failure.agy.next_check_unix_ms.is_some());
+}

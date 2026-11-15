@@ -410,9 +410,8 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     let target = match update.provider {
         QuotaProvider::Codex => &mut snapshots.codex,
         QuotaProvider::Grok => &mut snapshots.grok,
-        QuotaProvider::Agy => &mut snapshots.agy,
         QuotaProvider::Cursor => &mut snapshots.cursor,
-        QuotaProvider::Claude => return,
+        QuotaProvider::Claude | QuotaProvider::Agy => return,
     };
     let before_state = target.state;
     let before_reason = target.reason.clone();
@@ -758,6 +757,43 @@ struct Rpc {
     account_epoch: u64,
     workspace: Option<tempfile::TempDir>,
 }
+fn strip_ovrcr_child_env(command: &mut Command) {
+    for name in [
+        "OVRCR_HOOK_SOCKET",
+        "OVRCR_HOOK_TOKEN",
+        "OVRCR_SESSION_ID",
+        "OVRCR_SOCKET",
+        "OVRCR_CONFIG",
+    ] {
+        command.env_remove(name);
+    }
+    for (name, _) in std::env::vars_os() {
+        let text = name.to_string_lossy();
+        if text.starts_with("OVRCR_HOOK_") || text.starts_with("OVRCR_AGENT_") {
+            command.env_remove(name);
+        }
+    }
+}
+
+fn native_spawn_failure(name: &str, program: &NativeCommand, error: &std::io::Error) -> Failure {
+    let reason = if error.kind() != std::io::ErrorKind::NotFound {
+        format!("{name} could not start")
+    } else if program
+        .command
+        .as_os_str()
+        .as_encoded_bytes()
+        .contains(&b'/')
+    {
+        format!("{name} not found at the configured path")
+    } else {
+        format!("{name} not found on PATH")
+    };
+    Failure {
+        deterministic: true,
+        ..Failure::unavailable(reason)
+    }
+}
+
 impl Rpc {
     fn spawn(
         provider: QuotaProvider,
@@ -773,20 +809,7 @@ impl Rpc {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        for name in [
-            "OVRCR_HOOK_SOCKET",
-            "OVRCR_HOOK_TOKEN",
-            "OVRCR_SESSION_ID",
-            "OVRCR_SOCKET",
-            "OVRCR_CONFIG",
-        ] {
-            command.env_remove(name);
-        }
-        for (name, _) in std::env::vars_os() {
-            if name.to_string_lossy().starts_with("OVRCR_AGENT_") {
-                command.env_remove(name);
-            }
-        }
+        strip_ovrcr_child_env(&mut command);
         if let Some(home) = &program.home {
             command.env(
                 if provider == QuotaProvider::Codex {
@@ -798,24 +821,9 @@ impl Rpc {
             );
         }
         let name = provider.name().to_lowercase();
-        let mut child = command.spawn().map_err(|error| {
-            let reason = if error.kind() != std::io::ErrorKind::NotFound {
-                format!("{name} could not start")
-            } else if program
-                .command
-                .as_os_str()
-                .as_encoded_bytes()
-                .contains(&b'/')
-            {
-                format!("{name} not found at the configured path")
-            } else {
-                format!("{name} not found on PATH")
-            };
-            Failure {
-                deterministic: true,
-                ..Failure::unavailable(reason)
-            }
-        })?;
+        let mut child = command
+            .spawn()
+            .map_err(|error| native_spawn_failure(&name, program, &error))?;
         let input = child.stdin.take().unwrap();
         let output = child.stdout.take().unwrap();
         let rpc = Self {
@@ -1164,15 +1172,22 @@ fn require_usage(windows: Vec<QuotaWindow>) -> Result<Vec<QuotaWindow>> {
 const AGY_MAX_RESET_UNIX_MS: u64 = 4_102_444_800_000; // 2100-01-01T00:00:00Z
 const AGY_MAX_STDERR: usize = 64 * 1024;
 
-const AGY_STDERR_LOGIN_MARKERS: [&str; 7] = [
-    "authentication required",
-    "please visit the url to log in",
-    "select login method",
-    "you are not logged into antigravity",
-    "login required",
-    "please log in",
-    "please sign in",
-];
+pub(super) fn select_agy_session_quota(
+    focused: Option<ovrcr_protocol::SessionId>,
+    candidates: impl IntoIterator<Item = (ovrcr_protocol::SessionId, ProviderQuota)>,
+) -> Option<ProviderQuota> {
+    candidates
+        .into_iter()
+        .max_by_key(|(id, quota)| {
+            (
+                !quota.windows.is_empty(),
+                focused == Some(*id),
+                quota.observed_unix_ms.unwrap_or(0),
+                id.0,
+            )
+        })
+        .map(|(_, quota)| quota)
+}
 
 pub(super) fn merge_agy_quota(
     previous: &ProviderQuota,
@@ -1188,8 +1203,11 @@ pub(super) fn merge_agy_quota(
     {
         return account.clone();
     }
+    let account_settled_without_windows =
+        account.is_some_and(|acc| acc.state != QuotaState::Checking);
     if settings.agy.home.is_none()
         && let Some(mut session_quota) = session.cloned()
+        && (!account_settled_without_windows || !session_quota.windows.is_empty())
     {
         session_quota.provider = QuotaProvider::Agy;
         session_quota.checked_unix_ms = None;
@@ -1445,8 +1463,58 @@ struct AgyChild {
     child: Child,
     stdout: ChildStdout,
     stderr: ChildStderr,
-    reaped: Option<ExitStatus>,
+    reaped: bool,
     _workspace: tempfile::TempDir,
+}
+
+fn observed_leader_exit(pid: libc::pid_t) -> std::io::Result<bool> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let rc = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if rc == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        return Ok(unsafe { info.si_pid() } == pid);
+    }
+}
+
+fn group_is_absent(pgid: libc::pid_t) -> bool {
+    let rc = unsafe { libc::kill(-pgid, 0) };
+    rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if group_is_absent(pgid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return group_is_absent(pgid);
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+fn terminate_pinned_group(pgid: libc::pid_t) {
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    std::thread::park_timeout(Duration::from_millis(50));
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
 }
 
 impl AgyChild {
@@ -1495,49 +1563,20 @@ impl AgyChild {
             .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
             .env("BROWSER", &open_stub)
             .env("PATH", child_path);
-        for name in [
-            "OVRCR_HOOK_SOCKET",
-            "OVRCR_HOOK_TOKEN",
-            "OVRCR_SESSION_ID",
-            "OVRCR_SOCKET",
-            "OVRCR_CONFIG",
-        ] {
-            command.env_remove(name);
-        }
-        for (name, _) in std::env::vars_os() {
-            let text = name.to_string_lossy();
-            if text.starts_with("OVRCR_HOOK_") || text.starts_with("OVRCR_AGENT_") {
-                command.env_remove(name);
-            }
-        }
+        strip_ovrcr_child_env(&mut command);
         if let Some(home) = &program.home {
             command.env("HOME", home).env("SSH_TTY", "ovrcr-quota");
         }
-        let mut child = command.spawn().map_err(|error| {
-            let reason = if error.kind() != std::io::ErrorKind::NotFound {
-                "agy could not start"
-            } else if program
-                .command
-                .as_os_str()
-                .as_encoded_bytes()
-                .contains(&b'/')
-            {
-                "agy not found at the configured path"
-            } else {
-                "agy not found on PATH"
-            };
-            Failure {
-                deterministic: true,
-                ..Failure::unavailable(reason)
-            }
-        })?;
+        let mut child = command
+            .spawn()
+            .map_err(|error| native_spawn_failure("agy", program, &error))?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let runner = Self {
             child,
             stdout,
             stderr,
-            reaped: None,
+            reaped: false,
             _workspace: workspace,
         };
         for fd in [runner.stdout.as_raw_fd(), runner.stderr.as_raw_fd()] {
@@ -1548,25 +1587,6 @@ impl AgyChild {
             }
         }
         Ok(runner)
-    }
-
-    fn terminate_group(pgid: libc::pid_t) {
-        if unsafe { libc::kill(-pgid, 0) } != 0 {
-            return;
-        }
-        unsafe {
-            libc::kill(-pgid, libc::SIGTERM);
-        }
-        let grace = Instant::now() + Duration::from_millis(100);
-        while Instant::now() < grace {
-            if unsafe { libc::kill(-pgid, 0) } != 0 {
-                return;
-            }
-            std::thread::park_timeout(Duration::from_millis(10));
-        }
-        unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
-        }
     }
 
     fn wait_status(
@@ -1587,13 +1607,28 @@ impl AgyChild {
             if !current.enabled || current.agy != *program {
                 return Err(interrupted());
             }
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    self.reaped = Some(status);
-                    Self::terminate_group(pgid);
+            match observed_leader_exit(pgid) {
+                Ok(true) => {
+                    if !self.reaped {
+                        // WNOWAIT proves the leader is an unreaped zombie pinning pgid;
+                        // signal the process group only before reaping the leader.
+                        terminate_pinned_group(pgid);
+                    }
+                    let status = loop {
+                        match self.child.try_wait() {
+                            Ok(Some(status)) => {
+                                self.reaped = true;
+                                break status;
+                            }
+                            Ok(None) => std::thread::park_timeout(Duration::from_millis(1)),
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => return Err(Failure::unavailable("agy output failed")),
+                        }
+                    };
+                    let _ = wait_group_absent(pgid, Duration::from_millis(200));
                     return Ok(status);
                 }
-                Ok(None) => {}
+                Ok(false) => {}
                 Err(_) => return Err(Failure::unavailable("agy output failed")),
             }
             if Instant::now() >= deadline {
@@ -1606,37 +1641,58 @@ impl AgyChild {
 
 impl Drop for AgyChild {
     fn drop(&mut self) {
-        if self.reaped.is_some() {
+        if self.reaped {
             return;
         }
         let pgid = self.child.id() as libc::pid_t;
         unsafe {
             libc::kill(-pgid, libc::SIGTERM);
         }
-        std::thread::park_timeout(Duration::from_millis(100));
-        unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
-        }
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
+        let term_deadline = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < term_deadline {
             match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    self.reaped = Some(status);
-                    return;
+                Ok(Some(_)) => {
+                    self.reaped = true;
+                    break;
                 }
+                Ok(None) => std::thread::park_timeout(Duration::from_millis(10)),
                 Err(_) => break,
-                _ => std::thread::park_timeout(Duration::from_millis(10)),
             }
         }
-        eprintln!("native agy quota process cleanup remains unverified");
+        if !self.reaped
+            && let Ok(Some(_)) = self.child.try_wait()
+        {
+            self.reaped = true;
+        }
+        if !self.reaped {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+            let kill_deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < kill_deadline {
+                match self.child.try_wait() {
+                    Ok(Some(_)) => {
+                        self.reaped = true;
+                        break;
+                    }
+                    Ok(None) => std::thread::park_timeout(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            if !self.reaped
+                && let Ok(Some(_)) = self.child.try_wait()
+            {
+                self.reaped = true;
+            }
+        }
+        if !self.reaped || !wait_group_absent(pgid, Duration::from_millis(200)) {
+            eprintln!("native agy quota process cleanup remains unverified");
+        }
     }
 }
 
 fn contains_agy_stderr_login_marker(bytes: &[u8]) -> bool {
-    let lower = String::from_utf8_lossy(bytes).to_ascii_lowercase();
-    AGY_STDERR_LOGIN_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
+    contains_agy_auth_marker(&String::from_utf8_lossy(bytes))
 }
 
 fn read_agy_allowance(state: &ServerState, program: &NativeCommand) -> Result<Vec<QuotaWindow>> {
@@ -1731,7 +1787,7 @@ fn read_agy_allowance(state: &ServerState, program: &NativeCommand) -> Result<Ve
     agy_windows(&value)
 }
 
-const AGY_AUTH_MARKERS: [&str; 10] = [
+const AGY_AUTH_MARKERS: [&str; 11] = [
     "authentication required",
     "authentication failed",
     "please visit the url to log in",
@@ -1742,11 +1798,12 @@ const AGY_AUTH_MARKERS: [&str; 10] = [
     "unauthenticated",
     "login required",
     "please log in",
+    "please sign in",
 ];
 
 fn contains_agy_auth_marker(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    AGY_AUTH_MARKERS.iter().any(|marker| lower.contains(marker)) || lower.contains("please sign in")
+    AGY_AUTH_MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 fn agy_error_failure(object: &serde_json::Map<String, Value>) -> Option<Failure> {
@@ -1957,6 +2014,30 @@ fn agy_remaining_fraction(bucket: &serde_json::Map<String, Value>) -> Result<Opt
     Ok(Some(((1.0 - fraction) * 10_000.0).floor() as u16))
 }
 
+fn parse_agy_reset_ms(text_or_secs: &Value) -> Result<u64> {
+    let max_reset = now_ms()
+        .saturating_add(366 * 86_400_000)
+        .max(AGY_MAX_RESET_UNIX_MS);
+    if let Some(text) = text_or_secs.as_str() {
+        let stamp = chrono::DateTime::parse_from_rfc3339(text)
+            .map_err(|_| Failure::new(QuotaState::Invalid))?;
+        let ms = u64::try_from(stamp.timestamp_millis())
+            .map_err(|_| Failure::new(QuotaState::Invalid))?;
+        if ms == 0 || ms > max_reset {
+            return Err(Failure::new(QuotaState::Invalid));
+        }
+        return Ok(ms);
+    }
+    if let Some(seconds) = text_or_secs.as_u64() {
+        let ms = seconds
+            .checked_mul(1000)
+            .filter(|ms| *ms > 0 && *ms <= max_reset)
+            .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
+        return Ok(ms);
+    }
+    Err(Failure::new(QuotaState::Invalid))
+}
+
 fn agy_reset_ms(bucket: &serde_json::Map<String, Value>) -> Result<Option<u64>> {
     let raw = bucket
         .get("reset_time")
@@ -1975,27 +2056,7 @@ fn agy_reset_ms(bucket: &serde_json::Map<String, Value>) -> Result<Option<u64>> 
     let Some(value) = raw else {
         return Ok(None);
     };
-    let max_reset = now_ms()
-        .saturating_add(366 * 86_400_000)
-        .max(AGY_MAX_RESET_UNIX_MS);
-    if let Some(text) = value.as_str() {
-        let stamp = chrono::DateTime::parse_from_rfc3339(text)
-            .map_err(|_| Failure::new(QuotaState::Invalid))?;
-        let ms = u64::try_from(stamp.timestamp_millis())
-            .map_err(|_| Failure::new(QuotaState::Invalid))?;
-        if ms == 0 || ms > max_reset {
-            return Err(Failure::new(QuotaState::Invalid));
-        }
-        return Ok(Some(ms));
-    }
-    if let Some(seconds) = value.as_u64() {
-        let ms = seconds
-            .checked_mul(1000)
-            .filter(|ms| *ms > 0 && *ms <= max_reset)
-            .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
-        return Ok(Some(ms));
-    }
-    Err(Failure::new(QuotaState::Invalid))
+    parse_agy_reset_ms(value).map(Some)
 }
 
 fn rank_agy_buckets(parsed: Vec<ParsedAgyBucket>) -> Vec<QuotaWindow> {
@@ -2056,226 +2117,168 @@ fn agy_aliased_field<'a>(
     }
 }
 
+/// Reset timestamp inside a sanitized Antigravity status-line allowance bucket.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum AgyStatuslineResetTime {
+    Rfc3339(String),
+    UnixSeconds(u64),
+}
+
+impl AgyStatuslineResetTime {
+    fn to_unix_ms(&self) -> Result<u64> {
+        match self {
+            Self::Rfc3339(text) => parse_agy_reset_ms(&Value::String(text.clone())),
+            Self::UnixSeconds(seconds) => parse_agy_reset_ms(&json!(*seconds)),
+        }
+    }
+}
+
+/// Sanitized Antigravity status-line allowance bucket retaining only the 3 allowlisted fields.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgyStatuslineBucket {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_time: Option<AgyStatuslineResetTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+}
+
+/// Typed sanitized Antigravity status-line `quota` representation.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "buckets", rename_all = "snake_case")]
+pub enum SanitizedAgyStatuslineQuota {
+    Buckets(std::collections::BTreeMap<String, AgyStatuslineBucket>),
+    Invalid,
+}
+
 /// Sanitize an optional raw Antigravity status-line `quota` value before sending it across
-/// the invocation socket. Only up to 32 bucket entries with allowlisted allowance fields are
-/// retained; malformed shapes or values become a static `"invalid"` marker without forwarding
-/// raw strings.
-pub fn sanitize_agy_statusline_quota(raw: &Value) -> Option<Value> {
+/// the invocation socket. At most 32 raw bucket entries are accepted and only
+/// `remaining_fraction`, `reset_time`, and `disabled` are retained per bucket; malformed shapes
+/// or values become [`SanitizedAgyStatuslineQuota::Invalid`] without forwarding raw strings.
+pub fn sanitize_agy_statusline_quota(raw: &Value) -> Option<SanitizedAgyStatuslineQuota> {
     if raw.is_null() {
         return None;
     }
     let Some(map) = raw.as_object() else {
-        return Some(serde_json::json!("invalid"));
+        return Some(SanitizedAgyStatuslineQuota::Invalid);
     };
-    if map.len() > 128 {
-        return Some(serde_json::json!("invalid"));
+    if map.len() > 32 {
+        return Some(SanitizedAgyStatuslineQuota::Invalid);
     }
-    let mut enabled_entries: Vec<(String, Value)> = Vec::new();
-    let mut disabled_entries: Vec<(String, Value)> = Vec::new();
+    let mut buckets = std::collections::BTreeMap::new();
     for (raw_id, entry) in map {
         let id = raw_id.trim();
-        if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
-            return Some(serde_json::json!("invalid"));
+        if id.is_empty()
+            || id.len() > 128
+            || id.chars().any(char::is_control)
+            || buckets.contains_key(id)
+        {
+            return Some(SanitizedAgyStatuslineQuota::Invalid);
         }
         let Some(bucket) = entry.as_object() else {
-            return Some(serde_json::json!("invalid"));
+            return Some(SanitizedAgyStatuslineQuota::Invalid);
         };
         let disabled = match bucket.get("disabled").filter(|v| !v.is_null()) {
             None => None,
             Some(Value::Bool(flag)) => Some(*flag),
-            Some(_) => return Some(serde_json::json!("invalid")),
+            Some(_) => return Some(SanitizedAgyStatuslineQuota::Invalid),
         };
-        let mut clean = serde_json::Map::new();
-        if let Some(flag) = disabled {
-            clean.insert("disabled".into(), serde_json::json!(flag));
-        }
         let Ok(fraction_field) =
             agy_aliased_field(bucket, "remaining_fraction", "remainingFraction")
         else {
-            return Some(serde_json::json!("invalid"));
+            return Some(SanitizedAgyStatuslineQuota::Invalid);
         };
-        if let Some((key, val)) = fraction_field {
-            let Some(num) = val
+        let remaining_fraction = match fraction_field {
+            None => None,
+            Some((_, val)) => match val
                 .as_f64()
                 .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
-            else {
-                return Some(serde_json::json!("invalid"));
-            };
-            clean.insert(key.into(), serde_json::json!(num));
-        } else if let Some(rem) = bucket.get("remaining").filter(|v| !v.is_null()) {
-            let Some(rem_obj) = rem.as_object() else {
-                return Some(serde_json::json!("invalid"));
-            };
-            let Ok(nested_frac) =
-                agy_aliased_field(rem_obj, "remaining_fraction", "remainingFraction")
-            else {
-                return Some(serde_json::json!("invalid"));
-            };
-            if let Some((_, val)) = nested_frac {
-                let Some(num) = val
-                    .as_f64()
-                    .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
-                else {
-                    return Some(serde_json::json!("invalid"));
-                };
-                clean.insert("remaining_fraction".into(), serde_json::json!(num));
-            }
-        }
+            {
+                Some(num) => Some(num),
+                None => return Some(SanitizedAgyStatuslineQuota::Invalid),
+            },
+        };
 
         let Ok(reset_field) = agy_aliased_field(bucket, "reset_time", "resetTime") else {
-            return Some(serde_json::json!("invalid"));
+            return Some(SanitizedAgyStatuslineQuota::Invalid);
         };
-        if let Some((key, val)) = reset_field {
-            if agy_reset_ms(bucket).is_err() {
-                return Some(serde_json::json!("invalid"));
-            }
-            clean.insert(key.into(), val.clone());
-        } else if let Some(rem) = bucket.get("remaining").and_then(Value::as_object) {
-            let Ok(nested_reset) = agy_aliased_field(rem, "reset_time", "resetTime") else {
-                return Some(serde_json::json!("invalid"));
-            };
-            if let Some((_, val)) = nested_reset {
-                if agy_reset_ms(bucket).is_err() {
-                    return Some(serde_json::json!("invalid"));
+        let reset_time = match reset_field {
+            None => None,
+            Some((_, val)) => {
+                if parse_agy_reset_ms(val).is_err() {
+                    return Some(SanitizedAgyStatuslineQuota::Invalid);
                 }
-                clean.insert("reset_time".into(), val.clone());
+                if let Some(text) = val.as_str() {
+                    Some(AgyStatuslineResetTime::Rfc3339(text.to_owned()))
+                } else if let Some(seconds) = val.as_u64() {
+                    Some(AgyStatuslineResetTime::UnixSeconds(seconds))
+                } else {
+                    return Some(SanitizedAgyStatuslineQuota::Invalid);
+                }
             }
-        }
-
-        if let Some(window_val) = bucket.get("window").filter(|v| !v.is_null()) {
-            let Some(window_str) = window_val.as_str() else {
-                return Some(serde_json::json!("invalid"));
-            };
-            let trimmed = window_str.trim();
-            if trimmed.len() > 64 || window_str.chars().any(char::is_control) {
-                return Some(serde_json::json!("invalid"));
-            }
-            if !trimmed.is_empty() {
-                clean.insert("window".into(), serde_json::json!(trimmed));
-            }
-        }
-
-        let Ok(name_field) = agy_aliased_field(bucket, "name", "displayName") else {
-            return Some(serde_json::json!("invalid"));
         };
-        if let Some((key, val)) = name_field {
-            let Some(name_str) = val.as_str() else {
-                return Some(serde_json::json!("invalid"));
-            };
-            if name_str.chars().any(char::is_control) {
-                return Some(serde_json::json!("invalid"));
-            }
-            let trimmed = name_str.trim();
-            if !trimmed.is_empty() && trimmed.len() <= 64 && !trimmed.contains('@') {
-                clean.insert(key.into(), serde_json::json!(trimmed));
-            }
-        }
 
-        if disabled == Some(true) {
-            disabled_entries.push((id.to_owned(), Value::Object(clean)));
-        } else {
-            enabled_entries.push((id.to_owned(), Value::Object(clean)));
-            if enabled_entries.len() > 32 {
-                return Some(serde_json::json!("invalid"));
-            }
-        }
+        buckets.insert(
+            id.to_owned(),
+            AgyStatuslineBucket {
+                remaining_fraction,
+                reset_time,
+                disabled,
+            },
+        );
     }
-    let mut out = serde_json::Map::new();
-    for (id, val) in enabled_entries {
-        out.insert(id, val);
-    }
-    for (id, val) in disabled_entries {
-        if out.len() >= 32 {
-            break;
-        }
-        out.insert(id, val);
-    }
-    Some(Value::Object(out))
+    Some(SanitizedAgyStatuslineQuota::Buckets(buckets))
 }
 
-/// Normalize a status-line `quota` value into a [`QuotaReport`] when active buckets or a
-/// malformed payload are present. Empty or not-yet-populated bucket maps return `None`.
-pub fn normalize_agy_statusline_quota(value: &Value) -> Option<QuotaReport> {
-    if value.is_null() {
-        return None;
-    }
+/// Normalize a sanitized status-line `quota` payload into a [`QuotaReport`] when active buckets
+/// or a malformed payload are present. Empty or not-yet-populated bucket maps return `None`.
+pub fn normalize_agy_statusline_quota(quota: &SanitizedAgyStatuslineQuota) -> Option<QuotaReport> {
     let invalid = || {
         Some(QuotaReport {
             windows: None,
             state: QuotaState::Invalid,
         })
     };
-    let Some(map) = value.as_object() else {
+    let SanitizedAgyStatuslineQuota::Buckets(map) = quota else {
         return invalid();
     };
-    if map.len() > 128 {
+    if map.len() > 32 {
         return invalid();
     }
     let mut parsed = Vec::new();
-    for (raw_id, entry) in map {
+    for (raw_id, bucket) in map {
         let id = raw_id.trim();
         if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
             return invalid();
         }
-        let Some(bucket) = entry.as_object() else {
-            return invalid();
-        };
-        let disabled = match bucket.get("disabled").filter(|v| !v.is_null()) {
-            None => false,
-            Some(flag) => match flag.as_bool() {
-                Some(flag) => flag,
-                None => return invalid(),
-            },
-        };
-        if disabled {
+        if bucket.disabled == Some(true) {
             continue;
         }
-        if agy_aliased_field(bucket, "remaining_fraction", "remainingFraction").is_err()
-            || agy_aliased_field(bucket, "reset_time", "resetTime").is_err()
-            || agy_aliased_field(bucket, "name", "displayName").is_err()
-        {
+        let Ok(label) = agy_bucket_label(id, None, None) else {
             return invalid();
-        }
-        if let Some(window_val) = bucket.get("window").filter(|v| !v.is_null())
-            && window_val
-                .as_str()
-                .is_none_or(|s| s.trim().len() > 64 || s.chars().any(char::is_control))
-        {
-            return invalid();
-        }
-        let display_name = match bucket
-            .get("name")
-            .filter(|v| !v.is_null())
-            .or_else(|| bucket.get("displayName").filter(|v| !v.is_null()))
-            .or_else(|| bucket.get("display_name").filter(|v| !v.is_null()))
-        {
+        };
+        let used_basis_points = match bucket.remaining_fraction {
             None => None,
-            Some(val) => match val.as_str() {
-                Some(s) if !s.chars().any(char::is_control) => Some(s),
-                _ => return invalid(),
+            Some(fraction) if fraction.is_finite() && (0.0..=1.0).contains(&fraction) => {
+                Some(((1.0 - fraction) * 10_000.0).floor() as u16)
+            }
+            Some(_) => return invalid(),
+        };
+        let resets_unix_ms = match &bucket.reset_time {
+            None => None,
+            Some(reset) => match reset.to_unix_ms() {
+                Ok(ms) => Some(ms),
+                Err(_) => return invalid(),
             },
         };
-        let window_hint = bucket.get("window").and_then(Value::as_str);
-        let Ok(label) = agy_bucket_label(id, window_hint, display_name) else {
-            return invalid();
-        };
-        let Ok(used_basis_points) = agy_remaining_fraction(bucket) else {
-            return invalid();
-        };
-        let Ok(resets_unix_ms) = agy_reset_ms(bucket) else {
-            return invalid();
-        };
         let id_lower = id.to_ascii_lowercase();
-        let name_lower = display_name.unwrap_or("").trim().to_ascii_lowercase();
         let is_gemini_group = matches!(id, "gemini-5h" | "gemini-weekly")
             || id_lower == "gemini"
             || id_lower.starts_with("gemini-")
-            || id_lower.starts_with("gemini_")
-            || (name_lower.contains("gemini")
-                && !name_lower.contains("3p")
-                && !name_lower.contains("third")
-                && !name_lower.contains("claude")
-                && !name_lower.contains("gpt"));
+            || id_lower.starts_with("gemini_");
         parsed.push(ParsedAgyBucket {
             id: id.to_owned(),
             label,
@@ -2283,9 +2286,6 @@ pub fn normalize_agy_statusline_quota(value: &Value) -> Option<QuotaReport> {
             used_basis_points,
             resets_unix_ms,
         });
-        if parsed.len() > 32 {
-            return invalid();
-        }
     }
     if parsed.is_empty() || parsed.iter().all(|b| b.used_basis_points.is_none()) {
         return None;
@@ -3424,8 +3424,7 @@ mod tests {
         );
         assert_eq!(snapshot.claude.reason.as_deref(), Some(CLAUDE_WAITING));
 
-        // Populate Agy windows while enabled, then confirm turning quota off clears windows
-        // and blocks late updates from reviving the row.
+        // quota::apply never mutates Agy directly; Agy updates flow exclusively via apply_agy.
         apply(
             &state,
             NativeQuotaUpdate {
@@ -3447,6 +3446,38 @@ mod tests {
                 next_check_unix_ms: Some(1_900_000_300_000),
             },
         );
+        assert_eq!(
+            state.quotas.lock().unwrap().agy,
+            ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking)
+        );
+
+        // Populate Agy windows via apply_agy while enabled, then confirm turning quota off
+        // clears windows and blocks late updates from reviving the row.
+        let agy_config = state.quota_settings().agy;
+        apply_agy(
+            &state,
+            AgyQuotaUpdate {
+                config: agy_config.clone(),
+                native: NativeQuotaUpdate {
+                    provider: QuotaProvider::Agy,
+                    generation: 1,
+                    report: QuotaReport {
+                        windows: Some(vec![QuotaWindow {
+                            id: "gemini-5h".into(),
+                            label: "5h".into(),
+                            general: true,
+                            used_basis_points: Some(2500),
+                            over_limit: false,
+                            resets_unix_ms: Some(1_900_000_000_000),
+                        }]),
+                        state: QuotaState::Current,
+                    },
+                    checked: true,
+                    reason: None,
+                    next_check_unix_ms: Some(1_900_000_300_000),
+                },
+            },
+        );
         assert_eq!(state.quotas.lock().unwrap().agy.state, QuotaState::Current);
         assert_eq!(state.quotas.lock().unwrap().agy.windows.len(), 1);
 
@@ -3458,11 +3489,26 @@ mod tests {
             QuotaSnapshot::default().agy
         );
         assert!(state.quotas.lock().unwrap().agy.windows.is_empty());
-        for provider in [QuotaProvider::Codex, QuotaProvider::Agy] {
-            apply(
-                &state,
-                NativeQuotaUpdate {
-                    provider,
+        apply(
+            &state,
+            NativeQuotaUpdate {
+                provider: QuotaProvider::Codex,
+                generation: 2,
+                report: QuotaReport {
+                    windows: Some(Vec::new()),
+                    state: QuotaState::Current,
+                },
+                checked: true,
+                reason: None,
+                next_check_unix_ms: None,
+            },
+        );
+        apply_agy(
+            &state,
+            AgyQuotaUpdate {
+                config: agy_config,
+                native: NativeQuotaUpdate {
+                    provider: QuotaProvider::Agy,
                     generation: 2,
                     report: QuotaReport {
                         windows: Some(Vec::new()),
@@ -3472,8 +3518,8 @@ mod tests {
                     reason: None,
                     next_check_unix_ms: None,
                 },
-            );
-        }
+            },
+        );
         assert_eq!(
             state.quotas.lock().unwrap().codex.state,
             QuotaState::Disabled
@@ -4082,5 +4128,282 @@ mod tests {
             ),
             account_retained_stale
         );
+    }
+
+    #[test]
+    fn windowless_invalid_session_quota_surfaces_while_checking_but_yields_to_settled_account_failure()
+     {
+        let binding = ovrcr_protocol::AgentBinding {
+            provider: ovrcr_protocol::AgentProvider::Agy,
+            invocation: "inv-invalid".into(),
+            conversation: "01a08e5c-7480-7052-9964-9224aadebef0".into(),
+            generation: 1,
+        };
+        let invalid_session = ProviderQuota {
+            provider: QuotaProvider::Agy,
+            source: Some(QuotaSource::Session {
+                session: ovrcr_protocol::SessionId(9),
+                run: ovrcr_protocol::SessionRunId(1),
+                binding,
+            }),
+            state: QuotaState::Invalid,
+            windows: Vec::new(),
+            observed_unix_ms: None,
+            checked_unix_ms: None,
+            next_check_unix_ms: None,
+            reason: None,
+        };
+        let checking = ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking);
+        let account_checking = ProviderQuota {
+            source: Some(QuotaSource::NativeProfile {
+                profile: "Agy selected native profile".into(),
+                generation: 1,
+            }),
+            ..checking.clone()
+        };
+        let settings = ovrcr_protocol::QuotaSettings {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // While account is None or Checking, windowless Invalid session surfaces Invalid.
+        let while_none = merge_agy_quota(&checking, &settings, None, Some(&invalid_session));
+        assert_eq!(while_none.state, QuotaState::Invalid);
+        let while_checking = merge_agy_quota(
+            &checking,
+            &settings,
+            Some(&account_checking),
+            Some(&invalid_session),
+        );
+        assert_eq!(while_checking.state, QuotaState::Invalid);
+
+        // Once account settles into a concrete failure without retained windows, windowless
+        // Invalid session must NOT clobber the account failure state or reason.
+        for (state, reason) in [
+            (QuotaState::NotSignedIn, "not signed in"),
+            (QuotaState::Unavailable, "agy not found on PATH"),
+        ] {
+            let settled_failure = ProviderQuota {
+                provider: QuotaProvider::Agy,
+                source: Some(QuotaSource::NativeProfile {
+                    profile: "Agy selected native profile".into(),
+                    generation: 1,
+                }),
+                state,
+                windows: Vec::new(),
+                observed_unix_ms: None,
+                checked_unix_ms: None,
+                next_check_unix_ms: Some(1_800_000_600_000),
+                reason: Some(reason.into()),
+            };
+            let merged = merge_agy_quota(
+                &while_none,
+                &settings,
+                Some(&settled_failure),
+                Some(&invalid_session),
+            );
+            assert_eq!(merged, settled_failure, "{state:?}: {reason}");
+        }
+    }
+
+    #[test]
+    fn select_agy_session_quota_prefers_non_empty_windows_before_windowless_invalid() {
+        use ovrcr_protocol::{AgentBinding, AgentProvider, SessionId, SessionRunId};
+        let make_session =
+            |id: u64, state: QuotaState, used: Option<u16>, observed: Option<u64>| {
+                let windows = used
+                    .into_iter()
+                    .map(|used_basis_points| QuotaWindow {
+                        id: "gemini-5h".into(),
+                        label: "5h".into(),
+                        general: true,
+                        used_basis_points: Some(used_basis_points),
+                        over_limit: false,
+                        resets_unix_ms: Some(1_900_000_000_000),
+                    })
+                    .collect();
+                (
+                    SessionId(id),
+                    ProviderQuota {
+                        provider: QuotaProvider::Agy,
+                        source: Some(QuotaSource::Session {
+                            session: SessionId(id),
+                            run: SessionRunId(1),
+                            binding: AgentBinding {
+                                provider: AgentProvider::Agy,
+                                invocation: format!("inv-{id}"),
+                                conversation: "01a08e5c-7480-7052-9964-9224aadebef0".into(),
+                                generation: 1,
+                            },
+                        }),
+                        state,
+                        windows,
+                        observed_unix_ms: observed,
+                        checked_unix_ms: None,
+                        next_check_unix_ms: None,
+                        reason: None,
+                    },
+                )
+            };
+        let unfocused_older = make_session(1, QuotaState::Current, Some(3000), Some(100));
+        let unfocused_fresher = make_session(2, QuotaState::Current, Some(2000), Some(200));
+        let focused_invalid = make_session(3, QuotaState::Invalid, None, None);
+
+        // Focused windowless Invalid yields to unfocused sessions with valid windows (freshest first).
+        let picked = select_agy_session_quota(
+            Some(SessionId(3)),
+            [
+                unfocused_older.clone(),
+                unfocused_fresher.clone(),
+                focused_invalid.clone(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(picked, unfocused_fresher.1);
+
+        // Focused session with valid windows beats a fresher unfocused session with valid windows.
+        let picked_focused_valid = select_agy_session_quota(
+            Some(SessionId(1)),
+            [unfocused_older.clone(), unfocused_fresher.clone()],
+        )
+        .unwrap();
+        assert_eq!(picked_focused_valid, unfocused_older.1);
+
+        // When only windowless Invalid sessions exist, focused wins over unfocused.
+        let unfocused_invalid = make_session(4, QuotaState::Invalid, None, None);
+        let picked_invalid = select_agy_session_quota(
+            Some(SessionId(3)),
+            [unfocused_invalid, focused_invalid.clone()],
+        )
+        .unwrap();
+        assert_eq!(picked_invalid, focused_invalid.1);
+    }
+
+    #[test]
+    fn agy_child_signals_process_group_before_reaping_leader_and_preserves_exit_status() {
+        let (stream, _dashboard) = std::os::unix::net::UnixStream::pair().unwrap();
+        let state = super::super::tests::test_state(
+            Some(super::super::DashboardSink::new()),
+            Some((Arc::new(()), stream)),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let wait_for_file = |path: &Path| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !path.exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for {}",
+                    path.display()
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        // 1. Normal completion: leader exits with code 7 while lingering group members (one
+        // trapping SIGTERM, one ignoring SIGTERM) remain in pgid. Group must be signaled while
+        // the zombie leader still pins pgid (before try_wait reaps it), and exit code 7 preserved.
+        let ready_term = dir.path().join("ready-term");
+        let ready_ign = dir.path().join("ready-ign");
+        let stamp = dir.path().join("wait-status-stamp");
+        let script_normal = dir.path().join("agy-normal.sh");
+        std::fs::write(
+            &script_normal,
+            format!(
+                "#!/bin/sh\nleader=$$\n(\n  exec >/dev/null 2>&1 </dev/null\n  trap 'if kill -0 \"$leader\" 2>/dev/null; then printf \"unreaped\\n\" > \"{}\"; else printf \"already_reaped\\n\" > \"{}\"; fi; exit 0' TERM\n  printf 'ready\\n' > \"{}\"\n  while :; do sleep 1; done\n) &\n(\n  exec >/dev/null 2>&1 </dev/null\n  trap '' TERM\n  printf 'ready\\n' > \"{}\"\n  while :; do sleep 1; done\n) &\nwhile [ ! -f \"{}\" ] || [ ! -f \"{}\" ]; do sleep 0.01; done\nexit 7\n",
+                stamp.display(),
+                stamp.display(),
+                ready_term.display(),
+                ready_ign.display(),
+                ready_term.display(),
+                ready_ign.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script_normal, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let program_normal = NativeCommand {
+            command: script_normal,
+            home: None,
+        };
+        {
+            let mut settings = state.settings.lock().unwrap();
+            settings.report.settings.quota.enabled = true;
+            settings.report.settings.quota.agy = program_normal.clone();
+        }
+        let mut runner = AgyChild::spawn(&program_normal).ok().unwrap();
+        let pgid_normal = runner.child.id() as libc::pid_t;
+        let status = runner
+            .wait_status(
+                &state,
+                &program_normal,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .ok()
+            .unwrap();
+        assert_eq!(status.code(), Some(7));
+        wait_for_file(&stamp);
+        assert_eq!(
+            std::fs::read_to_string(&stamp).unwrap().trim(),
+            "unreaped",
+            "group was signaled after leader reap instead of while zombie leader pinned pgid"
+        );
+        assert!(
+            group_is_absent(pgid_normal),
+            "process group {pgid_normal} still present after wait_status"
+        );
+        drop(runner);
+
+        // 2. Early Drop while !reaped on SIGTERM-responsive child: signals SIGTERM before reap,
+        // reaps within 200ms without needing SIGKILL, and leaves group absent.
+        let drop_ready = dir.path().join("drop-ready");
+        let drop_stamp = dir.path().join("drop-stamp");
+        let script_drop_term = dir.path().join("agy-drop-term.sh");
+        std::fs::write(
+            &script_drop_term,
+            format!(
+                "#!/bin/sh\ntrap 'printf \"term_handled\\n\" > \"{}\"; exit 0' TERM\nprintf 'ready\\n' > \"{}\"\nwhile :; do sleep 1; done\n",
+                drop_stamp.display(),
+                drop_ready.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script_drop_term, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let program_drop_term = NativeCommand {
+            command: script_drop_term,
+            home: None,
+        };
+        let runner_drop_term = AgyChild::spawn(&program_drop_term).ok().unwrap();
+        let pgid_drop_term = runner_drop_term.child.id() as libc::pid_t;
+        wait_for_file(&drop_ready);
+        drop(runner_drop_term);
+        assert_eq!(
+            std::fs::read_to_string(&drop_stamp).unwrap().trim(),
+            "term_handled"
+        );
+        assert!(group_is_absent(pgid_drop_term));
+
+        // 3. Early Drop while !reaped on SIGTERM-ignoring child: escalates to SIGKILL while
+        // !reaped, reaps leader, and leaves group absent.
+        let ign_drop_ready = dir.path().join("ign-drop-ready");
+        let script_drop_ign = dir.path().join("agy-drop-ign.sh");
+        std::fs::write(
+            &script_drop_ign,
+            format!(
+                "#!/bin/sh\ntrap '' TERM\nprintf 'ready\\n' > \"{}\"\nwhile :; do sleep 1; done\n",
+                ign_drop_ready.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script_drop_ign, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let program_drop_ign = NativeCommand {
+            command: script_drop_ign,
+            home: None,
+        };
+        let runner_drop_ign = AgyChild::spawn(&program_drop_ign).ok().unwrap();
+        let pgid_drop_ign = runner_drop_ign.child.id() as libc::pid_t;
+        wait_for_file(&ign_drop_ready);
+        drop(runner_drop_ign);
+        assert!(group_is_absent(pgid_drop_ign));
     }
 }
