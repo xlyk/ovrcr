@@ -1209,6 +1209,8 @@ fn enabled_attach_shows_checking_then_current_within_one_read() {
     let first = quota_until(&mut socket, "no quota snapshot on attach", |_| true);
     assert_eq!(first.codex.state, QuotaState::Checking);
     assert_eq!(first.grok.state, QuotaState::Checking);
+    assert_eq!(first.agy.state, QuotaState::Checking);
+    assert_eq!(first.agy.reason, None);
     assert_eq!(first.claude.state, QuotaState::Checking);
     assert_eq!(first.claude.reason.as_deref(), Some(CLAUDE_WAITING));
     let current = quota_until(&mut socket, "native quotas never became current", |q| {
@@ -1236,13 +1238,19 @@ fn enabled_attach_shows_checking_then_current_within_one_read() {
         }),
         Response::Error { code: ErrorCode::InvalidRequest, message } if message.contains(CLAUDE_WAITING)
     ));
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Agy)
+        }),
+        Response::Ok
+    );
 }
 
 #[test]
 fn disabled_quota_snapshot_carries_the_off_state_reason() {
     // Off at hello is the protocol default the Dashboard already holds.
     let off = QuotaSnapshot::default();
-    for row in [&off.codex, &off.grok] {
+    for row in [&off.codex, &off.grok, &off.agy] {
         assert_eq!(row.state, QuotaState::Disabled);
         assert_eq!(row.reason.as_deref(), Some(ovrcr::settings::QUOTA_OFF));
     }
@@ -1253,17 +1261,21 @@ fn disabled_quota_snapshot_carries_the_off_state_reason() {
     });
     std::fs::write(settings_document(&fixture), "[quota]\nenabled = false\n").unwrap();
     let snapshot = quota_until(&mut socket, "turning quota off was not published", |q| {
-        q.codex.state == QuotaState::Disabled && q.grok.state == QuotaState::Disabled
+        q.codex.state == QuotaState::Disabled
+            && q.grok.state == QuotaState::Disabled
+            && q.agy.state == QuotaState::Disabled
     });
-    for row in [&snapshot.codex, &snapshot.grok] {
+    for row in [&snapshot.codex, &snapshot.grok, &snapshot.agy] {
         assert_eq!(row.reason.as_deref(), Some(ovrcr::settings::QUOTA_OFF));
         assert_eq!(row.next_check_unix_ms, None);
         assert!(row.windows.is_empty());
     }
-    assert!(matches!(
-        fixture.request(Request::RefreshQuota { provider: None }),
-        Response::Error { message, .. } if message == ovrcr::settings::QUOTA_OFF
-    ));
+    for provider in [None, Some(QuotaProvider::Agy)] {
+        assert!(matches!(
+            fixture.request(Request::RefreshQuota { provider }),
+            Response::Error { message, .. } if message == ovrcr::settings::QUOTA_OFF
+        ));
+    }
 }
 
 #[test]

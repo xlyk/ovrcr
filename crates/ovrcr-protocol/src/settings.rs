@@ -1612,7 +1612,7 @@ pub struct CursorQuotaSettings {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuotaSettings {
-    /// Codex, Grok and opt-in Cursor account collection. On by default while a Dashboard is
+    /// Codex, Grok, Agy and opt-in Cursor account collection. On by default while a Dashboard is
     /// attached. `false` is the explicit off switch. The readers do not rewrite
     /// auth files.
     pub enabled: bool,
@@ -1621,6 +1621,7 @@ pub struct QuotaSettings {
     pub codex: NativeCommand,
     pub grok: NativeCommand,
     pub cursor: CursorQuotaSettings,
+    pub agy: NativeCommand,
 }
 
 impl Default for QuotaSettings {
@@ -1635,6 +1636,10 @@ impl Default for QuotaSettings {
             },
             grok: NativeCommand {
                 command: "grok".into(),
+                home: None,
+            },
+            agy: NativeCommand {
+                command: "agy".into(),
                 home: None,
             },
         }

@@ -26,15 +26,15 @@
                                        │
                                        │
                                        │
-                                       │▌ ✓ Review this workspace.
- RESOURCES ────────────────────────────│▌   → global
- cpu       ──────────────────────    … │▌     tool
- mem       …                           │▌
-                                       │▌   I will inspect its sessions.
- QUOTA LEFT ───────────────────────────│
-Claude · checking                      │ Managing global
-Codex · usage off                      │ ──────────────────────────────────────────────────────────────────────────────────────────────────
-Grok · usage off                       │ > ▏
+ RESOURCES ────────────────────────────│▌ ✓ Review this workspace.
+ cpu       ──────────────────────    … │▌   → global
+ mem       …                           │▌     tool
+                                       │▌
+ QUOTA LEFT ───────────────────────────│▌   I will inspect its sessions.
+Claude · checking                      │
+Codex · usage off                      │ Managing global
+Grok · usage off                       │ ──────────────────────────────────────────────────────────────────────────────────────────────────
+Agy · usage off                        │ > ▏
 Cursor · usage off                     │
                                        │ ──────────────────────────────────────────────────────────────────────────────────────────────────
 OPERATOR  Shift-Enter Newline  Ctrl-g Browse

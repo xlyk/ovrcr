@@ -9,15 +9,25 @@ pub enum QuotaProvider {
     Codex,
     Grok,
     Cursor,
+    Agy,
 }
 
 impl QuotaProvider {
+    pub const ALL: [Self; 5] = [
+        Self::Claude,
+        Self::Codex,
+        Self::Grok,
+        Self::Agy,
+        Self::Cursor,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
             Self::Grok => "Grok",
             Self::Cursor => "Cursor",
+            Self::Agy => "Agy",
         }
     }
 }
@@ -147,7 +157,8 @@ pub struct ProviderQuota {
 }
 
 /// The off-state sentence of the `quota.enabled` consent setting.
-pub const QUOTA_OFF: &str = "Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml";
+pub const QUOTA_OFF: &str =
+    "Codex/Grok/Agy usage off: set `quota.enabled = true` in dashboard.toml";
 
 /// Cursor personal dashboard collection requires its own opt-in.
 pub const CURSOR_QUOTA_OFF: &str =
@@ -200,6 +211,19 @@ pub struct QuotaSnapshot {
     pub codex: ProviderQuota,
     pub grok: ProviderQuota,
     pub cursor: ProviderQuota,
+    pub agy: ProviderQuota,
+}
+
+impl QuotaSnapshot {
+    pub fn providers(&self) -> [&ProviderQuota; 5] {
+        [
+            &self.claude,
+            &self.codex,
+            &self.grok,
+            &self.agy,
+            &self.cursor,
+        ]
+    }
 }
 
 /// The Server's snapshot with `quota.enabled` off and nothing reported. The
@@ -221,6 +245,58 @@ impl Default for QuotaSnapshot {
                 reason: Some(CURSOR_QUOTA_OFF.into()),
                 ..ProviderQuota::unknown(QuotaProvider::Cursor, QuotaState::Disabled)
             },
+            agy: off(QuotaProvider::Agy),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn agy_is_appended_on_the_wire_and_ordered_before_cursor_in_canonical_providers() {
+        assert_eq!(
+            QuotaProvider::ALL,
+            [
+                QuotaProvider::Claude,
+                QuotaProvider::Codex,
+                QuotaProvider::Grok,
+                QuotaProvider::Agy,
+                QuotaProvider::Cursor,
+            ]
+        );
+        assert_eq!(QuotaProvider::Agy.name(), "Agy");
+
+        for (expected_discriminant, provider) in [
+            (0u8, QuotaProvider::Claude),
+            (1, QuotaProvider::Codex),
+            (2, QuotaProvider::Grok),
+            (3, QuotaProvider::Cursor),
+            (4, QuotaProvider::Agy),
+        ] {
+            let encoded =
+                bincode::serde::encode_to_vec(provider, bincode::config::standard()).unwrap();
+            assert_eq!(encoded, [expected_discriminant], "{provider:?}");
+        }
+
+        assert_eq!(
+            QUOTA_OFF,
+            "Codex/Grok/Agy usage off: set `quota.enabled = true` in dashboard.toml"
+        );
+
+        let snapshot = QuotaSnapshot::default();
+        assert_eq!(snapshot.agy.provider, QuotaProvider::Agy);
+        assert_eq!(snapshot.agy.state, QuotaState::Disabled);
+        assert_eq!(snapshot.agy.reason.as_deref(), Some(QUOTA_OFF));
+        assert_eq!(
+            snapshot.providers().map(|row| row.provider),
+            QuotaProvider::ALL
+        );
+
+        let settings = crate::QuotaSettings::default();
+        assert_eq!(settings.agy.command, Path::new("agy"));
+        assert_eq!(settings.agy.home, None);
     }
 }

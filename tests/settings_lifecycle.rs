@@ -209,6 +209,8 @@ fn quota_enabled_flipped_in_the_file_starts_and_stops_the_collector() {
         |snapshot| snapshot.codex.state == QuotaState::Current,
     );
     assert_ne!(enabled.codex.state, QuotaState::Disabled);
+    assert_eq!(enabled.agy.state, QuotaState::Checking);
+    assert_eq!(enabled.agy.reason, None);
     let first = newest_pid(&pids);
     assert!(alive(first), "collector exited before quota was turned off");
 
@@ -219,15 +221,116 @@ fn quota_enabled_flipped_in_the_file_starts_and_stops_the_collector() {
         |snapshot| {
             snapshot.codex.state == QuotaState::Disabled
                 && snapshot.grok.state == QuotaState::Disabled
+                && snapshot.agy.state == QuotaState::Disabled
         },
     );
     assert_eq!(
         disabled.codex.reason.as_deref(),
         Some(ovrcr::settings::QUOTA_OFF)
     );
+    assert_eq!(
+        disabled.agy.reason.as_deref(),
+        Some(ovrcr::settings::QUOTA_OFF)
+    );
     wait_until("disabling quota did not stop the collector", || {
         !alive(first)
     });
+}
+
+#[test]
+fn quota_agy_settings_round_trip_through_cli_server_and_emit_findings_on_invalid_input() {
+    let live = fresh();
+    live.start_binary();
+    let pid = live.server_pid();
+
+    for (path, value) in [
+        ("quota.agy.command", "/opt/custom-agy"),
+        ("quota.agy.home", "/tmp/agy-profile"),
+    ] {
+        let output = live
+            .command()
+            .args(["settings", "set", path, value])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let mut socket = attach(&live);
+    let configured = settings_event(&mut socket);
+    assert!(configured.findings.is_empty(), "{:?}", configured.findings);
+    assert_eq!(
+        configured.settings.quota.agy.command,
+        PathBuf::from("/opt/custom-agy")
+    );
+    assert_eq!(
+        configured.settings.quota.agy.home,
+        Some(PathBuf::from("/tmp/agy-profile"))
+    );
+    assert_eq!(
+        row(&configured, "quota.agy.command").source,
+        SettingSource::Document
+    );
+    assert_eq!(
+        row(&configured, "quota.agy.home").source,
+        SettingSource::Document
+    );
+    let cli = cli_settings(&live).1;
+    assert_eq!(cli.settings.quota.agy, configured.settings.quota.agy);
+
+    for path in ["quota.agy.home", "quota.agy.command"] {
+        let output = live
+            .command()
+            .args(["settings", "reset", path])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let reset = settings_until(&mut socket, "quota.agy reset was not published", |report| {
+        report.settings.quota.agy == settings::defaults().quota.agy
+    });
+    assert_eq!(reset.settings.quota.agy.command, PathBuf::from("agy"));
+    assert_eq!(reset.settings.quota.agy.home, None);
+    assert_eq!(
+        row(&reset, "quota.agy.command").source,
+        SettingSource::Default
+    );
+    assert_eq!(row(&reset, "quota.agy.home").source, SettingSource::Default);
+
+    std::fs::write(
+        settings_document(&live),
+        "branch_prefix = \"kept/\"\n[quota.agy]\ncommand = 42\nhome = false\nextra = true\n",
+    )
+    .unwrap();
+    let invalid = settings_until(
+        &mut socket,
+        "invalid quota.agy findings were not published",
+        |report| report.settings.branch_prefix == "kept/",
+    );
+    assert_eq!(invalid.settings.quota.agy.command, PathBuf::from("agy"));
+    assert_eq!(invalid.settings.quota.agy.home, None);
+    for key in ["quota.agy.command", "quota.agy.home", "quota.agy.extra"] {
+        assert!(
+            invalid
+                .findings
+                .iter()
+                .any(|finding| finding.key.as_deref() == Some(key)),
+            "missing finding for {key}: {:?}",
+            invalid.findings
+        );
+    }
+    assert_eq!(
+        live.server_pid(),
+        pid,
+        "Server restarted on invalid [quota.agy]"
+    );
 }
 
 #[test]
@@ -1295,6 +1398,10 @@ fn production_defaults_match_the_docs_and_the_demo_only_by_its_allowlist() {
         documented.findings
     );
     assert_eq!(documented.settings, settings::defaults());
+    assert_eq!(
+        row(&documented, "quota.agy.command").source,
+        SettingSource::Document
+    );
 
     assert_demo_allowlist();
 }

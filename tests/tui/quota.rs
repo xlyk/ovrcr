@@ -48,12 +48,25 @@ fn quota_waiting_providers_are_visible_before_the_first_native_report() {
         rows.iter().any(|row| row.contains("QUOTA LEFT")),
         "{rows:?}"
     );
-    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
-        assert!(
-            rows.iter().any(|row| row == expected),
-            "{expected}: {rows:?}"
-        );
-    }
+    let expected = [
+        "Claude · checking",
+        "Codex · usage off",
+        "Grok · usage off",
+        "Agy · usage off",
+        "Cursor · usage off",
+    ];
+    let positions: Vec<usize> = expected
+        .iter()
+        .map(|line| {
+            rows.iter()
+                .position(|row| row == line)
+                .unwrap_or_else(|| panic!("{line}: {rows:?}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "canonical provider order: {positions:?} in {rows:?}"
+    );
 }
 
 #[test]
@@ -64,7 +77,13 @@ fn quota_narrow_sidebar_preserves_waiting_provider_and_full_state() {
     )));
     narrow_sidebar(&mut dashboard);
     let rows = sidebar_rows(&dashboard, 19, 1_000);
-    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
+    for expected in [
+        "Claude · checking",
+        "Codex · usage off",
+        "Grok · usage off",
+        "Agy · usage off",
+        "Cursor · usage off",
+    ] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -142,6 +161,7 @@ fn quota_narrow_sidebar_preserves_window_identity_percentage_and_full_state() {
             "{rows:?}"
         );
         assert!(rows.iter().any(|row| row == "Grok · usage off"), "{rows:?}");
+        assert!(rows.iter().any(|row| row == "Agy · usage off"), "{rows:?}");
     }
 }
 
@@ -270,7 +290,7 @@ fn window(label: &str, used: u16) -> QuotaWindow {
     }
 }
 
-/// Claude Checking, Codex Current, Grok failed with a retry three minutes out.
+/// Claude Checking, Codex Current, Grok failed with a retry three minutes out, Agy Checking.
 fn mixed_snapshot() -> QuotaSnapshot {
     let mut snapshot = QuotaSnapshot::default();
     snapshot.codex.state = QuotaState::Current;
@@ -282,6 +302,8 @@ fn mixed_snapshot() -> QuotaSnapshot {
     snapshot.grok.state = QuotaState::Unavailable;
     snapshot.grok.reason = Some("timed out after 20 s".into());
     snapshot.grok.next_check_unix_ms = Some(NOW + 170_000);
+    snapshot.agy.state = QuotaState::Checking;
+    snapshot.agy.reason = None;
     snapshot
 }
 
@@ -311,7 +333,12 @@ fn rows_at(dashboard: &Dashboard, height: u16, now: u64) -> Vec<String> {
 fn quota_block_shows_off_checking_current_and_failed_with_retry() {
     let mut dashboard = dashboard_fixture();
     let rows = sidebar_rows(&dashboard, 39, NOW);
-    for expected in ["Claude · checking", "Codex · usage off", "Grok · usage off"] {
+    for expected in [
+        "Claude · checking",
+        "Codex · usage off",
+        "Grok · usage off",
+        "Agy · usage off",
+    ] {
         assert!(
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:?}"
@@ -384,7 +411,7 @@ fn quota_block_shows_a_stale_value_with_its_age() {
 }
 
 #[test]
-fn quota_block_ladder_gives_four_lines_then_one_then_none() {
+fn quota_block_ladder_gives_five_lines_then_one_then_none() {
     // This case isolates Quota's own ladder with an empty tree; combined
     // Operator + Quota shrinking is covered with the production default in operator_dock.
     let mut dashboard = dashboard_fixture();
@@ -404,13 +431,14 @@ fn quota_block_ladder_gives_four_lines_then_one_then_none() {
             "Claude · checking",
             "Codex 5h 37%",
             "Grok · unavailable · retry 3m",
+            "Agy · checking",
             "Cursor · usage off",
         ];
         let state = if rows.iter().any(|row| row.contains("QUOTA LEFT")) {
             "full"
         } else if let Some(at) = rows.iter().position(|row| row == compact[0]) {
-            assert_eq!(rows[at..at + 4], compact, "height {height}: {rows:?}");
-            "four"
+            assert_eq!(rows[at..at + 5], compact, "height {height}: {rows:?}");
+            "five"
         } else if rows.iter().any(|row| row == "Quota: u") {
             "one"
         } else {
@@ -418,7 +446,8 @@ fn quota_block_ladder_gives_four_lines_then_one_then_none() {
                 !rows.iter().any(|row| row.contains("QUOTA")
                     || row.contains("Quota")
                     || row.contains("Claude")
-                    || row.contains("Codex")),
+                    || row.contains("Codex")
+                    || row.contains("Agy")),
                 "height {height}: {rows:?}"
             );
             "none"
@@ -427,7 +456,7 @@ fn quota_block_ladder_gives_four_lines_then_one_then_none() {
             seen.push(state);
         }
     }
-    assert_eq!(seen, ["full", "four", "one", "none"]);
+    assert_eq!(seen, ["full", "five", "one", "none"]);
 }
 
 fn details_text(dashboard: &Dashboard, now: u64) -> String {
@@ -453,8 +482,9 @@ fn quota_details_show_off_sentence_reason_local_times_and_next_check() {
     let off = details_text(&dashboard, NOW);
     assert!(off.contains("Quota details"), "{off}");
     assert!(off.contains("Codex · off"), "{off}");
+    assert!(off.contains("Agy · off"), "{off}");
     assert!(
-        off.contains("Codex/Grok usage off: set `quota.enabled = true` in dashboard.toml"),
+        off.contains("Codex/Grok/Agy usage off: set `quota.enabled = true` in dashboard.toml"),
         "{off}"
     );
     assert!(off.contains("Claude · checking…"), "{off}");
@@ -569,7 +599,19 @@ fn palette_enable_usage_asks_the_server_and_applies_nothing() {
         rows.iter().any(|row| row == "Codex · usage off"),
         "{rows:?}"
     );
-    // Once the Server republishes the setting on, the command is gone.
+    // If Agy alone remains Disabled, the palette still offers Enable native account usage.
+    let mut agy_only_off = mixed_snapshot();
+    agy_only_off.agy = QuotaSnapshot::default().agy;
+    publish_quota(&mut dashboard, agy_only_off);
+    dashboard.key(KeyCode::Char(':'));
+    let inspect = only_request(dashboard.drain_outbox());
+    assert_eq!(inspect.request, Request::Inspect);
+    dashboard.event_action(Event::Paste("enable native".into()));
+    let rows = sidebar_rows(&dashboard, 120, NOW).join("\n");
+    assert!(rows.contains("Enable native account usage"), "{rows}");
+    dashboard.key(KeyCode::Esc);
+
+    // Once the Server republishes the setting on for all native providers, the command is gone.
     publish_quota(&mut dashboard, mixed_snapshot());
     dashboard.key(KeyCode::Char(':'));
     let inspect = only_request(dashboard.drain_outbox());
@@ -762,4 +804,349 @@ fn cursor_plan_bar_keeps_its_complete_remaining_percentage() {
     let row = rows.iter().find(|row| row.contains("Cursor plan")).unwrap();
     assert!(row.ends_with("70%"), "{row}");
     assert!(row.contains('━'), "{row}");
+}
+
+#[test]
+fn agy_sidebar_bars_use_teal_across_themes_and_handle_dual_and_weekly_only_plans() {
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[0].workspaces[0].sessions[0].kind =
+        ovrcr::protocol::SessionKind::Agent { name: "agy".into() };
+    hierarchy.projects[0].workspaces[0].sessions[0].label = "agy".into();
+    dashboard.install_hierarchy(hierarchy);
+
+    let mut quota = mixed_snapshot();
+    quota.agy = ProviderQuota {
+        observed_unix_ms: Some(NOW),
+        checked_unix_ms: Some(NOW),
+        next_check_unix_ms: Some(NOW + 300_000),
+        windows: vec![
+            QuotaWindow {
+                id: "gemini-5h".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(1_500),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3_600_000),
+            },
+            QuotaWindow {
+                id: "gemini-weekly".into(),
+                label: "7d".into(),
+                general: true,
+                used_basis_points: Some(3_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 604_800_000),
+            },
+            QuotaWindow {
+                id: "3p-5h".into(),
+                label: "5h".into(),
+                general: false,
+                used_basis_points: Some(4_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3_600_000),
+            },
+        ],
+        ..ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Current)
+    };
+    publish_quota(&mut dashboard, quota);
+
+    for theme_id in [
+        ovrcr::protocol::ThemeId::Dark,
+        ovrcr::protocol::ThemeId::Light,
+        ovrcr::protocol::ThemeId::TokyoNight,
+    ] {
+        dashboard.install_settings(ovrcr::tui::Settings {
+            theme: theme_id,
+            ..Default::default()
+        });
+        let teal = ovrcr_tui::theme::ThemeTokens::for_id(theme_id).teal;
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| draw_dashboard_at(frame, &dashboard, NOW))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let lines: Vec<String> = (0..40)
+            .map(|y| {
+                (0..39)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+
+        let grok_y = lines
+            .iter()
+            .position(|row| row.trim_start().starts_with("Grok"))
+            .expect("Grok row");
+        let agy_5h_y = lines
+            .iter()
+            .position(|row| row.trim_start().starts_with("Agy") && row.contains("5h"))
+            .expect("Agy 5h row");
+        let cursor_y = lines
+            .iter()
+            .position(|row| row.trim_start().starts_with("Cursor"))
+            .expect("Cursor row");
+        assert!(grok_y < agy_5h_y && agy_5h_y < cursor_y, "{lines:?}");
+        assert!(lines[agy_5h_y].ends_with("85%"), "{}", lines[agy_5h_y]);
+        assert!(
+            lines[agy_5h_y + 1].contains("7d") && lines[agy_5h_y + 1].ends_with("70%"),
+            "{}",
+            lines[agy_5h_y + 1]
+        );
+        // Non-general 3p window stays out of the sidebar.
+        assert!(
+            !lines
+                .iter()
+                .any(|row| row.contains("60%") || row.contains("3p")),
+            "{lines:?}"
+        );
+
+        // Both the Agy heading, its remaining-allowance bar fill, and the `agy` session label use TEAL.
+        let agy_name_x = lines[agy_5h_y].find("Agy").expect("Agy name") as u16;
+        assert_eq!(
+            buffer[(agy_name_x, agy_5h_y as u16)].fg,
+            teal,
+            "theme {theme_id} Agy name"
+        );
+        let bar_x = (0..39)
+            .find(|&x| buffer[(x, agy_5h_y as u16)].symbol() == "━")
+            .expect("filled bar cell");
+        assert_eq!(
+            buffer[(bar_x, agy_5h_y as u16)].fg,
+            teal,
+            "theme {theme_id} Agy bar"
+        );
+        let session_y = lines
+            .iter()
+            .position(|row| row.ends_with(" agy"))
+            .expect("agy session row in tree");
+        let agy_label_x = lines[session_y].rfind("agy").expect("agy label") as u16;
+        assert_eq!(
+            buffer[(agy_label_x, session_y as u16)].fg,
+            teal,
+            "theme {theme_id} agy session label"
+        );
+    }
+
+    // Starter / weekly-only plan: single general 7d bar without fabricating a 5h bar.
+    let mut starter = mixed_snapshot();
+    starter.agy = ProviderQuota {
+        observed_unix_ms: Some(NOW),
+        checked_unix_ms: Some(NOW),
+        windows: vec![
+            QuotaWindow {
+                id: "gemini-weekly".into(),
+                label: "7d".into(),
+                general: true,
+                used_basis_points: Some(2_500),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 604_800_000),
+            },
+            QuotaWindow {
+                id: "3p-weekly".into(),
+                label: "7d".into(),
+                general: false,
+                used_basis_points: Some(5_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 604_800_000),
+            },
+        ],
+        ..ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Current)
+    };
+    publish_quota(&mut dashboard, starter);
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    let agy_row = rows
+        .iter()
+        .position(|row| row.trim_start().starts_with("Agy"))
+        .expect("weekly-only Agy row");
+    assert!(
+        rows[agy_row].contains("7d")
+            && rows[agy_row].contains('━')
+            && rows[agy_row].ends_with("75%")
+            && !rows[agy_row].contains("5h"),
+        "{}",
+        rows[agy_row]
+    );
+    assert!(
+        rows[agy_row + 1].trim_start().starts_with("Cursor"),
+        "no second Agy bar row invented: {rows:?}"
+    );
+}
+
+#[test]
+fn agy_quota_details_open_via_key_click_and_palette_with_general_3p_and_model_windows() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+
+    let mut quota = mixed_snapshot();
+    quota.agy = ProviderQuota {
+        observed_unix_ms: Some(NOW - 120_000),
+        checked_unix_ms: Some(NOW - 120_000),
+        next_check_unix_ms: Some(NOW + 180_000),
+        windows: vec![
+            QuotaWindow {
+                id: "gemini-5h".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(1_500),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 7_200_000),
+            },
+            QuotaWindow {
+                id: "gemini-weekly".into(),
+                label: "7d".into(),
+                general: true,
+                used_basis_points: Some(3_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3 * 86_400_000),
+            },
+            QuotaWindow {
+                id: "3p-5h".into(),
+                label: "5h".into(),
+                general: false,
+                used_basis_points: Some(4_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 3_600_000),
+            },
+            QuotaWindow {
+                id: "3p-weekly".into(),
+                label: "7d".into(),
+                general: false,
+                used_basis_points: Some(5_500),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 5 * 86_400_000),
+            },
+            QuotaWindow {
+                id: "gemini-4-argon-weekly".into(),
+                label: "7d".into(),
+                general: false,
+                used_basis_points: Some(1_000),
+                over_limit: false,
+                resets_unix_ms: Some(NOW + 4 * 86_400_000),
+            },
+        ],
+        ..ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Current)
+    };
+    publish_quota(&mut dashboard, quota.clone());
+
+    let scrolled_details = |dashboard: &mut Dashboard, now: u64| {
+        for _ in 0..20 {
+            dashboard.key(KeyCode::Down);
+        }
+        details_text(dashboard, now)
+    };
+
+    // 1. Open via `u` key.
+    assert_eq!(dashboard.key(KeyCode::Char('u')), DashboardAction::Redraw);
+    let via_key = scrolled_details(&mut dashboard, NOW);
+    dashboard.key(KeyCode::Esc);
+
+    // 2. Open via mouse click on QUOTA LEFT.
+    let rows = sidebar_rows(&dashboard, 39, NOW);
+    let quota_y = rows
+        .iter()
+        .position(|row| row.contains("QUOTA LEFT"))
+        .expect("QUOTA LEFT row") as u16;
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                2,
+                quota_y,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    let via_click = scrolled_details(&mut dashboard, NOW);
+    dashboard.key(KeyCode::Esc);
+
+    // 3. Open via command palette.
+    palette_search(&mut dashboard, "quota details");
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let via_palette = scrolled_details(&mut dashboard, NOW);
+    dashboard.key(KeyCode::Esc);
+
+    assert_eq!(via_key, via_click);
+    assert_eq!(via_key, via_palette);
+
+    assert!(via_key.contains("Agy · up to date"), "{via_key}");
+    assert!(
+        via_key.contains(&format!(
+            "  5-hour  85% left · resets {} (in 2h)",
+            clock(NOW + 7_200_000)
+        )),
+        "{via_key}"
+    );
+    assert!(
+        via_key.contains(&format!(
+            "  weekly  70% left · resets {} (in 3d)",
+            clock(NOW + 3 * 86_400_000)
+        )),
+        "{via_key}"
+    );
+    assert!(
+        via_key.contains(&format!(
+            "  5-hour (3p-5h)  60% left · resets {} (in 1h)",
+            clock(NOW + 3_600_000)
+        )),
+        "{via_key}"
+    );
+    assert!(
+        via_key.contains(&format!(
+            "  weekly (3p-weekly)  45% left · resets {} (in 5d)",
+            clock(NOW + 5 * 86_400_000)
+        )),
+        "{via_key}"
+    );
+    assert!(
+        via_key.contains(&format!(
+            "  weekly (gemini-4-argon-weekly)  90% left · resets {} (in 4d)",
+            clock(NOW + 4 * 86_400_000)
+        )),
+        "{via_key}"
+    );
+    assert!(
+        via_key.contains(&format!(
+            "  as of {} (2m ago) · next check {} (in 3m)",
+            clock(NOW - 120_000),
+            clock(NOW + 180_000)
+        )),
+        "{via_key}"
+    );
+
+    // Stale + failed refresh retains windows, shows reason, staleness, and next check.
+    let mut stale = quota;
+    stale.agy.state = QuotaState::Unavailable;
+    stale.agy.reason = Some("agy timed out after 20 s".into());
+    stale.agy.checked_unix_ms = Some(NOW - 10 * 60_000);
+    stale.agy.observed_unix_ms = Some(NOW - 20 * 60_000);
+    stale.agy.next_check_unix_ms = Some(NOW + 60_000);
+    publish_quota(&mut dashboard, stale);
+    dashboard.key(KeyCode::Char('u'));
+    let stale_text = scrolled_details(&mut dashboard, NOW);
+    assert!(stale_text.contains("Agy · unavailable"), "{stale_text}");
+    assert!(
+        stale_text.contains("  agy timed out after 20 s"),
+        "{stale_text}"
+    );
+    assert!(
+        stale_text.contains(&format!(
+            "  as of {} (10m ago) · next check {} (in 1m)",
+            clock(NOW - 10 * 60_000),
+            clock(NOW + 60_000)
+        )),
+        "{stale_text}"
+    );
+    let stale_sidebar = sidebar_rows(&dashboard, 39, NOW);
+    assert!(
+        stale_sidebar.iter().any(|row| {
+            row.trim_start().starts_with("Agy") && row.contains("85%") && row.contains("stale 10m")
+        }),
+        "{stale_sidebar:?}"
+    );
 }

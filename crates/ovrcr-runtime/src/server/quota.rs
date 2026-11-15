@@ -40,7 +40,7 @@ pub struct NativeQuotaUpdate {
 pub(super) struct Refresh {
     /// Unix milliseconds of the last accepted manual refresh, on [`clock_ms`].
     last_ms: Option<u64>,
-    due: [bool; 3],
+    due: [bool; 4],
     /// The Claude row's state and reason while `claude auth status` rules an
     /// allowance out; `None` while signed in through claude.ai.
     pub(super) claude_auth: Option<(QuotaState, String)>,
@@ -64,6 +64,7 @@ fn slot(provider: QuotaProvider) -> Option<usize> {
         QuotaProvider::Grok => Some(1),
         QuotaProvider::Cursor => None,
         QuotaProvider::Claude => None,
+        QuotaProvider::Agy => None,
     }
 }
 
@@ -120,6 +121,7 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
             QuotaProvider::Codex,
             QuotaProvider::Grok,
             QuotaProvider::Cursor,
+            QuotaProvider::Agy,
         ]
         .into_iter()
         .enumerate()
@@ -145,12 +147,13 @@ pub(super) fn request_refresh(state: &ServerState, provider: Option<QuotaProvide
 fn consent_row(provider: QuotaProvider, enabled: bool) -> ProviderQuota {
     if enabled {
         ProviderQuota::unknown(provider, QuotaState::Checking)
-    } else if provider == QuotaProvider::Cursor {
-        QuotaSnapshot::default().cursor
-    } else if provider == QuotaProvider::Grok {
-        QuotaSnapshot::default().grok
     } else {
-        QuotaSnapshot::default().codex
+        match provider {
+            QuotaProvider::Cursor => QuotaSnapshot::default().cursor,
+            QuotaProvider::Grok => QuotaSnapshot::default().grok,
+            QuotaProvider::Agy => QuotaSnapshot::default().agy,
+            _ => QuotaSnapshot::default().codex,
+        }
     }
 }
 
@@ -172,6 +175,7 @@ pub(super) fn initial(settings: &ovrcr_protocol::QuotaSettings) -> QuotaSnapshot
     QuotaSnapshot {
         codex: consent_row(QuotaProvider::Codex, enabled),
         grok: consent_row(QuotaProvider::Grok, enabled),
+        agy: consent_row(QuotaProvider::Agy, enabled),
         cursor: cursor_consent(settings),
         ..QuotaSnapshot::default()
     }
@@ -189,6 +193,7 @@ pub(super) fn sync_consent(state: &ServerState) -> bool {
         for row in [
             &mut snapshots.codex,
             &mut snapshots.grok,
+            &mut snapshots.agy,
             &mut snapshots.cursor,
         ] {
             let enabled =
@@ -380,6 +385,7 @@ pub(super) fn apply(state: &ServerState, update: NativeQuotaUpdate) {
     let target = match update.provider {
         QuotaProvider::Codex => &mut snapshots.codex,
         QuotaProvider::Grok => &mut snapshots.grok,
+        QuotaProvider::Agy => &mut snapshots.agy,
         QuotaProvider::Cursor => &mut snapshots.cursor,
         QuotaProvider::Claude => return,
     };
@@ -1168,8 +1174,10 @@ pub fn normalize_native_quota(
 }
 
 fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWindow>> {
-    if provider == QuotaProvider::Codex {
-        return codex_windows(value);
+    match provider {
+        QuotaProvider::Codex => return codex_windows(value),
+        QuotaProvider::Grok => {}
+        other => return Err(unrecognized(other)),
     }
     let config = value["config"]
         .as_object()
@@ -2037,6 +2045,10 @@ mod tests {
             request_refresh(&off, None),
             Response::Error { message, .. } if message == crate::settings::QUOTA_OFF
         ));
+        assert!(matches!(
+            request_refresh(&off, Some(QuotaProvider::Agy)),
+            Response::Error { message, .. } if message == crate::settings::QUOTA_OFF
+        ));
         assert!(off.quota_refresh.lock().unwrap().last_ms.is_none());
         let state = enabled_state(true);
         assert!(matches!(
@@ -2052,7 +2064,7 @@ mod tests {
         );
         assert_eq!(
             state.quota_refresh.lock().unwrap().due,
-            [false, true, false]
+            [false, true, false, false]
         );
         match request_refresh(&state, None) {
             Response::QuotaCooldown { remaining_ms } => {
@@ -2062,11 +2074,24 @@ mod tests {
         }
         assert_eq!(
             state.quota_refresh.lock().unwrap().due,
-            [false, true, false]
+            [false, true, false, false]
         );
         state.quota_refresh.lock().unwrap().last_ms = Some(clock_ms().saturating_sub(COOLDOWN_MS));
+        assert_eq!(
+            request_refresh(&state, Some(QuotaProvider::Agy)),
+            Response::Ok
+        );
+        assert_eq!(
+            state.quota_refresh.lock().unwrap().due,
+            [false, true, false, true]
+        );
+        state.quota_refresh.lock().unwrap().due = [false; 4];
+        state.quota_refresh.lock().unwrap().last_ms = Some(clock_ms().saturating_sub(COOLDOWN_MS));
         assert_eq!(request_refresh(&state, None), Response::Ok);
-        assert_eq!(state.quota_refresh.lock().unwrap().due, [true, true, false]);
+        assert_eq!(
+            state.quota_refresh.lock().unwrap().due,
+            [true, true, false, true]
+        );
     }
 
     #[test]
@@ -2083,9 +2108,15 @@ mod tests {
             QuotaSnapshot::default().grok.reason.as_deref(),
             Some(crate::settings::QUOTA_OFF)
         );
-        assert_ne!(
-            initial(&ovrcr_protocol::QuotaSettings::default()),
-            QuotaSnapshot::default()
+        assert_eq!(
+            QuotaSnapshot::default().agy.reason.as_deref(),
+            Some(crate::settings::QUOTA_OFF)
+        );
+        let default_enabled = initial(&ovrcr_protocol::QuotaSettings::default());
+        assert_ne!(default_enabled, QuotaSnapshot::default());
+        assert_eq!(
+            default_enabled.agy,
+            ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking)
         );
     }
 
@@ -2100,6 +2131,10 @@ mod tests {
             state.quotas.lock().unwrap().codex.reason.as_deref(),
             Some(crate::settings::QUOTA_OFF)
         );
+        assert_eq!(
+            state.quotas.lock().unwrap().agy.reason.as_deref(),
+            Some(crate::settings::QUOTA_OFF)
+        );
         assert!(!sync_consent(&state));
         state.settings.lock().unwrap().report.settings.quota.enabled = true;
         assert!(sync_consent(&state));
@@ -2109,27 +2144,70 @@ mod tests {
             ProviderQuota::unknown(QuotaProvider::Codex, QuotaState::Checking)
         );
         assert_eq!(snapshot.grok.state, QuotaState::Checking);
+        assert_eq!(
+            snapshot.agy,
+            ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking)
+        );
         assert_eq!(snapshot.claude.reason.as_deref(), Some(CLAUDE_WAITING));
-        // A late native result after the switch goes off cannot revive the row.
-        state.settings.lock().unwrap().report.settings.quota.enabled = false;
-        assert!(sync_consent(&state));
+
+        // Populate Agy windows while enabled, then confirm turning quota off clears windows
+        // and blocks late updates from reviving the row.
         apply(
             &state,
             NativeQuotaUpdate {
-                provider: QuotaProvider::Codex,
-                generation: 2,
+                provider: QuotaProvider::Agy,
+                generation: 1,
                 report: QuotaReport {
-                    windows: Some(Vec::new()),
+                    windows: Some(vec![QuotaWindow {
+                        id: "agy/gemini-5h".into(),
+                        label: "5h".into(),
+                        general: true,
+                        used_basis_points: Some(2500),
+                        over_limit: false,
+                        resets_unix_ms: Some(1_900_000_000_000),
+                    }]),
                     state: QuotaState::Current,
                 },
                 checked: true,
                 reason: None,
-                next_check_unix_ms: None,
+                next_check_unix_ms: Some(1_900_000_300_000),
             },
         );
+        assert_eq!(state.quotas.lock().unwrap().agy.state, QuotaState::Current);
+        assert_eq!(state.quotas.lock().unwrap().agy.windows.len(), 1);
+
+        // A late native result after the switch goes off cannot revive the row.
+        state.settings.lock().unwrap().report.settings.quota.enabled = false;
+        assert!(sync_consent(&state));
+        assert_eq!(
+            state.quotas.lock().unwrap().agy,
+            QuotaSnapshot::default().agy
+        );
+        assert!(state.quotas.lock().unwrap().agy.windows.is_empty());
+        for provider in [QuotaProvider::Codex, QuotaProvider::Agy] {
+            apply(
+                &state,
+                NativeQuotaUpdate {
+                    provider,
+                    generation: 2,
+                    report: QuotaReport {
+                        windows: Some(Vec::new()),
+                        state: QuotaState::Current,
+                    },
+                    checked: true,
+                    reason: None,
+                    next_check_unix_ms: None,
+                },
+            );
+        }
         assert_eq!(
             state.quotas.lock().unwrap().codex.state,
             QuotaState::Disabled
+        );
+        assert_eq!(state.quotas.lock().unwrap().agy.state, QuotaState::Disabled);
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &json!({})),
+            Err(QuotaState::Unsupported)
         );
     }
 

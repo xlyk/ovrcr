@@ -210,7 +210,7 @@ impl Dashboard {
         let quota = self.quotas.clone().unwrap_or_default();
         let mut lines = vec!["Subscription allowance only.".into(), String::new()];
         let at = |stamp| when(stamp, now, &chrono::Local);
-        for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
+        for provider in quota.providers() {
             lines.push(format!(
                 "{} · {}",
                 provider.provider.name(),
@@ -305,8 +305,9 @@ impl Dashboard {
         } else {
             vec![(0, 0)]
         };
+        let compact = crate::protocol::QuotaProvider::ALL.len() as u16;
         let quota_heights = if desired > 0 {
-            vec![(desired, 0), (4, 0), (1, 0), (0, 0)]
+            vec![(desired, 0), (compact, 0), (1, 0), (0, 0)]
         } else {
             vec![(0, 0)]
         };
@@ -405,8 +406,9 @@ impl Dashboard {
                     area,
                 );
             }
-            4 => {
-                let lines = [&quota.claude, &quota.codex, &quota.grok, &quota.cursor]
+            n if n == crate::protocol::QuotaProvider::ALL.len() as u16 => {
+                let lines = quota
+                    .providers()
                     .map(|provider| compact_line(provider, now));
                 return frame.render_widget(Paragraph::new(Vec::from(lines)), area);
             }
@@ -626,7 +628,8 @@ fn bar_filled(remaining_bp: u16, n: usize) -> usize {
 }
 
 fn any_provider_stale(quota: &QuotaSnapshot, now: u64) -> bool {
-    [&quota.claude, &quota.codex, &quota.grok, &quota.cursor]
+    quota
+        .providers()
         .into_iter()
         .any(|provider| provider.stale(now) && !provider.windows.is_empty())
 }
@@ -864,7 +867,7 @@ fn sidebar_quota_rows(quota: &QuotaSnapshot, width: u16, now: u64) -> Vec<(Line<
     let reserve_stale = any_provider_stale(quota, now);
     let n = bar_width(width, reserve_stale);
     let mut rows = vec![(header_line(width), 1)];
-    for provider in [&quota.claude, &quota.codex, &quota.grok, &quota.cursor] {
+    for provider in quota.providers() {
         if !provider.windows.iter().any(|window| window.general) {
             rows.extend(state_row(provider, width, now));
         } else {
@@ -1187,6 +1190,7 @@ mod layout_tests {
                 &mut quota.claude,
                 &mut quota.codex,
                 &mut quota.grok,
+                &mut quota.agy,
                 &mut quota.cursor,
             ] {
                 provider.state = QuotaState::Current;
@@ -1271,7 +1275,7 @@ mod layout_tests {
         let area = Rect::new(0, 0, 120, 30);
         dashboard.install_area(area);
         let line = dashboard.sidebar_rects(area).quota;
-        assert_eq!((line.y, line.height), (23, 6));
+        assert_eq!((line.y, line.height), (22, 7));
         let click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: line.x + 2,

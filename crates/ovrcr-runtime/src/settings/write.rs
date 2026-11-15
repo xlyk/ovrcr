@@ -639,6 +639,12 @@ mod tests {
             ("quota.grok.home", "/tmp/g", "quota.grok.home", |s| {
                 s.quota.grok.home.as_deref() == Some(Path::new("/tmp/g"))
             }),
+            ("quota.agy.command", "/opt/agy", "quota.agy.command", |s| {
+                s.quota.agy.command == Path::new("/opt/agy")
+            }),
+            ("quota.agy.home", "\"/tmp/a\"", "quota.agy.home", |s| {
+                s.quota.agy.home.as_deref() == Some(Path::new("/tmp/a"))
+            }),
         ];
         for &(path, value, reset, check) in cases {
             let root = tempfile::tempdir().unwrap();
@@ -835,6 +841,8 @@ branch_prefix = 'kh/' # mine
             ("picker_roots", "nope", "expected an array of paths"),
             ("picker_roots[0]", "true", "expected a path"),
             ("quota.codex.command", "7", "expected a path"),
+            ("quota.agy.command", "7", "expected a path"),
+            ("quota.agy.home", "true", "expected a path"),
             ("agents[0].argv", "\"x\"", "expected an array of strings"),
             (
                 "agents[1]",
@@ -963,6 +971,8 @@ branch_prefix = 'kh/' # mine
             "quota",
             "quota.codex",
             "quota.codex.hom",
+            "quota.agy",
+            "quota.agy.hom",
             "picker_roots[x]",
             "picker_roots[0].name",
             "agents[0].extra",

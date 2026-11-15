@@ -82,7 +82,7 @@ const ITERM_ABOUT: &[&str] = &[
 ];
 
 const QUOTA_ABOUT: &[&str] = &[
-    "Reads Codex and Grok allowance while a Dashboard is attached. The readers never rewrite auth files.",
+    "Reads Codex, Grok and Agy allowance while a Dashboard is attached. The readers never rewrite auth files.",
     "Off also stops the opt-in Cursor reader.",
 ];
 
@@ -281,7 +281,7 @@ fn path_text(path: &std::path::Path) -> Option<String> {
     Some(path.display().to_string())
 }
 
-const CATALOG: [Entry; 37] = [
+const CATALOG: [Entry; 39] = [
     Entry {
         path: "desktop_notifications",
         shape: Shape::Toggle,
@@ -483,6 +483,28 @@ const CATALOG: [Entry; 37] = [
         off_state: None,
         about: &[],
         value: |settings| settings.quota.grok.home.as_deref().and_then(path_text),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "quota.agy.command",
+        shape: Shape::Path("a path"),
+        owner: SettingOwner::Server,
+        group: "Usage",
+        label: "Agy command",
+        off_state: None,
+        about: &[],
+        value: |settings| path_text(&settings.quota.agy.command),
+        show_off: |_| false,
+    },
+    Entry {
+        path: "quota.agy.home",
+        shape: Shape::Path("a path"),
+        owner: SettingOwner::Server,
+        group: "Usage",
+        label: "Agy home",
+        off_state: None,
+        about: &[],
+        value: |settings| settings.quota.agy.home.as_deref().and_then(path_text),
         show_off: |_| false,
     },
     Entry {
@@ -770,6 +792,8 @@ mod tests {
                 "quota.codex.home",
                 "quota.grok.command",
                 "quota.grok.home",
+                "quota.agy.command",
+                "quota.agy.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "resources.sidebar",
@@ -902,6 +926,30 @@ mod tests {
                 .unwrap()
                 .value,
             None
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == "quota.agy.command")
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("agy")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == "quota.agy.home")
+                .unwrap()
+                .value,
+            None
+        );
+        assert!(
+            entries()
+                .iter()
+                .find(|entry| entry.path == "quota.enabled")
+                .unwrap()
+                .about
+                .iter()
+                .any(|line| line.contains("Agy"))
         );
         let off: Vec<_> = rows
             .iter()
@@ -1080,6 +1128,10 @@ mod tests {
                     home: Some(PathBuf::from("/tmp/codex-home")),
                     ..Settings::default().quota.codex
                 },
+                agy: crate::NativeCommand {
+                    home: Some(PathBuf::from("/tmp/agy-home")),
+                    ..Settings::default().quota.agy
+                },
                 ..Settings::default().quota
             },
             ..Settings::default()
@@ -1101,6 +1153,7 @@ mod tests {
             value("quota.codex.home").as_deref(),
             Some("/tmp/codex-home")
         );
+        assert_eq!(value("quota.agy.home").as_deref(), Some("/tmp/agy-home"));
         assert!(value("picker_roots").unwrap().contains("/tmp/a"));
         assert!(value("agents").unwrap().contains("claude"));
         let choices = value("launch_choices").unwrap();

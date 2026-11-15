@@ -96,7 +96,7 @@ See [Operator setup and controls](operator.md).
 
 ## Browse keys
 
-The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok and Cursor account
+The sidebar's quota section at the bottom, after the project tree, summarizes remaining Claude, Codex, Grok, Agy and Cursor account
 allowance, as in `Claude 98% · Codex 38% · Grok 95%`: each provider shows the
 least allowance left in any of its general windows. The number is red at 5% or
 less and yellow at 20% or less. A stale value is muted. A provider with no value
@@ -109,8 +109,8 @@ line compacts or hides when the sidebar is short so the tree keeps room; sidebar
 and pane dividers remain
 draggable over their full height.
 
-The palette offers **Refresh quota**, which asks the Server to read Codex and
-Grok now, Cursor while `quota.cursor.dashboard` is on, and Claude too while `quota.claude.probe` is on (a refusal inside the
+The palette offers **Refresh quota**, which asks the Server to read Codex,
+Grok and Agy now, Cursor while `quota.cursor.dashboard` is on, and Claude too while `quota.claude.probe` is on (a refusal inside the
 Server's 30-second cooldown shows the remaining seconds in the footer), and,
 while collection is off, **Enable native account usage**, which asks the Server
 to set `quota.enabled = true`. The Dashboard changes nothing itself; the rows
@@ -1347,6 +1347,10 @@ command = "codex"
 [quota.grok]
 command = "grok"
 # home = "/absolute/path/to/grok-profile"
+
+[quota.agy]
+command = "agy"
+# home = "/absolute/path/to/agy-profile"
 
 [quota.cursor]
 dashboard = false                 # opt in: experimental personal Cursor dashboard reader

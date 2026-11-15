@@ -950,8 +950,8 @@ fn quota_block_keeps_sidebar_border_draggable_at_the_bottom() {
         .rposition(|row| row.contains("QUOTA LEFT"))
         .unwrap_or_else(|| panic!("missing the quota section: {rows:?}"));
     assert_eq!(
-        quota, 33,
-        "the new top Operator section reduces tree height by one row"
+        quota, 32,
+        "five-provider Quota section starts seven rows above the footer"
     );
     assert_eq!(rows[quota].chars().nth(49), Some('│'), "{}", rows[quota]);
     let resized = request_view(&mut dashboard, area, 0);
