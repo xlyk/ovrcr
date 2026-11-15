@@ -183,14 +183,17 @@ impl ReportingState {
                 }) {
                     bail!("stale quota revision");
                 }
+                let quota_provider = match report.binding.provider {
+                    AgentProvider::Agy => QuotaProvider::Agy,
+                    _ => QuotaProvider::Claude,
+                };
                 let mut quota = self
                     .quota
                     .as_ref()
                     .filter(|(binding, _, _)| binding == &report.binding)
                     .map(|(_, quota, _)| quota.clone())
-                    .unwrap_or_else(|| {
-                        ProviderQuota::unknown(QuotaProvider::Claude, QuotaState::Waiting)
-                    });
+                    .unwrap_or_else(|| ProviderQuota::unknown(quota_provider, QuotaState::Waiting));
+                quota.provider = quota_provider;
                 if let Some(windows) = &incoming.windows {
                     if quota.observed_unix_ms.is_none() || quota.windows != *windows {
                         quota.observed_unix_ms = Some(now_ms());
@@ -1340,5 +1343,66 @@ mod tests {
             relabelled.context_received_unix_ms, START,
             "and it moves nothing else"
         );
+    }
+
+    #[test]
+    fn quota_observation_routes_provider_for_claude_and_agy() {
+        for (agent_provider, expected_quota_provider) in [
+            (AgentProvider::Claude, QuotaProvider::Claude),
+            (AgentProvider::Agy, QuotaProvider::Agy),
+        ] {
+            let binding = AgentBinding {
+                provider: agent_provider,
+                invocation: "inv-quota".into(),
+                conversation: "01a08e5c-7480-7052-9964-9224aadebef0".into(),
+                generation: 1,
+            };
+            let mut reporting = ReportingState {
+                lease: Some(AgentSecret([9; 32])),
+                snapshot: Some(AgentSnapshot {
+                    binding: binding.clone(),
+                    activity: None,
+                    metrics: None,
+                    health: HealthSample {
+                        state: ReporterHealth::Connected,
+                        reason: None,
+                    },
+                    activity_revision: 0,
+                    metrics_revision: 0,
+                    health_revision: 0,
+                    input_requests: Vec::new(),
+                    input_revision: 0,
+                    native_control: None,
+                    native_control_revision: 0,
+                }),
+                ..Default::default()
+            };
+            reporting
+                .apply(
+                    &ProviderReport {
+                        binding: binding.clone(),
+                        revision: 1,
+                        observation: AgentObservation::Quota(Box::new(QuotaReport {
+                            windows: Some(vec![ovrcr_protocol::QuotaWindow {
+                                id: "gemini-5h".into(),
+                                label: "5h".into(),
+                                general: true,
+                                used_basis_points: Some(2500),
+                                over_limit: false,
+                                resets_unix_ms: Some(1_900_000_000_000),
+                            }]),
+                            state: QuotaState::Current,
+                        })),
+                    },
+                    false,
+                )
+                .unwrap();
+            let (_, stored, rev) = reporting.quota.as_ref().unwrap();
+            assert_eq!(*rev, 1);
+            assert_eq!(stored.provider, expected_quota_provider);
+            assert_eq!(stored.state, QuotaState::Current);
+            assert!(stored.observed_unix_ms.is_some());
+            assert!(stored.checked_unix_ms.is_none());
+        }
     }
 }

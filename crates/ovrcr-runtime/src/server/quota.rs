@@ -52,6 +52,8 @@ pub(super) struct Refresh {
     pub(super) claude_account: Option<ProviderQuota>,
     /// Latest Antigravity account read (`agy -p /usage --output-format json`).
     pub(super) agy_account: Option<ProviderQuota>,
+    /// The `quota.agy` command/home configuration that produced `agy_account`.
+    pub(super) agy_account_config: Option<NativeCommand>,
     /// Latest probe signal. The allowance merge decides whether it becomes the row.
     pub(super) claude_probe: Option<super::claude_allowance::ProbeSignal>,
 }
@@ -232,8 +234,17 @@ pub(super) fn sync_consent(state: &ServerState) -> bool {
         }
         transitions
     };
-    if !enabled {
-        state.quota_refresh.lock().unwrap().agy_account = None;
+    {
+        let mut refresh = state.quota_refresh.lock().unwrap();
+        if !enabled
+            || refresh
+                .agy_account_config
+                .as_ref()
+                .is_some_and(|prev| prev != &settings.agy)
+        {
+            refresh.agy_account = None;
+            refresh.agy_account_config = None;
+        }
     }
     for (provider, before_state, before_reason, after_state, after_reason) in transitions {
         note_transition(
@@ -1163,13 +1174,86 @@ const AGY_STDERR_LOGIN_MARKERS: [&str; 7] = [
     "please sign in",
 ];
 
+pub(super) fn merge_agy_quota(
+    previous: &ProviderQuota,
+    settings: &ovrcr_protocol::QuotaSettings,
+    account: Option<&ProviderQuota>,
+    session: Option<&ProviderQuota>,
+) -> ProviderQuota {
+    if !settings.enabled {
+        return QuotaSnapshot::default().agy;
+    }
+    if let Some(account) = account
+        && !account.windows.is_empty()
+    {
+        return account.clone();
+    }
+    if settings.agy.home.is_none()
+        && let Some(mut session_quota) = session.cloned()
+    {
+        session_quota.provider = QuotaProvider::Agy;
+        session_quota.checked_unix_ms = None;
+        session_quota.next_check_unix_ms = account.and_then(|acc| acc.next_check_unix_ms);
+        return session_quota;
+    }
+    if let Some(account) = account {
+        return account.clone();
+    }
+    if previous.source.is_some() {
+        return ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking);
+    }
+    previous.clone()
+}
+
 pub(super) fn apply_agy(state: &ServerState, update: AgyQuotaUpdate) {
     let current = state.quota_settings();
-    if current.enabled && current.agy == update.config {
-        apply(state, update.native);
-        let agy = state.quotas.lock().unwrap().agy.clone();
-        state.quota_refresh.lock().unwrap().agy_account = Some(agy);
+    if !current.enabled
+        || current.agy != update.config
+        || update.native.generation == 0
+        || update.native.report.validate().is_err()
+    {
+        return;
     }
+    {
+        let mut refresh = state.quota_refresh.lock().unwrap();
+        if refresh.agy_account_config.as_ref() != Some(&update.config) {
+            refresh.agy_account = None;
+        }
+        let mut account = refresh
+            .agy_account
+            .take()
+            .unwrap_or_else(|| ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking));
+        let old_generation = match &account.source {
+            Some(QuotaSource::NativeProfile { generation, .. }) => *generation,
+            _ => 0,
+        };
+        if update.native.generation < old_generation {
+            refresh.agy_account = Some(account);
+            return;
+        }
+        if update.native.generation != old_generation {
+            account = ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking);
+            account.source = Some(QuotaSource::NativeProfile {
+                profile: "Agy selected native profile".into(),
+                generation: update.native.generation,
+            });
+        }
+        if let Some(windows) = update.native.report.windows {
+            if account.windows != windows || account.observed_unix_ms.is_none() {
+                account.observed_unix_ms = Some(now_ms());
+            }
+            account.windows = windows;
+        }
+        account.state = update.native.report.state;
+        account.reason = update.native.reason;
+        account.next_check_unix_ms = update.native.next_check_unix_ms;
+        if update.native.checked {
+            account.checked_unix_ms = Some(now_ms());
+        }
+        refresh.agy_account = Some(account);
+        refresh.agy_account_config = Some(update.config);
+    }
+    state.refresh_agy_quota();
 }
 
 pub(super) fn run_agy_quota(state: Arc<ServerState>) {
@@ -1914,6 +1998,309 @@ fn agy_reset_ms(bucket: &serde_json::Map<String, Value>) -> Result<Option<u64>> 
     Err(Failure::new(QuotaState::Invalid))
 }
 
+fn rank_agy_buckets(parsed: Vec<ParsedAgyBucket>) -> Vec<QuotaWindow> {
+    let has_ordinary_gemini = parsed
+        .iter()
+        .any(|b| matches!(b.id.as_str(), "gemini-5h" | "gemini-weekly"));
+    let mut ranked: Vec<((u8, u8, String), QuotaWindow)> = parsed
+        .into_iter()
+        .map(|bucket| {
+            let (general, rank) = match bucket.id.as_str() {
+                "gemini-5h" => (true, (0, 0, String::new())),
+                "gemini-weekly" => (true, (0, 1, String::new())),
+                _ if !has_ordinary_gemini
+                    && bucket.is_gemini_group
+                    && !bucket.id.starts_with("3p-") =>
+                {
+                    (
+                        true,
+                        (1, agy_duration_rank(&bucket.label), bucket.id.clone()),
+                    )
+                }
+                "3p-5h" => (false, (2, 0, String::new())),
+                "3p-weekly" => (false, (2, 1, String::new())),
+                _ => (
+                    false,
+                    (3, agy_duration_rank(&bucket.label), bucket.id.clone()),
+                ),
+            };
+            (
+                rank,
+                QuotaWindow {
+                    id: bucket.id,
+                    label: bucket.label,
+                    general,
+                    used_basis_points: bucket.used_basis_points,
+                    over_limit: false,
+                    resets_unix_ms: bucket.resets_unix_ms,
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.cmp(&b.0));
+    ranked.into_iter().map(|(_, window)| window).collect()
+}
+
+fn agy_aliased_field<'a>(
+    bucket: &'a serde_json::Map<String, Value>,
+    first: &'static str,
+    second: &'static str,
+) -> std::result::Result<Option<(&'static str, &'a Value)>, ()> {
+    let a = bucket.get(first).filter(|v| !v.is_null());
+    let b = bucket.get(second).filter(|v| !v.is_null());
+    match (a, b) {
+        (Some(va), Some(vb)) if va != vb => Err(()),
+        (Some(va), _) => Ok(Some((first, va))),
+        (None, Some(vb)) => Ok(Some((second, vb))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Sanitize an optional raw Antigravity status-line `quota` value before sending it across
+/// the invocation socket. Only up to 32 bucket entries with allowlisted allowance fields are
+/// retained; malformed shapes or values become a static `"invalid"` marker without forwarding
+/// raw strings.
+pub fn sanitize_agy_statusline_quota(raw: &Value) -> Option<Value> {
+    if raw.is_null() {
+        return None;
+    }
+    let Some(map) = raw.as_object() else {
+        return Some(serde_json::json!("invalid"));
+    };
+    if map.len() > 128 {
+        return Some(serde_json::json!("invalid"));
+    }
+    let mut enabled_entries: Vec<(String, Value)> = Vec::new();
+    let mut disabled_entries: Vec<(String, Value)> = Vec::new();
+    for (raw_id, entry) in map {
+        let id = raw_id.trim();
+        if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
+            return Some(serde_json::json!("invalid"));
+        }
+        let Some(bucket) = entry.as_object() else {
+            return Some(serde_json::json!("invalid"));
+        };
+        let disabled = match bucket.get("disabled").filter(|v| !v.is_null()) {
+            None => None,
+            Some(Value::Bool(flag)) => Some(*flag),
+            Some(_) => return Some(serde_json::json!("invalid")),
+        };
+        let mut clean = serde_json::Map::new();
+        if let Some(flag) = disabled {
+            clean.insert("disabled".into(), serde_json::json!(flag));
+        }
+        let Ok(fraction_field) =
+            agy_aliased_field(bucket, "remaining_fraction", "remainingFraction")
+        else {
+            return Some(serde_json::json!("invalid"));
+        };
+        if let Some((key, val)) = fraction_field {
+            let Some(num) = val
+                .as_f64()
+                .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+            else {
+                return Some(serde_json::json!("invalid"));
+            };
+            clean.insert(key.into(), serde_json::json!(num));
+        } else if let Some(rem) = bucket.get("remaining").filter(|v| !v.is_null()) {
+            let Some(rem_obj) = rem.as_object() else {
+                return Some(serde_json::json!("invalid"));
+            };
+            let Ok(nested_frac) =
+                agy_aliased_field(rem_obj, "remaining_fraction", "remainingFraction")
+            else {
+                return Some(serde_json::json!("invalid"));
+            };
+            if let Some((_, val)) = nested_frac {
+                let Some(num) = val
+                    .as_f64()
+                    .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+                else {
+                    return Some(serde_json::json!("invalid"));
+                };
+                clean.insert("remaining_fraction".into(), serde_json::json!(num));
+            }
+        }
+
+        let Ok(reset_field) = agy_aliased_field(bucket, "reset_time", "resetTime") else {
+            return Some(serde_json::json!("invalid"));
+        };
+        if let Some((key, val)) = reset_field {
+            if agy_reset_ms(bucket).is_err() {
+                return Some(serde_json::json!("invalid"));
+            }
+            clean.insert(key.into(), val.clone());
+        } else if let Some(rem) = bucket.get("remaining").and_then(Value::as_object) {
+            let Ok(nested_reset) = agy_aliased_field(rem, "reset_time", "resetTime") else {
+                return Some(serde_json::json!("invalid"));
+            };
+            if let Some((_, val)) = nested_reset {
+                if agy_reset_ms(bucket).is_err() {
+                    return Some(serde_json::json!("invalid"));
+                }
+                clean.insert("reset_time".into(), val.clone());
+            }
+        }
+
+        if let Some(window_val) = bucket.get("window").filter(|v| !v.is_null()) {
+            let Some(window_str) = window_val.as_str() else {
+                return Some(serde_json::json!("invalid"));
+            };
+            let trimmed = window_str.trim();
+            if trimmed.len() > 64 || window_str.chars().any(char::is_control) {
+                return Some(serde_json::json!("invalid"));
+            }
+            if !trimmed.is_empty() {
+                clean.insert("window".into(), serde_json::json!(trimmed));
+            }
+        }
+
+        let Ok(name_field) = agy_aliased_field(bucket, "name", "displayName") else {
+            return Some(serde_json::json!("invalid"));
+        };
+        if let Some((key, val)) = name_field {
+            let Some(name_str) = val.as_str() else {
+                return Some(serde_json::json!("invalid"));
+            };
+            if name_str.chars().any(char::is_control) {
+                return Some(serde_json::json!("invalid"));
+            }
+            let trimmed = name_str.trim();
+            if !trimmed.is_empty() && trimmed.len() <= 64 && !trimmed.contains('@') {
+                clean.insert(key.into(), serde_json::json!(trimmed));
+            }
+        }
+
+        if disabled == Some(true) {
+            disabled_entries.push((id.to_owned(), Value::Object(clean)));
+        } else {
+            enabled_entries.push((id.to_owned(), Value::Object(clean)));
+            if enabled_entries.len() > 32 {
+                return Some(serde_json::json!("invalid"));
+            }
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for (id, val) in enabled_entries {
+        out.insert(id, val);
+    }
+    for (id, val) in disabled_entries {
+        if out.len() >= 32 {
+            break;
+        }
+        out.insert(id, val);
+    }
+    Some(Value::Object(out))
+}
+
+/// Normalize a status-line `quota` value into a [`QuotaReport`] when active buckets or a
+/// malformed payload are present. Empty or not-yet-populated bucket maps return `None`.
+pub fn normalize_agy_statusline_quota(value: &Value) -> Option<QuotaReport> {
+    if value.is_null() {
+        return None;
+    }
+    let invalid = || {
+        Some(QuotaReport {
+            windows: None,
+            state: QuotaState::Invalid,
+        })
+    };
+    let Some(map) = value.as_object() else {
+        return invalid();
+    };
+    if map.len() > 128 {
+        return invalid();
+    }
+    let mut parsed = Vec::new();
+    for (raw_id, entry) in map {
+        let id = raw_id.trim();
+        if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
+            return invalid();
+        }
+        let Some(bucket) = entry.as_object() else {
+            return invalid();
+        };
+        let disabled = match bucket.get("disabled").filter(|v| !v.is_null()) {
+            None => false,
+            Some(flag) => match flag.as_bool() {
+                Some(flag) => flag,
+                None => return invalid(),
+            },
+        };
+        if disabled {
+            continue;
+        }
+        if agy_aliased_field(bucket, "remaining_fraction", "remainingFraction").is_err()
+            || agy_aliased_field(bucket, "reset_time", "resetTime").is_err()
+            || agy_aliased_field(bucket, "name", "displayName").is_err()
+        {
+            return invalid();
+        }
+        if let Some(window_val) = bucket.get("window").filter(|v| !v.is_null())
+            && window_val
+                .as_str()
+                .is_none_or(|s| s.trim().len() > 64 || s.chars().any(char::is_control))
+        {
+            return invalid();
+        }
+        let display_name = match bucket
+            .get("name")
+            .filter(|v| !v.is_null())
+            .or_else(|| bucket.get("displayName").filter(|v| !v.is_null()))
+            .or_else(|| bucket.get("display_name").filter(|v| !v.is_null()))
+        {
+            None => None,
+            Some(val) => match val.as_str() {
+                Some(s) if !s.chars().any(char::is_control) => Some(s),
+                _ => return invalid(),
+            },
+        };
+        let window_hint = bucket.get("window").and_then(Value::as_str);
+        let Ok(label) = agy_bucket_label(id, window_hint, display_name) else {
+            return invalid();
+        };
+        let Ok(used_basis_points) = agy_remaining_fraction(bucket) else {
+            return invalid();
+        };
+        let Ok(resets_unix_ms) = agy_reset_ms(bucket) else {
+            return invalid();
+        };
+        let id_lower = id.to_ascii_lowercase();
+        let name_lower = display_name.unwrap_or("").trim().to_ascii_lowercase();
+        let is_gemini_group = matches!(id, "gemini-5h" | "gemini-weekly")
+            || id_lower == "gemini"
+            || id_lower.starts_with("gemini-")
+            || id_lower.starts_with("gemini_")
+            || (name_lower.contains("gemini")
+                && !name_lower.contains("3p")
+                && !name_lower.contains("third")
+                && !name_lower.contains("claude")
+                && !name_lower.contains("gpt"));
+        parsed.push(ParsedAgyBucket {
+            id: id.to_owned(),
+            label,
+            is_gemini_group,
+            used_basis_points,
+            resets_unix_ms,
+        });
+        if parsed.len() > 32 {
+            return invalid();
+        }
+    }
+    if parsed.is_empty() || parsed.iter().all(|b| b.used_basis_points.is_none()) {
+        return None;
+    }
+    let windows = rank_agy_buckets(parsed);
+    let report = QuotaReport {
+        windows: Some(windows),
+        state: QuotaState::Current,
+    };
+    if report.validate().is_err() {
+        return invalid();
+    }
+    Some(report)
+}
+
 fn agy_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
     let object = value
         .as_object()
@@ -2012,46 +2399,7 @@ fn agy_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
             });
         }
     }
-    let has_ordinary_gemini = parsed
-        .iter()
-        .any(|b| matches!(b.id.as_str(), "gemini-5h" | "gemini-weekly"));
-    let mut ranked: Vec<((u8, u8, String), QuotaWindow)> = parsed
-        .into_iter()
-        .map(|bucket| {
-            let (general, rank) = match bucket.id.as_str() {
-                "gemini-5h" => (true, (0, 0, String::new())),
-                "gemini-weekly" => (true, (0, 1, String::new())),
-                _ if !has_ordinary_gemini
-                    && bucket.is_gemini_group
-                    && !bucket.id.starts_with("3p-") =>
-                {
-                    (
-                        true,
-                        (1, agy_duration_rank(&bucket.label), bucket.id.clone()),
-                    )
-                }
-                "3p-5h" => (false, (2, 0, String::new())),
-                "3p-weekly" => (false, (2, 1, String::new())),
-                _ => (
-                    false,
-                    (3, agy_duration_rank(&bucket.label), bucket.id.clone()),
-                ),
-            };
-            (
-                rank,
-                QuotaWindow {
-                    id: bucket.id,
-                    label: bucket.label,
-                    general,
-                    used_basis_points: bucket.used_basis_points,
-                    over_limit: false,
-                    resets_unix_ms: bucket.resets_unix_ms,
-                },
-            )
-        })
-        .collect();
-    ranked.sort_by(|a, b| a.0.cmp(&b.0));
-    let windows: Vec<QuotaWindow> = ranked.into_iter().map(|(_, window)| window).collect();
+    let windows = rank_agy_buckets(parsed);
     QuotaReport {
         windows: Some(windows.clone()),
         state: QuotaState::Current,
@@ -3587,5 +3935,152 @@ mod tests {
         let (ident, token) = result.expect("should adopt sibling");
         assert_eq!(token, "sibling-access");
         assert_eq!(ident, fingerprint("sibling-access"));
+    }
+
+    #[test]
+    fn agy_account_and_session_supplement_precedence_respects_consent_home_and_authoritative_windows()
+     {
+        let binding = ovrcr_protocol::AgentBinding {
+            provider: ovrcr_protocol::AgentProvider::Agy,
+            invocation: "inv-1".into(),
+            conversation: "01a08e5c-7480-7052-9964-9224aadebef0".into(),
+            generation: 1,
+        };
+        let session_quota = ProviderQuota {
+            provider: QuotaProvider::Agy,
+            source: Some(QuotaSource::Session {
+                session: ovrcr_protocol::SessionId(7),
+                run: ovrcr_protocol::SessionRunId(1),
+                binding,
+            }),
+            state: QuotaState::Current,
+            windows: vec![QuotaWindow {
+                id: "gemini-5h".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(4000),
+                over_limit: false,
+                resets_unix_ms: Some(1_900_000_000_000),
+            }],
+            observed_unix_ms: Some(1_800_000_000_000),
+            checked_unix_ms: Some(999), // merge must clear checked_unix_ms on Session supplement
+            next_check_unix_ms: None,
+            reason: None,
+        };
+
+        let checking = ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Checking);
+
+        // 1. Disabled consent suppresses both account and session supplement.
+        let mut settings = ovrcr_protocol::QuotaSettings {
+            enabled: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            merge_agy_quota(&checking, &settings, None, Some(&session_quota)),
+            QuotaSnapshot::default().agy
+        );
+
+        // 2. Enabled ambient profile (home == None) uses session supplement while Checking or
+        // failed without retained windows, keeping checked_unix_ms == None and preserving next_check.
+        settings.enabled = true;
+        let supplemented = merge_agy_quota(&checking, &settings, None, Some(&session_quota));
+        assert_eq!(supplemented.state, QuotaState::Current);
+        assert!(matches!(
+            supplemented.source,
+            Some(QuotaSource::Session { .. })
+        ));
+        assert_eq!(supplemented.observed_unix_ms, Some(1_800_000_000_000));
+        assert_eq!(supplemented.checked_unix_ms, None);
+
+        let failed_no_windows = ProviderQuota {
+            provider: QuotaProvider::Agy,
+            source: Some(QuotaSource::NativeProfile {
+                profile: "Agy selected native profile".into(),
+                generation: 1,
+            }),
+            state: QuotaState::Unavailable,
+            windows: Vec::new(),
+            observed_unix_ms: None,
+            checked_unix_ms: Some(1_800_000_010_000),
+            next_check_unix_ms: Some(1_800_000_070_000),
+            reason: Some("timed out after 20 s".into()),
+        };
+        let supplemented_on_failure = merge_agy_quota(
+            &checking,
+            &settings,
+            Some(&failed_no_windows),
+            Some(&session_quota),
+        );
+        assert_eq!(supplemented_on_failure.state, QuotaState::Current);
+        assert!(matches!(
+            supplemented_on_failure.source,
+            Some(QuotaSource::Session { .. })
+        ));
+        assert_eq!(supplemented_on_failure.checked_unix_ms, None);
+        assert_eq!(
+            supplemented_on_failure.next_check_unix_ms,
+            Some(1_800_000_070_000)
+        );
+
+        // 3. Explicit quota.agy.home suppresses ambient session supplement (returning to account
+        // or Checking if account has not reported yet).
+        settings.agy.home = Some(PathBuf::from("/tmp/isolated-agy-home"));
+        let suppressed_by_home = merge_agy_quota(
+            &supplemented,
+            &settings,
+            Some(&failed_no_windows),
+            Some(&session_quota),
+        );
+        assert_eq!(suppressed_by_home, failed_no_windows);
+        assert_eq!(
+            merge_agy_quota(&supplemented, &settings, None, Some(&session_quota)),
+            checking
+        );
+
+        // 4. Authoritative /usage account windows (Current OR retained stale windows on transient
+        // failure) replace the session supplement and preserve checked_unix_ms.
+        settings.agy.home = None;
+        let account_current = ProviderQuota {
+            provider: QuotaProvider::Agy,
+            source: Some(QuotaSource::NativeProfile {
+                profile: "Agy selected native profile".into(),
+                generation: 1,
+            }),
+            state: QuotaState::Current,
+            windows: vec![QuotaWindow {
+                id: "gemini-5h".into(),
+                label: "5h".into(),
+                general: true,
+                used_basis_points: Some(2500),
+                over_limit: false,
+                resets_unix_ms: Some(1_900_000_000_000),
+            }],
+            observed_unix_ms: Some(1_800_000_020_000),
+            checked_unix_ms: Some(1_800_000_020_000),
+            next_check_unix_ms: Some(1_800_000_320_000),
+            reason: None,
+        };
+        assert_eq!(
+            merge_agy_quota(
+                &supplemented,
+                &settings,
+                Some(&account_current),
+                Some(&session_quota)
+            ),
+            account_current
+        );
+
+        let mut account_retained_stale = account_current.clone();
+        account_retained_stale.state = QuotaState::Unavailable;
+        account_retained_stale.reason = Some("HTTP 503".into());
+        assert_eq!(
+            merge_agy_quota(
+                &account_current,
+                &settings,
+                Some(&account_retained_stale),
+                Some(&session_quota)
+            ),
+            account_retained_stale
+        );
     }
 }

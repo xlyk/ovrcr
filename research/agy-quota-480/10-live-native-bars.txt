@@ -1,0 +1,61 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│local (#1)  shell · 0m                                                                                               pid 65980
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off                                ┃│consigint ›
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ━━━━━─────────────────  21% │
+ mem       ━━━━━━━━━━━━━───── 34.9/48G │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │
+Codex · unavailable · retry 10m        │
+ Grok   wk ━━━━━━━━━━━━━━━━━━━━━─  99% │
+ Agy    5h ━━━━━━━━━━━━━━━───────  67% │
+        7d ━━━━━━━━━━━━──────────  54% │
+Cursor · usage off                     │
+                                       │
+Claude, Codex and Antigravity status off — :connect to set up

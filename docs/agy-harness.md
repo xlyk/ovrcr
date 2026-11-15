@@ -35,9 +35,12 @@ The foreground callback identifies the active conversation and reports its nativ
 model, activity and title. A manual session title takes precedence. After an
 observed working turn, a successful, fully idle Stop followed by foreground idle
 marks its response Ready and unread. An interrupted turn creates no new alert.
-The previous unread response stays unread until reviewed. Process supervision
-and terminal input remain available when callbacks are missing. The adapter discards
-prompt text, tool arguments, account identity and quota information from its reports.
+Process supervision and terminal input remain available when callbacks are missing.
+The adapter discards prompt text, tool arguments, transcript paths and account
+identity from its reports. When `quota.enabled` is on and `quota.agy.home` is unset,
+sanitized status-line `quota` buckets supplement the Dashboard's **Agy** allowance row
+while an account `/usage` check is pending or unavailable without retained windows,
+without advancing account-check provenance.
 
 ## Reopen a conversation
 

@@ -102,6 +102,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             DispatchMessage::ClaudeAccount(update) => {
                 super::quota::store_claude_account(&state, *update);
                 state.refresh_claude_quota();
+                state.refresh_agy_quota();
             }
             DispatchMessage::ClaudeProbe {
                 report,
@@ -488,6 +489,7 @@ pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
         eprintln!("assignment control observation failed: {error:#}");
     }
     state.refresh_claude_quota();
+    state.refresh_agy_quota();
     if let Some(summary) = state.session_summary(id) {
         state.delegation_observations.session_changed(&summary);
         state
@@ -833,6 +835,7 @@ fn dispatch_set_view_with_resize(
     drop(registered);
     drop(retained);
     state.refresh_claude_quota();
+    state.recompute_agy_quota(false);
     state.publish_quotas();
     let _ = completion.send(DispatchCompletion::Complete);
 }

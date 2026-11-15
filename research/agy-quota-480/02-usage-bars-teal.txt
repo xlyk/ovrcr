@@ -1,0 +1,61 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│local (#1)  shell · 0m                                                                                               pid 36858
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off                                ┃│consigint › printf 'CUA_%s\n' AGY_QUOTA_INPUT_OK
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│CUA_AGY_QUOTA_INPUT_OK
+                                       │consigint ›
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+       Allowance Supplement Session    │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ━━━━━━━━──────────────  35% │
+ mem       ━━━━━━━━━━━━━━━───── 35/48G │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │
+Codex · unavailable · retry 10m        │
+Grok · not signed in · retry 10m       │
+ Agy    5h ━━━━━━━━━━━━━━━━──────  72% │
+        7d ━━━━━━━━━─────────────  41% │
+Cursor · usage off                     │
+                                       │
+BROWSE  Space Menu  : Commands  ? Help  m Recent activity

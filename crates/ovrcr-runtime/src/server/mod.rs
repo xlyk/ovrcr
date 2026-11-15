@@ -51,6 +51,7 @@ pub mod operator;
 mod operator_tests;
 mod outbound;
 mod quota;
+pub use quota::{normalize_agy_statusline_quota, sanitize_agy_statusline_quota};
 mod quota_probe;
 mod remote;
 mod reporting_queue;
@@ -452,6 +453,82 @@ impl ServerState {
             });
         }
         Some(claude_allowance::ChosenSession::Other)
+    }
+
+    pub(super) fn refresh_agy_quota(&self) {
+        self.recompute_agy_quota(true);
+    }
+
+    pub(super) fn recompute_agy_quota(&self, send: bool) -> bool {
+        let settings = self.quota_settings();
+        let old = self.quotas.lock().unwrap().agy.clone();
+        let account = self.quota_refresh.lock().unwrap().agy_account.clone();
+        let session = if settings.enabled
+            && settings.agy.home.is_none()
+            && account.as_ref().is_none_or(|acc| acc.windows.is_empty())
+        {
+            self.chosen_agy_session()
+        } else {
+            None
+        };
+        let next = quota::merge_agy_quota(&old, &settings, account.as_ref(), session.as_ref());
+        if next == old {
+            return false;
+        }
+        let before_state = old.state;
+        let before_reason = old.reason.clone();
+        let after_state = next.state;
+        let after_reason = next.reason.clone();
+        let snapshot = {
+            let mut quotas = self.quotas.lock().unwrap();
+            quotas.agy = next;
+            quotas.clone()
+        };
+        if send {
+            self.send_quotas(snapshot);
+        }
+        quota::note_transition(
+            self,
+            ovrcr_protocol::QuotaProvider::Agy,
+            before_state,
+            before_reason.as_deref(),
+            after_state,
+            after_reason.as_deref(),
+        );
+        true
+    }
+
+    fn chosen_agy_session(&self) -> Option<ovrcr_protocol::ProviderQuota> {
+        use ovrcr_protocol::{AgentProvider, ReporterHealth};
+        let focused = self.dashboard.view().and_then(|view| view.focused);
+        let sessions: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
+        let eligible = |session: &Arc<Session>| -> Option<ovrcr_protocol::ProviderQuota> {
+            let summary = session.summary();
+            if !summary.phase.is_live() {
+                return None;
+            }
+            let agent = summary.agent.as_ref()?;
+            if agent.binding.provider != AgentProvider::Agy
+                || agent.health.state != ReporterHealth::Connected
+            {
+                return None;
+            }
+            session.quota_snapshot()
+        };
+        if let Some(focused_id) = focused
+            && let Some(session) = sessions.iter().find(|s| s.id() == focused_id)
+            && let Some(quota) = eligible(session)
+        {
+            return Some(quota);
+        }
+        sessions
+            .iter()
+            .filter_map(|session| {
+                let quota = eligible(session)?;
+                Some(((quota.observed_unix_ms.unwrap_or(0), session.id().0), quota))
+            })
+            .max_by_key(|(rank, _)| *rank)
+            .map(|(_, quota)| quota)
     }
 
     /// The default (quota off, nothing reported) is what a new Dashboard
