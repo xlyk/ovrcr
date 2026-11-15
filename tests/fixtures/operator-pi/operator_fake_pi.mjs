@@ -116,6 +116,14 @@ let stdinClosed = false;
 
 // ---------------------------------------------------------------- session file
 
+let currentLeafId = null;
+let entrySequence = 0;
+
+function nextEntryId(prefix = "e") {
+  entrySequence += 1;
+  return `${prefix}${entrySequence}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
 function isoNow() {
   return new Date().toISOString();
 }
@@ -136,6 +144,7 @@ function writeHeader(path) {
   } finally {
     closeSync(fd);
   }
+  currentLeafId = null;
 }
 
 function appendEntry(path, entry) {
@@ -151,8 +160,12 @@ function appendEntry(path, entry) {
 if (sessionFile) writeHeader(sessionFile);
 
 function appendSessionEntry(entry) {
-  if (!sessionFile) return;
-  appendEntry(sessionFile, { id: `e${Date.now()}${Math.random().toString(16).slice(2)}`, parentId: null, timestamp: isoNow(), ...entry });
+  if (!sessionFile) return null;
+  const id = typeof entry.id === "string" && entry.id.length > 0 ? entry.id : nextEntryId("e");
+  const parentId = entry.parentId !== undefined ? entry.parentId : currentLeafId;
+  appendEntry(sessionFile, { ...entry, id, parentId, timestamp: entry.timestamp ?? isoNow() });
+  currentLeafId = id;
+  return id;
 }
 
 // Pi records the initial model/thinking so a resumed session can restore them.
@@ -333,11 +346,9 @@ async function runTool(step, execute) {
       extra.provider = currentModel.provider;
       extra.model = currentModel.id;
     }
-    appendEntry(sessionFile, {
+    appendSessionEntry({
       type: "message",
       id: `tc-${call.id}`,
-      parentId: null,
-      timestamp: isoNow(),
       message: {
         role: "assistant",
         content: [{ type: "toolCall", id: call.id, name: call.name, arguments: call.input }],
@@ -383,11 +394,9 @@ async function runTool(step, execute) {
   record({ event: "result_ack", id: call.id, confirmed: result?.confirmed === true, cancelled: result?.cancelled === true });
   const isError = (step.status ?? "succeeded") !== "succeeded";
   if (scenario.record_tool_history && sessionFile) {
-    appendEntry(sessionFile, {
+    appendSessionEntry({
       type: "message",
       id: `tr-${call.id}`,
-      parentId: null,
-      timestamp: isoNow(),
       message: {
         role: "toolResult",
         toolCallId: call.id,
@@ -589,6 +598,21 @@ async function runSteps(promptIndex) {
         if (result?.confirmed === true && step.marker) appendLine(step.marker, "UNKNOWN-CALL-RAN\n");
         break;
       }
+      case "unsolicited_tree_control": {
+        const resp = await askConfirm("ovrcr_operator_tree_control", {
+          targetId: step.targetId ?? "u1",
+          summarize: false,
+        });
+        record({
+          event: "unsolicited_tree_control",
+          confirmed: resp?.confirmed === true,
+          cancelled: resp?.cancelled === true,
+        });
+        if (resp?.confirmed === true && step.marker) {
+          appendLine(step.marker, "UNSOLICITED-TREE-CONTROL-CONFIRMED\n");
+        }
+        break;
+      }
       case "event":
         writeRecord(step.event);
         break;
@@ -690,11 +714,9 @@ async function runSteps(promptIndex) {
 
 function appendPromptHistory(message) {
   if (!sessionFile) return;
-  appendEntry(sessionFile, {
+  appendSessionEntry({
     type: "message",
-    id: `u${Date.now()}`,
-    parentId: null,
-    timestamp: isoNow(),
+    id: nextEntryId("u"),
     message: { role: "user", content: message, timestamp: Date.now() },
   });
 }
@@ -709,11 +731,9 @@ function appendAssistantHistory(text, stop) {
     }
     extra.usage = scenario.assistant_usage;
   }
-  appendEntry(sessionFile, {
+  appendSessionEntry({
     type: "message",
-    id: `a${Date.now()}`,
-    parentId: null,
-    timestamp: isoNow(),
+    id: nextEntryId("a"),
     message: {
       role: "assistant",
       content: [{ type: "text", text }],
@@ -722,6 +742,30 @@ function appendAssistantHistory(text, stop) {
       ...extra,
     },
   });
+}
+
+function readSessionEntriesById(path) {
+  const byId = new Map();
+  if (!path || !existsSync(path)) return byId;
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return byId;
+  }
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry && typeof entry === "object" && entry.type !== "session" && typeof entry.id === "string") {
+      byId.set(entry.id, entry);
+    }
+  }
+  return byId;
 }
 
 function restoreSessionState(path) {
@@ -733,6 +777,7 @@ function restoreSessionState(path) {
   }
   let thinking = null;
   let model = null;
+  let lastId = null;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let entry;
@@ -743,6 +788,9 @@ function restoreSessionState(path) {
       continue;
     }
     if (!entry || typeof entry !== "object") continue;
+    if (entry.type !== "session" && typeof entry.id === "string") {
+      lastId = entry.id;
+    }
     if (entry.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
       thinking = entry.thinkingLevel;
     } else if (entry.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
@@ -756,6 +804,7 @@ function restoreSessionState(path) {
       model = { provider: entry.message.provider, id: entry.message.model, name: entry.message.model };
     }
   }
+  currentLeafId = lastId;
   if (model) currentModel = model;
   if (thinking) thinkingLevel = thinking;
 }
@@ -867,7 +916,94 @@ function handleCommand(command) {
       break;
     }
     case "prompt": {
-      record({ event: "prompt", id, message: command.message });
+      if (
+        typeof command.message === "string" &&
+        (command.message === "/ovrcr_tree_control" || command.message.startsWith("/ovrcr_tree_control "))
+      ) {
+        const rawArgs = command.message.slice("/ovrcr_tree_control".length).trim();
+        void (async () => {
+          let parsed;
+          try {
+            parsed = JSON.parse(rawArgs);
+          } catch (error) {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: String(error?.message ?? error) }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          const payload = {
+            targetId: parsed.targetId,
+            summarize: parsed.summarize === true,
+            ...(typeof parsed.customInstructions === "string"
+              ? { customInstructions: parsed.customInstructions }
+              : {}),
+          };
+          const confirmResp = await askConfirm("ovrcr_operator_tree_control", payload);
+          const authorized = confirmResp?.confirmed === true;
+          record({ event: "tree_control", ...payload, authorized });
+          if (!authorized) {
+            respond("prompt", id);
+            return;
+          }
+          if (scenario.tree_control === "cancel") {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, leafId: currentLeafId }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          if (scenario.tree_control === "error") {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: "fixture tree navigation failed" }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          const entriesById = readSessionEntriesById(sessionFile);
+          const target = entriesById.get(payload.targetId);
+          if (!target) {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: `Entry ${payload.targetId} not found` }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          if (payload.targetId !== currentLeafId) {
+            const isUserOrCustom =
+              (target.type === "message" && target.message?.role === "user") ||
+              target.type === "custom_message";
+            currentLeafId = isUserOrCustom ? (target.parentId ?? null) : target.id;
+          }
+          record({ event: "tree_navigated", targetId: payload.targetId, leafId: currentLeafId });
+          writeRecord({
+            type: "extension_ui_request",
+            id: `status-${++dialogSequence}`,
+            method: "setStatus",
+            statusKey: "ovrcr_operator_tree_result",
+            statusText: JSON.stringify({ cancelled: false, leafId: currentLeafId, summaryEntry: null }),
+          });
+          respond("prompt", id);
+        })();
+        break;
+      }
+      record({ event: "prompt", id, message: command.message, parentLeafId: currentLeafId });
       const promptIndex = promptCount++;
       const promptResponse = scenario.prompt_responses?.[promptIndex] ?? scenario.prompt_response;
       if (promptResponse === "error") {

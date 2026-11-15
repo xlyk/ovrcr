@@ -2745,6 +2745,7 @@ mod wire_snapshot {
             session_epoch: 1,
             pi_session_id: Some("operator-1".into()),
             checkpoint_turn: Some(identity.turn),
+            active_tip_turn: Some(identity.turn),
             configured_model: Some("openai/model".into()),
             active_model: Some(OperatorModel {
                 provider: "openai".into(),
@@ -2758,11 +2759,13 @@ mod wire_snapshot {
             }),
             turns: 2,
             completed_turns: 2,
+            branch_turns: 2,
             user_messages: 2,
             assistant_messages: 2,
             tool_calls: 1,
             tool_results: 1,
             total_messages: 5,
+            epoch_total_messages: 5,
             tokens: OperatorTokenStats {
                 input: 100,
                 output: 50,
@@ -2836,6 +2839,20 @@ mod wire_snapshot {
                     instructions: Some("preserve branches".into()),
                 },
             ),
+            (
+                "Tree",
+                OperatorRequest::Tree {
+                    conversation: identity.conversation,
+                },
+            ),
+            (
+                "NavigateTree",
+                OperatorRequest::NavigateTree {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    target_entry_id: "entry-1".into(),
+                },
+            ),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2873,7 +2890,11 @@ mod wire_snapshot {
             ),
             (
                 "Completed",
-                OperatorWorkerEvent::Completed { leased: false },
+                OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: Some("entry-1".into()),
+                    pi_leaf_entry_id: Some("entry-2".into()),
+                },
             ),
             ("Failed", OperatorWorkerEvent::Failed("error".into())),
             (
@@ -3001,6 +3022,37 @@ mod wire_snapshot {
                 "SessionInfo",
                 OperatorResponse::SessionInfo(Box::new(session_info)),
             ),
+            (
+                "Tree",
+                OperatorResponse::Tree(Box::new(OperatorSessionTree {
+                    pi_session_id: Some("operator-1".into()),
+                    current_leaf_id: Some("entry-2".into()),
+                    entries: vec![
+                        OperatorTreeEntry {
+                            id: "entry-1".into(),
+                            parent_id: None,
+                            kind: OperatorTreeEntryKind::User,
+                            preview: "hello".into(),
+                        },
+                        OperatorTreeEntry {
+                            id: "entry-2".into(),
+                            parent_id: Some("entry-1".into()),
+                            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                            preview: "reply".into(),
+                        },
+                    ],
+                })),
+            ),
+            (
+                "TreeNavigated",
+                OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+                    conversation: summary.clone(),
+                    current_leaf_id: None,
+                    noop: false,
+                    editor_text: Some("hello".into()),
+                    restored_context: Some(context.clone()),
+                })),
+            ),
         ] {
             all.push((
                 format!("Response::Operator::{name}"),
@@ -3024,6 +3076,7 @@ mod wire_snapshot {
                         async_wakeup: false,
                     },
                     checkpoint_turn: Some(OperatorTurnId(2)),
+                    tree_target_id: Some("entry-1".into()),
                 }),
             ))),
         ));
@@ -3038,6 +3091,7 @@ mod wire_snapshot {
                         instructions: Some("preserve branches".into()),
                     },
                     checkpoint_turn: Some(OperatorTurnId(2)),
+                    tree_target_id: None,
                 }),
             ))),
         ));
@@ -3054,6 +3108,7 @@ mod wire_snapshot {
                         async_wakeup: false,
                     },
                     checkpoint_turn: Some(identity.turn),
+                    tree_target_id: None,
                 })),
             ))),
         ));
@@ -3076,6 +3131,7 @@ mod wire_snapshot {
                         async_wakeup: true,
                     },
                     checkpoint_turn: Some(identity.turn),
+                    tree_target_id: None,
                 }))),
             )),
         ));
@@ -4802,6 +4858,11 @@ mod wire_snapshot {
             "Request::Operator::CompactInstructions",
             "3908010401117072657365727665206272616e63686573",
         ),
+        ("Request::Operator::Tree", "390901"),
+        (
+            "Request::Operator::NavigateTree",
+            "390a010407656e7472792d31",
+        ),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -4820,7 +4881,7 @@ mod wire_snapshot {
         ),
         (
             "Request::OperatorExchange::Completed",
-            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010400",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104000107656e7472792d310107656e7472792d32",
         ),
         (
             "Request::OperatorExchange::Failed",
@@ -4895,25 +4956,33 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::SessionInfo",
-            "190701030401010a6f70657261746f722d310102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c05010505020305020202020101056432190ab9fc60e3160001b901fc400d0300",
+            "190701030401010a6f70657261746f722d3101020102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c050105050203050202020202010105056432190ab9fc60e3160001b901fc400d0300",
+        ),
+        (
+            "Response::Operator::Tree",
+            "1908010a6f70657261746f722d310107656e7472792d320207656e7472792d3100000568656c6c6f07656e7472792d320107656e7472792d310100057265706c79",
+        ),
+        (
+            "Response::Operator::TreeNavigated",
+            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020000010568656c6c6f0101017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c000568656c6c6f01017001056c6162656c0106737461626c6501022f770105010600010200",
+            "1b0001020304010c6f70656e61692f6d6f64656c000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
         ),
         (
             "Response::OperatorWorker::StartCompact",
-            "1b0001020304000101117072657365727665206272616e63686573010200",
+            "1b0001020304000101117072657365727665206272616e6368657301020000",
         ),
         (
             "Response::OperatorWorker::StartTurn",
-            "1b0101010203040000047761726d01017001056c6162656c0106737461626c6501022f770105010600010200",
+            "1b0101010203040000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
         ),
         ("Response::OperatorWorker::StartTurnNone", "1b0100"),
         (
             "Response::OperatorWorker::BeginAsyncTurn",
-            "1b04010102030400000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f770105010601010200",
+            "1b04010102030400000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
         ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),

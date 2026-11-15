@@ -2024,7 +2024,7 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
     );
     ui.dashboard.key(KeyCode::Esc);
 
-    // 2. Full Operator `/` menu shows registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`, `/compact`) and
+    // 2. Full Operator `/` menu shows all 7 registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`, `/compact`, `/tree`) and
     //    dismisses cleanly on `Esc` without leaving Operator.
     ui.dashboard.event_action(Event::Paste("/".into()));
     let menu_screen = ui.render();
@@ -2035,7 +2035,7 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
             && menu_screen.contains("/new")
             && menu_screen.contains("/session")
             && menu_screen.contains("/compact [instructions]")
-            && !menu_screen.contains("/tree"),
+            && menu_screen.contains("/tree"),
         "{menu_screen}"
     );
     assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
@@ -3353,6 +3353,339 @@ fn dashboard_slash_compact_and_stop_rollback_work_end_to_end() {
         1,
         "post-`/new` refused `/compact` must not spawn Pi"
     );
+}
+
+#[test]
+fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{ErrorCode, OperatorResponse};
+    use ovrcr::tui::DashboardAction;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let release_turn_four = live.root.path().join("release-turn-four");
+
+    let mut s1 = Scenario::new();
+    s1.steps(vec![Step::assistant("Root reply one."), Step::Settle]);
+    fake.script(&s1);
+
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `Ctrl-o` Quick message `/tree` transitions into full Operator and reports empty state
+    //    without spawning `pi`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let cold_tree = ui.render();
+    assert!(
+        !cold_tree.contains("Quick message · Ctrl-o")
+            && cold_tree.contains("Operator tree · /tree")
+            && cold_tree.contains("No turns in this Operator session yet."),
+        "cold `/tree` unexpected:\n{cold_tree}"
+    );
+    assert!(fake.log().is_empty(), "cold `/tree` must never spawn Pi");
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Run Turn 1 (`Seed root turn`) and Turn 2 (`Branch alpha prompt`).
+    ui.dashboard
+        .event_action(Event::Paste("Seed root turn".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Root reply one.") && history.conversation.worker_stopped
+    });
+
+    let mut s2 = Scenario::new();
+    s2.steps(vec![Step::assistant("Branch alpha reply."), Step::Settle]);
+    fake.script(&s2);
+
+    ui.dashboard
+        .event_action(Event::Paste("Branch alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let alpha_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Branch alpha reply.") && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&alpha_history, "Root reply one."));
+    assert!(has_assistant(&alpha_history, "Branch alpha reply."));
+
+    let starts_after_alpha = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_after_alpha, 2);
+
+    // 3. Open `/tree` (zero Pi spawns!), verify unwrapped user prompts, select `Branch alpha prompt`
+    //    (`Up` from active leaf `Branch alpha reply.`), and press `Enter` to rewind!
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let linear_tree = ui.render();
+    assert!(
+        linear_tree.contains("● user: Seed root turn")
+            && linear_tree.contains("● assistant: Root reply one.")
+            && linear_tree.contains("● user: Branch alpha prompt")
+            && linear_tree.contains("● assistant: Branch alpha reply. ← active")
+            && !linear_tree.contains("Captured OVRCR context"),
+        "expected clean unwrapped prompts in `/tree`:\n{linear_tree}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_alpha,
+        "`/tree` inspection must never spawn Pi"
+    );
+
+    ui.dashboard.key(KeyCode::Up);
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_alpha,
+        "zero-token `/tree` rewind must never spawn Pi"
+    );
+
+    let rewound_screen = ui.render();
+    assert!(
+        !rewound_screen.contains("Operator tree · /tree")
+            && rewound_screen.contains("Root reply one.")
+            && !rewound_screen.contains("Branch alpha reply.")
+            && rewound_screen.contains("> Branch alpha prompt▏"),
+        "user rewind must project Turn 1 feed and restore unwrapped prompt to composer:\n{rewound_screen}"
+    );
+
+    // `/copy` follows the rewound active branch (`Root reply one.`), not `Branch alpha reply.`.
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    match ui.dashboard.key(KeyCode::Enter) {
+        DashboardAction::CopyText(text) => assert_eq!(text, "Root reply one."),
+        other => panic!("expected CopyText of rewound branch tip, got {other:?}"),
+    }
+
+    // 4. Submit Turn 3 (`Branch beta prompt`) on the rewound branch: cold worker restores exact leaf
+    //    via `/ovrcr_tree_control` (`summarize: false`) before prompting, creating sibling Branch B!
+    let mut s3 = Scenario::new();
+    s3.steps(vec![Step::assistant("Branch beta reply."), Step::Settle]);
+    fake.script(&s3);
+
+    ui.dashboard
+        .event_action(Event::Paste("Branch beta prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let beta_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Branch beta reply.") && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&beta_history, "Root reply one."));
+    assert!(has_assistant(&beta_history, "Branch beta reply."));
+    assert!(
+        !has_assistant(&beta_history, "Branch alpha reply."),
+        "active Branch B feed must exclude sibling Branch A"
+    );
+    assert!(
+        fake.log()
+            .iter()
+            .any(|entry| { entry["event"] == "tree_control" && entry["summarize"] == false }),
+        "expected cold worker to execute authorized tree_control leaf restoration: {:?}",
+        fake.log()
+    );
+
+    // 5. Open `/tree` and verify both diverging branches (`├─` / `└─` / `│`) are preserved;
+    //    switch to Branch A (`Branch alpha reply.`), inspect `/session` branch vs epoch counts,
+    //    then switch back to Branch B (`Branch beta reply.`) — all with zero Pi spawns!
+    let starts_after_beta = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_after_beta, 3);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let branched_tree = ui.render();
+    for expected in [
+        "● user: Seed root turn",
+        "● assistant: Root reply one.",
+        "├─   user: Branch alpha prompt",
+        "│    assistant: Branch alpha reply.",
+        "└─ ● user: Branch beta prompt",
+        "● assistant: Branch beta reply. ← active",
+    ] {
+        assert!(
+            branched_tree.contains(expected),
+            "expected `{expected}` in branched `/tree`:\n{branched_tree}"
+        );
+    }
+
+    ui.dashboard
+        .event_action(Event::Paste("alpha assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let on_alpha = ui.render();
+    assert!(
+        on_alpha.contains("Branch alpha reply.")
+            && !on_alpha.contains("Branch beta reply.")
+            && on_alpha.contains("> ▏"),
+        "switching to assistant leaf `Branch alpha reply.` must update feed with empty composer:\n{on_alpha}"
+    );
+
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let session_on_alpha = ui.render();
+    assert!(
+        session_on_alpha.contains("2 on branch · 3 total (3 completed)"),
+        "expected active-branch vs epoch turn counts in `/session`:\n{session_on_alpha}"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // Switch back to Branch B (`Branch beta reply.`).
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard
+        .event_action(Event::Paste("beta assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let back_on_beta = ui.render();
+    assert!(
+        back_on_beta.contains("Branch beta reply.")
+            && !back_on_beta.contains("Branch alpha reply."),
+        "switching back to Branch B must restore Branch B feed:\n{back_on_beta}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_beta,
+        "switching back and forth across `/tree` branches must spawn zero Pi processes"
+    );
+
+    // 6. Start Turn 4 (held mid-flight) -> read-only `/tree` works while `Running`, whereas
+    //    branch navigation refuses cleanly while `Running` AND while `watch_sessions` lease is active!
+    let mut s4 = Scenario::new();
+    s4.prompt_steps(vec![
+        vec![
+            Step::WaitFile(release_turn_four.clone()),
+            Step::WatchStatus(1),
+            Step::assistant("Watched leaf reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch released."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&s4);
+
+    ui.dashboard
+        .event_action(Event::Paste("Start watched turn".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let running = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+    });
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert!(ui.render().contains("Branch alpha reply."));
+    ui.dashboard
+        .event_action(Event::Paste("alpha assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    assert!(
+        ui.render()
+            .contains("Cannot switch Operator tree branch while a turn is running."),
+    );
+    ui.dashboard.key(KeyCode::Esc);
+
+    let tree_resp = match ui.exchange(Request::Operator(OperatorRequest::Tree {
+        conversation: conversation_id,
+    })) {
+        Response::Operator(OperatorResponse::Tree(tree)) => tree,
+        other => panic!("expected Tree response while running, got {other:?}"),
+    };
+    let alpha_id = tree_resp
+        .entries
+        .iter()
+        .find(|e| e.preview.contains("Branch alpha reply."))
+        .expect("alpha entry")
+        .id
+        .clone();
+    match ui.exchange(Request::Operator(OperatorRequest::NavigateTree {
+        conversation: conversation_id,
+        expected_run: running.conversation.run,
+        target_entry_id: alpha_id.clone(),
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        } => {}
+        other => panic!("expected Conflict navigating tree while Running, got {other:?}"),
+    }
+
+    // Release Turn 4 into active `watch_sessions` warm lease -> navigation still refuses!
+    std::fs::write(&release_turn_four, b"go\n").unwrap();
+    let leased = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+    match ui.exchange(Request::Operator(OperatorRequest::NavigateTree {
+        conversation: conversation_id,
+        expected_run: leased.conversation.run,
+        target_entry_id: alpha_id,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict navigating tree while leased, got {other:?}"),
+    }
+
+    // Finish the watch lease cleanly.
+    ui.dashboard
+        .event_action(Event::Paste("Release watch".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Watch released.") && history.conversation.worker_stopped
+    });
 }
 
 #[cfg(feature = "acceptance-diagnostics")]

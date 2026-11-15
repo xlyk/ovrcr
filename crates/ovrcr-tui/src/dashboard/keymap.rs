@@ -577,6 +577,18 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 ],
             }];
         }
+        if dashboard.operator_tree_modal_open() {
+            return vec![KeyGroup {
+                title: "Operator tree".into(),
+                keys: vec![
+                    native("↑/↓", "Select node", KeyCode::Down, KeyModifiers::NONE),
+                    native("Enter", "Switch / rewind", Enter, KeyModifiers::NONE),
+                    native("Ctrl-f", "Filter mode", Char('f'), KeyModifiers::CONTROL),
+                    native("Ctrl-c", "Clear search", Char('c'), KeyModifiers::CONTROL),
+                    native("Esc", "Close", Esc, KeyModifiers::NONE),
+                ],
+            }];
+        }
         if dashboard.operator_slash_menu_open() {
             return vec![KeyGroup {
                 title: "Operator commands".into(),

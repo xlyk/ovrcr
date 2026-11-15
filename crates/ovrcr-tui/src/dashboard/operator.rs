@@ -5,6 +5,7 @@ mod feed;
 mod markdown;
 mod render;
 mod slash;
+mod tree;
 
 use super::text_cursor::TextCursor;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -16,8 +17,8 @@ use ovrcr_protocol::{
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
     OperatorMessageContent, OperatorModelCatalogEntry, OperatorRequest, OperatorResponse,
     OperatorSessionInfo, OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus,
-    OperatorTurnId, OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request,
-    Response, SessionId, SessionRunId,
+    OperatorTreeEntryKind, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState,
+    OperatorWorkerEvent, Request, Response, SessionId, SessionRunId,
 };
 use ratatui::{
     Frame,
@@ -27,6 +28,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use tree::{MAX_TREE_SEARCH_BYTES, TreeModal, TreePicker};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
@@ -54,6 +56,8 @@ pub(super) struct Hub {
     pending_model_notice: Option<String>,
     session_modal: Option<SessionModal>,
     pending_session_info: bool,
+    tree_modal: Option<TreeModal>,
+    pending_tree_modal: bool,
     slash_selected: usize,
     slash_dismissed_for: Option<String>,
 }
@@ -276,6 +280,25 @@ impl Chat {
         }
         Ok(())
     }
+    fn can_navigate_tree(&self) -> Result<(), &'static str> {
+        if self.submitting || self.stopping {
+            return Err("Cannot switch Operator tree branch while a turn or stop is in progress.");
+        }
+        if self
+            .summary
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+        {
+            return Err("Cannot switch Operator tree branch while a turn is running.");
+        }
+        if !self.summary.worker_stopped || self.summary.worker_live {
+            return Err(
+                "Cannot switch Operator tree branch while a watched-session lease or worker is active.",
+            );
+        }
+        Ok(())
+    }
     /// Enter and mouse share this toggle; the choice outlives the default.
     fn toggle_entry(&mut self, entry: render::TranscriptEntry) {
         self.expanded.insert(entry.ordinal, !entry.expanded);
@@ -328,6 +351,12 @@ enum Pending {
         origin: SubmitOrigin,
     },
     SessionInfo {
+        id: Id,
+    },
+    Tree {
+        id: Id,
+    },
+    NavigateTree {
         id: Id,
     },
 }
@@ -674,6 +703,7 @@ impl Dashboard {
                             slash::SlashCommandKind::Compact => {
                                 self.operator_run_compact(args, true)
                             }
+                            slash::SlashCommandKind::Tree => self.operator_run_tree(args, true),
                         };
                     }
                     let Some(quick) = &mut self.operator.quick else {
@@ -1043,6 +1073,10 @@ impl Dashboard {
         self.operator.session_modal.is_some()
     }
 
+    pub(super) fn operator_tree_modal_open(&self) -> bool {
+        self.operator.tree_modal.is_some()
+    }
+
     fn operator_slash_menu_specs(&self) -> Vec<&'static slash::SlashCommandSpec> {
         if !self.operator.visible
             || !self.operator.editing
@@ -1050,6 +1084,7 @@ impl Dashboard {
             || self.operator.reasoning_picker.is_some()
             || self.operator.model_picker.is_some()
             || self.operator.session_modal.is_some()
+            || self.operator.tree_modal.is_some()
         {
             return Vec::new();
         }
@@ -1420,6 +1455,8 @@ impl Dashboard {
         self.operator.model_picker = None;
         self.operator.pending_model_picker = None;
         self.operator.pending_model_notice = None;
+        self.operator.tree_modal = None;
+        self.operator.pending_tree_modal = false;
         self.operator.session_modal = Some(SessionModal::Loading);
         if !self
             .operator
@@ -1432,6 +1469,189 @@ impl Dashboard {
                 OperatorRequest::SessionInfo { conversation: id },
             );
         }
+    }
+
+    fn operator_open_tree(&mut self) {
+        self.operator.pending_tree_modal = false;
+        let Some(id) = self.operator.chat.as_ref().map(|chat| chat.summary.id) else {
+            return;
+        };
+        self.operator.reasoning_picker = None;
+        self.operator.pending_reasoning_picker = false;
+        self.operator.model_picker = None;
+        self.operator.pending_model_picker = None;
+        self.operator.pending_model_notice = None;
+        self.operator.session_modal = None;
+        self.operator.pending_session_info = false;
+        self.operator.tree_modal = Some(TreeModal::Loading);
+        if !self
+            .operator
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::Tree { .. }))
+        {
+            self.operator_request(
+                Pending::Tree { id },
+                OperatorRequest::Tree { conversation: id },
+            );
+        }
+    }
+
+    fn operator_run_tree(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        if !args.is_empty() {
+            let error = "Usage: /tree (takes no arguments).";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.draft.clear();
+            chat.cursor = TextCursor::default();
+            chat.error = None;
+            chat.notice = None;
+        }
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if from_quick {
+            self.operator.quick = None;
+            self.operator.pending_tree_modal = true;
+            self.open_operator();
+            if self.operator.chat.is_some() {
+                self.operator_open_tree();
+            }
+        } else {
+            self.operator_open_tree();
+        }
+        DashboardAction::Redraw
+    }
+
+    fn operator_tree_modal_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.code == KeyCode::Esc {
+            self.operator.tree_modal = None;
+            self.operator.pending_tree_modal = false;
+            return DashboardAction::Redraw;
+        }
+        let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() else {
+            return DashboardAction::Redraw;
+        };
+        if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('f'))
+            || (key.modifiers.is_empty() && key.code == KeyCode::Tab)
+        {
+            picker.cycle_filter(true);
+            return DashboardAction::Redraw;
+        }
+        if key.code == KeyCode::BackTab {
+            picker.cycle_filter(false);
+            return DashboardAction::Redraw;
+        }
+        match key.code {
+            KeyCode::Up if key.modifiers.is_empty() => {
+                picker.selected = picker.selected.saturating_sub(1);
+                return DashboardAction::Redraw;
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                let len = picker.visible_rows().len();
+                if len > 0 {
+                    picker.selected = (picker.selected + 1).min(len - 1);
+                }
+                return DashboardAction::Redraw;
+            }
+            KeyCode::PageUp if key.modifiers.is_empty() => {
+                picker.selected = picker.selected.saturating_sub(8);
+                return DashboardAction::Redraw;
+            }
+            KeyCode::PageDown if key.modifiers.is_empty() => {
+                let len = picker.visible_rows().len();
+                if len > 0 {
+                    picker.selected = (picker.selected + 8).min(len - 1);
+                }
+                return DashboardAction::Redraw;
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                if picker.submitting {
+                    return DashboardAction::Redraw;
+                }
+                if picker.tree.entries.is_empty() {
+                    self.operator.tree_modal = None;
+                    self.operator.pending_tree_modal = false;
+                    return DashboardAction::Redraw;
+                }
+                let Some(entry) = picker.selected_entry().cloned() else {
+                    return DashboardAction::Redraw;
+                };
+                if TreePicker::is_noop_selection(&picker.tree, &entry) {
+                    self.operator.tree_modal = None;
+                    self.operator.pending_tree_modal = false;
+                    return DashboardAction::Redraw;
+                }
+                let check = self
+                    .operator
+                    .chat
+                    .as_ref()
+                    .map(|chat| (chat.summary.id, chat.summary.run, chat.can_navigate_tree()));
+                let Some((id, expected_run, result)) = check else {
+                    return DashboardAction::Redraw;
+                };
+                if let Err(reason) = result {
+                    if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                        picker.error = Some(reason.into());
+                    }
+                    if let Some(chat) = self.operator.chat.as_mut() {
+                        chat.notice = None;
+                        chat.error = Some(reason.into());
+                    }
+                    return DashboardAction::Redraw;
+                }
+                if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                    picker.submitting = true;
+                    picker.error = None;
+                }
+                self.operator_request(
+                    Pending::NavigateTree { id },
+                    OperatorRequest::NavigateTree {
+                        conversation: id,
+                        expected_run,
+                        target_entry_id: entry.id,
+                    },
+                );
+                return DashboardAction::Redraw;
+            }
+            _ => {}
+        }
+        let before = picker.query.clone();
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+            picker.query.clear();
+            picker.cursor = TextCursor::default();
+        } else if !picker.cursor.edit_key(&mut picker.query, key) {
+            match key.code {
+                KeyCode::Char(ch)
+                    if !ch.is_control()
+                        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
+                {
+                    let ch_str = ch.to_string();
+                    if picker.query.len().saturating_add(ch_str.len()) <= MAX_TREE_SEARCH_BYTES {
+                        picker.cursor.insert(&mut picker.query, &ch_str);
+                    }
+                }
+                KeyCode::Backspace
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => picker.cursor.key(&mut picker.query, key.code),
+                _ => {}
+            }
+        }
+        if picker.query != before {
+            picker.on_query_changed();
+        }
+        DashboardAction::Redraw
     }
 
     fn operator_run_session(&mut self, args: &str, from_quick: bool) -> DashboardAction {
@@ -1484,6 +1704,8 @@ impl Dashboard {
         self.operator.pending_model_notice = None;
         self.operator.session_modal = None;
         self.operator.pending_session_info = false;
+        self.operator.tree_modal = None;
+        self.operator.pending_tree_modal = false;
         let choices = slash::allowed_thinking_levels(Some(
             &self
                 .operator
@@ -1556,6 +1778,8 @@ impl Dashboard {
         self.operator.pending_reasoning_picker = false;
         self.operator.session_modal = None;
         self.operator.pending_session_info = false;
+        self.operator.tree_modal = None;
+        self.operator.pending_tree_modal = false;
         self.operator.error = None;
         if let Some(chat) = self.operator.chat.as_mut() {
             chat.error = None;
@@ -1727,6 +1951,9 @@ impl Dashboard {
         if self.operator.session_modal.is_some() {
             return self.operator_session_modal_key(key);
         }
+        if self.operator.tree_modal.is_some() {
+            return self.operator_tree_modal_key(key);
+        }
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('t') {
             self.operator_open_reasoning();
             return DashboardAction::Redraw;
@@ -1780,6 +2007,7 @@ impl Dashboard {
                         slash::SlashCommandKind::New => self.operator_run_new("", false),
                         slash::SlashCommandKind::Session => self.operator_run_session("", false),
                         slash::SlashCommandKind::Compact => self.operator_run_compact("", false),
+                        slash::SlashCommandKind::Tree => self.operator_run_tree("", false),
                     };
                 }
                 _ => {}
@@ -1795,6 +2023,8 @@ impl Dashboard {
             self.operator.pending_model_notice = None;
             self.operator.pending_session_info = false;
             self.operator.session_modal = None;
+            self.operator.pending_tree_modal = false;
+            self.operator.tree_modal = None;
             self.retarget(super::state::PaneChange::Focus);
             // Ctrl-g is the navigation key: leaving Operator with it also
             // opens the label picker. Esc only leaves.
@@ -1950,6 +2180,7 @@ impl Dashboard {
                         slash::SlashCommandKind::New => self.operator_run_new(args, false),
                         slash::SlashCommandKind::Session => self.operator_run_session(args, false),
                         slash::SlashCommandKind::Compact => self.operator_run_compact(args, false),
+                        slash::SlashCommandKind::Tree => self.operator_run_tree(args, false),
                     };
                 }
                 self.operator_submit();
@@ -2009,6 +2240,22 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
+        if let Some(modal) = self.operator.tree_modal.as_mut() {
+            if let TreeModal::Loaded(picker) = modal {
+                let clean: String = text.chars().filter(|ch| !ch.is_control()).collect();
+                if !clean.is_empty()
+                    && picker.query.len().saturating_add(clean.len()) <= MAX_TREE_SEARCH_BYTES
+                {
+                    let before = picker.query.clone();
+                    picker.cursor.insert(&mut picker.query, &clean);
+                    if picker.query != before {
+                        picker.on_query_changed();
+                    }
+                }
+                return DashboardAction::Redraw;
+            }
+            return DashboardAction::None;
+        }
         if self.operator.session_modal.is_some() || self.operator.reasoning_picker.is_some() {
             return DashboardAction::None;
         }
@@ -2063,6 +2310,13 @@ impl Dashboard {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.operator.session_modal = None;
                 self.operator.pending_session_info = false;
+            }
+            return Some(DashboardAction::Redraw);
+        }
+        if self.operator.tree_modal.is_some() {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                self.operator.tree_modal = None;
+                self.operator.pending_tree_modal = false;
             }
             return Some(DashboardAction::Redraw);
         }
@@ -2137,7 +2391,10 @@ impl Dashboard {
                     chat.stopping = false;
                 }
             }
-            Pending::NewSession { .. } | Pending::SessionInfo { .. } => {}
+            Pending::NewSession { .. }
+            | Pending::SessionInfo { .. }
+            | Pending::Tree { .. }
+            | Pending::NavigateTree { .. } => {}
         }
         if let Response::Error { message, .. } = response {
             if matches!(pending, Pending::Open { .. }) {
@@ -2145,9 +2402,19 @@ impl Dashboard {
                 self.operator.pending_model_picker = None;
                 self.operator.pending_model_notice = None;
                 self.operator.pending_session_info = false;
+                self.operator.pending_tree_modal = false;
             }
             if matches!(pending, Pending::SessionInfo { .. }) {
                 self.operator.session_modal = None;
+            }
+            if matches!(pending, Pending::Tree { .. }) {
+                self.operator.tree_modal = None;
+            }
+            if matches!(pending, Pending::NavigateTree { .. })
+                && let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut()
+            {
+                picker.submitting = false;
+                picker.error = Some(display_text(message));
             }
             if let Pending::Models { intent } = &pending {
                 match intent {
@@ -2205,6 +2472,8 @@ impl Dashboard {
                     | Pending::Stop { .. }
                     | Pending::NewSession { .. }
                     | Pending::SessionInfo { .. }
+                    | Pending::Tree { .. }
+                    | Pending::NavigateTree { .. }
             );
             if chat_error {
                 if let Some(chat) = self.operator.chat.as_mut() {
@@ -2300,6 +2569,7 @@ impl Dashboard {
                     self.operator.pending_model_picker = None;
                     self.operator.pending_model_notice = None;
                     self.operator.pending_session_info = false;
+                    self.operator.pending_tree_modal = false;
                     match origin {
                         OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
                         OpenOrigin::Quick(submission) => {
@@ -2334,6 +2604,12 @@ impl Dashboard {
                             self.operator.pending_session_info = false;
                             if self.operator.visible {
                                 self.operator_open_session_info();
+                            }
+                        }
+                        if self.operator.pending_tree_modal {
+                            self.operator.pending_tree_modal = false;
+                            if self.operator.visible {
+                                self.operator_open_tree();
                             }
                         }
                         self.operator_read();
@@ -2626,6 +2902,83 @@ impl Dashboard {
                     self.operator.session_modal = Some(SessionModal::Loaded(info.clone()));
                 }
             }
+            (Pending::Tree { id }, Response::Operator(OperatorResponse::Tree(tree)))
+                if self
+                    .operator
+                    .chat
+                    .as_ref()
+                    .is_some_and(|chat| chat.summary.id == id) =>
+            {
+                if self.operator.tree_modal.is_some() {
+                    self.operator.tree_modal =
+                        Some(TreeModal::Loaded(TreePicker::new((**tree).clone())));
+                }
+            }
+            (
+                Pending::NavigateTree { id },
+                Response::Operator(OperatorResponse::TreeNavigated(nav)),
+            ) if nav.conversation.id == id => {
+                self.operator.tree_modal = None;
+                self.operator.pending_tree_modal = false;
+                let attach_context = nav.restored_context.clone().unwrap_or_else(|| {
+                    self.operator.chat.as_ref().map_or_else(
+                        || self.operator.context.clone(),
+                        |chat| chat.context.clone(),
+                    )
+                });
+                if !self.operator_attach(nav.conversation.clone(), attach_context) {
+                    self.operator.error = Some(UNAVAILABLE_REASON.into());
+                    return true;
+                }
+                if !nav.noop {
+                    self.operator
+                        .pending
+                        .retain(|_, pending| !matches!(pending, Pending::Read { id: pid, .. } if *pid == id));
+                    if let Some(chat) = self.operator.chat.as_mut() {
+                        chat.messages.clear();
+                        chat.ordinal = 0;
+                        chat.confirmed_tail = None;
+                        chat.reading = false;
+                        chat.dirty = true;
+                        chat.scroll = 0;
+                        chat.anchor = None;
+                        chat.expanded.clear();
+                        chat.entry_focus = None;
+                        chat.follow = true;
+                        chat.compact_turn = None;
+                        *chat.rows.borrow_mut() = None;
+                        chat.error = None;
+                        if let Some(text) = &nav.editor_text {
+                            chat.draft = text.clone();
+                            chat.cursor = TextCursor::default();
+                            if let Some(ctx) = &nav.restored_context {
+                                chat.context = ctx.clone();
+                            }
+                            chat.notice = Some(
+                                "Rewound Operator branch; prompt restored to composer.".into(),
+                            );
+                        } else {
+                            chat.draft.clear();
+                            chat.cursor = TextCursor::default();
+                            chat.notice = Some("Switched Operator branch.".into());
+                        }
+                        if let Some(quick) = self.operator.quick.as_mut()
+                            && quick.seeded
+                        {
+                            quick.text = chat.draft.clone();
+                            quick.cursor = chat.cursor;
+                            if let Some(ctx) = &nav.restored_context {
+                                quick.context = ctx.clone();
+                            }
+                        }
+                    }
+                    self.operator.editing = true;
+                    self.operator.transcript_focus = false;
+                    self.operator.slash_selected = 0;
+                    self.operator.slash_dismissed_for = None;
+                    self.operator_read();
+                }
+            }
             (pending, _) => {
                 match pending {
                     Pending::Open {
@@ -2726,6 +3079,9 @@ impl Dashboard {
             self.operator.pending_model_picker = None;
             self.operator.pending_model_notice = None;
             self.operator.session_modal = None;
+            self.operator.pending_session_info = false;
+            self.operator.tree_modal = None;
+            self.operator.pending_tree_modal = false;
             chat.summary = summary;
             self.operator_quick_adopt_draft();
             return true;
@@ -2826,6 +3182,7 @@ impl Dashboard {
             || self.operator_reasoning_picker_open()
             || self.operator_model_picker_open()
             || self.operator_session_modal_open()
+            || self.operator_tree_modal_open()
         {
             return;
         }
@@ -3049,7 +3406,11 @@ mod tests {
     fn completed(ordinal: u64) -> OperatorMessage {
         message(
             ordinal,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         )
     }
     fn draw(d: &mut Dashboard, cols: u16, rows: u16) -> String {
@@ -3660,9 +4021,11 @@ mod tests {
                 )),
             };
             let terminal = match outcome {
-                "complete" => {
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false })
-                }
+                "complete" => OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: None,
+                    pi_leaf_entry_id: None,
+                }),
                 "failed" => OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
                     "wake up failed".into(),
                 )),

@@ -2725,3 +2725,220 @@ fn manual_compact_failures_and_corrupt_snapshot_roll_back_without_promoting_or_l
         assert_eq!(std::fs::read(&checkpoint_path).unwrap(), baseline_bytes);
     }
 }
+
+#[test]
+fn tree_target_restores_leaf_on_cold_start_and_warm_rollback_and_tracks_entry_ids() {
+    use ovrcr::protocol::{OperatorRequest, OperatorResponse, OperatorTreeEntryKind};
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    // 1. Complete Turn 1 (root) and Turn 2 (Branch A).
+    let turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    // Inspect Tree via real Server -> verify unwrapped prompts + 2 user + 2 assistant entries.
+    let Response::Operator(OperatorResponse::Tree(tree_initial)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let user_entries: Vec<_> = tree_initial
+        .entries
+        .iter()
+        .filter(|e| e.kind == OperatorTreeEntryKind::User)
+        .collect();
+    let assistant_entries: Vec<_> = tree_initial
+        .entries
+        .iter()
+        .filter(|e| matches!(e.kind, OperatorTreeEntryKind::Assistant { .. }))
+        .collect();
+    assert_eq!(user_entries.len(), 2);
+    assert_eq!(user_entries[0].preview, "root prompt");
+    assert_eq!(user_entries[1].preview, "branch A prompt");
+    assert_eq!(assistant_entries.len(), 2);
+    let turn_one_assistant_id = assistant_entries[0].id.clone();
+    let turn_two_user_id = user_entries[1].id.clone();
+
+    // Verify worker recorded `pi_first_entry_id` and `pi_leaf_entry_id` in SQLite for both turns!
+    {
+        let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        let (t1_first, t1_leaf): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT pi_first_entry_id, pi_leaf_entry_id FROM operator_turns WHERE id=?1",
+                [turn_one.identity.turn.0 as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let (t2_first, t2_leaf): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT pi_first_entry_id, pi_leaf_entry_id FROM operator_turns WHERE id=?1",
+                [turn_two.identity.turn.0 as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(t1_first.is_some());
+        assert_eq!(t1_leaf.as_deref(), Some(turn_one_assistant_id.as_str()));
+        assert!(t2_first.is_some());
+        assert!(t2_leaf.is_some());
+    }
+
+    // 2. NavigateTree to `turn_two_user_id` (user rewind -> rewinds active leaf to `turn_one_assistant_id`).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    assert_eq!(
+        rewound.current_leaf_id.as_deref(),
+        Some(turn_one_assistant_id.as_str())
+    );
+    assert_eq!(rewound.editor_text.as_deref(), Some("branch A prompt"));
+
+    // 3. Test warm rollback re-applying `tree_target_id`:
+    // Start Turn 3 cold with `tree_target_id = Some(turn_two_user_id)`. During Turn 3, set active watch = 1
+    // and hold until Stop aborts Turn 3 -> worker rolls back via `switch_session` AND re-applies `tree_target_id`,
+    // then Turn 4 runs warm on the same worker and branches from `turn_one_assistant_id`!
+    let reached_hold = live.root.path().join("tree-rollback-hold");
+    fake.clear_log();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::Delta("partial before abort".into()),
+            Step::Tool {
+                id: "touch-hold".into(),
+                name: "write".into(),
+                input: json!({"path": reached_hold.display().to_string(), "content": "ready"}),
+                output: "ok".into(),
+                status: "succeeded",
+                truncated: false,
+                marker: Some(reached_hold.clone()),
+            },
+            Step::Hold,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Branch B answer after rollback."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&scenario);
+
+    let turn_three = client.submit_turn(&rewound.conversation, "aborted branch attempt");
+    let deadline = std::time::Instant::now() + harness::BUDGET;
+    while !reached_hold.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "turn 3 did not reach hold"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(matches!(
+        client.exchange(Request::Operator(OperatorRequest::Stop {
+            identity: turn_three.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    let after_abort = client.wait_history(opened.id, |h| {
+        h.conversation.current_turn.as_ref().is_some_and(|t| {
+            t.identity == turn_three.identity && t.state == OperatorTurnState::Interrupted
+        })
+    });
+    assert!(
+        after_abort.conversation.worker_live,
+        "leased worker stays warm across aborted Turn 3"
+    );
+
+    // Submit Turn 4 warm on the same worker!
+    let turn_four = client.submit_turn(&after_abort.conversation, "branch B prompt");
+    assert_eq!(turn_four.identity.run, turn_three.identity.run);
+    let after_four = client.wait_stopped(opened.id);
+    assert!(harness::has_assistant(
+        &after_four,
+        "Branch B answer after rollback."
+    ));
+
+    // Verify fake-pi executed `/ovrcr_tree_control` TWICE (once on cold start, once after rollback switch_session),
+    // and that Turn 4's prompt had `parentLeafId == turn_one_assistant_id`!
+    let tree_navs = fake.events("tree_navigated");
+    assert_eq!(
+        tree_navs.len(),
+        2,
+        "expected cold + rollback tree_navigated events: {:#?}",
+        fake.log()
+    );
+    for nav in &tree_navs {
+        assert_eq!(nav["targetId"], turn_two_user_id);
+        assert_eq!(nav["leafId"], turn_one_assistant_id);
+    }
+    let prompts = fake.events("prompt");
+    assert_eq!(prompts.len(), 2, "{prompts:#?}");
+    assert_eq!(prompts[0]["parentLeafId"], turn_one_assistant_id);
+    assert_eq!(prompts[1]["parentLeafId"], turn_one_assistant_id);
+
+    // And SQLite cleared `pi_tree_target_id = NULL` once Turn 4 completed, while `Tree` shows both sibling branches!
+    let Response::Operator(OperatorResponse::Tree(final_tree)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected final Tree");
+    };
+    let branch_children: Vec<_> = final_tree
+        .entries
+        .iter()
+        .filter(|e| e.parent_id.as_deref() == Some(turn_one_assistant_id.as_str()))
+        .collect();
+    assert_eq!(
+        branch_children.len(),
+        2,
+        "both Branch A and Branch B user prompts must hang off Turn 1's assistant leaf: {final_tree:#?}"
+    );
+}
+
+#[test]
+fn unsolicited_tree_control_dialog_is_rejected_and_fails_the_turn() {
+    let marker = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+    let marker_path = marker.to_path_buf();
+    drop(marker);
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::UnsolicitedTreeControl {
+            target_id: "u1".into(),
+            marker: Some(marker_path.clone()),
+        },
+        Step::assistant("must never complete"),
+        Step::Settle,
+    ]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "trigger unsolicited tree confirm");
+    let failed = client.wait_terminal(opened.id);
+    client.wait_stopped(opened.id);
+
+    assert_eq!(
+        failed.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Error
+    );
+    assert_eq!(
+        failed_text(&failed).as_deref(),
+        Some("Unsupported Pi interaction; the turn was stopped.")
+    );
+    assert!(!marker_path.exists());
+    let unsolicited = fake.events("unsolicited_tree_control");
+    assert_eq!(unsolicited.len(), 1);
+    assert_eq!(unsolicited[0]["confirmed"], false);
+}

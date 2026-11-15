@@ -106,6 +106,7 @@ try {
 
   const handlers = new Map();
   const tools = new Map();
+  const commands = new Map();
   const sessionsPath = join(dir, "sessions.json");
   const cliPath = join(dir, "ovrcr");
   const gatePath = join(dir, "poll-gate");
@@ -166,6 +167,9 @@ try {
     registerTool(tool) {
       tools.set(tool.name, tool);
     },
+    registerCommand(name, definition) {
+      commands.set(name, definition);
+    },
     getActiveTools() {
       return ["read", "bash", "edit", "write", "watch_sessions"];
     },
@@ -178,6 +182,7 @@ try {
   const replacementHost = () => {
     const replacementHandlers = new Map();
     const replacementTools = new Map();
+    const replacementCommands = new Map();
     const messages = [];
     const context = {
       ui: {
@@ -199,6 +204,9 @@ try {
       registerTool(tool) {
         replacementTools.set(tool.name, tool);
       },
+      registerCommand(name, definition) {
+        replacementCommands.set(name, definition);
+      },
       getActiveTools() {
         return ["read", "bash", "edit", "write", "watch_sessions"];
       },
@@ -206,7 +214,13 @@ try {
         messages.push(message);
       },
     });
-    return { handlers: replacementHandlers, tools: replacementTools, context, messages };
+    return {
+      handlers: replacementHandlers,
+      tools: replacementTools,
+      commands: replacementCommands,
+      context,
+      messages,
+    };
   };
 
   // 1. Sequential registration for every native tool.
@@ -948,7 +962,123 @@ try {
   assert.equal(aborted, true, "a timed-out result must abort the agent loop");
   assert.equal(decision, undefined, "a timed-out result returns no decision");
 
-  console.log("EXTENSION_PROBE PASS sequential=5 watches=add,list,remove,catchup timeout_ms=" + elapsed);
+  // 5. ovrcr_tree_control requires Rust-worker confirmation and reports leaf + summary status.
+  const treeControl = commands.get("ovrcr_tree_control");
+  assert.equal(typeof treeControl?.handler, "function", "ovrcr_tree_control command is registered");
+  const treeConfirms = [];
+  const treeStatuses = [];
+  const navigateCalls = [];
+  let allowTreeControl = false;
+  let currentLeaf = "entry-tail";
+  let nextNavigateResult = { cancelled: false };
+  const treeCtx = {
+    ui: {
+      async confirm(title, value) {
+        treeConfirms.push([title, JSON.parse(value)]);
+        return allowTreeControl;
+      },
+      setStatus(key, value) {
+        treeStatuses.push([key, JSON.parse(value)]);
+      },
+    },
+    sessionManager: {
+      getLeafId: () => currentLeaf,
+    },
+    async navigateTree(targetId, options) {
+      navigateCalls.push([targetId, options]);
+      if (targetId === "entry-root-user") currentLeaf = null;
+      else if (targetId === "entry-user-2") currentLeaf = "entry-assistant-1";
+      else currentLeaf = targetId;
+      return nextNavigateResult;
+    },
+  };
+
+  for (const invalidArgs of [
+    "",
+    "not-json",
+    JSON.stringify({ summarize: false }),
+    JSON.stringify({ targetId: "", summarize: false }),
+    JSON.stringify({ targetId: "entry-1", summarize: "no" }),
+    JSON.stringify({ targetId: "entry-1", summarize: false, customInstructions: 42 }),
+    JSON.stringify({ targetId: "entry-1", summarize: false, extra: true }),
+  ]) {
+    await assert.rejects(
+      () => treeControl.handler(invalidArgs, treeCtx),
+      /invalid ovrcr_tree_control/,
+      invalidArgs,
+    );
+  }
+  assert.equal(treeConfirms.length, 0, "invalid args fail before confirm");
+  assert.equal(navigateCalls.length, 0, "invalid args never call navigateTree");
+
+  // Unauthorized invocation is rejected without calling ctx.navigateTree.
+  allowTreeControl = false;
+  await assert.rejects(
+    () =>
+      treeControl.handler(
+        JSON.stringify({ targetId: "entry-user-2", summarize: false }),
+        treeCtx,
+      ),
+    /OVRCR tree control refused/,
+  );
+  assert.equal(treeConfirms.length, 1);
+  assert.equal(treeConfirms[0][0], "ovrcr_operator_tree_control");
+  assert.deepEqual(treeConfirms[0][1], {
+    targetId: "entry-user-2",
+    summarize: false,
+    customInstructions: null,
+  });
+  assert.equal(navigateCalls.length, 0, "unauthorized invocation must not call navigateTree");
+  assert.equal(treeStatuses.length, 0, "unauthorized invocation emits no result status");
+
+  // Authorized zero-token rewind (including root reset to null leafId).
+  allowTreeControl = true;
+  nextNavigateResult = { cancelled: false };
+  await treeControl.handler(
+    JSON.stringify({ targetId: "entry-root-user", summarize: false }),
+    treeCtx,
+  );
+  assert.equal(navigateCalls.length, 1);
+  assert.deepEqual(navigateCalls[0], [
+    "entry-root-user",
+    { summarize: false, customInstructions: undefined },
+  ]);
+  assert.equal(treeStatuses.at(-1)[0], "ovrcr_operator_tree_result");
+  assert.deepEqual(treeStatuses.at(-1)[1], {
+    cancelled: false,
+    leafId: null,
+    summaryEntry: null,
+  });
+
+  // Authorized summarized branch switch (#490 contract compatibility).
+  const summaryEntry = {
+    type: "branch_summary",
+    id: "entry-summary-4",
+    parentId: "entry-assistant-1",
+    summary: "Branch recap",
+  };
+  nextNavigateResult = { cancelled: false, summaryEntry };
+  await treeControl.handler(
+    JSON.stringify({
+      targetId: "entry-user-2",
+      summarize: true,
+      customInstructions: "focus on failing tests",
+    }),
+    treeCtx,
+  );
+  assert.equal(navigateCalls.length, 2);
+  assert.deepEqual(navigateCalls[1], [
+    "entry-user-2",
+    { summarize: true, customInstructions: "focus on failing tests" },
+  ]);
+  assert.equal(treeStatuses.at(-1)[0], "ovrcr_operator_tree_result");
+  assert.deepEqual(treeStatuses.at(-1)[1], {
+    cancelled: false,
+    leafId: "entry-assistant-1",
+    summaryEntry,
+  });
+
+  console.log("EXTENSION_PROBE PASS sequential=5 watches=add,list,remove,catchup tree=auth,nav timeout_ms=" + elapsed);
 } finally {
   if (typeof originalExecutable === "undefined") delete process.env.OVRCR_EXECUTABLE;
   else process.env.OVRCR_EXECUTABLE = originalExecutable;

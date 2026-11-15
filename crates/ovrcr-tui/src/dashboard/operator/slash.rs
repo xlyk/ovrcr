@@ -10,6 +10,7 @@ pub(super) enum SlashCommandKind {
     New,
     Session,
     Compact,
+    Tree,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +64,13 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         usage: "/compact [instructions]",
         description: "Compact Operator conversation context",
         takes_args: true,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Tree,
+        name: "tree",
+        usage: "/tree",
+        description: "Inspect or switch Operator conversation branch",
+        takes_args: false,
     },
 ];
 

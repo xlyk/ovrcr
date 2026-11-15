@@ -468,11 +468,14 @@ impl ServerState {
                         .context("dashboard owner changed")??
                 };
                 let checkpoint = if let Some(turn) = snapshot.checkpoint_turn {
-                    Some(crate::operator_session_file::read_promoted_checkpoint(
-                        &self.registry_path,
-                        conversation,
-                        turn,
-                    )?)
+                    Some(
+                        crate::operator_session_file::read_promoted_checkpoint_for_branch(
+                            &self.registry_path,
+                            conversation,
+                            turn,
+                            snapshot.pi_tree_target_id.as_deref(),
+                        )?,
+                    )
                 } else {
                     None
                 };
@@ -507,6 +510,8 @@ impl ServerState {
                 };
                 if verified.summary.session_epoch != snapshot.summary.session_epoch
                     || verified.checkpoint_turn != snapshot.checkpoint_turn
+                    || verified.pi_tree_target_id != snapshot.pi_tree_target_id
+                    || verified.active_tip_turn != snapshot.active_tip_turn
                 {
                     bail!("Operator session changed while reading checkpoint; retry /session.");
                 }
@@ -517,6 +522,7 @@ impl ServerState {
                     tool_calls,
                     tool_results,
                     total_messages,
+                    epoch_total_messages,
                     tokens,
                     cost_usd_nanos,
                     used_tokens,
@@ -528,12 +534,24 @@ impl ServerState {
                         checkpoint.tool_calls,
                         checkpoint.tool_results,
                         checkpoint.total_messages,
+                        checkpoint.epoch_total_messages,
                         checkpoint.tokens,
                         checkpoint.cost_usd_nanos,
                         checkpoint.latest_context_tokens,
                     )
                 } else {
-                    (None, 0, 0, 0, 0, 0, OperatorTokenStats::default(), 0, None)
+                    (
+                        None,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        OperatorTokenStats::default(),
+                        0,
+                        None,
+                    )
                 };
                 Ok(OperatorResponse::SessionInfo(Box::new(
                     OperatorSessionInfo {
@@ -543,17 +561,20 @@ impl ServerState {
                         session_epoch: verified.summary.session_epoch,
                         pi_session_id,
                         checkpoint_turn: verified.checkpoint_turn,
+                        active_tip_turn: verified.active_tip_turn,
                         configured_model: settings.model,
                         active_model,
                         configured_thinking_level: settings.thinking_level,
                         reasoning: verified.summary.reasoning,
                         turns: verified.turns,
                         completed_turns: verified.completed_turns,
+                        branch_turns: verified.branch_turns,
                         user_messages,
                         assistant_messages,
                         tool_calls,
                         tool_results,
                         total_messages,
+                        epoch_total_messages,
                         tokens,
                         cost_usd_nanos,
                         context_window: OperatorContextWindowUsage {
@@ -562,6 +583,144 @@ impl ServerState {
                         },
                     },
                 )))
+            }
+            OperatorRequest::Tree { conversation } => {
+                self.reject_if_stopping()?;
+                #[cfg(test)]
+                if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                    hook();
+                }
+                let snapshot = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| retained.operator_tree_snapshot(conversation))
+                        .context("dashboard owner changed")??
+                };
+                let Some(turn) = snapshot.checkpoint_turn else {
+                    return Ok(OperatorResponse::Tree(Box::default()));
+                };
+                let tree = crate::operator_session_file::read_session_tree(
+                    &self.registry_path,
+                    conversation,
+                    turn,
+                    snapshot.pi_tree_target_id.as_deref(),
+                    &snapshot.completed_turns,
+                )?;
+                let verified = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| retained.operator_tree_snapshot(conversation))
+                        .context("dashboard owner changed")??
+                };
+                if verified.summary.session_epoch != snapshot.summary.session_epoch
+                    || verified.checkpoint_turn != snapshot.checkpoint_turn
+                    || verified.pi_tree_target_id != snapshot.pi_tree_target_id
+                {
+                    bail!("Operator session changed while reading tree; retry /tree.");
+                }
+                Ok(OperatorResponse::Tree(Box::new(tree)))
+            }
+            OperatorRequest::NavigateTree {
+                conversation,
+                expected_run,
+                target_entry_id,
+            } => {
+                let (nav, changed) = {
+                    let _mutation = self.mutation_lock.lock().unwrap();
+                    self.reject_if_stopping()?;
+                    #[cfg(test)]
+                    if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                        hook();
+                    }
+                    let current = {
+                        let retained = self.retained.lock();
+                        self.dashboard
+                            .with_owned(owner, |_| -> Result<_> {
+                                retained.require_current_operator(conversation)?;
+                                retained.operator_conversation(conversation)
+                            })
+                            .context("dashboard owner changed")??
+                    };
+                    let session = self.sessions.lock().unwrap().get(&current.session).cloned();
+                    let worker_live = session.is_some_and(|session| {
+                        session.run() == current.run
+                            && session.is_live()
+                            && session.summary().scope
+                                == (ovrcr_protocol::SessionScope::OperatorConversation {
+                                    conversation: current.id,
+                                })
+                    });
+                    if worker_live {
+                        bail!(
+                            "cannot switch Operator tree branch while an Operator worker or watched-session lease is active"
+                        );
+                    }
+                    let snapshot = {
+                        let retained = self.retained.lock();
+                        self.dashboard
+                            .with_owned(owner, |_| {
+                                retained.ensure_operator_tree_navigable(conversation, expected_run)
+                            })
+                            .context("dashboard owner changed")??
+                    };
+                    let Some(checkpoint_turn) = snapshot.checkpoint_turn else {
+                        bail!(
+                            "Cannot navigate Operator tree before the first completed turn in this session."
+                        );
+                    };
+                    let resolved = crate::operator_session_file::resolve_tree_target(
+                        &self.registry_path,
+                        conversation,
+                        checkpoint_turn,
+                        snapshot.pi_tree_target_id.as_deref(),
+                        &snapshot.completed_turns,
+                        &target_entry_id,
+                    )?;
+                    if resolved.noop {
+                        let published = self.publish_worker_live(snapshot.summary)?;
+                        (
+                            OperatorTreeNavigation {
+                                conversation: published,
+                                current_leaf_id: resolved.current_leaf_id,
+                                noop: true,
+                                editor_text: None,
+                                restored_context: None,
+                            },
+                            false,
+                        )
+                    } else {
+                        let summary = {
+                            let mut retained = self.retained.lock();
+                            self.dashboard
+                                .with_owned(owner, |_| {
+                                    retained.apply_operator_tree_navigation(
+                                        conversation,
+                                        expected_run,
+                                        snapshot.summary.session_epoch,
+                                        checkpoint_turn,
+                                        resolved.active_tip_turn,
+                                        resolved.pi_tree_target_id.as_deref(),
+                                    )
+                                })
+                                .context("dashboard owner changed")??
+                        };
+                        let published = self.publish_worker_live(summary)?;
+                        (
+                            OperatorTreeNavigation {
+                                conversation: published,
+                                current_leaf_id: resolved.current_leaf_id,
+                                noop: false,
+                                editor_text: resolved.editor_text,
+                                restored_context: resolved.restored_context,
+                            },
+                            true,
+                        )
+                    }
+                };
+                if changed {
+                    self.operator_changed(nav.conversation.id);
+                }
+                Ok(OperatorResponse::TreeNavigated(Box::new(nav)))
             }
             OperatorRequest::Read {
                 conversation,

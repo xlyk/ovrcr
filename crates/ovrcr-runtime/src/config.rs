@@ -475,7 +475,15 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     }
     if schema_identity(&transaction)?.1 < 35 {
         crate::retained::operator::migrate_session_epochs(&transaction)?;
+        if transaction
+            .prepare("PRAGMA foreign_key_check")?
+            .exists([])?
+        {
+            bail!("registry migration would leave invalid foreign keys");
+        }
         transaction.pragma_update(None, "user_version", 35)?;
+    } else {
+        crate::retained::operator::migrate_session_epochs(&transaction)?;
     }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;

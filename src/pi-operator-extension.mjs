@@ -38,6 +38,8 @@ const MAX_TIMEOUT_SECONDS = 2_147_483.647;
 const ADMISSION_TITLE = "OVRCR Operator tool admission";
 const RESULT_TITLE = "OVRCR Operator tool result";
 const WAKEUP_ADMISSION_TITLE = "OVRCR Operator async wakeup admission";
+const TREE_CONTROL_TITLE = "ovrcr_operator_tree_control";
+const TREE_RESULT_KEY = "ovrcr_operator_tree_result";
 const WATCHES_KEY = "ovrcr_operator_watches";
 const WATCH_STATE = Symbol.for("ovrcr.operator.watchState");
 const MAX_WATCHES = 50;
@@ -430,6 +432,40 @@ function exitCodeOf(code, signalName) {
   return 1;
 }
 
+function validateTreeControlArgs(rawArgs) {
+  if (typeof rawArgs !== "string" ||
+    rawArgs.trim().length === 0 ||
+    Buffer.byteLength(rawArgs, "utf8") > OUTPUT_LIMIT) {
+    throw new Error("invalid ovrcr_tree_control arguments");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawArgs);
+  } catch {
+    throw new Error("invalid ovrcr_tree_control arguments");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+    Object.keys(parsed).some((key) => !["targetId", "summarize", "customInstructions"].includes(key)) ||
+    !validName(parsed.targetId) ||
+    typeof parsed.summarize !== "boolean" ||
+    (parsed.customInstructions !== undefined &&
+      parsed.customInstructions !== null &&
+      (typeof parsed.customInstructions !== "string" ||
+        parsed.customInstructions.includes("\0") ||
+        Buffer.byteLength(parsed.customInstructions, "utf8") > OUTPUT_LIMIT))) {
+    throw new Error("invalid ovrcr_tree_control arguments");
+  }
+  const customInstructions =
+    typeof parsed.customInstructions === "string" && parsed.customInstructions.trim().length > 0
+      ? parsed.customInstructions
+      : null;
+  return {
+    targetId: parsed.targetId,
+    summarize: parsed.summarize,
+    customInstructions,
+  };
+}
+
 export default function ovrcrOperatorExtension(pi) {
   const watches = watchState(pi);
   // toolCallId -> timeout seconds, recorded by the attached adapter so a
@@ -736,4 +772,43 @@ export default function ovrcrOperatorExtension(pi) {
   for (const definition of definitions) {
     pi.registerTool({ ...definition, executionMode: "sequential" });
   }
+
+  pi.registerCommand("ovrcr_tree_control", {
+    description: "Internal OVRCR worker tree navigation control.",
+    async handler(args, ctx) {
+      const request = validateTreeControlArgs(args);
+      const confirmed = await ctx.ui.confirm(
+        TREE_CONTROL_TITLE,
+        JSON.stringify(request),
+      );
+      if (!confirmed) {
+        throw new Error("OVRCR tree control refused");
+      }
+      try {
+        const result = await ctx.navigateTree(request.targetId, {
+          summarize: request.summarize,
+          customInstructions: request.customInstructions ?? undefined,
+        });
+        ctx.ui.setStatus(
+          TREE_RESULT_KEY,
+          JSON.stringify({
+            cancelled: Boolean(result?.cancelled),
+            leafId: ctx.sessionManager.getLeafId?.() ?? null,
+            summaryEntry: result?.summaryEntry ?? null,
+          }),
+        );
+      } catch (error) {
+        ctx.ui.setStatus(
+          TREE_RESULT_KEY,
+          JSON.stringify({
+            cancelled: false,
+            leafId: ctx.sessionManager.getLeafId?.() ?? null,
+            summaryEntry: null,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        throw error;
+      }
+    },
+  });
 }

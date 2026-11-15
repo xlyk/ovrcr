@@ -373,9 +373,13 @@ Markdown of the latest visible assistant reply, bounded at 64 KiB),
 `/new` (idle/unleased session-epoch reset) directly, while transitioning into
 full Operator for bare `/thinking`, bare `/model`, non-exact `/model <query>`
 filters, `/compact [instructions]` (manual context compaction with live
-`Compacting context…` activity, foreground `Stop` rollback and receipt) or
+`Compacting context…` activity, foreground `Stop` rollback and receipt),
 `/session` (dismissible read-only session inspection modal: `Esc`, `Enter` or
-`q` closes). `ModelPicker` queries the dedicated profile via
+`q` closes), or `/tree` (`TreePicker` modal with `●` active-branch markers,
+`├─`/`└─`/`│` connectors, unwrapped user prompts, live multi-token search,
+`default`/`no-tools`/`user-only`/`all` filter cycling via `Tab`/`Ctrl-f`,
+user-prompt rewind into composer + captured `OperatorContext`, and idle/unleased
+branch switching). `ModelPicker` queries the dedicated profile via
 `OperatorRequest::Models`, lists `Harness default` ahead of `provider/id`
 entries, marks the active `Settings` snapshot selection, filters live
 case-insensitively by `provider/id` or display name, and writes the chosen model

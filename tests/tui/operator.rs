@@ -159,7 +159,11 @@ fn delta(ordinal: u64, text: &str) -> OperatorMessage {
 fn completed(ordinal: u64) -> OperatorMessage {
     message(
         ordinal,
-        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+            leased: false,
+            pi_first_entry_id: None,
+            pi_leaf_entry_id: None,
+        }),
     )
 }
 
@@ -719,7 +723,11 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         vec![turn_message(
             2,
             6,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         )],
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
@@ -812,7 +820,11 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
             turn_message(
                 2,
                 2,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: None,
+                    pi_leaf_entry_id: None,
+                }),
             ),
         ],
     );
@@ -862,7 +874,11 @@ fn unread_outranks_a_retained_draft_in_the_operator_section() {
         vec![turn_message(
             2,
             1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
@@ -3171,7 +3187,11 @@ fn request_finish() -> Vec<OperatorMessage> {
         turn_message(
             2,
             9,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         ),
     ]
 }
@@ -3829,6 +3849,8 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     turn: OperatorTurnId(1),
                     content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
                         leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
                     }),
                 },
                 OperatorMessage {
@@ -3851,6 +3873,8 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     turn: OperatorTurnId(2),
                     content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
                         leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
                     }),
                 },
                 OperatorMessage {
@@ -4433,6 +4457,7 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
         session_epoch: 0,
         pi_session_id: Some("operator-7".into()),
         checkpoint_turn: Some(OperatorTurnId(2)),
+        active_tip_turn: Some(OperatorTurnId(2)),
         configured_model: Some("anthropic/claude-sonnet-4-5".into()),
         active_model: Some(OperatorModel {
             provider: "openai".into(),
@@ -4450,11 +4475,13 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
         }),
         turns: 3,
         completed_turns: 2,
+        branch_turns: 2,
         user_messages: 3,
         assistant_messages: 2,
         tool_calls: 5,
         tool_results: 4,
         total_messages: 9,
+        epoch_total_messages: 9,
         tokens: ovrcr_protocol::OperatorTokenStats {
             input: 1_200,
             output: 350,
@@ -4572,17 +4599,20 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
         session_epoch: 1,
         pi_session_id: None,
         checkpoint_turn: None,
+        active_tip_turn: None,
         configured_model: None,
         active_model: None,
         configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::Default,
         reasoning: None,
         turns: 0,
         completed_turns: 0,
+        branch_turns: 0,
         user_messages: 0,
         assistant_messages: 0,
         tool_calls: 0,
         tool_results: 0,
         total_messages: 0,
+        epoch_total_messages: 0,
         tokens: ovrcr_protocol::OperatorTokenStats::default(),
         cost_usd_nanos: 0,
         context_window: ovrcr_protocol::OperatorContextWindowUsage::default(),
@@ -4891,16 +4921,13 @@ fn slash_compact_menu_completion_and_empty_or_busy_refusal() {
         "/new",
         "/session",
         "/compact",
+        "/tree",
     ] {
         assert!(
             menu.contains(entry),
             "expected `{entry}` in slash menu:\n{menu}"
         );
     }
-    assert!(
-        !menu.contains("/tree"),
-        "`/tree` belongs to #489 and must not be registered here:\n{menu}"
-    );
 
     // `/co` matches `/copy` then `/compact`; Down + Tab completes `/compact ` with trailing space.
     d.event_action(Event::Paste("co".into()));
@@ -5165,6 +5192,8 @@ fn slash_compact_dispatches_across_composer_and_quick_renders_activity_receipt_a
                     11,
                     OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
                         leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
                     }),
                 ),
             ],
@@ -5248,5 +5277,490 @@ fn slash_compact_dispatches_across_composer_and_quick_renders_activity_receipt_a
         !transitioned.contains("Quick message · Ctrl-o")
             && transitioned.contains("Compacting context…"),
         "accepted Quick `/compact` transitions into full Operator:\n{transitioned}"
+    );
+}
+
+#[test]
+fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_when_busy() {
+    use ovrcr_protocol::{
+        OperatorSessionTree, OperatorTreeEntry, OperatorTreeEntryKind, OperatorTreeNavigation,
+    };
+
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(3);
+    seeded.current_turn = Some(turn(3, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    3,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "check beta latency".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Beta p99 is 12ms.".into(),
+                    )),
+                ),
+                turn_message(
+                    3,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2b".into()),
+                        pi_leaf_entry_id: Some("a2b".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    // 1. `/tr` filters slash menu to `/tree` and Tab completes without trailing space;
+    //    `/tree extra` rejects locally with draft preserved.
+    d.event_action(Event::Paste("/tr".into()));
+    let menu = draw_text(&mut d, 120, 30);
+    assert!(
+        menu.contains("/tree") && menu.contains("Inspect or switch Operator conversation branch"),
+        "{menu}"
+    );
+    d.key(KeyCode::Tab);
+    assert!(draw_text(&mut d, 120, 30).contains("> /tree▏"));
+    d.event_action(Event::Paste(" extra".into()));
+    d.key(KeyCode::Enter);
+    assert!(d.drain_outbox().is_empty());
+    let bad_args = draw_text(&mut d, 120, 30);
+    assert!(
+        bad_args.contains("Usage: /tree (takes no arguments).")
+            && bad_args.contains("> /tree extra▏"),
+        "{bad_args}"
+    );
+
+    // 2. `/tree` sends `OperatorRequest::Tree` and renders connectors, `●` markers, filters, and search.
+    d.ctrl('c');
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Tree {
+                    conversation: OperatorConversationId(7)
+                })
+            )
+        })
+        .expect("expected OperatorRequest::Tree");
+
+    let sample_tree = OperatorSessionTree {
+        pi_session_id: Some("pi-7".into()),
+        current_leaf_id: Some("a2b".into()),
+        entries: vec![
+            OperatorTreeEntry {
+                id: "m1".into(),
+                parent_id: None,
+                kind: OperatorTreeEntryKind::ModelChange,
+                preview: "openai/gpt-6.1-sol".into(),
+            },
+            OperatorTreeEntry {
+                id: "u1".into(),
+                parent_id: Some("m1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "inspect logs".into(),
+            },
+            OperatorTreeEntry {
+                id: "tr1".into(),
+                parent_id: Some("u1".into()),
+                kind: OperatorTreeEntryKind::ToolResult,
+                preview: "tool result: list_sessions".into(),
+            },
+            OperatorTreeEntry {
+                id: "a1".into(),
+                parent_id: Some("tr1".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Found two sessions.".into(),
+            },
+            OperatorTreeEntry {
+                id: "u2a".into(),
+                parent_id: Some("a1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "restart alpha worker".into(),
+            },
+            OperatorTreeEntry {
+                id: "a2a".into(),
+                parent_id: Some("u2a".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Alpha restarted.".into(),
+            },
+            OperatorTreeEntry {
+                id: "u2b".into(),
+                parent_id: Some("a1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "check beta latency".into(),
+            },
+            OperatorTreeEntry {
+                id: "a2b".into(),
+                parent_id: Some("u2b".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Beta p99 is 12ms.".into(),
+            },
+        ],
+    };
+    respond(
+        &mut d,
+        tree_req.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree.clone())),
+    );
+    let tree_screen = draw_text(&mut d, 120, 32);
+    for expected in [
+        "filter: default",
+        "● user: inspect logs",
+        "├─   user: restart alpha worker",
+        "│    assistant: Alpha restarted.",
+        "└─ ● user: check beta latency",
+        "● assistant: Beta p99 is 12ms. ← active",
+    ] {
+        assert!(
+            tree_screen.contains(expected),
+            "expected `{expected}` in `/tree` modal:\n{tree_screen}"
+        );
+    }
+    assert!(
+        !tree_screen.contains("[model]"),
+        "`default` filter must hide model_change:\n{tree_screen}"
+    );
+
+    // Filter mode cycles `default` -> `no-tools` -> `user-only` -> `all` -> `default`.
+    d.key(KeyCode::Tab);
+    let no_tools = draw_text(&mut d, 120, 32);
+    assert!(
+        no_tools.contains("filter: no-tools") && !no_tools.contains("tool: tool result"),
+        "{no_tools}"
+    );
+    d.ctrl('f');
+    let user_only = draw_text(&mut d, 120, 32);
+    assert!(
+        user_only.contains("filter: user-only") && !user_only.contains("Alpha restarted."),
+        "{user_only}"
+    );
+    d.key(KeyCode::Tab);
+    let all_mode = draw_text(&mut d, 120, 32);
+    assert!(
+        all_mode.contains("filter: all") && all_mode.contains("[model]: openai/gpt-6.1-sol"),
+        "{all_mode}"
+    );
+    d.key(KeyCode::Tab);
+    assert!(draw_text(&mut d, 120, 32).contains("filter: default"));
+
+    // Multi-token search + `Ctrl-c` clear:
+    d.event_action(Event::Paste("alpha assistant".into()));
+    let searched = draw_text(&mut d, 120, 32);
+    assert!(
+        searched.contains("Alpha restarted.") && !searched.contains("← active"),
+        "{searched}"
+    );
+    d.ctrl('c');
+    assert!(draw_text(&mut d, 120, 32).contains("Beta p99 is 12ms. ← active"));
+
+    // 3. Pressing `Enter` on the already-active leaf (`a2b`) closes `/tree` as a zero-op!
+    d.key(KeyCode::Enter);
+    assert!(
+        d.drain_outbox().is_empty(),
+        "selecting active leaf must not send NavigateTree"
+    );
+    assert!(!draw_text(&mut d, 120, 32).contains("Operator tree · /tree"));
+
+    // 4. Reopen `/tree`, search `"alpha assistant"` (`a2a`), press `Enter` -> switches branch,
+    //    clears composer, reloads feed from `after: 0`, and `/session` shows branch vs epoch counts.
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let req2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        req2.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree.clone())),
+    );
+    d.event_action(Event::Paste("alpha assistant".into()));
+    d.key(KeyCode::Enter);
+    let nav_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(3),
+                    target_entry_id,
+                }) if target_entry_id == "a2a"
+            )
+        })
+        .expect("expected NavigateTree to `a2a`");
+    let follow = respond(
+        &mut d,
+        nav_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a2a".into()),
+            noop: false,
+            editor_text: None,
+            restored_context: None,
+        })),
+    );
+    let reload = follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read {
+                    conversation: OperatorConversationId(7),
+                    after: 0,
+                    ..
+                })
+            )
+        })
+        .expect("branch switch reloads history from after=0");
+    respond(
+        &mut d,
+        reload.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "restart alpha worker".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Alpha restarted.".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2a".into()),
+                        pi_leaf_entry_id: Some("a2a".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let switched_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        switched_screen.contains("Alpha restarted.")
+            && !switched_screen.contains("Beta p99 is 12ms.")
+            && switched_screen.contains("> ▏"),
+        "{switched_screen}"
+    );
+
+    // `/session` shows active-branch vs epoch counts when branched.
+    d.event_action(Event::Paste("/session".into()));
+    d.key(KeyCode::Enter);
+    let sreq = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo { .. })
+            )
+        })
+        .unwrap();
+    respond(
+        &mut d,
+        sreq.request_id,
+        OperatorResponse::SessionInfo(Box::new(ovrcr_protocol::OperatorSessionInfo {
+            conversation: OperatorConversationId(7),
+            session: SessionId(99),
+            run: SessionRunId(3),
+            session_epoch: 0,
+            pi_session_id: Some("pi-7".into()),
+            checkpoint_turn: Some(OperatorTurnId(3)),
+            active_tip_turn: Some(OperatorTurnId(2)),
+            configured_model: None,
+            active_model: None,
+            configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::Default,
+            reasoning: None,
+            turns: 3,
+            completed_turns: 3,
+            branch_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            total_messages: 5,
+            epoch_total_messages: 7,
+            tokens: ovrcr_protocol::OperatorTokenStats::default(),
+            cost_usd_nanos: 0,
+            context_window: ovrcr_protocol::OperatorContextWindowUsage::default(),
+        })),
+    );
+    let branched_session = draw_text(&mut d, 140, 35);
+    assert!(
+        branched_session.contains("2 on branch · 3 total")
+            && branched_session.contains("5 on branch (2 user · 2 assistant) · 7 in epoch"),
+        "{branched_session}"
+    );
+    d.key(KeyCode::Esc);
+
+    // 5. Rewind a user prompt (`u2a`): restores unwrapped text + captured `OperatorContext` into composer!
+    let target_ctx = captured_context(&fixture_hierarchy(), SessionId(1));
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let req3 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    let mut branch_a_tree = sample_tree.clone();
+    branch_a_tree.current_leaf_id = Some("a2a".into());
+    respond(
+        &mut d,
+        req3.request_id,
+        OperatorResponse::Tree(Box::new(branch_a_tree)),
+    );
+    d.event_action(Event::Paste("restart alpha".into()));
+    d.key(KeyCode::Enter);
+    let rewind_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    ..
+                }) if target_entry_id == "u2a"
+            )
+        })
+        .expect("expected NavigateTree to user node `u2a`");
+    let rewind_follow = respond(
+        &mut d,
+        rewind_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a1".into()),
+            noop: false,
+            editor_text: Some("restart alpha worker".into()),
+            restored_context: Some(target_ctx),
+        })),
+    );
+    let rewind_read = read_request(&rewind_follow);
+    respond(
+        &mut d,
+        rewind_read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    d.ctrl('l'); // hide notice on next edit? First verify notice + draft, then check restored context!
+    let rewound_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        rewound_screen.contains("> restart alpha worker▏"),
+        "expected unwrapped prompt restored in composer:\n{rewound_screen}"
+    );
+    // Editing a char clears the transient notice and reveals the restored `Managing consigint / auth / #1 run 1` caption!
+    d.key(KeyCode::Char('!'));
+    let ctx_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        ctx_screen.contains("Managing consigint / auth / #1 run 1")
+            && ctx_screen.contains("> restart alpha worker!▏"),
+        "expected restored OperatorContext in composer caption:\n{ctx_screen}"
+    );
+
+    // 6. Read-only `/tree` while a turn is `Running`: inspection works, switching refuses cleanly!
+    let mut busy = dashboard_fixture();
+    open_and_settle(&mut busy, running_request());
+    busy.event_action(Event::Paste("/tree".into()));
+    busy.key(KeyCode::Enter);
+    let busy_tree_req = busy
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("read-only `/tree` allowed while Running");
+    respond(
+        &mut busy,
+        busy_tree_req.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree)),
+    );
+    assert!(draw_text(&mut busy, 120, 32).contains("● user: inspect logs"));
+    busy.key(KeyCode::Up); // move off active leaf `a2b` onto `u2b`
+    busy.key(KeyCode::Enter);
+    assert!(
+        busy.drain_outbox().is_empty(),
+        "busy `/tree` must refuse NavigateTree locally"
+    );
+    let busy_refused = draw_text(&mut busy, 120, 32);
+    assert!(
+        busy_refused.contains("Cannot switch Operator tree branch while a turn is running."),
+        "{busy_refused}"
+    );
+
+    // 7. Cold Quick message (`Ctrl-o`) `/tree` transitions into full Operator and renders empty state.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/tree".into()));
+    cold.key(KeyCode::Enter);
+    let open_req = cold
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/tree` opens singleton");
+    let cold_follow = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let cold_tree_req = cold_follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("Opened triggers Tree");
+    respond(
+        &mut cold,
+        cold_tree_req.request_id,
+        OperatorResponse::Tree(Box::default()),
+    );
+    let cold_screen = draw_text(&mut cold, 120, 32);
+    assert!(
+        !cold_screen.contains("Quick message · Ctrl-o")
+            && cold_screen.contains("No turns in this Operator session yet."),
+        "{cold_screen}"
     );
 }

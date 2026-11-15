@@ -311,8 +311,18 @@ checkpoint so the next turn starts cold with empty model context, and preserves
 prior-epoch journal rows in SQLite. Run `/session` to open a read-only modal
 (`Esc`, `Enter` or `q` closes) showing conversation/session/run identities, the
 current session epoch, native pi session id, active and configured model and
-reasoning, turn/message/tool counts, token usage, cumulative cost and
-context-window occupancy without starting a worker or spending tokens. After each
+reasoning, active-branch and epoch turn/message/tool counts, token usage,
+cumulative cost and context-window occupancy without starting a worker or
+spending tokens. Run `/tree` to inspect the current epoch's conversation tree
+with active-branch markers (`●`), branch connectors (`├─`, `└─`, `│`), live
+multi-token search, and filter modes (`default`, `no-tools`, `user-only`, `all`
+via `Tab` or `Ctrl-f`) without spawning `pi`: read-only inspection works even
+while a turn is running, whereas switching branches requires Operator to be idle
+and unleased. Selecting a user entry rewinds the active branch to right before
+that prompt and restores the unwrapped prompt text and captured
+workspace/session context into the composer; selecting an assistant, compaction
+or branch-summary entry positions the active leaf there with an empty composer
+while preserving sibling branches in SQLite and `session.jsonl`. After each
 successful
 turn, OVRCR keeps that turn's completed pi session as the context checkpoint for
 the next turn. A failed, interrupted or uncertain turn keeps its partial journal

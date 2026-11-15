@@ -653,6 +653,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                         async_wakeup: false,
                                     },
                                     checkpoint_turn: None,
+                                    tree_target_id: None,
                                 },
                             )))
                         }
@@ -673,6 +674,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                         async_wakeup: false,
                                     },
                                     checkpoint_turn: None,
+                                    tree_target_id: None,
                                 }),
                             )))
                         }
@@ -695,6 +697,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                         async_wakeup,
                                     },
                                     checkpoint_turn: None,
+                                    tree_target_id: None,
                                 }),
                             )))
                         }

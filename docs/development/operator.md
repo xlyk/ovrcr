@@ -200,14 +200,19 @@ Registry schema 35 (protocol 88) adds monotonic `session_epoch` scoping on
 idle turn + unleased/stopped worker, removing superseded checkpoint files outside
 locks while keeping prior-epoch SQLite audit rows), zero-spawn `/session`
 (`SessionInfo`, reading SQLite + bounded `O_NOFOLLOW` regular-file `session.jsonl`
-and `models.json` outside locks without starting `pi`), and manual `/compact`
+and `models.json` outside locks without starting `pi`), manual `/compact`
 (`Compact { conversation, expected_run, instructions }` +
 `OperatorWorkerSubmission::Compact { instructions }`, gated on an idle turn and
 an existing checkpoint in the current `session_epoch`, executing pi's `compact`
 RPC on cold or warm `watch_sessions`-leased workers, committing
 `CompactionSummary { summary, tokens_before }` atomically with checkpoint
 promotion, and rolling back to the pre-compaction checkpoint on foreground
-`Stop` or RPC failure).
+`Stop` or RPC failure), and `/tree` turn lineage (`active_tip_turn` and
+`pi_tree_target_id` on `operator_conversations`, `parent_turn`,
+`pi_first_entry_id`, and `pi_leaf_entry_id` on `operator_turns`, zero-spawn
+`Tree` reading + idle/unleased `NavigateTree` branch switching and user-prompt
+rewind, active-branch `read_operator_history` projection, and worker-gated
+`/ovrcr_tree_control` leaf restoration on cold restore and warm rollback).
 
 ## Workspace coordination watches
 

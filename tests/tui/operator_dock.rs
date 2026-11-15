@@ -118,6 +118,8 @@ fn assistant_reply(text: &str) -> Vec<OperatorMessage> {
             turn: OperatorTurnId(1),
             content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
                 leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
             }),
         },
     ]

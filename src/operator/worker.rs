@@ -47,6 +47,9 @@ const TOOLS: [&str; 5] = ["read", "bash", "edit", "write", "watch_sessions"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
 const WAKEUP_ADMISSION_TITLE: &str = "OVRCR Operator async wakeup admission";
+const TREE_CONTROL_COMMAND: &str = "/ovrcr_tree_control";
+const TREE_CONTROL_TITLE: &str = "ovrcr_operator_tree_control";
+const TREE_RESULT_KEY: &str = "ovrcr_operator_tree_result";
 
 /// Pi's extensions stay off except the OVRCR lifecycle adapter. Pi supplies the four
 /// native tool factories; this adapter adds the custom watch_sessions tool.
@@ -398,17 +401,22 @@ fn run_turn(
         .session_file
         .as_deref()
         .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    snapshot_session(
+    let (pi_first_entry_id, pi_leaf_entry_id) = snapshot_session(
         &attempt_dir,
         &state.session_root,
         native,
         &state.session_id,
         &state.workdir,
+        state.turn_start_file_len,
     )?;
     if termination.requested() {
         return Err(Failure::Terminated);
     }
-    journal.commit(OperatorWorkerEvent::Completed { leased })?;
+    journal.commit(OperatorWorkerEvent::Completed {
+        leased,
+        pi_first_entry_id,
+        pi_leaf_entry_id,
+    })?;
     Ok(leased)
 }
 
@@ -498,12 +506,13 @@ fn run_compact_turn(
         .session_file
         .as_deref()
         .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    snapshot_session(
+    let (pi_first_entry_id, pi_leaf_entry_id) = snapshot_session(
         &attempt_dir,
         &state.session_root,
         native,
         &state.session_id,
         &state.workdir,
+        state.turn_start_file_len,
     )?;
     if termination.requested() {
         return Err(Failure::Terminated);
@@ -513,7 +522,11 @@ fn run_compact_turn(
             summary,
             tokens_before,
         },
-        OperatorWorkerEvent::Completed { leased },
+        OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id,
+            pi_leaf_entry_id,
+        },
     ])?;
     Ok(leased)
 }
@@ -1076,6 +1089,18 @@ impl Connection {
                 {
                     self.begin_async_wakeup(journal, state, &event)
                 }
+                Some("extension_ui_request")
+                    if event["method"] == "confirm" && event["title"] == TREE_CONTROL_TITLE =>
+                {
+                    if let Some(dialog) = event["id"].as_str() {
+                        let _ = self.send(&json!({
+                            "type": "extension_ui_response",
+                            "id": dialog,
+                            "confirmed": false,
+                        }));
+                    }
+                    Err(Failure::Failed(UNSUPPORTED_INTERACTION))
+                }
                 Some("agent_start") => Err(Failure::Failed(REQUEST_FAILED)),
                 Some("extension_error") => Err(Failure::Failed(REQUEST_FAILED)),
                 _ => Ok(None),
@@ -1382,6 +1407,8 @@ impl Connection {
                 state.ready_count += 1;
             } else if event["statusKey"].as_str() == Some(WATCHES_KEY) {
                 self.read_watch_status(state, event)?;
+            } else if event["statusKey"].as_str() == Some(TREE_RESULT_KEY) {
+                self.read_tree_result_status(state, event)?;
             }
             // A duplicate binding is harmless; unrelated status entries are display only.
             return Ok(());
@@ -1406,6 +1433,39 @@ impl Connection {
                         return Ok(());
                     }
                     return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                Some(TREE_CONTROL_TITLE) => {
+                    let dialog = event["id"]
+                        .as_str()
+                        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+                    let pending = state.pending_tree_control.take();
+                    let payload = event["message"]
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<Value>(text).ok());
+                    let matches = match (pending.as_ref(), payload.as_ref()) {
+                        (Some(expected), Some(actual)) => {
+                            actual["targetId"].as_str() == Some(expected.target_id.as_str())
+                                && actual["summarize"].as_bool() == Some(expected.summarize)
+                                && actual.get("customInstructions").and_then(Value::as_str)
+                                    == expected.custom_instructions.as_deref()
+                        }
+                        _ => false,
+                    };
+                    if !matches {
+                        let _ = self.send(&json!({
+                            "type": "extension_ui_response",
+                            "id": dialog,
+                            "confirmed": false,
+                        }));
+                        return Err(Failure::Failed(UNSUPPORTED_INTERACTION));
+                    }
+                    self.send(&json!({
+                        "type": "extension_ui_response",
+                        "id": dialog,
+                        "confirmed": true,
+                    }))
+                    .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+                    return Ok(());
                 }
                 Some(ADMISSION_TITLE) => {
                     return self.flush_admission(journal, state, event.clone());
@@ -1446,6 +1506,34 @@ impl Connection {
         Ok(())
     }
 
+    fn read_tree_result_status(
+        &self,
+        state: &mut TurnState,
+        event: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let text = event["statusText"]
+            .as_str()
+            .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        let payload: Value =
+            serde_json::from_str(text).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        let cancelled = payload["cancelled"].as_bool().unwrap_or(true);
+        let leaf_id = match payload.get("leafId") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if valid_token(id) => Some(id.clone()),
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        };
+        let error = payload
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        state.tree_control_result = Some(TreeControlResult {
+            cancelled,
+            leaf_id,
+            error,
+        });
+        Ok(())
+    }
+
     /// Stream until `agent_settled`. Prompt execution has no added wall-clock deadline.
     fn stream(
         &mut self,
@@ -1478,6 +1566,20 @@ impl Drop for Connection {
 
 struct PendingCall {
     id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingTreeControl {
+    target_id: String,
+    summarize: bool,
+    custom_instructions: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TreeControlResult {
+    cancelled: bool,
+    leaf_id: Option<String>,
+    error: Option<String>,
 }
 
 struct TurnState {
@@ -1515,6 +1617,8 @@ struct TurnState {
     compaction_started_seen: bool,
     compaction_ended_seen: bool,
     compaction_failed_event: bool,
+    pending_tree_control: Option<PendingTreeControl>,
+    tree_control_result: Option<TreeControlResult>,
     last_assistant: Option<AssistantTurn>,
     /// Admitted tool-call ids whose ordinary execution end has not arrived yet.
     admitted: Vec<String>,
@@ -1574,6 +1678,8 @@ impl TurnState {
             compaction_started_seen: false,
             compaction_ended_seen: false,
             compaction_failed_event: false,
+            pending_tree_control: None,
+            tree_control_result: None,
             last_assistant: None,
             admitted: Vec::new(),
             pending: None,
@@ -1609,6 +1715,8 @@ impl TurnState {
         self.compaction_started_seen = false;
         self.compaction_ended_seen = false;
         self.compaction_failed_event = false;
+        self.pending_tree_control = None;
+        self.tree_control_result = None;
     }
 
     fn note_display(&mut self, index: usize) {
@@ -2175,11 +2283,66 @@ fn restore_checkpoint(
     state.capture(&response.data)?;
     match state.session_file.as_deref() {
         Some(reported) => match (reported.canonicalize(), target.canonicalize()) {
-            (Ok(reported), Ok(expected)) if reported == expected => Ok(()),
-            _ => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+            (Ok(reported), Ok(expected)) if reported == expected => {}
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
         },
-        None => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        None => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
     }
+    if let Some(target_id) = start.tree_target_id.as_deref() {
+        apply_tree_target(connection, journal, state, target_id, false, None)?;
+    }
+    Ok(())
+}
+
+fn apply_tree_target(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    target_id: &str,
+    summarize: bool,
+    custom_instructions: Option<&str>,
+) -> std::result::Result<(), Failure> {
+    if !valid_token(target_id) {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    state.tree_control_result = None;
+    state.pending_tree_control = Some(PendingTreeControl {
+        target_id: target_id.to_owned(),
+        summarize,
+        custom_instructions: custom_instructions.map(str::to_owned),
+    });
+    let mut args = json!({
+        "targetId": target_id,
+        "summarize": summarize,
+    });
+    if let Some(instructions) = custom_instructions {
+        args["customInstructions"] = json!(instructions);
+    }
+    let encoded = serde_json::to_string(&args).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let message = format!("{TREE_CONTROL_COMMAND} {encoded}");
+    let request_result = connection.request(
+        journal,
+        state,
+        "prompt",
+        json!({ "message": message }),
+        CONTROL_DEADLINE,
+    );
+    state.pending_tree_control = None;
+    let response = match request_result {
+        Ok(response) => response,
+        Err(Failure::Failed(_)) => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        Err(other) => return Err(other),
+    };
+    if !response.success {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let Some(result) = state.tree_control_result.take() else {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    };
+    if result.error.is_some() || result.cancelled {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    Ok(())
 }
 
 fn rollback_turn(
@@ -2267,6 +2430,11 @@ fn rollback_turn(
         &state.session_id,
         &state.workdir,
     )?;
+    if turn.checkpoint_turn.is_some()
+        && let Some(target_id) = turn.tree_target_id.as_deref()
+    {
+        apply_tree_target(connection, journal, state, target_id, false, None)?;
+    }
     Ok(())
 }
 
@@ -2894,7 +3062,8 @@ fn snapshot_session(
     native: &Path,
     expected_session: &str,
     workdir: &Path,
-) -> std::result::Result<(), Failure> {
+    turn_start_file_len: Option<u64>,
+) -> std::result::Result<(Option<String>, Option<String>), Failure> {
     let metadata =
         fs::symlink_metadata(native).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     if !metadata.file_type().is_file()
@@ -2920,10 +3089,57 @@ fn snapshot_session(
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     let target = checkpoint_attempt.join("session.jsonl");
     copy_checkpoint(&native, &target, expected_session, workdir)?;
+    let entry_ids = extract_turn_entry_ids(&target, turn_start_file_len)?;
     File::open(checkpoint_attempt)
         .and_then(|file| file.sync_all())
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    Ok(())
+    Ok(entry_ids)
+}
+
+fn extract_turn_entry_ids(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+) -> std::result::Result<(Option<String>, Option<String>), Failure> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(session_path)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut reader = BufReader::new(file);
+    let header = read_header(&mut reader)?;
+    let mut offset = header.len() as u64;
+    let start_offset = turn_start_file_len.unwrap_or(0);
+    let mut first_id: Option<String> = None;
+    let mut leaf_id: Option<String> = None;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .by_ref()
+            .take((MAX_CHECKPOINT_RECORD + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        if read == 0 {
+            break;
+        }
+        let record_offset = offset;
+        offset = offset.saturating_add(read as u64);
+        if line.iter().all(u8::is_ascii_whitespace) || record_offset < start_offset {
+            continue;
+        }
+        let value: Value =
+            serde_json::from_slice(&line).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        if value["type"].as_str() == Some("session") {
+            continue;
+        }
+        if let Some(id) = value["id"].as_str().filter(|id| valid_token(id)) {
+            if first_id.is_none() {
+                first_id = Some(id.to_owned());
+            }
+            leaf_id = Some(id.to_owned());
+        }
+    }
+    Ok((first_id, leaf_id))
 }
 
 fn read_header(reader: &mut BufReader<File>) -> std::result::Result<Vec<u8>, Failure> {
