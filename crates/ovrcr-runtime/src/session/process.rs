@@ -112,31 +112,76 @@ pub(super) fn short_tty_name(path: &std::path::Path) -> Option<String> {
 /// only the leader's group leaves background jobs behind. Ownership is
 /// defined by the controlling terminal: anything still attached to the
 /// session's PTY belongs to the session; anything that called `setsid` does
-/// not. `ps -t` filters in the kernel. Discovery errors propagate so
-/// terminate cannot treat a failed listing as "no attached jobs".
+/// not. `ps -t` filters in the kernel, but both BSD `ps` and Linux `procps`
+/// exit 1 when zero processes remain attached to `tty` (for example after the
+/// session leader has exited and before `SessionEvent::Exited` is applied).
+/// Confirm non-zero `-t` exits against `ps -axo pgid=,tty=` so an empty PTY
+/// yields an empty set while genuine `ps` failures still propagate.
 pub(super) fn attached_groups_checked(
     tty: &str,
     leader: libc::pid_t,
 ) -> Result<BTreeSet<libc::pid_t>> {
+    let own_group = unsafe { libc::getpgrp() };
     let output = Command::new("ps")
         .args(["-t", tty, "-o", "pgid="])
         .output()
         .context("list processes attached to session PTY")?;
-    if !output.status.success() {
+    if output.status.success() {
+        let mut groups = BTreeSet::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Ok(pgid) = line.trim().parse::<libc::pid_t>() {
+                insert_subgroup(&mut groups, pgid, leader, own_group);
+            }
+        }
+        return Ok(groups);
+    }
+    let fallback = Command::new("ps")
+        .args(["-axo", "pgid=,tty="])
+        .output()
+        .context("list processes attached to session PTY")?;
+    if !fallback.status.success() {
         bail!("ps could not list processes attached to session PTY");
     }
-    let own_group = unsafe { libc::getpgrp() };
-    let mut groups = BTreeSet::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Ok(pgid) = line.trim().parse::<libc::pid_t>() else {
-            continue;
-        };
-        if pgid <= 1 || pgid == leader || pgid == own_group {
-            continue;
-        }
+    Ok(attached_groups_from_table(
+        &String::from_utf8_lossy(&fallback.stdout),
+        tty,
+        leader,
+        own_group,
+    ))
+}
+
+fn insert_subgroup(
+    groups: &mut BTreeSet<libc::pid_t>,
+    pgid: libc::pid_t,
+    leader: libc::pid_t,
+    own_group: libc::pid_t,
+) {
+    if pgid > 1 && pgid != leader && pgid != own_group {
         groups.insert(pgid);
     }
-    Ok(groups)
+}
+
+pub(super) fn attached_groups_from_table(
+    stdout: &str,
+    tty: &str,
+    leader: libc::pid_t,
+    own_group: libc::pid_t,
+) -> BTreeSet<libc::pid_t> {
+    let mut groups = BTreeSet::new();
+    for line in stdout.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(pgid), Some(process_tty)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let normalized_tty = process_tty.strip_prefix("/dev/").unwrap_or(process_tty);
+        if fields.next().is_some() || normalized_tty != tty {
+            continue;
+        }
+        if let Ok(pgid) = pgid.parse::<libc::pid_t>() {
+            insert_subgroup(&mut groups, pgid, leader, own_group);
+        }
+    }
+    groups
 }
 
 /// Deliver `signal` to every group in `groups`, tolerating groups that have

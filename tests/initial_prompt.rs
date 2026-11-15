@@ -978,7 +978,18 @@ fn agy_background_quota_check_does_not_pollute_interactive_argv_capture() {
     );
     start_server_with_agy(&live, &fake_agy, &capture, &catalog);
 
-    let mut conn = dashboard(&live);
+    let mut conn = connect_server(&live.socket).expect("connect to fixture Server");
+    conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    conn.set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut conn,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         assert!(
