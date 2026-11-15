@@ -190,10 +190,8 @@ impl TreePicker {
     }
 
     pub(super) fn is_noop_selection(tree: &OperatorSessionTree, entry: &OperatorTreeEntry) -> bool {
-        !matches!(
-            entry.kind,
-            OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
-        ) && tree.current_leaf_id.as_deref() == Some(entry.id.as_str())
+        !matches!(entry.kind, OperatorTreeEntryKind::User)
+            && tree.current_leaf_id.as_deref() == Some(entry.id.as_str())
     }
 
     /// Returns `true` when switching to `entry` abandons one or more entries on the
@@ -216,10 +214,7 @@ impl TreePicker {
         if !by_id.contains_key(old_id) {
             return false;
         }
-        let target_branch_point = if matches!(
-            entry.kind,
-            OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
-        ) {
+        let target_branch_point = if matches!(entry.kind, OperatorTreeEntryKind::User) {
             entry.parent_id.as_deref()
         } else {
             Some(entry.id.as_str())
@@ -267,6 +262,19 @@ impl TreePicker {
             self.filter.next()
         } else {
             self.filter.prev()
+        };
+        self.select_target_or_ancestor(anchor_id.as_deref());
+    }
+
+    pub(super) fn toggle_user_only(&mut self) {
+        let anchor_id = self
+            .selected_entry()
+            .map(|entry| entry.id.clone())
+            .or_else(|| self.tree.current_leaf_id.clone());
+        self.filter = if self.filter == TreeFilterMode::UserOnly {
+            TreeFilterMode::Default
+        } else {
+            TreeFilterMode::UserOnly
         };
         self.select_target_or_ancestor(anchor_id.as_deref());
     }
@@ -650,5 +658,65 @@ mod tests {
             &at_a1,
             &at_a1.entries[6]
         ));
+    }
+
+    #[test]
+    fn custom_message_is_leaf_noop_and_does_not_rewind_parent() {
+        let cm_leaf = OperatorSessionTree {
+            pi_session_id: Some("pi-1".into()),
+            current_leaf_id: Some("cm1".into()),
+            entries: vec![
+                entry("u1", None, OperatorTreeEntryKind::User, "first prompt"),
+                entry(
+                    "a1",
+                    Some("u1"),
+                    OperatorTreeEntryKind::Assistant { tool_only: false },
+                    "first answer",
+                ),
+                entry(
+                    "cm1",
+                    Some("a1"),
+                    OperatorTreeEntryKind::CustomMessage,
+                    "extension status note",
+                ),
+            ],
+        };
+        assert!(
+            TreePicker::is_noop_selection(&cm_leaf, &cm_leaf.entries[2]),
+            "selecting CustomMessage when already active leaf must be a no-op, not a user rewind"
+        );
+
+        let sibling_tree = OperatorSessionTree {
+            pi_session_id: Some("pi-1".into()),
+            current_leaf_id: Some("cm_other".into()),
+            entries: vec![
+                entry("u1", None, OperatorTreeEntryKind::User, "root"),
+                entry(
+                    "cm1",
+                    Some("u1"),
+                    OperatorTreeEntryKind::CustomMessage,
+                    "branch A custom",
+                ),
+                entry(
+                    "cm_other",
+                    Some("cm1"),
+                    OperatorTreeEntryKind::CustomMessage,
+                    "child custom",
+                ),
+            ],
+        };
+        // Moving from `cm_other` to its parent `cm1` abandons `cm_other` -> true.
+        assert!(TreePicker::should_prompt_summarize(
+            &sibling_tree,
+            &sibling_tree.entries[1]
+        ));
+        // Moving from `cm1` to its child `cm_other` does NOT rewind `cm_other` to `cm1`;
+        // `cm_other`'s ancestor path includes `cm1`, so nothing is abandoned -> false!
+        let mut from_cm1 = sibling_tree;
+        from_cm1.current_leaf_id = Some("cm1".into());
+        assert!(
+            !TreePicker::should_prompt_summarize(&from_cm1, &from_cm1.entries[2]),
+            "moving forward into a child CustomMessage must not rewind to parentId"
+        );
     }
 }

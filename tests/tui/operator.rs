@@ -1205,11 +1205,12 @@ fn header_names_pi_and_only_a_really_selected_model() {
                 user(1, "Review this.", OperatorContext::default()),
                 message(
                     2,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::model_selected(
                         OperatorModel {
                             provider: "openai".into(),
                             id: "gpt-6.1-sol".into(),
                         },
+                        None,
                     )),
                 ),
                 delta(3, "Inspecting."),
@@ -4480,6 +4481,8 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
         assistant_messages: 2,
         tool_calls: 5,
         tool_results: 4,
+        epoch_tool_calls: 5,
+        epoch_tool_results: 4,
         total_messages: 9,
         epoch_total_messages: 9,
         tokens: ovrcr_protocol::OperatorTokenStats {
@@ -4611,6 +4614,8 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
         assistant_messages: 0,
         tool_calls: 0,
         tool_results: 0,
+        epoch_tool_calls: 0,
+        epoch_tool_results: 0,
         total_messages: 0,
         epoch_total_messages: 0,
         tokens: ovrcr_protocol::OperatorTokenStats::default(),
@@ -5629,6 +5634,8 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
             assistant_messages: 2,
             tool_calls: 1,
             tool_results: 1,
+            epoch_tool_calls: 3,
+            epoch_tool_results: 2,
             total_messages: 5,
             epoch_total_messages: 7,
             tokens: ovrcr_protocol::OperatorTokenStats::default(),
@@ -5639,7 +5646,9 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
     let branched_session = draw_text(&mut d, 140, 35);
     assert!(
         branched_session.contains("2 on branch · 3 total")
-            && branched_session.contains("5 on branch (2 user · 2 assistant) · 7 in epoch"),
+            && branched_session.contains("5 on branch (2 user · 2 assistant) · 7 in epoch")
+            && branched_session
+                .contains("1 calls · 1 results on branch · 3 calls · 2 results in epoch"),
         "{branched_session}"
     );
     d.key(KeyCode::Esc);
@@ -6227,5 +6236,228 @@ fn tree_summarize_branch_modal_supports_esc_back_navigation_custom_prompt_compos
             .contains("Interrupted · branch summarization cancelled; current branch preserved.")
             && interrupted_screen.contains("> restart alpha worker?▏"),
         "{interrupted_screen}"
+    );
+}
+
+#[test]
+fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
+    use ovrcr_protocol::{OperatorSessionTree, OperatorTreeEntry, OperatorTreeEntryKind};
+
+    // 1. `/copy` ignores partial assistant text on Interrupted, Error, and Running turns!
+    let mut d = dashboard_fixture();
+    let mut state = with_model(summary());
+    state.run = SessionRunId(3);
+    state.current_turn = Some(OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: state.id,
+            session: state.session,
+            run: SessionRunId(3),
+            turn: OperatorTurnId(3),
+        },
+        state: OperatorTurnState::Interrupted,
+        sequence: 2,
+    });
+    let out = opened(&mut d, state.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            state,
+            vec![
+                turn_message(
+                    1,
+                    1,
+                    OperatorMessageContent::User {
+                        text: "completed question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    1,
+                    2,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Completed durable reply.".into(),
+                    )),
+                ),
+                turn_message(
+                    1,
+                    3,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u1".into()),
+                        pi_leaf_entry_id: Some("a1".into()),
+                    }),
+                ),
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "failed question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Partial failed reply MUST NOT COPY.".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed("boom".into())),
+                ),
+                turn_message(
+                    3,
+                    7,
+                    OperatorMessageContent::User {
+                        text: "interrupted question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Partial interrupted reply MUST NOT COPY.".into(),
+                    )),
+                ),
+                turn_message(3, 9, OperatorMessageContent::Interrupted),
+            ],
+            None,
+        ),
+    );
+
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText("Completed durable reply.".into()),
+        "/copy must skip Failed and Interrupted partial replies and copy the latest Complete reply"
+    );
+
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("expected Tree request");
+
+    // Loading state advertises `Esc close`.
+    let loading_tree = draw_text(&mut d, 140, 32);
+    assert!(loading_tree.contains("Esc close"), "{loading_tree}");
+
+    respond(
+        &mut d,
+        tree_req.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a2".into()),
+            entries: vec![
+                OperatorTreeEntry {
+                    id: "u1".into(),
+                    parent_id: None,
+                    kind: OperatorTreeEntryKind::User,
+                    preview: "first prompt".into(),
+                },
+                OperatorTreeEntry {
+                    id: "a1".into(),
+                    parent_id: Some("u1".into()),
+                    kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                    preview: "first answer".into(),
+                },
+                OperatorTreeEntry {
+                    id: "u2".into(),
+                    parent_id: Some("a1".into()),
+                    kind: OperatorTreeEntryKind::User,
+                    preview: "second prompt".into(),
+                },
+                OperatorTreeEntry {
+                    id: "a2".into(),
+                    parent_id: Some("u2".into()),
+                    kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                    preview: "second answer".into(),
+                },
+            ],
+        })),
+    );
+
+    // 3. Browse state advertises `Tab/Ctrl-f` + `Ctrl-u user-only` + `Ctrl-c clear` + `Esc close`,
+    //    and `Ctrl-u` toggles `filter: user-only` <-> `filter: default` without deleting search text!
+    d.event_action(Event::Paste("first".into()));
+    let browse_screen = draw_text(&mut d, 140, 32);
+    for expected in [
+        "Tab/Ctrl-f",
+        "Ctrl-u user-only",
+        "Ctrl-c clear",
+        "Esc close",
+    ] {
+        assert!(
+            browse_screen.contains(expected),
+            "expected `{expected}` in /tree Browse footer:\n{browse_screen}"
+        );
+    }
+    d.ctrl('u');
+    let user_only_screen = draw_text(&mut d, 140, 32);
+    assert!(
+        user_only_screen.contains("filter: user-only")
+            && user_only_screen.contains("Search: first▏")
+            && !user_only_screen.contains("first answer"),
+        "Ctrl-u must toggle user-only filter while keeping search text:\n{user_only_screen}"
+    );
+    d.ctrl('u');
+    let back_default = draw_text(&mut d, 140, 32);
+    assert!(
+        back_default.contains("filter: default") && back_default.contains("first answer"),
+        "second Ctrl-u must return to default filter:\n{back_default}"
+    );
+
+    // 4. ConfirmSummarize advertises `Esc back`, and CustomInstructions advertises `Ctrl-c clear` + `Esc back`!
+    d.ctrl('c'); // clear search -> selects `a2`
+    d.key(KeyCode::Up); // selects `u2` (rewinding from `a2` prompts ConfirmSummarize)
+    d.key(KeyCode::Enter);
+    let confirm_screen = draw_text(&mut d, 140, 32);
+    assert!(
+        confirm_screen.contains("Summarize branch?") && confirm_screen.contains("Esc back"),
+        "{confirm_screen}"
+    );
+    d.key(KeyCode::Down); // Summarize
+    d.key(KeyCode::Down); // Summarize with custom prompt
+    d.key(KeyCode::Enter);
+    let custom_screen = draw_text(&mut d, 140, 32);
+    for expected in ["Ctrl-c clear", "Esc back"] {
+        assert!(
+            custom_screen.contains(expected),
+            "expected `{expected}` in CustomInstructions footer:\n{custom_screen}"
+        );
+    }
+
+    // 5. Running turn with only streaming text has no completed reply -> `/copy` refuses cleanly!
+    let mut running_dash = dashboard_fixture();
+    let mut running_state = with_model(summary());
+    running_state.run = SessionRunId(1);
+    running_state.current_turn = Some(turn(1, OperatorTurnState::Running));
+    let out_run = opened(&mut running_dash, running_state.clone());
+    let read_run = read_request(&out_run);
+    respond(
+        &mut running_dash,
+        read_run.request_id,
+        history_of(
+            running_state,
+            vec![
+                user(1, "streaming prompt", OperatorContext::default()),
+                delta(2, "Still streaming partial reply..."),
+            ],
+            None,
+        ),
+    );
+    running_dash.event_action(Event::Paste("/copy".into()));
+    assert_eq!(running_dash.key(KeyCode::Enter), DashboardAction::Redraw);
+    let running_copy_screen = draw_text(&mut running_dash, 140, 32);
+    assert!(
+        running_copy_screen.contains("No assistant reply to copy yet."),
+        "streaming Running turn must not copy partial text:\n{running_copy_screen}"
     );
 }

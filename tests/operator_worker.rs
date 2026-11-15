@@ -69,7 +69,7 @@ fn selected_models_in_transcript(history: &ovrcr::protocol::OperatorHistory) -> 
         .filter(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_))
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected { .. })
             )
         })
         .count()
@@ -3282,4 +3282,145 @@ fn branch_summary_turn_stop_and_failure_preserve_checkpoint_and_active_branch() 
         );
         current_conv = after_err.conversation;
     }
+
+    // Switching to another branch via `No summary` must NOT leak Branch A's
+    // interrupted/failed BranchSummary turns into `Read`!
+    let turn_one_assistant_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "Root answer.")
+        .unwrap()
+        .id
+        .clone();
+    let Response::Operator(OperatorResponse::TreeNavigated(_switched_root)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: current_conv.run,
+            target_entry_id: turn_one_assistant_id,
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated to root");
+    };
+    let root_history = client.read(opened.id.0, 0, 100);
+    assert!(
+        !root_history
+            .messages
+            .iter()
+            .any(|m| matches!(m.content, OperatorMessageContent::BranchSummary { .. })),
+        "interrupted/failed BranchSummary from Branch A leaked onto root branch: {root_history:#?}"
+    );
+}
+
+#[test]
+fn session_info_reports_builtin_pi_context_window_and_branched_epoch_tool_counts() {
+    use ovrcr::protocol::{OperatorRequest, OperatorResponse};
+
+    let mut scenario = Scenario::new();
+    scenario.set("context_window", json!(128_000));
+    scenario.set("record_tool_history", json!(true));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 4_000,
+            "output": 500,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 4_500,
+            "cost": { "total": 0.01 }
+        }),
+    );
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    assert!(
+        !live.config.join("operator-pi/models.json").exists(),
+        "built-in pi models do not write operator-pi/models.json"
+    );
+    let opened = client.open();
+
+    // Turn 1: root
+    let _turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    // Turn 2: Branch A with 1 tool call + 1 tool result
+    scenario.steps(vec![
+        Step::Tool {
+            id: "call-1".into(),
+            name: "read".into(),
+            input: json!({ "path": "README.md" }),
+            output: "readme contents".into(),
+            status: "succeeded",
+            truncated: false,
+            marker: None,
+        },
+        Step::assistant("Branch A tool answer."),
+        Step::Settle,
+    ]);
+    fake.script(&scenario);
+    let _turn_two = client.submit_turn(&after_one.conversation, "branch A with tool");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::SessionInfo(info_branch_a)) =
+        client.exchange(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected SessionInfo on Branch A");
+    };
+    assert_eq!(info_branch_a.tool_calls, 1);
+    assert_eq!(info_branch_a.tool_results, 1);
+    assert_eq!(info_branch_a.epoch_tool_calls, 1);
+    assert_eq!(info_branch_a.epoch_tool_results, 1);
+
+    let Response::Operator(OperatorResponse::Tree(tree)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let branch_a_user_id = tree
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A with tool")
+        .unwrap()
+        .id
+        .clone();
+
+    // Rewind to `branch_a_user_id` (`No summary`) and submit Turn 3 (Branch B without tools).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: branch_a_user_id,
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    scenario.steps(vec![
+        Step::assistant("Branch B plain answer."),
+        Step::Settle,
+    ]);
+    fake.script(&scenario);
+    let _turn_three = client.submit_turn(&rewound.conversation, "branch B without tool");
+    client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::SessionInfo(info)) =
+        client.exchange(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected SessionInfo");
+    };
+    assert_eq!(
+        info.context_window.capacity_tokens,
+        Some(128_000),
+        "built-in pi contextWindow must populate SessionInfo capacity without models.json"
+    );
+    assert_eq!(info.context_window.used_tokens, Some(4_500));
+    assert_eq!(info.tool_calls, 0);
+    assert_eq!(info.tool_results, 0);
+    assert_eq!(info.epoch_tool_calls, 1);
+    assert_eq!(info.epoch_tool_results, 1);
 }

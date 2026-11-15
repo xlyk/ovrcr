@@ -450,10 +450,11 @@ fn operator_worker_fixture() {
             assert!(!text.is_empty());
             vec![
                 OperatorWorkerEvent::AssistantDelta("partial".into()),
-                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                OperatorWorkerEvent::ModelSelected {
                     provider: "fixture".into(),
                     id: "offline".into(),
-                }),
+                    context_window: Some(128_000),
+                },
             ]
         }
         OperatorWorkerSubmission::Compact { .. } => {
@@ -471,10 +472,11 @@ fn operator_worker_fixture() {
                 start.checkpoint_turn.is_some(),
                 "branch summary must always resume a checkpoint"
             );
-            vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+            vec![OperatorWorkerEvent::ModelSelected {
                 provider: "fixture".into(),
                 id: "offline".into(),
-            })]
+                context_window: Some(128_000),
+            }]
         }
     };
     assert!(

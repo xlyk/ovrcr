@@ -2764,6 +2764,8 @@ mod wire_snapshot {
             assistant_messages: 2,
             tool_calls: 1,
             tool_results: 1,
+            epoch_tool_calls: 1,
+            epoch_tool_results: 1,
             total_messages: 5,
             epoch_total_messages: 5,
             tokens: OperatorTokenStats {
@@ -2895,10 +2897,11 @@ mod wire_snapshot {
             ),
             (
                 "ModelSelected",
-                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                OperatorWorkerEvent::ModelSelected {
                     provider: "openai".into(),
                     id: "model".into(),
-                }),
+                    context_window: Some(200_000),
+                },
             ),
             (
                 "Completed",
@@ -4942,7 +4945,7 @@ mod wire_snapshot {
         ),
         (
             "Request::OperatorExchange::ModelSelected",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010103066f70656e6169056d6f64656c",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010103066f70656e6169056d6f64656c01fc400d0300",
         ),
         (
             "Request::OperatorExchange::Completed",
@@ -5025,7 +5028,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::SessionInfo",
-            "190701030401010a6f70657261746f722d3101020102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c050105050203050202020202010105056432190ab9fc60e3160001b901fc400d0300",
+            "190701030401010a6f70657261746f722d3101020102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c0501050502030502020202020101010105056432190ab9fc60e3160001b901fc400d0300",
         ),
         (
             "Response::Operator::Tree",

@@ -942,7 +942,7 @@ impl Dashboard {
     }
 
     fn draw_operator_reasoning_picker(&self, frame: &mut Frame<'_>) {
-        let Some(picker) = &self.operator.reasoning_picker else {
+        let Some(picker) = self.operator.reasoning_picker() else {
             return;
         };
         let outer = frame.area();
@@ -993,7 +993,12 @@ impl Dashboard {
             vec![Line::raw(unsupported)],
             width.saturating_sub(2),
         ));
-        lines.push(Line::raw("↑↓ Enter pick · Esc close").style(Style::default().fg(MAUVE())));
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(width.saturating_sub(2)),
+        ) {
+            lines.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+        }
         let height = (lines.len() as u16 + 2).min(outer.height);
         let area = Rect::new(
             outer.x + (outer.width - width) / 2,
@@ -1015,11 +1020,11 @@ impl Dashboard {
     }
 
     fn draw_operator_session_modal(&self, frame: &mut Frame<'_>) {
-        let Some(modal) = &self.operator.session_modal else {
+        let Some(modal) = self.operator.session_modal() else {
             return;
         };
         let outer = frame.area();
-        let width = outer.width.min(76);
+        let width = outer.width.min(82);
         let inner_width = width.saturating_sub(2);
         let field = |label: &'static str, value: String| -> Line<'static> {
             Line::from(vec![
@@ -1078,7 +1083,9 @@ impl Dashboard {
                     _ => "none yet".into(),
                 };
                 let branched = info.branch_turns != info.completed_turns
-                    || info.epoch_total_messages != info.total_messages;
+                    || info.epoch_total_messages != info.total_messages
+                    || info.epoch_tool_calls != info.tool_calls
+                    || info.epoch_tool_results != info.tool_results;
                 let turns_value = if branched {
                     format!(
                         "{} on branch · {} total ({} completed)",
@@ -1109,6 +1116,21 @@ impl Dashboard {
                         format_count(info.assistant_messages)
                     )
                 };
+                let tools_value = if branched {
+                    format!(
+                        "{} calls · {} results on branch · {} calls · {} results in epoch",
+                        format_count(info.tool_calls),
+                        format_count(info.tool_results),
+                        format_count(info.epoch_tool_calls),
+                        format_count(info.epoch_tool_results)
+                    )
+                } else {
+                    format!(
+                        "{} calls · {} results",
+                        format_count(info.tool_calls),
+                        format_count(info.tool_results)
+                    )
+                };
                 let rows = vec![
                     field(
                         "Identities",
@@ -1129,14 +1151,7 @@ impl Dashboard {
                     field("Reasoning", reasoning),
                     field("Turns", turns_value),
                     field("Messages", messages_value),
-                    field(
-                        "Tools",
-                        format!(
-                            "{} calls · {} results",
-                            format_count(info.tool_calls),
-                            format_count(info.tool_results)
-                        ),
-                    ),
+                    field("Tools", tools_value),
                     field(
                         "Tokens",
                         format!(
@@ -1161,7 +1176,12 @@ impl Dashboard {
             }
         };
         lines.push(Line::default());
-        lines.push(Line::raw(" Esc / Enter / q close").style(Style::default().fg(MAUVE())));
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(inner_width.saturating_sub(1)),
+        ) {
+            lines.push(Line::raw(format!(" {line}")).style(Style::default().fg(MAUVE())));
+        }
         let height = (lines.len() as u16 + 2).min(outer.height);
         let area = Rect::new(
             outer.x + (outer.width - width) / 2,
@@ -1183,7 +1203,7 @@ impl Dashboard {
     }
 
     fn draw_operator_model_picker(&self, frame: &mut Frame<'_>) {
-        let Some(picker) = &self.operator.model_picker else {
+        let Some(picker) = self.operator.model_picker() else {
             return;
         };
         let outer = frame.area();
@@ -1277,10 +1297,12 @@ impl Dashboard {
             }
         }
 
-        lines.push(
-            Line::raw("Type filter · ↑↓ Enter pick · Esc close")
-                .style(Style::default().fg(MAUVE())),
-        );
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(width.saturating_sub(2)),
+        ) {
+            lines.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+        }
         let height = (lines.len() as u16 + 2).min(outer.height);
         let area = Rect::new(
             outer.x + (outer.width - width) / 2,
@@ -1311,7 +1333,7 @@ impl Dashboard {
     }
 
     fn draw_operator_tree_modal(&self, frame: &mut Frame<'_>) {
-        let Some(modal) = &self.operator.tree_modal else {
+        let Some(modal) = self.operator.tree_modal() else {
             return;
         };
         let outer = frame.area();
@@ -1320,15 +1342,18 @@ impl Dashboard {
         }
         let width = outer.width.min(92);
         let inner_width = usize::from(width.saturating_sub(2));
+        let footer_lines = super::super::keymap::operator_overlay_footer_lines(self, inner_width);
 
         let (lines, title, modal_cursor) = match modal {
             TreeModal::Loading => {
-                let rows = vec![
+                let mut rows = vec![
                     Line::raw(" Loading Operator session tree…")
                         .style(Style::default().fg(SUBTEXT())),
                     Line::default(),
-                    Line::raw(" Esc close").style(Style::default().fg(MAUVE())),
                 ];
+                for line in footer_lines {
+                    rows.push(Line::raw(format!(" {line}")).style(Style::default().fg(MAUVE())));
+                }
                 (rows, " Operator tree · /tree ".to_owned(), None)
             }
             TreeModal::Loaded(picker) => match &picker.step {
@@ -1375,10 +1400,9 @@ impl Dashboard {
                         ));
                     }
                     rows.push(Line::default());
-                    rows.push(
-                        Line::raw("↑↓ select · Enter confirm · Esc back to /tree")
-                            .style(Style::default().fg(MAUVE())),
-                    );
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
                     (rows, " Summarize branch? · /tree ".to_owned(), None)
                 }
                 TreePickerStep::CustomInstructions {
@@ -1422,10 +1446,9 @@ impl Dashboard {
                         ));
                     }
                     rows.push(Line::default());
-                    rows.push(
-                        Line::raw("Type instructions · Enter summarize · Esc back")
-                            .style(Style::default().fg(MAUVE())),
-                    );
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
                     let cursor_col = prompt_prefix.width() + before.width();
                     (
                         rows,
@@ -1483,12 +1506,12 @@ impl Dashboard {
                             let bg = if active_sel { SURFACE2() } else { BASE() };
                             let marker = if row.active_branch { "● " } else { "  " };
                             let role_fg = match row.kind {
-                                OperatorTreeEntryKind::User
-                                | OperatorTreeEntryKind::CustomMessage => MAUVE(),
+                                OperatorTreeEntryKind::User => MAUVE(),
                                 OperatorTreeEntryKind::Assistant { .. } => BLUE(),
                                 OperatorTreeEntryKind::Compaction
                                 | OperatorTreeEntryKind::BranchSummary => PEACH(),
-                                OperatorTreeEntryKind::ToolResult
+                                OperatorTreeEntryKind::CustomMessage
+                                | OperatorTreeEntryKind::ToolResult
                                 | OperatorTreeEntryKind::ModelChange
                                 | OperatorTreeEntryKind::ThinkingLevelChange
                                 | OperatorTreeEntryKind::Other => SUBTEXT(),
@@ -1536,12 +1559,9 @@ impl Dashboard {
                         }
                     }
 
-                    rows.push(
-                        Line::raw(
-                            "Type search · ↑↓ select · Tab/Ctrl-f filter · Enter switch · Esc close",
-                        )
-                        .style(Style::default().fg(MAUVE())),
-                    );
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
                     let leaf_status = if picker.tree.entries.is_empty() {
                         "empty"
                     } else if picker.tree.current_leaf_id.is_some() {

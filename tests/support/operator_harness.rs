@@ -553,8 +553,11 @@ pub fn models_selected(history: &OperatorHistory) -> Vec<ovrcr::protocol::Operat
         .iter()
         .filter_map(|message| match &message.content {
             ovrcr::protocol::OperatorMessageContent::Worker(
-                ovrcr::protocol::OperatorWorkerEvent::ModelSelected(model),
-            ) => Some(model.clone()),
+                ovrcr::protocol::OperatorWorkerEvent::ModelSelected { provider, id, .. },
+            ) => Some(ovrcr::protocol::OperatorModel {
+                provider: provider.clone(),
+                id: id.clone(),
+            }),
             _ => None,
         })
         .collect()

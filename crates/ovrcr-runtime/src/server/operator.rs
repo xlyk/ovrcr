@@ -412,29 +412,11 @@ impl ServerState {
                     if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
                         hook();
                     }
-                    let current = {
-                        let retained = self.retained.lock();
-                        self.dashboard
-                            .with_owned(owner, |_| -> Result<_> {
-                                retained.require_current_operator(conversation)?;
-                                retained.operator_conversation(conversation)
-                            })
-                            .context("dashboard owner changed")??
-                    };
-                    let session = self.sessions.lock().unwrap().get(&current.session).cloned();
-                    let worker_live = session.is_some_and(|session| {
-                        session.run() == current.run
-                            && session.is_live()
-                            && session.summary().scope
-                                == (ovrcr_protocol::SessionScope::OperatorConversation {
-                                    conversation: current.id,
-                                })
-                    });
-                    if worker_live {
-                        bail!(
-                            "cannot start a new Operator session while an Operator worker or watched-session lease is active"
-                        );
-                    }
+                    self.ensure_operator_worker_not_live(
+                        owner,
+                        conversation,
+                        "cannot start a new Operator session while an Operator worker or watched-session lease is active",
+                    )?;
                     let (summary, superseded) = {
                         let mut retained = self.retained.lock();
                         self.dashboard
@@ -493,20 +475,14 @@ impl ServerState {
                     .model
                     .as_deref()
                     .and_then(|raw| OperatorModel::parse(raw).ok());
-                let capacity_tokens = [
-                    active_model.as_ref(),
+                let capacity_tokens = crate::operator_session_file::resolve_context_window_capacity(
+                    &self.registry_path,
+                    snapshot.summary.model.as_ref(),
+                    snapshot.context_window_tokens,
                     checkpoint.as_ref().and_then(|c| c.active_model.as_ref()),
                     configured_model.as_ref(),
-                ]
-                .into_iter()
-                .flatten()
-                .find_map(|model| {
-                    crate::operator_session_file::lookup_model_context_window(
-                        &self.registry_path,
-                        model,
-                    )
-                })
-                .or_else(|| checkpoint.as_ref().and_then(|c| c.inline_context_window));
+                    checkpoint.as_ref().and_then(|c| c.inline_context_window),
+                );
                 let verified = {
                     let retained = self.retained.lock();
                     self.dashboard
@@ -526,6 +502,8 @@ impl ServerState {
                     assistant_messages,
                     tool_calls,
                     tool_results,
+                    epoch_tool_calls,
+                    epoch_tool_results,
                     total_messages,
                     epoch_total_messages,
                     tokens,
@@ -538,6 +516,8 @@ impl ServerState {
                         checkpoint.assistant_messages,
                         checkpoint.tool_calls,
                         checkpoint.tool_results,
+                        checkpoint.epoch_tool_calls,
+                        checkpoint.epoch_tool_results,
                         checkpoint.total_messages,
                         checkpoint.epoch_total_messages,
                         checkpoint.tokens,
@@ -547,6 +527,8 @@ impl ServerState {
                 } else {
                     (
                         None,
+                        0,
+                        0,
                         0,
                         0,
                         0,
@@ -578,6 +560,8 @@ impl ServerState {
                         assistant_messages,
                         tool_calls,
                         tool_results,
+                        epoch_tool_calls,
+                        epoch_tool_results,
                         total_messages,
                         epoch_total_messages,
                         tokens,
@@ -638,29 +622,11 @@ impl ServerState {
                     if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
                         hook();
                     }
-                    let current = {
-                        let retained = self.retained.lock();
-                        self.dashboard
-                            .with_owned(owner, |_| -> Result<_> {
-                                retained.require_current_operator(conversation)?;
-                                retained.operator_conversation(conversation)
-                            })
-                            .context("dashboard owner changed")??
-                    };
-                    let session = self.sessions.lock().unwrap().get(&current.session).cloned();
-                    let worker_live = session.is_some_and(|session| {
-                        session.run() == current.run
-                            && session.is_live()
-                            && session.summary().scope
-                                == (ovrcr_protocol::SessionScope::OperatorConversation {
-                                    conversation: current.id,
-                                })
-                    });
-                    if worker_live {
-                        bail!(
-                            "cannot switch Operator tree branch while an Operator worker or watched-session lease is active"
-                        );
-                    }
+                    self.ensure_operator_worker_not_live(
+                        owner,
+                        conversation,
+                        "cannot switch Operator tree branch while an Operator worker or watched-session lease is active",
+                    )?;
                     let snapshot = {
                         let retained = self.retained.lock();
                         self.dashboard
@@ -951,6 +917,42 @@ impl ServerState {
             .map_err(|_| lifecycle_error(ErrorCode::Internal, OPERATOR_MODEL_UNAVAILABLE_MSG))
     }
 
+    fn is_operator_worker_live(
+        &self,
+        session_id: SessionId,
+        conversation: OperatorConversationId,
+        run: SessionRunId,
+    ) -> bool {
+        let session = self.sessions.lock().unwrap().get(&session_id).cloned();
+        session.is_some_and(|session| {
+            session.run() == run
+                && session.is_live()
+                && session.summary().scope
+                    == (ovrcr_protocol::SessionScope::OperatorConversation { conversation })
+        })
+    }
+
+    fn ensure_operator_worker_not_live(
+        &self,
+        owner: &Arc<()>,
+        conversation: OperatorConversationId,
+        busy_message: &'static str,
+    ) -> Result<()> {
+        let current = {
+            let retained = self.retained.lock();
+            self.dashboard
+                .with_owned(owner, |_| -> Result<_> {
+                    retained.require_current_operator(conversation)?;
+                    retained.operator_conversation(conversation)
+                })
+                .context("dashboard owner changed")??
+        };
+        if self.is_operator_worker_live(current.session, current.id, current.run) {
+            bail!("{busy_message}");
+        }
+        Ok(())
+    }
+
     fn publish_worker_live(
         &self,
         mut summary: ovrcr_protocol::OperatorConversationSummary,
@@ -963,15 +965,8 @@ impl ServerState {
             summary.worker_live = false;
             return Ok(summary);
         }
-        let session = self.sessions.lock().unwrap().get(&summary.session).cloned();
-        summary.worker_live = session.is_some_and(|session| {
-            session.run() == summary.run
-                && session.is_live()
-                && session.summary().scope
-                    == (ovrcr_protocol::SessionScope::OperatorConversation {
-                        conversation: summary.id,
-                    })
-        });
+        summary.worker_live =
+            self.is_operator_worker_live(summary.session, summary.id, summary.run);
         Ok(summary)
     }
 
@@ -1000,13 +995,7 @@ impl ServerState {
         {
             return Ok(false);
         }
-        let session = self.sessions.lock().unwrap().get(&summary.session).cloned();
-        Ok(session.is_some_and(|session| {
-            session.run() == run
-                && session.is_live()
-                && session.summary().scope
-                    == (ovrcr_protocol::SessionScope::OperatorConversation { conversation })
-        }))
+        Ok(self.is_operator_worker_live(summary.session, conversation, run))
     }
 
     fn validate_operator_context(&self, context: &OperatorContext) -> Result<()> {

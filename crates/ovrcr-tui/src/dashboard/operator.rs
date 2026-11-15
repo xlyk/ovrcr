@@ -49,17 +49,93 @@ pub(super) struct Hub {
     error: Option<String>,
     quick: Option<QuickMessage>,
     quick_generation: u64,
-    reasoning_picker: Option<ReasoningPicker>,
-    pending_reasoning_picker: bool,
-    model_picker: Option<ModelPicker>,
-    pending_model_picker: Option<ModelPicker>,
-    pending_model_notice: Option<String>,
-    session_modal: Option<SessionModal>,
-    pending_session_info: bool,
-    tree_modal: Option<TreeModal>,
-    pending_tree_modal: bool,
+    overlay: Option<OperatorOverlay>,
+    pending_overlay: Option<PendingOperatorOverlay>,
     slash_selected: usize,
     slash_dismissed_for: Option<String>,
+}
+enum OperatorOverlay {
+    Reasoning(ReasoningPicker),
+    Model(ModelPicker),
+    Session(SessionModal),
+    Tree(TreeModal),
+}
+enum PendingOperatorOverlay {
+    Reasoning,
+    Model {
+        picker: ModelPicker,
+        notice: Option<String>,
+    },
+    Session,
+    Tree,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OperatorOverlayKeymap {
+    ModelPicker,
+    ReasoningPicker,
+    SessionModal,
+    TreeLoading,
+    TreeBrowse,
+    TreeConfirmSummarize,
+    TreeCustomInstructions,
+}
+impl Hub {
+    fn clear_overlays(&mut self) {
+        self.overlay = None;
+        self.pending_overlay = None;
+    }
+    fn set_overlay(&mut self, overlay: OperatorOverlay) {
+        self.pending_overlay = None;
+        self.overlay = Some(overlay);
+    }
+    fn reasoning_picker(&self) -> Option<&ReasoningPicker> {
+        match &self.overlay {
+            Some(OperatorOverlay::Reasoning(picker)) => Some(picker),
+            _ => None,
+        }
+    }
+    fn reasoning_picker_mut(&mut self) -> Option<&mut ReasoningPicker> {
+        match &mut self.overlay {
+            Some(OperatorOverlay::Reasoning(picker)) => Some(picker),
+            _ => None,
+        }
+    }
+    fn model_picker(&self) -> Option<&ModelPicker> {
+        match &self.overlay {
+            Some(OperatorOverlay::Model(picker)) => Some(picker),
+            _ => None,
+        }
+    }
+    fn model_picker_mut(&mut self) -> Option<&mut ModelPicker> {
+        match &mut self.overlay {
+            Some(OperatorOverlay::Model(picker)) => Some(picker),
+            _ => None,
+        }
+    }
+    fn session_modal(&self) -> Option<&SessionModal> {
+        match &self.overlay {
+            Some(OperatorOverlay::Session(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+    fn tree_modal(&self) -> Option<&TreeModal> {
+        match &self.overlay {
+            Some(OperatorOverlay::Tree(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+    fn tree_modal_mut(&mut self) -> Option<&mut TreeModal> {
+        match &mut self.overlay {
+            Some(OperatorOverlay::Tree(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+    fn tree_picker_mut(&mut self) -> Option<&mut TreePicker> {
+        match &mut self.overlay {
+            Some(OperatorOverlay::Tree(TreeModal::Loaded(picker))) => Some(picker),
+            _ => None,
+        }
+    }
 }
 enum SessionModal {
     Loading,
@@ -399,6 +475,52 @@ fn paste_text(text: &str) -> String {
         .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
         .collect()
 }
+fn edit_modal_line(
+    text: &mut String,
+    cursor: &mut TextCursor,
+    key: KeyEvent,
+    max_bytes: usize,
+) -> bool {
+    let before = text.clone();
+    if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+        text.clear();
+        *cursor = TextCursor::default();
+    } else if !cursor.edit_key(text, key) {
+        match key.code {
+            KeyCode::Char(ch)
+                if !ch.is_control()
+                    && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
+            {
+                let ch_str = ch.to_string();
+                if text.len().saturating_add(ch_str.len()) <= max_bytes {
+                    cursor.insert(text, &ch_str);
+                }
+            }
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End => cursor.key(text, key.code),
+            _ => {}
+        }
+    }
+    *text != before
+}
+fn paste_modal_line(
+    text: &mut String,
+    cursor: &mut TextCursor,
+    pasted: &str,
+    max_bytes: usize,
+) -> bool {
+    let clean: String = pasted.chars().filter(|ch| !ch.is_control()).collect();
+    if clean.is_empty() || text.len().saturating_add(clean.len()) > max_bytes {
+        return false;
+    }
+    let before = text.clone();
+    cursor.insert(text, &clean);
+    *text != before
+}
 fn content_area(dashboard: &Dashboard, area: Rect) -> Rect {
     let sidebar = super::sidebar_width_for(area, dashboard.sidebar_preference());
     Rect::new(
@@ -677,6 +799,7 @@ impl Dashboard {
         if key.kind != KeyEventKind::Press {
             return DashboardAction::None;
         }
+        self.copy_notice = None;
         if key.code == KeyCode::Esc {
             self.operator_dismiss_quick();
             return DashboardAction::Redraw;
@@ -761,6 +884,7 @@ impl Dashboard {
         DashboardAction::Redraw
     }
     pub(super) fn operator_quick_paste(&mut self, text: &str) -> DashboardAction {
+        self.copy_notice = None;
         if let Some(quick) = &mut self.operator.quick
             && quick.phase == QuickPhase::Editing
         {
@@ -1086,30 +1210,32 @@ impl Dashboard {
         )
     }
 
-    pub(super) fn operator_reasoning_picker_open(&self) -> bool {
-        self.operator.reasoning_picker.is_some()
-    }
-
-    pub(super) fn operator_model_picker_open(&self) -> bool {
-        self.operator.model_picker.is_some()
-    }
-
-    pub(super) fn operator_session_modal_open(&self) -> bool {
-        self.operator.session_modal.is_some()
-    }
-
-    pub(super) fn operator_tree_modal_open(&self) -> bool {
-        self.operator.tree_modal.is_some()
+    pub(super) fn operator_overlay_keymap(&self) -> Option<OperatorOverlayKeymap> {
+        match &self.operator.overlay {
+            Some(OperatorOverlay::Model(_)) => Some(OperatorOverlayKeymap::ModelPicker),
+            Some(OperatorOverlay::Reasoning(_)) => Some(OperatorOverlayKeymap::ReasoningPicker),
+            Some(OperatorOverlay::Session(_)) => Some(OperatorOverlayKeymap::SessionModal),
+            Some(OperatorOverlay::Tree(TreeModal::Loading)) => {
+                Some(OperatorOverlayKeymap::TreeLoading)
+            }
+            Some(OperatorOverlay::Tree(TreeModal::Loaded(picker))) => match picker.step {
+                TreePickerStep::Browse => Some(OperatorOverlayKeymap::TreeBrowse),
+                TreePickerStep::ConfirmSummarize { .. } => {
+                    Some(OperatorOverlayKeymap::TreeConfirmSummarize)
+                }
+                TreePickerStep::CustomInstructions { .. } => {
+                    Some(OperatorOverlayKeymap::TreeCustomInstructions)
+                }
+            },
+            None => None,
+        }
     }
 
     fn operator_slash_menu_specs(&self) -> Vec<&'static slash::SlashCommandSpec> {
         if !self.operator.visible
             || !self.operator.editing
             || self.operator.transcript_focus
-            || self.operator.reasoning_picker.is_some()
-            || self.operator.model_picker.is_some()
-            || self.operator.session_modal.is_some()
-            || self.operator.tree_modal.is_some()
+            || self.operator.overlay.is_some()
         {
             return Vec::new();
         }
@@ -1231,7 +1357,7 @@ impl Dashboard {
             self.operator.slash_dismissed_for = None;
             if from_quick {
                 self.operator.quick = None;
-                self.operator.pending_reasoning_picker = true;
+                self.operator.pending_overlay = Some(PendingOperatorOverlay::Reasoning);
                 self.open_operator();
                 if self.operator.chat.is_some() {
                     self.operator_open_reasoning();
@@ -1471,18 +1597,17 @@ impl Dashboard {
     }
 
     fn operator_open_session_info(&mut self) {
-        self.operator.pending_session_info = false;
+        if matches!(
+            self.operator.pending_overlay,
+            Some(PendingOperatorOverlay::Session)
+        ) {
+            self.operator.pending_overlay = None;
+        }
         let Some(id) = self.operator.chat.as_ref().map(|chat| chat.summary.id) else {
             return;
         };
-        self.operator.reasoning_picker = None;
-        self.operator.pending_reasoning_picker = false;
-        self.operator.model_picker = None;
-        self.operator.pending_model_picker = None;
-        self.operator.pending_model_notice = None;
-        self.operator.tree_modal = None;
-        self.operator.pending_tree_modal = false;
-        self.operator.session_modal = Some(SessionModal::Loading);
+        self.operator
+            .set_overlay(OperatorOverlay::Session(SessionModal::Loading));
         if !self
             .operator
             .pending
@@ -1497,18 +1622,17 @@ impl Dashboard {
     }
 
     fn operator_open_tree(&mut self) {
-        self.operator.pending_tree_modal = false;
+        if matches!(
+            self.operator.pending_overlay,
+            Some(PendingOperatorOverlay::Tree)
+        ) {
+            self.operator.pending_overlay = None;
+        }
         let Some(id) = self.operator.chat.as_ref().map(|chat| chat.summary.id) else {
             return;
         };
-        self.operator.reasoning_picker = None;
-        self.operator.pending_reasoning_picker = false;
-        self.operator.model_picker = None;
-        self.operator.pending_model_picker = None;
-        self.operator.pending_model_notice = None;
-        self.operator.session_modal = None;
-        self.operator.pending_session_info = false;
-        self.operator.tree_modal = Some(TreeModal::Loading);
+        self.operator
+            .set_overlay(OperatorOverlay::Tree(TreeModal::Loading));
         if !self
             .operator
             .pending
@@ -1545,7 +1669,7 @@ impl Dashboard {
         self.operator.slash_dismissed_for = None;
         if from_quick {
             self.operator.quick = None;
-            self.operator.pending_tree_modal = true;
+            self.operator.pending_overlay = Some(PendingOperatorOverlay::Tree);
             self.open_operator();
             if self.operator.chat.is_some() {
                 self.operator_open_tree();
@@ -1570,7 +1694,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         };
         if let Err(reason) = result {
-            if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+            if let Some(picker) = self.operator.tree_picker_mut() {
                 picker.error = Some(reason.into());
             }
             if let Some(chat) = self.operator.chat.as_mut() {
@@ -1579,7 +1703,7 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
-        if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+        if let Some(picker) = self.operator.tree_picker_mut() {
             picker.submitting = true;
             picker.error = None;
         }
@@ -1596,13 +1720,12 @@ impl Dashboard {
     }
 
     fn operator_tree_modal_key(&mut self, key: KeyEvent) -> DashboardAction {
-        let Some(modal) = self.operator.tree_modal.as_mut() else {
+        let Some(modal) = self.operator.tree_modal_mut() else {
             return DashboardAction::Redraw;
         };
         let TreeModal::Loaded(picker) = modal else {
             if key.code == KeyCode::Esc {
-                self.operator.tree_modal = None;
-                self.operator.pending_tree_modal = false;
+                self.operator.clear_overlays();
             }
             return DashboardAction::Redraw;
         };
@@ -1646,30 +1769,7 @@ impl Dashboard {
                         }),
                     );
                 }
-                if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-                    input.clear();
-                    *cursor = TextCursor::default();
-                } else if !cursor.edit_key(input, key) {
-                    match key.code {
-                        KeyCode::Char(ch)
-                            if !ch.is_control()
-                                && (key.modifiers.is_empty()
-                                    || key.modifiers == KeyModifiers::SHIFT) =>
-                        {
-                            let ch_str = ch.to_string();
-                            if input.len().saturating_add(ch_str.len()) <= MAX_OPERATOR_TEXT_BYTES {
-                                cursor.insert(input, &ch_str);
-                            }
-                        }
-                        KeyCode::Backspace
-                        | KeyCode::Delete
-                        | KeyCode::Left
-                        | KeyCode::Right
-                        | KeyCode::Home
-                        | KeyCode::End => cursor.key(input, key.code),
-                        _ => {}
-                    }
-                }
+                edit_modal_line(input, cursor, key, MAX_OPERATOR_TEXT_BYTES);
                 picker.error = None;
                 return DashboardAction::Redraw;
             }
@@ -1721,8 +1821,7 @@ impl Dashboard {
         }
 
         if key.code == KeyCode::Esc {
-            self.operator.tree_modal = None;
-            self.operator.pending_tree_modal = false;
+            self.operator.clear_overlays();
             return DashboardAction::Redraw;
         }
         if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('f'))
@@ -1733,6 +1832,10 @@ impl Dashboard {
         }
         if key.code == KeyCode::BackTab {
             picker.cycle_filter(false);
+            return DashboardAction::Redraw;
+        }
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('u') {
+            picker.toggle_user_only();
             return DashboardAction::Redraw;
         }
         match key.code {
@@ -1760,16 +1863,14 @@ impl Dashboard {
             }
             KeyCode::Enter if key.modifiers.is_empty() => {
                 if picker.tree.entries.is_empty() {
-                    self.operator.tree_modal = None;
-                    self.operator.pending_tree_modal = false;
+                    self.operator.clear_overlays();
                     return DashboardAction::Redraw;
                 }
                 let Some(entry) = picker.selected_entry().cloned() else {
                     return DashboardAction::Redraw;
                 };
                 if TreePicker::is_noop_selection(&picker.tree, &entry) {
-                    self.operator.tree_modal = None;
-                    self.operator.pending_tree_modal = false;
+                    self.operator.clear_overlays();
                     return DashboardAction::Redraw;
                 }
                 let can_nav = self
@@ -1781,7 +1882,7 @@ impl Dashboard {
                     return DashboardAction::Redraw;
                 };
                 if let Err(reason) = can_nav {
-                    if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                    if let Some(picker) = self.operator.tree_picker_mut() {
                         picker.error = Some(reason.into());
                     }
                     if let Some(chat) = self.operator.chat.as_mut() {
@@ -1790,10 +1891,10 @@ impl Dashboard {
                     }
                     return DashboardAction::Redraw;
                 }
-                if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_ref()
+                if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal()
                     && TreePicker::should_prompt_summarize(&picker.tree, &entry)
                 {
-                    if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                    if let Some(picker) = self.operator.tree_picker_mut() {
                         picker.step = TreePickerStep::ConfirmSummarize {
                             target_entry_id: entry.id,
                             target_preview: format!(
@@ -1811,31 +1912,12 @@ impl Dashboard {
             }
             _ => {}
         }
-        let before = picker.query.clone();
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            picker.query.clear();
-            picker.cursor = TextCursor::default();
-        } else if !picker.cursor.edit_key(&mut picker.query, key) {
-            match key.code {
-                KeyCode::Char(ch)
-                    if !ch.is_control()
-                        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
-                {
-                    let ch_str = ch.to_string();
-                    if picker.query.len().saturating_add(ch_str.len()) <= MAX_TREE_SEARCH_BYTES {
-                        picker.cursor.insert(&mut picker.query, &ch_str);
-                    }
-                }
-                KeyCode::Backspace
-                | KeyCode::Delete
-                | KeyCode::Left
-                | KeyCode::Right
-                | KeyCode::Home
-                | KeyCode::End => picker.cursor.key(&mut picker.query, key.code),
-                _ => {}
-            }
-        }
-        if picker.query != before {
+        if edit_modal_line(
+            &mut picker.query,
+            &mut picker.cursor,
+            key,
+            MAX_TREE_SEARCH_BYTES,
+        ) {
             picker.on_query_changed();
         }
         DashboardAction::Redraw
@@ -1864,7 +1946,7 @@ impl Dashboard {
         self.operator.slash_dismissed_for = None;
         if from_quick {
             self.operator.quick = None;
-            self.operator.pending_session_info = true;
+            self.operator.pending_overlay = Some(PendingOperatorOverlay::Session);
             self.open_operator();
             if self.operator.chat.is_some() {
                 self.operator_open_session_info();
@@ -1879,20 +1961,12 @@ impl Dashboard {
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter)
             || (key.code == KeyCode::Char('q') && key.modifiers.is_empty())
         {
-            self.operator.session_modal = None;
-            self.operator.pending_session_info = false;
+            self.operator.clear_overlays();
         }
         DashboardAction::Redraw
     }
 
     fn operator_open_reasoning(&mut self) {
-        self.operator.model_picker = None;
-        self.operator.pending_model_picker = None;
-        self.operator.pending_model_notice = None;
-        self.operator.session_modal = None;
-        self.operator.pending_session_info = false;
-        self.operator.tree_modal = None;
-        self.operator.pending_tree_modal = false;
         let choices = slash::allowed_thinking_levels(Some(
             &self
                 .operator
@@ -1909,7 +1983,11 @@ impl Dashboard {
             .iter()
             .position(|level| *level == self.settings.operator.thinking_level)
             .unwrap_or(0);
-        self.operator.reasoning_picker = Some(ReasoningPicker { choices, selected });
+        self.operator
+            .set_overlay(OperatorOverlay::Reasoning(ReasoningPicker {
+                choices,
+                selected,
+            }));
     }
 
     fn operator_write_model_setting(&mut self, model: Option<&str>) {
@@ -1928,9 +2006,15 @@ impl Dashboard {
     }
 
     fn operator_apply_model_selection(&mut self, model: Option<&str>, from_quick: bool) {
-        self.operator.model_picker = None;
-        self.operator.pending_model_picker = None;
-        self.operator.pending_model_notice = None;
+        if matches!(self.operator.overlay, Some(OperatorOverlay::Model(_))) {
+            self.operator.overlay = None;
+        }
+        if matches!(
+            self.operator.pending_overlay,
+            Some(PendingOperatorOverlay::Model { .. })
+        ) {
+            self.operator.pending_overlay = None;
+        }
         self.operator_write_model_setting(model);
         let confirmation = match model {
             Some(id) => format!("Set Operator model to {}.", display_text(id)),
@@ -1961,22 +2045,16 @@ impl Dashboard {
     }
 
     fn operator_install_model_picker(&mut self, picker: ModelPicker, notice: Option<String>) {
-        self.operator.reasoning_picker = None;
-        self.operator.pending_reasoning_picker = false;
-        self.operator.session_modal = None;
-        self.operator.pending_session_info = false;
-        self.operator.tree_modal = None;
-        self.operator.pending_tree_modal = false;
+        self.operator.clear_overlays();
         self.operator.error = None;
         if let Some(chat) = self.operator.chat.as_mut() {
             chat.error = None;
             chat.notice = notice;
             if self.operator.visible {
-                self.operator.model_picker = Some(picker);
+                self.operator.set_overlay(OperatorOverlay::Model(picker));
             }
         } else if self.operator.visible {
-            self.operator.pending_model_picker = Some(picker);
-            self.operator.pending_model_notice = notice;
+            self.operator.pending_overlay = Some(PendingOperatorOverlay::Model { picker, notice });
         }
     }
 
@@ -2030,14 +2108,12 @@ impl Dashboard {
 
     fn operator_model_key(&mut self, key: KeyEvent) -> DashboardAction {
         let active = self.settings.operator.model.clone();
-        let Some(picker) = self.operator.model_picker.as_mut() else {
+        let Some(picker) = self.operator.model_picker_mut() else {
             return DashboardAction::None;
         };
         match key.code {
             KeyCode::Esc => {
-                self.operator.model_picker = None;
-                self.operator.pending_model_picker = None;
-                self.operator.pending_model_notice = None;
+                self.operator.clear_overlays();
                 return DashboardAction::Redraw;
             }
             KeyCode::Up if key.modifiers.is_empty() => {
@@ -2065,49 +2141,28 @@ impl Dashboard {
             }
             _ => {}
         }
-        let before = picker.query.clone();
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            picker.query.clear();
-            picker.cursor = TextCursor::default();
-        } else if !picker.cursor.edit_key(&mut picker.query, key) {
-            match key.code {
-                KeyCode::Char(ch)
-                    if !ch.is_control()
-                        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
-                {
-                    let ch_str = ch.to_string();
-                    if picker.query.len().saturating_add(ch_str.len()) <= MAX_MODEL_FILTER_BYTES {
-                        picker.cursor.insert(&mut picker.query, &ch_str);
-                    }
-                }
-                KeyCode::Backspace
-                | KeyCode::Delete
-                | KeyCode::Left
-                | KeyCode::Right
-                | KeyCode::Home
-                | KeyCode::End => picker.cursor.key(&mut picker.query, key.code),
-                _ => {}
-            }
-        }
-        if picker.query != before {
+        if edit_modal_line(
+            &mut picker.query,
+            &mut picker.cursor,
+            key,
+            MAX_MODEL_FILTER_BYTES,
+        ) {
             picker.on_query_changed(active.as_deref());
         }
         DashboardAction::Redraw
     }
 
     fn operator_reasoning_key(&mut self, key: KeyEvent) -> DashboardAction {
-        let picker = self.operator.reasoning_picker.as_mut().unwrap();
+        let picker = self.operator.reasoning_picker_mut().unwrap();
         match key.code {
             KeyCode::Esc => {
-                self.operator.reasoning_picker = None;
-                self.operator.pending_reasoning_picker = false;
+                self.operator.clear_overlays();
             }
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Down => picker.selected = (picker.selected + 1).min(picker.choices.len() - 1),
             KeyCode::Enter => {
                 let level = picker.choices[picker.selected];
-                self.operator.reasoning_picker = None;
-                self.operator.pending_reasoning_picker = false;
+                self.operator.clear_overlays();
                 if !self
                     .operator
                     .pending
@@ -2129,17 +2184,15 @@ impl Dashboard {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
-        if self.operator.model_picker.is_some() {
-            return self.operator_model_key(key);
+        if key.kind == KeyEventKind::Press {
+            self.copy_notice = None;
         }
-        if self.operator.reasoning_picker.is_some() {
-            return self.operator_reasoning_key(key);
-        }
-        if self.operator.session_modal.is_some() {
-            return self.operator_session_modal_key(key);
-        }
-        if self.operator.tree_modal.is_some() {
-            return self.operator_tree_modal_key(key);
+        match &self.operator.overlay {
+            Some(OperatorOverlay::Model(_)) => return self.operator_model_key(key),
+            Some(OperatorOverlay::Reasoning(_)) => return self.operator_reasoning_key(key),
+            Some(OperatorOverlay::Session(_)) => return self.operator_session_modal_key(key),
+            Some(OperatorOverlay::Tree(_)) => return self.operator_tree_modal_key(key),
+            None => {}
         }
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('t') {
             self.operator_open_reasoning();
@@ -2204,14 +2257,7 @@ impl Dashboard {
             // Back to the terminal panes; the conversation keeps its draft.
             self.operator.editing = false;
             self.operator.visible = false;
-            self.operator.pending_reasoning_picker = false;
-            self.operator.model_picker = None;
-            self.operator.pending_model_picker = None;
-            self.operator.pending_model_notice = None;
-            self.operator.pending_session_info = false;
-            self.operator.session_modal = None;
-            self.operator.pending_tree_modal = false;
-            self.operator.tree_modal = None;
+            self.operator.clear_overlays();
             self.retarget(super::state::PaneChange::Focus);
             // Ctrl-g is the navigation key: leaving Operator with it also
             // opens the label picker. Esc only leaves.
@@ -2413,42 +2459,35 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
-        if let Some(picker) = self.operator.model_picker.as_mut() {
-            let clean: String = text.chars().filter(|ch| !ch.is_control()).collect();
-            if !clean.is_empty()
-                && picker.query.len().saturating_add(clean.len()) <= MAX_MODEL_FILTER_BYTES
-            {
-                let before = picker.query.clone();
-                picker.cursor.insert(&mut picker.query, &clean);
-                if picker.query != before {
-                    let active = self.settings.operator.model.clone();
-                    picker.on_query_changed(active.as_deref());
-                }
+        self.copy_notice = None;
+        if let Some(picker) = self.operator.model_picker_mut() {
+            if paste_modal_line(
+                &mut picker.query,
+                &mut picker.cursor,
+                text,
+                MAX_MODEL_FILTER_BYTES,
+            ) {
+                let active = self.settings.operator.model.clone();
+                picker.on_query_changed(active.as_deref());
             }
             return DashboardAction::Redraw;
         }
-        if let Some(modal) = self.operator.tree_modal.as_mut() {
+        if let Some(modal) = self.operator.tree_modal_mut() {
             if let TreeModal::Loaded(picker) = modal {
-                let clean: String = text.chars().filter(|ch| !ch.is_control()).collect();
                 match &mut picker.step {
                     TreePickerStep::Browse => {
-                        if !clean.is_empty()
-                            && picker.query.len().saturating_add(clean.len())
-                                <= MAX_TREE_SEARCH_BYTES
-                        {
-                            let before = picker.query.clone();
-                            picker.cursor.insert(&mut picker.query, &clean);
-                            if picker.query != before {
-                                picker.on_query_changed();
-                            }
+                        if paste_modal_line(
+                            &mut picker.query,
+                            &mut picker.cursor,
+                            text,
+                            MAX_TREE_SEARCH_BYTES,
+                        ) {
+                            picker.on_query_changed();
                         }
                         return DashboardAction::Redraw;
                     }
                     TreePickerStep::CustomInstructions { input, cursor, .. } => {
-                        if !clean.is_empty()
-                            && input.len().saturating_add(clean.len()) <= MAX_OPERATOR_TEXT_BYTES
-                        {
-                            cursor.insert(input, &clean);
+                        if paste_modal_line(input, cursor, text, MAX_OPERATOR_TEXT_BYTES) {
                             picker.error = None;
                         }
                         return DashboardAction::Redraw;
@@ -2458,7 +2497,7 @@ impl Dashboard {
             }
             return DashboardAction::None;
         }
-        if self.operator.session_modal.is_some() || self.operator.reasoning_picker.is_some() {
+        if self.operator.overlay.is_some() {
             return DashboardAction::None;
         }
         if self.operator.transcript_focus {
@@ -2493,36 +2532,17 @@ impl Dashboard {
         area: Rect,
     ) -> Option<DashboardAction> {
         let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
-        if self.operator.model_picker.is_some() {
+        if self.operator.overlay.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                self.operator.model_picker = None;
-                self.operator.pending_model_picker = None;
-                self.operator.pending_model_notice = None;
-            }
-            return Some(DashboardAction::Redraw);
-        }
-        if self.operator.reasoning_picker.is_some() {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                self.operator.reasoning_picker = None;
-                self.operator.pending_reasoning_picker = false;
-            }
-            return Some(DashboardAction::Redraw);
-        }
-        if self.operator.session_modal.is_some() {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                self.operator.session_modal = None;
-                self.operator.pending_session_info = false;
-            }
-            return Some(DashboardAction::Redraw);
-        }
-        if self.operator.tree_modal.is_some() {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                self.operator.tree_modal = None;
-                self.operator.pending_tree_modal = false;
+                self.copy_notice = None;
+                self.operator.clear_overlays();
             }
             return Some(DashboardAction::Redraw);
         }
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
+            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                self.copy_notice = None;
+            }
             return Some(action);
         }
         if !self.operator.visible || self.operator.chat.is_none() {
@@ -2532,6 +2552,12 @@ impl Dashboard {
         let content = content_area(self, area);
         if !content.contains(point) {
             return None;
+        }
+        if matches!(
+            mouse.kind,
+            MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            self.copy_notice = None;
         }
         let layout = self.operator_layout(area);
         let transcript = layout.transcript;
@@ -2600,20 +2626,20 @@ impl Dashboard {
         }
         if let Response::Error { message, .. } = response {
             if matches!(pending, Pending::Open { .. }) {
-                self.operator.pending_reasoning_picker = false;
-                self.operator.pending_model_picker = None;
-                self.operator.pending_model_notice = None;
-                self.operator.pending_session_info = false;
-                self.operator.pending_tree_modal = false;
+                self.operator.pending_overlay = None;
             }
-            if matches!(pending, Pending::SessionInfo { .. }) {
-                self.operator.session_modal = None;
+            if matches!(pending, Pending::SessionInfo { .. })
+                && matches!(self.operator.overlay, Some(OperatorOverlay::Session(_)))
+            {
+                self.operator.overlay = None;
             }
-            if matches!(pending, Pending::Tree { .. }) {
-                self.operator.tree_modal = None;
+            if matches!(pending, Pending::Tree { .. })
+                && matches!(self.operator.overlay, Some(OperatorOverlay::Tree(_)))
+            {
+                self.operator.overlay = None;
             }
             if matches!(pending, Pending::NavigateTree { .. })
-                && let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut()
+                && let Some(picker) = self.operator.tree_picker_mut()
             {
                 picker.submitting = false;
                 picker.error = Some(display_text(message));
@@ -2631,8 +2657,12 @@ impl Dashboard {
                     | ModelIntent::ResolveArg {
                         from_quick: None, ..
                     } => {
-                        self.operator.pending_model_picker = None;
-                        self.operator.pending_model_notice = None;
+                        if matches!(
+                            self.operator.pending_overlay,
+                            Some(PendingOperatorOverlay::Model { .. })
+                        ) {
+                            self.operator.pending_overlay = None;
+                        }
                         if let Some(chat) = self.operator.chat.as_mut() {
                             chat.notice = None;
                             chat.error = Some(display_text(message));
@@ -2677,12 +2707,6 @@ impl Dashboard {
                     | Pending::Tree { .. }
                     | Pending::NavigateTree { .. }
             );
-            if let Pending::NavigateTree { .. } = pending
-                && let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut()
-            {
-                picker.submitting = false;
-                picker.error = Some(display_text(message));
-            }
             if chat_error {
                 if let Some(chat) = self.operator.chat.as_mut() {
                     chat.notice = None;
@@ -2773,11 +2797,7 @@ impl Dashboard {
                     OpenOrigin::Quick(submission) => submission.context.clone(),
                 };
                 if !self.operator_attach(summary.clone(), context) {
-                    self.operator.pending_reasoning_picker = false;
-                    self.operator.pending_model_picker = None;
-                    self.operator.pending_model_notice = None;
-                    self.operator.pending_session_info = false;
-                    self.operator.pending_tree_modal = false;
+                    self.operator.pending_overlay = None;
                     match origin {
                         OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
                         OpenOrigin::Quick(submission) => {
@@ -2792,32 +2812,22 @@ impl Dashboard {
                 }
                 match &origin {
                     OpenOrigin::Manual => {
-                        if let Some(picker) = self.operator.pending_model_picker.take() {
-                            let notice = self.operator.pending_model_notice.take();
-                            if self.operator.visible {
-                                self.operator_install_model_picker(picker, notice);
-                            }
-                        } else if let Some(notice) = self.operator.pending_model_notice.take()
-                            && let Some(chat) = self.operator.chat.as_mut()
+                        if let Some(pending_overlay) = self.operator.pending_overlay.take()
+                            && self.operator.visible
                         {
-                            chat.notice = Some(notice);
-                        }
-                        if self.operator.pending_reasoning_picker {
-                            self.operator.pending_reasoning_picker = false;
-                            if self.operator.visible {
-                                self.operator_open_reasoning();
-                            }
-                        }
-                        if self.operator.pending_session_info {
-                            self.operator.pending_session_info = false;
-                            if self.operator.visible {
-                                self.operator_open_session_info();
-                            }
-                        }
-                        if self.operator.pending_tree_modal {
-                            self.operator.pending_tree_modal = false;
-                            if self.operator.visible {
-                                self.operator_open_tree();
+                            match pending_overlay {
+                                PendingOperatorOverlay::Model { picker, notice } => {
+                                    self.operator_install_model_picker(picker, notice);
+                                }
+                                PendingOperatorOverlay::Reasoning => {
+                                    self.operator_open_reasoning();
+                                }
+                                PendingOperatorOverlay::Session => {
+                                    self.operator_open_session_info();
+                                }
+                                PendingOperatorOverlay::Tree => {
+                                    self.operator_open_tree();
+                                }
                             }
                         }
                         self.operator_read();
@@ -3106,8 +3116,9 @@ impl Dashboard {
                 Pending::SessionInfo { id },
                 Response::Operator(OperatorResponse::SessionInfo(info)),
             ) if info.conversation == id => {
-                if self.operator.session_modal.is_some() {
-                    self.operator.session_modal = Some(SessionModal::Loaded(info.clone()));
+                if matches!(self.operator.overlay, Some(OperatorOverlay::Session(_))) {
+                    self.operator.overlay =
+                        Some(OperatorOverlay::Session(SessionModal::Loaded(info.clone())));
                 }
             }
             (Pending::Tree { id }, Response::Operator(OperatorResponse::Tree(tree)))
@@ -3117,18 +3128,17 @@ impl Dashboard {
                     .as_ref()
                     .is_some_and(|chat| chat.summary.id == id) =>
             {
-                if self.operator.tree_modal.is_some() {
-                    self.operator.tree_modal = Some(TreeModal::Loaded(Box::new(TreePicker::new(
-                        (**tree).clone(),
-                    ))));
+                if matches!(self.operator.overlay, Some(OperatorOverlay::Tree(_))) {
+                    self.operator.overlay = Some(OperatorOverlay::Tree(TreeModal::Loaded(
+                        Box::new(TreePicker::new((**tree).clone())),
+                    )));
                 }
             }
             (
                 Pending::NavigateTree { id },
                 Response::Operator(OperatorResponse::TreeNavigated(nav)),
             ) if nav.conversation.id == id => {
-                self.operator.tree_modal = None;
-                self.operator.pending_tree_modal = false;
+                self.operator.clear_overlays();
                 if let Some(turn) = nav.submitted.clone() {
                     let current_context = self.operator.chat.as_ref().map_or_else(
                         || self.operator.context.clone(),
@@ -3317,15 +3327,8 @@ impl Dashboard {
             chat.branch_summary_turn = None;
             chat.branch_summary_pending = None;
             *chat.rows.borrow_mut() = None;
-            self.operator.reasoning_picker = None;
-            self.operator.model_picker = None;
-            self.operator.pending_model_picker = None;
-            self.operator.pending_model_notice = None;
-            self.operator.session_modal = None;
-            self.operator.pending_session_info = false;
-            self.operator.tree_modal = None;
-            self.operator.pending_tree_modal = false;
             chat.summary = summary;
+            self.operator.clear_overlays();
             self.operator_quick_adopt_draft();
             return true;
         }
@@ -3342,8 +3345,10 @@ impl Dashboard {
         {
             return false;
         }
-        if chat.summary.model != summary.model || chat.summary.reasoning != summary.reasoning {
-            self.operator.reasoning_picker = None;
+        if (chat.summary.model != summary.model || chat.summary.reasoning != summary.reasoning)
+            && matches!(self.operator.overlay, Some(OperatorOverlay::Reasoning(_)))
+        {
+            self.operator.overlay = None;
         }
         chat.summary = summary;
         self.operator_quick_adopt_draft();
@@ -3389,8 +3394,15 @@ impl Dashboard {
             // The row above the composer shows the captured target for the next
             // message; an older journal page never reloads it over that capture.
             match &message.content {
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(model)) => {
-                    chat.summary.model = Some(model.clone());
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected {
+                    provider,
+                    id,
+                    ..
+                }) => {
+                    chat.summary.model = Some(ovrcr_protocol::OperatorModel {
+                        provider: provider.clone(),
+                        id: id.clone(),
+                    });
                 }
                 OperatorMessageContent::Worker(
                     OperatorWorkerEvent::Completed { .. } | OperatorWorkerEvent::Failed(_),
@@ -3491,10 +3503,7 @@ impl Dashboard {
             || !self.operator.editing
             || self.operator.transcript_focus
             || self.operator_slash_menu_open()
-            || self.operator_reasoning_picker_open()
-            || self.operator_model_picker_open()
-            || self.operator_session_modal_open()
-            || self.operator_tree_modal_open()
+            || self.operator.overlay.is_some()
         {
             return;
         }
@@ -3997,11 +4006,12 @@ mod tests {
                     ),
                     message(
                         2,
-                        OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::model_selected(
                             OperatorModel {
                                 provider: "openai".into(),
                                 id: "gpt-6.1-sol".into(),
                             },
+                            None,
                         )),
                     ),
                     delta(3, "Inspecting."),
@@ -5661,5 +5671,188 @@ mod tests {
         assert!(appended.contains("appended tail"), "{appended}");
         draw(&mut d, 140, 24);
         assert_eq!(render::ROW_BUILDS.get(), builds + 1);
+    }
+
+    #[test]
+    fn copy_notice_clears_on_next_operator_action_and_overlay_keymaps_match_footers() {
+        use crossterm::event::Event;
+        use ovrcr_protocol::{OperatorSessionTree, OperatorTreeEntry};
+
+        let mut d = dashboard();
+        let mut state = summary();
+        state.run = SessionRunId(1);
+        state.current_turn = Some(turn(1, OperatorTurnState::Complete));
+        state.worker_stopped = true;
+        state.worker_live = false;
+        let out = opened(&mut d, state.clone());
+        let read = read_request(&out);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(
+                state,
+                vec![
+                    message(
+                        1,
+                        OperatorMessageContent::User {
+                            text: "hello".into(),
+                            context: OperatorContext::default(),
+                        },
+                    ),
+                    delta(2, "Durable reply."),
+                    message(
+                        3,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                            leased: false,
+                            pi_first_entry_id: Some("u1".into()),
+                            pi_leaf_entry_id: Some("a1".into()),
+                        }),
+                    ),
+                ],
+                None,
+            ),
+        );
+
+        // 1. `/copy` + `finish_copy(Ok(()))` renders outer clipboard confirmation, then clears on next Operator input.
+        d.event_action(Event::Paste("/copy".into()));
+        assert_eq!(
+            d.key(KeyCode::Enter),
+            DashboardAction::CopyText("Durable reply.".into())
+        );
+        d.finish_copy(Ok(()));
+        let with_copy_notice = draw(&mut d, 140, 28);
+        assert!(
+            with_copy_notice.contains("Clipboard request sent; paste to verify"),
+            "{with_copy_notice}"
+        );
+        d.event_action(Event::Paste("/tree".into()));
+        let after_paste = draw(&mut d, 140, 28);
+        assert!(
+            !after_paste.contains("Clipboard request sent; paste to verify"),
+            "copy_notice must clear on next Operator paste/key:\n{after_paste}"
+        );
+
+        // 2. TreeModal::Loading keymap: Esc -> Close, Enter unbound.
+        d.key(KeyCode::Enter);
+        let tree_req = d
+            .drain_outbox()
+            .into_iter()
+            .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+            .expect("expected Tree request");
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Close")
+        );
+        assert!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .is_none(),
+            "Loading /tree modal must not advertise Enter"
+        );
+
+        // 3. TreeModal::Browse keymap: Up/Down, Enter, Tab, Ctrl-f, Ctrl-u, Ctrl-c, Esc.
+        respond(
+            &mut d,
+            tree_req.request_id,
+            OperatorResponse::Tree(Box::new(OperatorSessionTree {
+                pi_session_id: Some("pi-1".into()),
+                current_leaf_id: Some("a2".into()),
+                entries: vec![
+                    OperatorTreeEntry {
+                        id: "u1".into(),
+                        parent_id: None,
+                        kind: OperatorTreeEntryKind::User,
+                        preview: "first".into(),
+                    },
+                    OperatorTreeEntry {
+                        id: "a1".into(),
+                        parent_id: Some("u1".into()),
+                        kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                        preview: "ans 1".into(),
+                    },
+                    OperatorTreeEntry {
+                        id: "u2".into(),
+                        parent_id: Some("a1".into()),
+                        kind: OperatorTreeEntryKind::User,
+                        preview: "second".into(),
+                    },
+                    OperatorTreeEntry {
+                        id: "a2".into(),
+                        parent_id: Some("u2".into()),
+                        kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                        preview: "ans 2".into(),
+                    },
+                ],
+            })),
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Select")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Select")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Filter mode")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+                .map(|b| b.name),
+            Some("Filter mode")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+                .map(|b| b.name),
+            Some("User-only")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+                .map(|b| b.name),
+            Some("Clear")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Close")
+        );
+
+        // 4. ConfirmSummarize keymap: Esc -> Back, Enter -> Confirm.
+        d.key(KeyCode::Up); // select u2
+        d.key(KeyCode::Enter);
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Back")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Confirm")
+        );
+
+        // 5. CustomInstructions keymap: Esc -> Back, Ctrl-c -> Clear, Enter -> Summarize.
+        d.key(KeyCode::Down);
+        d.key(KeyCode::Down);
+        d.key(KeyCode::Enter);
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Back")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+                .map(|b| b.name),
+            Some("Clear")
+        );
+        assert_eq!(
+            d.key_binding_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .map(|b| b.name),
+            Some("Summarize")
+        );
     }
 }

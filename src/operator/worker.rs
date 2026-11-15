@@ -343,11 +343,12 @@ fn run_turn(
             context,
             async_wakeup: false,
         } => {
-            let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+            let (model, context_window) =
+                resolve_model(connection, journal, state, turn.model.as_deref())?;
             if termination.requested() {
                 return Err(Failure::Terminated);
             }
-            journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+            journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
             let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
             if termination.requested() {
                 return Err(Failure::Terminated);
@@ -447,11 +448,11 @@ fn run_compact_turn(
     if turn.checkpoint_turn.is_none() {
         return Err(Failure::Failed(NOTHING_TO_COMPACT));
     }
-    let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    let (model, context_window) = resolve_model(connection, journal, state, turn.model.as_deref())?;
     if termination.requested() {
         return Err(Failure::Terminated);
     }
-    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+    journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
     let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
     if termination.requested() {
         return Err(Failure::Terminated);
@@ -560,11 +561,11 @@ fn run_branch_summary_turn(
     if turn.checkpoint_turn.is_none() || !valid_token(target_entry_id) {
         return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
     }
-    let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    let (model, context_window) = resolve_model(connection, journal, state, turn.model.as_deref())?;
     if termination.requested() {
         return Err(Failure::Terminated);
     }
-    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+    journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
     let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
     if termination.requested() {
         return Err(Failure::Terminated);
@@ -2748,7 +2749,7 @@ fn resolve_model(
     journal: &mut Journal<'_>,
     state: &mut TurnState,
     selection: Option<&str>,
-) -> std::result::Result<OperatorModel, Failure> {
+) -> std::result::Result<(OperatorModel, Option<u64>), Failure> {
     let explicit = selection.is_some();
     let desired = match selection {
         Some(selection) => {
@@ -2775,13 +2776,14 @@ fn resolve_model(
         // A success reply without the catalog array is a protocol fault, not a
         // model configuration answer.
         .ok_or(Failure::Failed(REQUEST_FAILED))?;
-    let found = available.iter().take(MAX_MODELS).any(|model| {
+    let catalog_entry = available.iter().take(MAX_MODELS).find(|model| {
         model["provider"].as_str() == Some(desired.provider.as_str())
             && model["id"].as_str() == Some(desired.id.as_str())
     });
-    if !found {
+    let Some(catalog_entry) = catalog_entry else {
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
-    }
+    };
+    let catalog_context_window = catalog_entry["contextWindow"].as_u64().filter(|&w| w > 0);
     let response = model_step_outcome(
         connection.request(
             journal,
@@ -2797,6 +2799,7 @@ fn resolve_model(
         // The command succeeded but a different model is active.
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
     }
+    let set_model_context_window = response.data["contextWindow"].as_u64().filter(|&w| w > 0);
     for (command, params) in [
         ("set_auto_retry", json!({ "enabled": false })),
         ("set_auto_compaction", json!({ "enabled": true })),
@@ -2815,7 +2818,13 @@ fn resolve_model(
             .entry(model_key(&desired))
             .or_insert(level);
     }
-    Ok(desired)
+    let state_context_window = response.data["model"]["contextWindow"]
+        .as_u64()
+        .filter(|&w| w > 0);
+    let context_window = state_context_window
+        .or(set_model_context_window)
+        .or(catalog_context_window);
+    Ok((desired, context_window))
 }
 
 fn resolve_reasoning(
@@ -3279,10 +3288,11 @@ fn snapshot_session(
     Ok(entry_ids)
 }
 
-fn extract_turn_entry_ids(
+fn for_each_turn_session_record(
     session_path: &Path,
     turn_start_file_len: Option<u64>,
-) -> std::result::Result<(Option<String>, Option<String>), Failure> {
+    mut visit: impl FnMut(Value) -> std::result::Result<(), Failure>,
+) -> std::result::Result<(), Failure> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -3292,8 +3302,6 @@ fn extract_turn_entry_ids(
     let header = read_header(&mut reader)?;
     let mut offset = header.len() as u64;
     let start_offset = turn_start_file_len.unwrap_or(0);
-    let mut first_id: Option<String> = None;
-    let mut leaf_id: Option<String> = None;
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -3312,16 +3320,28 @@ fn extract_turn_entry_ids(
         }
         let value: Value =
             serde_json::from_slice(&line).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-        if value["type"].as_str() == Some("session") {
-            continue;
-        }
-        if let Some(id) = value["id"].as_str().filter(|id| valid_token(id)) {
+        visit(value)?;
+    }
+    Ok(())
+}
+
+fn extract_turn_entry_ids(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+) -> std::result::Result<(Option<String>, Option<String>), Failure> {
+    let mut first_id: Option<String> = None;
+    let mut leaf_id: Option<String> = None;
+    for_each_turn_session_record(session_path, turn_start_file_len, |value| {
+        if value["type"].as_str() != Some("session")
+            && let Some(id) = value["id"].as_str().filter(|id| valid_token(id))
+        {
             if first_id.is_none() {
                 first_id = Some(id.to_owned());
             }
             leaf_id = Some(id.to_owned());
         }
-    }
+        Ok(())
+    })?;
     Ok((first_id, leaf_id))
 }
 
@@ -3330,34 +3350,8 @@ fn extract_branch_summary_entry(
     turn_start_file_len: Option<u64>,
     expected_id: &str,
 ) -> std::result::Result<String, Failure> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(session_path)
-        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    let mut reader = BufReader::new(file);
-    let header = read_header(&mut reader)?;
-    let mut offset = header.len() as u64;
-    let start_offset = turn_start_file_len.unwrap_or(0);
     let mut found_summary: Option<String> = None;
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = reader
-            .by_ref()
-            .take((MAX_CHECKPOINT_RECORD + 1) as u64)
-            .read_until(b'\n', &mut line)
-            .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
-        if read == 0 {
-            break;
-        }
-        let record_offset = offset;
-        offset = offset.saturating_add(read as u64);
-        if line.iter().all(u8::is_ascii_whitespace) || record_offset < start_offset {
-            continue;
-        }
-        let value: Value =
-            serde_json::from_slice(&line).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    for_each_turn_session_record(session_path, turn_start_file_len, |value| {
         if value["type"].as_str() == Some("branch_summary")
             && value["id"].as_str() == Some(expected_id)
         {
@@ -3367,7 +3361,8 @@ fn extract_branch_summary_entry(
                 .to_owned();
             found_summary = Some(summary);
         }
-    }
+        Ok(())
+    })?;
     found_summary.ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))
 }
 

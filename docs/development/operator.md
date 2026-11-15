@@ -24,9 +24,11 @@ work lease, that process stays live across warm user turns on the same run.
 - `src/pi-operator-extension.mjs` — the only custom code loaded into pi. It
   publishes the readiness contract, overrides `bash` with an attached execution
   adapter, turns pi's tool callbacks into the durable admission handshake, and
-  registers `/ovrcr_tree_control` (authenticated by a worker-generated nonce and
-  paired with `session_tree` + bounded `ovrcr_operator_tree_result` status) for
-  `/tree` leaf restoration and branch summarization.
+  registers `/ovrcr_tree_control` (gated by a synchronous
+  `ctx.ui.confirm("ovrcr_operator_tree_control", ...)` handshake matched against
+  the worker's one-shot `pending_tree_control` slot and paired with
+  `session_tree` + bounded `ovrcr_operator_tree_result` status) for `/tree` leaf
+  restoration and branch summarization.
   The worker consumes the bounded `ovrcr_operator_watches` status as its work
   lease count; the separate watch tool owns producing that status.
 

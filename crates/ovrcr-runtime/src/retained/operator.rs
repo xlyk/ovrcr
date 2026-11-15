@@ -69,12 +69,26 @@ pub(crate) fn migrate_session_epochs(connection: &Connection) -> Result<()> {
                 "ALTER TABLE operator_conversations ADD COLUMN pi_tree_target_id TEXT;",
             )?;
         }
+        if !has_column(
+            connection,
+            "operator_conversations",
+            "context_window_tokens",
+        )? {
+            connection.execute_batch(
+                "ALTER TABLE operator_conversations ADD COLUMN context_window_tokens INTEGER;",
+            )?;
+        }
     }
     let had_parent_turn = has_turns && has_column(connection, "operator_turns", "parent_turn")?;
     if has_turns {
         if !had_parent_turn {
             connection
                 .execute_batch("ALTER TABLE operator_turns ADD COLUMN parent_turn INTEGER;")?;
+        }
+        if !has_column(connection, "operator_turns", "branch_target_parent_turn")? {
+            connection.execute_batch(
+                "ALTER TABLE operator_turns ADD COLUMN branch_target_parent_turn INTEGER;",
+            )?;
         }
         if !has_column(connection, "operator_turns", "pi_first_entry_id")? {
             connection
@@ -94,6 +108,7 @@ pub(crate) fn migrate_session_epochs(connection: &Connection) -> Result<()> {
                      FROM operator_turns prev
                      WHERE prev.conversation = operator_turns.conversation
                        AND prev.session_epoch = operator_turns.session_epoch
+                       AND prev.state = 'Complete'
                        AND prev.id < operator_turns.id
                  )
                  WHERE parent_turn IS NULL;",
@@ -107,6 +122,7 @@ pub(crate) fn migrate_session_epochs(connection: &Connection) -> Result<()> {
                      FROM operator_turns t
                      WHERE t.conversation = operator_conversations.id
                        AND t.session_epoch = operator_conversations.session_epoch
+                       AND t.state = 'Complete'
                  );",
             )?;
         }
@@ -589,11 +605,20 @@ impl SessionStore {
         self.require_current_operator(id)?;
         let conversation = self.operator_conversation(id)?;
         let mut query = self.connection.prepare(
-            "WITH RECURSIVE branch_ancestors(id, parent_turn, depth) AS (
-                 SELECT t.id, t.parent_turn, 0
+            "WITH RECURSIVE active_tip(tip_id) AS (
+                 SELECT CASE
+                     WHEN tip.session_epoch=?2 AND tip.state='Complete' THEN c.active_tip_turn
+                     ELSE NULL
+                 END
                  FROM operator_conversations c
-                 JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
-                 WHERE c.id=?1 AND t.session_epoch=?2
+                 LEFT JOIN operator_turns tip ON tip.id=c.active_tip_turn AND tip.conversation=c.id
+                 WHERE c.id=?1
+             ),
+             branch_ancestors(id, parent_turn, depth) AS (
+                 SELECT t.id, t.parent_turn, 0
+                 FROM active_tip a
+                 JOIN operator_turns t ON t.id=a.tip_id AND t.conversation=?1
+                 WHERE t.session_epoch=?2
                  UNION ALL
                  SELECT p.id, p.parent_turn, b.depth + 1
                  FROM operator_turns p
@@ -603,21 +628,41 @@ impl SessionStore {
              visible_turns(id) AS (
                  SELECT id FROM branch_ancestors
                  UNION
-                 SELECT id FROM (
-                     SELECT t.id, t.state
-                     FROM operator_turns t
-                     WHERE t.conversation=?1 AND t.session_epoch=?2
-                     ORDER BY t.id DESC LIMIT 1
-                 ) latest
-                 WHERE latest.state='Running'
-                    OR (
-                        latest.state IN ('Interrupted', 'Error')
-                        AND EXISTS (
-                            SELECT 1 FROM operator_messages m0
-                            WHERE m0.conversation=?1 AND m0.turn=latest.id
-                              AND m0.content LIKE '{\"BranchSummary\":%'
-                        )
-                    )
+                 SELECT t.id
+                 FROM branch_ancestors b
+                 JOIN operator_turns t
+                   ON t.conversation=?1
+                  AND t.session_epoch=?2
+                  AND t.parent_turn IS b.parent_turn
+                  AND t.id > COALESCE(b.parent_turn, 0)
+                  AND t.id < b.id
+                  AND t.state IN ('Running', 'Interrupted', 'Error')
+                 WHERE NOT EXISTS (
+                     SELECT 1
+                     FROM operator_turns other
+                     WHERE other.conversation=?1
+                       AND other.session_epoch=?2
+                       AND other.id > t.id
+                       AND other.id < b.id
+                       AND (other.state = 'Complete' OR other.parent_turn IS NOT b.parent_turn)
+                 )
+                 UNION
+                 SELECT t.id
+                 FROM active_tip a
+                 JOIN operator_turns t
+                   ON t.conversation=?1
+                  AND t.session_epoch=?2
+                  AND t.parent_turn IS a.tip_id
+                  AND t.id > COALESCE(a.tip_id, 0)
+                  AND t.state IN ('Running', 'Interrupted', 'Error')
+                 WHERE NOT EXISTS (
+                     SELECT 1
+                     FROM operator_turns other
+                     WHERE other.conversation=?1
+                       AND other.session_epoch=?2
+                       AND other.id > t.id
+                       AND (other.state = 'Complete' OR other.parent_turn IS NOT a.tip_id)
+                 )
              )
              SELECT m.ordinal,m.turn,m.content
              FROM operator_messages m
@@ -772,17 +817,7 @@ impl SessionStore {
         }
 
         let transaction = self.connection.transaction()?;
-        let parent_turn: Option<i64> = transaction
-            .query_row(
-                "SELECT t.id
-                 FROM operator_conversations c
-                 LEFT JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
-                 WHERE c.id=?1 AND (c.active_tip_turn IS NULL OR t.session_epoch=c.session_epoch)",
-                [sql_integer(identity.conversation.0)?],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
+        let parent_turn = active_tip_parent_turn(&transaction, identity.conversation)?;
         transaction.execute(
             "INSERT INTO operator_turns(conversation,run,state,thinking_level,started_unix_ms,session_epoch,parent_turn) VALUES(?1,?2,'Running',?3,?4,?5,?6)",
             params![
@@ -795,10 +830,6 @@ impl SessionStore {
             ],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
-        transaction.execute(
-            "UPDATE operator_conversations SET active_tip_turn=?1 WHERE id=?2",
-            params![sql_integer(turn.0)?, sql_integer(identity.conversation.0)?],
-        )?;
         append_message(
             &transaction,
             sql_integer(identity.conversation.0)?,
@@ -984,17 +1015,7 @@ impl SessionStore {
                 bail!("operator session run changed");
             }
         }
-        let parent_turn: Option<i64> = transaction
-            .query_row(
-                "SELECT t.id
-                 FROM operator_conversations c
-                 LEFT JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
-                 WHERE c.id=?1 AND (c.active_tip_turn IS NULL OR t.session_epoch=c.session_epoch)",
-                [sql_integer(id.0)?],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
+        let parent_turn = active_tip_parent_turn(&transaction, id)?;
         transaction.execute(
             "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms,session_epoch,parent_turn) VALUES(?1,?2,'Running',?3,?4,?5,?6,?7)",
             params![
@@ -1008,10 +1029,6 @@ impl SessionStore {
             ],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
-        transaction.execute(
-            "UPDATE operator_conversations SET active_tip_turn=?1 WHERE id=?2",
-            params![sql_integer(turn.0)?, sql_integer(id.0)?],
-        )?;
         append_message(
             &transaction,
             sql_integer(id.0)?,
@@ -1110,10 +1127,23 @@ impl SessionStore {
                     )?;
                     continue;
                 }
-                OperatorWorkerEvent::ModelSelected(model) => {
+                OperatorWorkerEvent::ModelSelected {
+                    provider,
+                    id,
+                    context_window,
+                } => {
+                    let context_window_sql = context_window
+                        .filter(|&w| w > 0)
+                        .map(sql_integer)
+                        .transpose()?;
                     transaction.execute(
-                        "UPDATE operator_conversations SET provider=?1,model=?2,reasoning=NULL WHERE id=?3 AND singleton=1",
-                        params![model.provider, model.id, sql_integer(batch.identity.conversation.0)?],
+                        "UPDATE operator_conversations SET provider=?1,model=?2,reasoning=NULL,context_window_tokens=?3 WHERE id=?4 AND singleton=1",
+                        params![
+                            provider,
+                            id,
+                            context_window_sql,
+                            sql_integer(batch.identity.conversation.0)?
+                        ],
                     )?;
                     continue;
                 }
@@ -1142,7 +1172,12 @@ impl SessionStore {
             "UPDATE operator_turns
              SET state=?1,sequence=?2,completed_unix_ms=?3,leased=COALESCE(?4,leased),
                  pi_first_entry_id=COALESCE(?5,pi_first_entry_id),
-                 pi_leaf_entry_id=COALESCE(?6,pi_leaf_entry_id)
+                 pi_leaf_entry_id=COALESCE(?6,pi_leaf_entry_id),
+                 parent_turn=CASE
+                     WHEN ?1='Complete' AND branch_target_parent_turn IS NOT NULL THEN
+                         CASE WHEN branch_target_parent_turn=0 THEN NULL ELSE branch_target_parent_turn END
+                     ELSE parent_turn
+                 END
              WHERE id=?7",
             params![
                 state,
@@ -1353,6 +1388,38 @@ impl SessionStore {
         }
         self.operator_worker_start(turn.identity).map(Some)
     }
+    fn require_idle_unleased_operator(
+        &self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        action: &str,
+        command: &str,
+    ) -> Result<OperatorConversationSummary> {
+        self.require_current_operator(id)?;
+        let conversation = self.operator_conversation(id)?;
+        if conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|t| t.state == OperatorTurnState::Running)
+        {
+            bail!("cannot {action} while a turn is running");
+        }
+        let row = self
+            .records
+            .get(&conversation.session)
+            .context("retained operator session missing")?;
+        if row.run != expected_run {
+            bail!("operator session run changed; refresh and retry {command}");
+        }
+        if !row.stopped && self.operator_worker_leased(id)? {
+            bail!("cannot {action} while a watched-session work lease is active");
+        }
+        if !row.stopped || !matches!(row.disposition, Disposition::Active | Disposition::Returned) {
+            bail!("cannot {action} while the Operator worker stop is unconfirmed");
+        }
+        Ok(conversation)
+    }
+
     pub(crate) fn reset_operator_session(
         &mut self,
         id: OperatorConversationId,
@@ -1364,32 +1431,12 @@ impl SessionStore {
         }
         .validate()
         .map_err(anyhow::Error::msg)?;
-        self.require_current_operator(id)?;
-        let conversation = self.operator_conversation(id)?;
-        if conversation
-            .current_turn
-            .as_ref()
-            .is_some_and(|t| t.state == OperatorTurnState::Running)
-        {
-            bail!("cannot start a new Operator session while a turn is running");
-        }
-        let row = self
-            .records
-            .get(&conversation.session)
-            .context("retained operator session missing")?;
-        if row.run != expected_run {
-            bail!("operator session run changed; refresh and retry /new");
-        }
-        if !row.stopped && self.operator_worker_leased(id)? {
-            bail!(
-                "cannot start a new Operator session while a watched-session work lease is active"
-            );
-        }
-        if !row.stopped || !matches!(row.disposition, Disposition::Active | Disposition::Returned) {
-            bail!(
-                "cannot start a new Operator session while the Operator worker stop is unconfirmed"
-            );
-        }
+        let conversation = self.require_idle_unleased_operator(
+            id,
+            expected_run,
+            "start a new Operator session",
+            "/new",
+        )?;
         let next_epoch = conversation
             .session_epoch
             .checked_add(1)
@@ -1420,7 +1467,7 @@ impl SessionStore {
         }
         let changed = transaction.execute(
             "UPDATE operator_conversations
-             SET session_epoch=?1,pi_checkpoint_turn=NULL,active_tip_turn=NULL,pi_tree_target_id=NULL,reasoning=NULL,provider='',model=''
+             SET session_epoch=?1,pi_checkpoint_turn=NULL,active_tip_turn=NULL,pi_tree_target_id=NULL,reasoning=NULL,context_window_tokens=NULL,provider='',model=''
              WHERE id=?2 AND singleton=1 AND session_epoch=?3",
             params![
                 sql_integer(next_epoch)?,
@@ -1444,23 +1491,25 @@ impl SessionStore {
             .map_err(anyhow::Error::msg)?;
         self.require_current_operator(id)?;
         let summary = self.operator_conversation(id)?;
-        let (checkpoint_raw, active_tip_raw, pi_tree_target_id): (
+        let (checkpoint_raw, active_tip_raw, pi_tree_target_id, context_window_raw): (
             Option<i64>,
             Option<i64>,
             Option<String>,
+            Option<i64>,
         ) = self
             .connection
             .query_row(
                 "SELECT
                      CASE WHEN cp.session_epoch=c.session_epoch THEN c.pi_checkpoint_turn ELSE NULL END,
-                     CASE WHEN tip.session_epoch=c.session_epoch THEN c.active_tip_turn ELSE NULL END,
-                     c.pi_tree_target_id
+                     CASE WHEN tip.session_epoch=c.session_epoch AND tip.state='Complete' THEN c.active_tip_turn ELSE NULL END,
+                     c.pi_tree_target_id,
+                     c.context_window_tokens
                  FROM operator_conversations c
                  LEFT JOIN operator_turns cp ON cp.id=c.pi_checkpoint_turn AND cp.conversation=c.id
                  LEFT JOIN operator_turns tip ON tip.id=c.active_tip_turn AND tip.conversation=c.id
                  WHERE c.id=?1 AND c.singleton=1",
                 [sql_integer(id.0)?],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?
             .context("operator conversation not found")?;
@@ -1471,6 +1520,13 @@ impl SessionStore {
         } else {
             None
         };
+        let context_window_tokens = summary
+            .model
+            .is_some()
+            .then_some(context_window_raw)
+            .flatten()
+            .and_then(|raw| u64::try_from(raw).ok())
+            .filter(|&w| w > 0);
         let (turns, completed_turns): (u64, u64) = self.connection.query_row(
             "SELECT COUNT(*), COALESCE(SUM(CASE WHEN state='Complete' THEN 1 ELSE 0 END), 0)
              FROM operator_turns
@@ -1483,7 +1539,7 @@ impl SessionStore {
                  SELECT t.id, t.parent_turn, t.state, 0
                  FROM operator_conversations c
                  JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
-                 WHERE c.id=?1 AND t.session_epoch=?2
+                 WHERE c.id=?1 AND t.session_epoch=?2 AND t.state='Complete'
                  UNION ALL
                  SELECT p.id, p.parent_turn, p.state, b.depth + 1
                  FROM operator_turns p
@@ -1500,6 +1556,7 @@ impl SessionStore {
             checkpoint_turn,
             active_tip_turn,
             pi_tree_target_id,
+            context_window_tokens,
             turns,
             completed_turns,
             branch_turns,
@@ -1569,32 +1626,12 @@ impl SessionStore {
         id: OperatorConversationId,
         expected_run: SessionRunId,
     ) -> Result<OperatorTreeSnapshot> {
-        self.require_current_operator(id)?;
-        let conversation = self.operator_conversation(id)?;
-        if conversation
-            .current_turn
-            .as_ref()
-            .is_some_and(|t| t.state == OperatorTurnState::Running)
-        {
-            bail!("cannot switch Operator tree branch while a turn is running");
-        }
-        let row = self
-            .records
-            .get(&conversation.session)
-            .context("retained operator session missing")?;
-        if row.run != expected_run {
-            bail!("operator session run changed; refresh and retry /tree");
-        }
-        if !row.stopped && self.operator_worker_leased(id)? {
-            bail!(
-                "cannot switch Operator tree branch while a watched-session work lease is active"
-            );
-        }
-        if !row.stopped || !matches!(row.disposition, Disposition::Active | Disposition::Returned) {
-            bail!(
-                "cannot switch Operator tree branch while the Operator worker stop is unconfirmed"
-            );
-        }
+        self.require_idle_unleased_operator(
+            id,
+            expected_run,
+            "switch Operator tree branch",
+            "/tree",
+        )?;
         self.operator_tree_snapshot(id)
     }
 
@@ -1682,9 +1719,14 @@ impl SessionStore {
         if changed != 1 {
             bail!("operator session run changed");
         }
+        let origin_parent_turn = active_tip_parent_turn(&transaction, id)?;
+        let target_parent_sentinel = match target_branch_parent_turn {
+            Some(t) => sql_integer(t.0)?,
+            None => 0,
+        };
         transaction.execute(
-            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms,session_epoch,parent_turn)
-             VALUES(?1,?2,'Running',?3,?4,?5,?6,?7)",
+            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms,session_epoch,parent_turn,branch_target_parent_turn)
+             VALUES(?1,?2,'Running',?3,?4,?5,?6,?7,?8)",
             params![
                 sql_integer(id.0)?,
                 sql_integer(run.0)?,
@@ -1692,7 +1734,8 @@ impl SessionStore {
                 serde_json::to_string(&settings.thinking_level)?,
                 sql_integer(started_unix_ms)?,
                 sql_integer(expected_epoch)?,
-                target_branch_parent_turn.map(|t| sql_integer(t.0)).transpose()?,
+                origin_parent_turn,
+                target_parent_sentinel,
             ],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
@@ -1729,6 +1772,22 @@ impl SessionStore {
     }
 }
 
+fn active_tip_parent_turn(
+    connection: &Connection,
+    conversation: OperatorConversationId,
+) -> Result<Option<i64>> {
+    Ok(connection
+        .query_row(
+            "SELECT t.id
+             FROM operator_conversations c
+             JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
+             WHERE c.id=?1 AND t.session_epoch=c.session_epoch AND t.state='Complete'",
+            [sql_integer(conversation.0)?],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 fn parse_optional_turn_id(raw: Option<i64>) -> Result<Option<OperatorTurnId>> {
     raw.map(|turn| -> Result<OperatorTurnId> {
         let turn: u64 = turn
@@ -1747,6 +1806,7 @@ pub(crate) struct OperatorEpochSnapshot {
     pub checkpoint_turn: Option<OperatorTurnId>,
     pub active_tip_turn: Option<OperatorTurnId>,
     pub pi_tree_target_id: Option<String>,
+    pub context_window_tokens: Option<u64>,
     pub turns: u64,
     pub completed_turns: u64,
     pub branch_turns: u64,
@@ -2370,10 +2430,11 @@ mod tests {
             identity: t.identity,
             sequence: 1,
             events: vec![
-                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                OperatorWorkerEvent::ModelSelected {
                     provider: "openai".into(),
                     id: "gpt-5.1".into(),
-                }),
+                    context_window: None,
+                },
                 OperatorWorkerEvent::AssistantDelta("partial".into()),
             ],
         };
@@ -2433,10 +2494,11 @@ mod tests {
         let mut failed_batch = completed(&t, 1);
         failed_batch.events.insert(
             0,
-            OperatorWorkerEvent::ModelSelected(OperatorModel {
+            OperatorWorkerEvent::ModelSelected {
                 provider: "openai".into(),
                 id: "gpt-5.1".into(),
-            }),
+                context_window: None,
+            },
         );
         store
             .connection
@@ -3744,10 +3806,11 @@ mod tests {
                     identity: turn.identity,
                     sequence: 1,
                     events: vec![
-                        OperatorWorkerEvent::ModelSelected(OperatorModel {
+                        OperatorWorkerEvent::ModelSelected {
                             provider: "openai".into(),
                             id: "gpt-5.4".into(),
-                        }),
+                            context_window: Some(200_000),
+                        },
                         OperatorWorkerEvent::ReasoningSelected(OperatorReasoning {
                             requested: OperatorThinkingLevel::High,
                             level: OperatorThinkingLevel::High,
@@ -3834,10 +3897,11 @@ mod tests {
                 identity: turn0.identity,
                 sequence: 1,
                 events: vec![
-                    OperatorWorkerEvent::ModelSelected(OperatorModel {
+                    OperatorWorkerEvent::ModelSelected {
                         provider: "openai".into(),
                         id: "gpt-5.4".into(),
-                    }),
+                        context_window: Some(200_000),
+                    },
                     OperatorWorkerEvent::ReasoningSelected(OperatorReasoning {
                         requested: OperatorThinkingLevel::High,
                         level: OperatorThinkingLevel::High,
@@ -4327,7 +4391,9 @@ mod tests {
                 "DROP INDEX IF EXISTS operator_turn_parent;
                  ALTER TABLE operator_conversations DROP COLUMN active_tip_turn;
                  ALTER TABLE operator_conversations DROP COLUMN pi_tree_target_id;
+                 ALTER TABLE operator_conversations DROP COLUMN context_window_tokens;
                  ALTER TABLE operator_turns DROP COLUMN parent_turn;
+                 ALTER TABLE operator_turns DROP COLUMN branch_target_parent_turn;
                  ALTER TABLE operator_turns DROP COLUMN pi_first_entry_id;
                  ALTER TABLE operator_turns DROP COLUMN pi_leaf_entry_id;
                  PRAGMA user_version = 34;",
@@ -4341,5 +4407,539 @@ mod tests {
         assert_eq!(upgraded_snap.branch_turns, 2);
         let upgraded_history = upgraded.read_operator_history(c.id, 0, 100).unwrap();
         assert_eq!(upgraded_history.messages.len(), 2);
+    }
+
+    #[test]
+    fn aborted_and_failed_turns_never_advance_active_tip_or_parent_next_turn() {
+        let mut store = SessionStore::in_memory();
+        let c = open(&mut store);
+
+        // Turn 1: Complete root turn with built-in pi model contextWindow metadata.
+        let t1 = submit(&mut store, &c, None);
+        assert_eq!(
+            store.operator_epoch_snapshot(c.id).unwrap().active_tip_turn,
+            None,
+            "Running turn must not advance active_tip_turn before Completed"
+        );
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t1.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::ModelSelected {
+                        provider: "anthropic".into(),
+                        id: "claude-sonnet-4-5".into(),
+                        context_window: Some(200_000),
+                    },
+                    OperatorWorkerEvent::AssistantDelta("root ok".into()),
+                    OperatorWorkerEvent::Completed {
+                        leased: true,
+                        pi_first_entry_id: Some("u1".into()),
+                        pi_leaf_entry_id: Some("a1".into()),
+                    },
+                ],
+            })
+            .unwrap();
+        let snap1 = store.operator_epoch_snapshot(c.id).unwrap();
+        assert_eq!(snap1.active_tip_turn, Some(t1.identity.turn));
+        assert_eq!(snap1.context_window_tokens, Some(200_000));
+
+        // Turn 2: Aborted warm `/compact` must NOT advance active_tip_turn or splice into parent_turn.
+        let after_t1 = store.operator_conversation(c.id).unwrap();
+        let t2_compact = store
+            .submit_operator_compact_turn_warm(
+                c.id,
+                after_t1.run,
+                Some("abort me".into()),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            store.operator_epoch_snapshot(c.id).unwrap().active_tip_turn,
+            Some(t1.identity.turn)
+        );
+        store
+            .interrupt_operator_turn(t2_compact.identity, true)
+            .unwrap();
+        assert_eq!(
+            store.operator_epoch_snapshot(c.id).unwrap().active_tip_turn,
+            Some(t1.identity.turn)
+        );
+
+        // Turn 3: Failed warm Prompt turn must NOT advance active_tip_turn either.
+        let after_t2 = store.operator_conversation(c.id).unwrap();
+        let t3_failed = store
+            .submit_operator_turn_warm(
+                c.id,
+                after_t2.run,
+                "fail prompt",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t3_failed.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Failed("boom".into())],
+            })
+            .unwrap();
+        store
+            .mark_stopped(t3_failed.identity.session, t3_failed.identity.run)
+            .unwrap();
+        assert_eq!(
+            store.operator_epoch_snapshot(c.id).unwrap().active_tip_turn,
+            Some(t1.identity.turn)
+        );
+
+        // Turn 4: Next Complete turn must have `parent_turn == t1` (skipping t2_compact and t3_failed!).
+        let after_t3 = store.operator_conversation(c.id).unwrap();
+        let t4 = store
+            .submit_operator_turn(
+                c.id,
+                after_t3.run,
+                "follow-up ok",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        let t4_parent: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT parent_turn FROM operator_turns WHERE id=?1",
+                [sql_integer(t4.identity.turn.0).unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(t4_parent, Some(sql_integer(t1.identity.turn.0).unwrap()));
+        store.apply_operator_batch(&completed(&t4, 1)).unwrap();
+        store
+            .mark_stopped(t4.identity.session, t4.identity.run)
+            .unwrap();
+
+        let snap4 = store.operator_epoch_snapshot(c.id).unwrap();
+        assert_eq!(snap4.active_tip_turn, Some(t4.identity.turn));
+        assert_eq!(snap4.branch_turns, 2);
+
+        let visible_turns: Vec<OperatorTurnId> = store
+            .read_operator_history(c.id, 0, 100)
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|m| m.turn)
+            .collect();
+        for same_branch_turn in [
+            t1.identity.turn,
+            t2_compact.identity.turn,
+            t3_failed.identity.turn,
+            t4.identity.turn,
+        ] {
+            assert!(
+                visible_turns.contains(&same_branch_turn),
+                "same-branch intermediate non-Complete turns remain visible on that branch: {visible_turns:?}"
+            );
+        }
+
+        // Rewinding to t1 and completing t5 on a new branch excludes t2_compact, t3_failed, and t4!
+        let before_rewind = store.operator_conversation(c.id).unwrap();
+        store
+            .apply_operator_tree_navigation(
+                c.id,
+                before_rewind.run,
+                0,
+                t4.identity.turn,
+                Some(t1.identity.turn),
+                Some("a1"),
+            )
+            .unwrap();
+        let after_rewind = store.operator_conversation(c.id).unwrap();
+        let t5 = store
+            .submit_operator_turn(
+                c.id,
+                after_rewind.run,
+                "branch two ok",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store.apply_operator_batch(&completed(&t5, 1)).unwrap();
+        store
+            .mark_stopped(t5.identity.session, t5.identity.run)
+            .unwrap();
+        let branch_two_turns: Vec<OperatorTurnId> = store
+            .read_operator_history(c.id, 0, 100)
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|m| m.turn)
+            .collect();
+        assert!(
+            branch_two_turns.contains(&t1.identity.turn)
+                && branch_two_turns.contains(&t5.identity.turn)
+                && !branch_two_turns.contains(&t2_compact.identity.turn)
+                && !branch_two_turns.contains(&t3_failed.identity.turn)
+                && !branch_two_turns.contains(&t4.identity.turn),
+            "aborted/failed turns on abandoned branch must not leak onto new branch: {branch_two_turns:?}"
+        );
+
+        // Reset via `/new` clears persisted `context_window_tokens`.
+        let after_t4 = store.operator_conversation(c.id).unwrap();
+        store.reset_operator_session(c.id, after_t4.run).unwrap();
+        assert_eq!(
+            store
+                .operator_epoch_snapshot(c.id)
+                .unwrap()
+                .context_window_tokens,
+            None
+        );
+    }
+
+    #[test]
+    fn schema_34_migration_chains_only_complete_turns_and_sets_complete_active_tip() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(root.path()).unwrap();
+        let c = open(&mut store);
+
+        // Turn 1: Complete
+        let t1 = submit(&mut store, &c, None);
+        store.apply_operator_batch(&completed(&t1, 1)).unwrap();
+        store
+            .mark_stopped(t1.identity.session, t1.identity.run)
+            .unwrap();
+
+        // Turn 2: Error (middle failed turn)
+        let after_1 = store.operator_conversation(c.id).unwrap();
+        let t2_err = store
+            .submit_operator_turn(
+                c.id,
+                after_1.run,
+                "middle error",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t2_err.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Failed("provider err".into())],
+            })
+            .unwrap();
+        store
+            .mark_stopped(t2_err.identity.session, t2_err.identity.run)
+            .unwrap();
+
+        // Turn 3: Complete
+        let after_2 = store.operator_conversation(c.id).unwrap();
+        let t3 = store
+            .submit_operator_turn(
+                c.id,
+                after_2.run,
+                "second complete",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store.apply_operator_batch(&completed(&t3, 1)).unwrap();
+        store
+            .mark_stopped(t3.identity.session, t3.identity.run)
+            .unwrap();
+
+        // Turn 4: Interrupted (trailing interrupted turn)
+        let after_3 = store.operator_conversation(c.id).unwrap();
+        let t4_int = store
+            .submit_operator_turn(
+                c.id,
+                after_3.run,
+                "trailing interrupted",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .interrupt_operator_turn(t4_int.identity, false)
+            .unwrap();
+        store
+            .mark_stopped(t4_int.identity.session, t4_int.identity.run)
+            .unwrap();
+
+        // Downgrade to Schema 34 shape and re-open.
+        store
+            .connection
+            .execute_batch(
+                "DROP INDEX IF EXISTS operator_turn_parent;
+                 ALTER TABLE operator_conversations DROP COLUMN active_tip_turn;
+                 ALTER TABLE operator_conversations DROP COLUMN pi_tree_target_id;
+                 ALTER TABLE operator_conversations DROP COLUMN context_window_tokens;
+                 ALTER TABLE operator_turns DROP COLUMN parent_turn;
+                 ALTER TABLE operator_turns DROP COLUMN branch_target_parent_turn;
+                 ALTER TABLE operator_turns DROP COLUMN pi_first_entry_id;
+                 ALTER TABLE operator_turns DROP COLUMN pi_leaf_entry_id;
+                 PRAGMA user_version = 34;",
+            )
+            .unwrap();
+        drop(store);
+
+        let upgraded = SessionStore::open(root.path()).unwrap();
+        let snap = upgraded.operator_epoch_snapshot(c.id).unwrap();
+        assert_eq!(
+            snap.active_tip_turn,
+            Some(t3.identity.turn),
+            "migration must set active_tip_turn to latest Complete turn, not trailing Interrupted"
+        );
+        assert_eq!(snap.branch_turns, 2);
+        let parent_of = |turn: OperatorTurnId| -> Option<i64> {
+            upgraded
+                .connection
+                .query_row(
+                    "SELECT parent_turn FROM operator_turns WHERE id=?1",
+                    [sql_integer(turn.0).unwrap()],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(parent_of(t1.identity.turn), None);
+        assert_eq!(
+            parent_of(t2_err.identity.turn),
+            Some(sql_integer(t1.identity.turn.0).unwrap())
+        );
+        assert_eq!(
+            parent_of(t3.identity.turn),
+            Some(sql_integer(t1.identity.turn.0).unwrap()),
+            "Complete turn 3 must chain to Complete turn 1, skipping Error turn 2"
+        );
+        assert_eq!(
+            parent_of(t4_int.identity.turn),
+            Some(sql_integer(t3.identity.turn.0).unwrap())
+        );
+
+        let migrated_history = upgraded.read_operator_history(c.id, 0, 100).unwrap();
+        for expected_turn in [
+            t1.identity.turn,
+            t2_err.identity.turn,
+            t3.identity.turn,
+            t4_int.identity.turn,
+        ] {
+            assert!(
+                migrated_history
+                    .messages
+                    .iter()
+                    .any(|m| m.turn == expected_turn),
+                "migrated history must preserve turn {expected_turn:?}: {:?}",
+                migrated_history.messages
+            );
+        }
+
+        // Rewinding to t1 hides t2_err (which preceded t3 on the abandoned branch), t3, and t4_int.
+        let mut upgraded = upgraded;
+        let conv = upgraded.operator_conversation(c.id).unwrap();
+        upgraded
+            .apply_operator_tree_navigation(
+                c.id,
+                conv.run,
+                0,
+                t3.identity.turn,
+                Some(t1.identity.turn),
+                Some("a1"),
+            )
+            .unwrap();
+        let rewound_history = upgraded.read_operator_history(c.id, 0, 100).unwrap();
+        assert!(
+            rewound_history
+                .messages
+                .iter()
+                .all(|m| m.turn == t1.identity.turn),
+            "rewinding to t1 must exclude abandoned branch turns (including t2_err): {:?}",
+            rewound_history.messages
+        );
+    }
+
+    #[test]
+    fn failed_or_interrupted_branch_summary_does_not_leak_onto_other_branches() {
+        let mut store = SessionStore::in_memory();
+        let c = open(&mut store);
+
+        // Turn 1: Root Complete
+        let t1 = submit(&mut store, &c, None);
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t1.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::AssistantDelta("root".into()),
+                    OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u1".into()),
+                        pi_leaf_entry_id: Some("a1".into()),
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(t1.identity.session, t1.identity.run)
+            .unwrap();
+
+        // Turn 2: Branch B Complete (`parent_turn = t1`)
+        let after_1 = store.operator_conversation(c.id).unwrap();
+        let t2_b = store
+            .submit_operator_turn(
+                c.id,
+                after_1.run,
+                "branch B",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t2_b.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::AssistantDelta("B reply".into()),
+                    OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2b".into()),
+                        pi_leaf_entry_id: Some("a2b".into()),
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(t2_b.identity.session, t2_b.identity.run)
+            .unwrap();
+
+        // Switch back to t1 and create Turn 3 on Branch A (`parent_turn = t1`, `active_tip_turn = t3_a`).
+        let after_2 = store.operator_conversation(c.id).unwrap();
+        store
+            .apply_operator_tree_navigation(
+                c.id,
+                after_2.run,
+                0,
+                t2_b.identity.turn,
+                Some(t1.identity.turn),
+                Some("a1"),
+            )
+            .unwrap();
+        let after_nav = store.operator_conversation(c.id).unwrap();
+        let t3_a = store
+            .submit_operator_turn(
+                c.id,
+                after_nav.run,
+                "branch A",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: t3_a.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::AssistantDelta("A reply".into()),
+                    OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2a".into()),
+                        pi_leaf_entry_id: Some("a2a".into()),
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(t3_a.identity.session, t3_a.identity.run)
+            .unwrap();
+
+        // On Branch A (`active_tip_turn = t3_a`), start a BranchSummary turn targeting `a2b` (`target_branch_parent_turn = Some(t2_b)`),
+        // then interrupt it!
+        let on_a = store.operator_conversation(c.id).unwrap();
+        let bs_interrupted = store
+            .submit_operator_branch_summary_turn(
+                c.id,
+                on_a.run,
+                0,
+                t3_a.identity.turn,
+                Some(t2_b.identity.turn),
+                "a2b".into(),
+                None,
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .interrupt_operator_turn(bs_interrupted.identity, false)
+            .unwrap();
+        store
+            .mark_stopped(bs_interrupted.identity.session, bs_interrupted.identity.run)
+            .unwrap();
+
+        // While still on Branch A, the interrupted BranchSummary appears as trailing child of Branch A.
+        let history_on_a = store.read_operator_history(c.id, 0, 100).unwrap();
+        assert!(
+            history_on_a
+                .messages
+                .iter()
+                .any(|m| m.turn == bs_interrupted.identity.turn),
+            "trailing interrupted BranchSummary must be visible on origin Branch A"
+        );
+
+        // Now switch to Branch B (`active_tip_turn = Some(t2_b)`) via `No summary`!
+        let after_bs_stop = store.operator_conversation(c.id).unwrap();
+        store
+            .apply_operator_tree_navigation(
+                c.id,
+                after_bs_stop.run,
+                0,
+                t3_a.identity.turn,
+                Some(t2_b.identity.turn),
+                Some("a2b"),
+            )
+            .unwrap();
+
+        // Interrupted BranchSummary from Branch A must NOT leak onto Branch B (even though its id > t2_b)!
+        let history_on_b = store.read_operator_history(c.id, 0, 100).unwrap();
+        assert!(
+            history_on_b
+                .messages
+                .iter()
+                .all(|m| m.turn != bs_interrupted.identity.turn),
+            "interrupted BranchSummary from Branch A leaked onto Branch B: {:?}",
+            history_on_b.messages
+        );
+
+        // Also test Completed root BranchSummary (`target_branch_parent_turn = None`):
+        // while Running its parent_turn is `t2_b`, and on Completed its parent_turn becomes NULL and active_tip_turn = bs_root!
+        let on_b = store.operator_conversation(c.id).unwrap();
+        let bs_root = store
+            .submit_operator_branch_summary_turn(
+                c.id,
+                on_b.run,
+                0,
+                t3_a.identity.turn,
+                None,
+                "u1".into(),
+                None,
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: bs_root.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::BranchSummary {
+                        summary: "root summary".into(),
+                    },
+                    OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("bs1".into()),
+                        pi_leaf_entry_id: Some("bs1".into()),
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(bs_root.identity.session, bs_root.identity.run)
+            .unwrap();
+        let snap_root = store.operator_epoch_snapshot(c.id).unwrap();
+        assert_eq!(snap_root.active_tip_turn, Some(bs_root.identity.turn));
+        assert_eq!(snap_root.branch_turns, 1);
     }
 }

@@ -344,7 +344,7 @@ timeout rollback, first-turn empty and zero-record rollback, and the five-second
 owned-group fallback. The Node extension probe
 (`tests/fixtures/operator-pi/extension_probe.mjs`) covers add/list/remove,
 pre-send baseline catch-up with opaque turn identities, queued reports,
-same-process extension reload, and nonce-authenticated `/ovrcr_tree_control`
+same-process extension reload, and `ctx.ui.confirm`-gated `/ovrcr_tree_control`
 navigation and `session_tree` branch-summary capture. Dashboard tests cover
 AsyncWakeup, Compaction and BranchSummary headings/receipts, slash-command
 modals/menus, unread and draft preservation. The schema-32 through schema-35

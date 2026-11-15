@@ -251,6 +251,10 @@ pub struct OperatorSessionInfo {
     pub assistant_messages: u64,
     pub tool_calls: u64,
     pub tool_results: u64,
+    #[serde(default)]
+    pub epoch_tool_calls: u64,
+    #[serde(default)]
+    pub epoch_tool_results: u64,
     pub total_messages: u64,
     pub epoch_total_messages: u64,
     pub tokens: OperatorTokenStats,
@@ -348,7 +352,12 @@ pub enum OperatorWorkerEvent {
         truncated: bool,
         status: OperatorToolStatus,
     },
-    ModelSelected(OperatorModel),
+    ModelSelected {
+        provider: String,
+        id: String,
+        #[serde(default)]
+        context_window: Option<u64>,
+    },
     Completed {
         leased: bool,
         #[serde(default)]
@@ -377,6 +386,14 @@ pub enum OperatorWorkerEvent {
     },
 }
 impl OperatorWorkerEvent {
+    pub fn model_selected(model: OperatorModel, context_window: Option<u64>) -> Self {
+        Self::ModelSelected {
+            provider: model.provider,
+            id: model.id,
+            context_window,
+        }
+    }
+
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed { .. } | Self::Failed(_))
     }
@@ -403,7 +420,20 @@ impl OperatorEventBatch {
             }
             match event {
                 OperatorWorkerEvent::ReasoningSelected(reasoning) => reasoning.validate()?,
-                OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
+                OperatorWorkerEvent::ModelSelected {
+                    provider,
+                    id,
+                    context_window,
+                } => {
+                    OperatorModel {
+                        provider: provider.clone(),
+                        id: id.clone(),
+                    }
+                    .validate()?;
+                    if *context_window == Some(0) {
+                        return Err("invalid operator model context window".into());
+                    }
+                }
                 OperatorWorkerEvent::Completed {
                     pi_first_entry_id,
                     pi_leaf_entry_id,
@@ -884,16 +914,34 @@ mod tests {
             OperatorWorkerEvent::AssistantDelta("late".into()),
         ];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
             provider: String::new(),
             id: "id".into(),
-        })];
+            context_window: None,
+        }];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
             provider: "openai".into(),
             id: "gpt".into(),
-        })];
+            context_window: Some(0),
+        }];
+        assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
+            provider: "openai".into(),
+            id: "gpt".into(),
+            context_window: Some(200_000),
+        }];
         assert!(batch.validate().is_ok());
+        let legacy: OperatorWorkerEvent =
+            serde_json::from_str(r#"{"ModelSelected":{"provider":"openai","id":"gpt"}}"#).unwrap();
+        assert_eq!(
+            legacy,
+            OperatorWorkerEvent::ModelSelected {
+                provider: "openai".into(),
+                id: "gpt".into(),
+                context_window: None,
+            }
+        );
     }
     #[test]
     fn empty_tool_output_has_explicit_outcome_without_relaxing_other_text() {
@@ -1063,6 +1111,8 @@ mod tests {
             assistant_messages: 2,
             tool_calls: 1,
             tool_results: 1,
+            epoch_tool_calls: 2,
+            epoch_tool_results: 2,
             total_messages: 5,
             epoch_total_messages: 5,
             tokens: OperatorTokenStats {

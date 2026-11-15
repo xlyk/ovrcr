@@ -40,6 +40,8 @@ pub struct PromotedCheckpointSummary {
     pub assistant_messages: u64,
     pub tool_calls: u64,
     pub tool_results: u64,
+    pub epoch_tool_calls: u64,
+    pub epoch_tool_results: u64,
     pub total_messages: u64,
     pub epoch_total_messages: u64,
     pub tokens: OperatorTokenStats,
@@ -139,6 +141,8 @@ pub fn read_promoted_checkpoint_for_branch(
         assistant_messages: branch_summary.assistant_messages,
         tool_calls: branch_summary.tool_calls,
         tool_results: branch_summary.tool_results,
+        epoch_tool_calls: epoch_summary.tool_calls,
+        epoch_tool_results: epoch_summary.tool_results,
         total_messages: branch_summary.total_messages,
         epoch_total_messages: epoch_summary.total_messages,
         tokens: epoch_summary.tokens,
@@ -268,10 +272,7 @@ pub fn resolve_tree_target(
         .collect();
 
     let target = &entries[target_idx];
-    let is_user_rewind = matches!(
-        target.kind,
-        OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
-    );
+    let is_user_rewind = matches!(target.kind, OperatorTreeEntryKind::User);
     if !is_user_rewind && prior_effective_leaf_id.as_deref() == Some(target_entry_id) {
         let active_tip_turn = resolve_active_tip_for_leaf(
             &entries,
@@ -317,10 +318,6 @@ pub fn resolve_tree_target(
                 let (text, context) = unwrap_operator_user_prompt(&raw_text);
                 (Some(text), Some(context))
             }
-        }
-        OperatorTreeEntryKind::CustomMessage => {
-            let text = extract_custom_message_text(&target.raw);
-            (Some(sanitize_editor_text(&text)), None)
         }
         _ => (None, None),
     };
@@ -504,10 +501,7 @@ fn compute_effective_leaf_id(
         bail!("{SESSION_CHECKPOINT_UNAVAILABLE}");
     };
     let target = &entries[idx];
-    if matches!(
-        target.kind,
-        OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
-    ) {
+    if matches!(target.kind, OperatorTreeEntryKind::User) {
         Ok(target.parent_id.clone())
     } else {
         Ok(Some(target.id.clone()))
@@ -823,11 +817,6 @@ fn single_line_preview(raw: &str, fallback: &str) -> String {
     truncate_utf8_bytes(candidate, MAX_OPERATOR_TREE_PREVIEW_BYTES)
 }
 
-fn sanitize_editor_text(raw: &str) -> String {
-    let cleaned = raw.replace('\0', "\u{FFFD}");
-    truncate_utf8_bytes(&cleaned, ovrcr_protocol::operator::MAX_OPERATOR_TEXT_BYTES)
-}
-
 fn truncate_utf8_bytes(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_owned();
@@ -837,6 +826,26 @@ fn truncate_utf8_bytes(text: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     text[..end].to_owned()
+}
+
+pub fn resolve_context_window_capacity(
+    registry_path: &Path,
+    persisted_model: Option<&OperatorModel>,
+    persisted_context_window: Option<u64>,
+    checkpoint_model: Option<&OperatorModel>,
+    configured_model: Option<&OperatorModel>,
+    inline_context_window: Option<u64>,
+) -> Option<u64> {
+    if persisted_model.is_some()
+        && let Some(window) = persisted_context_window.filter(|&w| w > 0)
+    {
+        return Some(window);
+    }
+    [persisted_model, checkpoint_model, configured_model]
+        .into_iter()
+        .flatten()
+        .find_map(|model| lookup_model_context_window(registry_path, model))
+        .or_else(|| inline_context_window.filter(|&w| w > 0))
 }
 
 pub fn lookup_model_context_window(registry_path: &Path, model: &OperatorModel) -> Option<u64> {
@@ -1591,6 +1600,9 @@ mod tests {
         assert_eq!(branch_b.user_messages, 2);
         assert_eq!(branch_b.assistant_messages, 2);
         assert_eq!(branch_b.tool_calls, 0);
+        assert_eq!(branch_b.tool_results, 0);
+        assert_eq!(branch_b.epoch_tool_calls, 1);
+        assert_eq!(branch_b.epoch_tool_results, 1);
         assert_eq!(branch_b.total_messages, 4);
         assert_eq!(branch_b.epoch_total_messages, 8);
         assert_eq!(branch_b.latest_context_tokens, Some(1650));
@@ -1739,5 +1751,165 @@ mod tests {
         .unwrap();
         assert!(!child_user_from_ancestor.noop);
         assert!(!child_user_from_ancestor.can_summarize);
+    }
+
+    #[test]
+    fn custom_message_tree_target_positions_leaf_without_composer_rewind() {
+        let root = tempfile::tempdir().unwrap();
+        let workdir = root.path().join("operator-workdir");
+        fs::create_dir_all(&workdir).unwrap();
+        fs::set_permissions(&workdir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let lines = [
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "operator-9",
+                "cwd": workdir.display().to_string(),
+            }),
+            json!({
+                "type": "message",
+                "id": "u1",
+                "parentId": null,
+                "message": { "role": "user", "content": "root question" }
+            }),
+            json!({
+                "type": "message",
+                "id": "a1",
+                "parentId": "u1",
+                "message": { "role": "assistant", "stopReason": "stop", "content": "root reply" }
+            }),
+            json!({
+                "type": "custom_message",
+                "id": "cm1",
+                "parentId": "a1",
+                "customType": "note",
+                "content": "injected extension note"
+            }),
+            json!({
+                "type": "message",
+                "id": "u2",
+                "parentId": "cm1",
+                "message": { "role": "user", "content": "follow-up" }
+            }),
+            json!({
+                "type": "message",
+                "id": "a2",
+                "parentId": "u2",
+                "message": { "role": "assistant", "stopReason": "stop", "content": "follow-up reply" }
+            }),
+        ];
+        let body = lines
+            .iter()
+            .map(|line| format!("{}\n", serde_json::to_string(line).unwrap()))
+            .collect::<String>();
+        let session_path = checkpoint_dir(root.path(), OperatorTurnId(2)).join("session.jsonl");
+        write_private(&session_path, &body);
+
+        let completed_turns = vec![
+            StoredTurnLineage {
+                turn: OperatorTurnId(1),
+                parent_turn: None,
+                pi_first_entry_id: Some("u1".into()),
+                pi_leaf_entry_id: Some("cm1".into()),
+                user_prompt: Some(("root question".into(), OperatorContext::default())),
+            },
+            StoredTurnLineage {
+                turn: OperatorTurnId(2),
+                parent_turn: Some(OperatorTurnId(1)),
+                pi_first_entry_id: Some("u2".into()),
+                pi_leaf_entry_id: Some("a2".into()),
+                user_prompt: Some(("follow-up".into(), OperatorContext::default())),
+            },
+        ];
+
+        let nav_cm = resolve_tree_target(
+            root.path(),
+            OperatorConversationId(9),
+            OperatorTurnId(2),
+            None,
+            &completed_turns,
+            "cm1",
+        )
+        .unwrap();
+        assert!(!nav_cm.noop);
+        assert!(nav_cm.can_summarize);
+        assert_eq!(nav_cm.current_leaf_id.as_deref(), Some("cm1"));
+        assert_eq!(nav_cm.pi_tree_target_id.as_deref(), Some("cm1"));
+        assert_eq!(nav_cm.active_tip_turn, Some(OperatorTurnId(1)));
+        assert_eq!(nav_cm.editor_text, None);
+        assert_eq!(nav_cm.restored_context, None);
+
+        let tree_at_cm = read_session_tree(
+            root.path(),
+            OperatorConversationId(9),
+            OperatorTurnId(2),
+            Some("cm1"),
+            &completed_turns,
+        )
+        .unwrap();
+        assert_eq!(tree_at_cm.current_leaf_id.as_deref(), Some("cm1"));
+
+        let noop_cm = resolve_tree_target(
+            root.path(),
+            OperatorConversationId(9),
+            OperatorTurnId(2),
+            Some("cm1"),
+            &completed_turns,
+            "cm1",
+        )
+        .unwrap();
+        assert!(noop_cm.noop);
+        assert_eq!(noop_cm.editor_text, None);
+    }
+
+    #[test]
+    fn context_window_capacity_uses_persisted_worker_value_with_models_json_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let builtin = OperatorModel {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-5".into(),
+        };
+        assert_eq!(
+            resolve_context_window_capacity(
+                root.path(),
+                Some(&builtin),
+                Some(200_000),
+                Some(&builtin),
+                None,
+                None,
+            ),
+            Some(200_000),
+            "built-in pi model without models.json must use persisted worker context window"
+        );
+
+        let custom = OperatorModel {
+            provider: "custom".into(),
+            id: "local-llm".into(),
+        };
+        let models_path = root.path().join("operator-pi").join("models.json");
+        write_private(
+            &models_path,
+            &serde_json::to_string(&json!({
+                "providers": {
+                    "custom": {
+                        "models": [{ "id": "local-llm", "contextWindow": 65536 }]
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            resolve_context_window_capacity(
+                root.path(),
+                Some(&custom),
+                None,
+                Some(&custom),
+                None,
+                None,
+            ),
+            Some(65_536),
+            "unset worker context window must fall back to operator-pi/models.json"
+        );
     }
 }

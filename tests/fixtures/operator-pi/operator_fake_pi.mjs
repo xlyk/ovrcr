@@ -268,9 +268,42 @@ function respond(command, id, data, success = true) {
   writeRecord(response);
 }
 
+function configuredModelContextWindow(provider, id) {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (!agentDir) return undefined;
+  const modelsPath = join(agentDir, "models.json");
+  if (!existsSync(modelsPath)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(modelsPath, "utf8"));
+    const models = parsed?.providers?.[provider]?.models;
+    if (!Array.isArray(models)) return undefined;
+    const found = models.find((m) => m && m.id === id);
+    const cw = found?.contextWindow;
+    return typeof cw === "number" && Number.isFinite(cw) && cw > 0 ? Math.floor(cw) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function modelPayload(model) {
+  if (!model) return null;
+  const cw = model.contextWindow !== undefined
+    ? model.contextWindow
+    : (scenario.context_window !== undefined
+      ? scenario.context_window
+      : (configuredModelContextWindow(model.provider, model.id) ?? 200_000));
+  const out = {
+    provider: model.provider,
+    id: model.id,
+    name: model.name ?? model.id,
+  };
+  if (cw !== null) out.contextWindow = cw;
+  return out;
+}
+
 function stateData() {
   return {
-    model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name ?? currentModel.id } : null,
+    model: modelPayload(currentModel),
     thinkingLevel,
     isStreaming: promptRunning,
     isCompacting: compactRunning,
@@ -862,7 +895,7 @@ function handleCommand(command) {
       break;
     case "get_available_models":
       record({ event: "command", command: "get_available_models", id });
-      respond("get_available_models", id, { models: scenario.models ?? [] });
+      respond("get_available_models", id, { models: (scenario.models ?? []).map(modelPayload) });
       break;
     case "set_model": {
       const models = scenario.models ?? [];
@@ -879,7 +912,7 @@ function handleCommand(command) {
           ?? scenario.thinking_level ?? thinkingLevel);
         appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       }
-      respond("set_model", id, { provider: match.provider, id: match.id, name: match.name ?? match.id });
+      respond("set_model", id, modelPayload(match));
       break;
     }
     case "get_available_thinking_levels":

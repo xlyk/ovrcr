@@ -325,7 +325,7 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
             // The selected model is retained metadata and compaction events are
             // transient phase state; neither is part of the feed.
             OperatorMessageContent::Worker(
-                OperatorWorkerEvent::ModelSelected(_)
+                OperatorWorkerEvent::ModelSelected { .. }
                 | OperatorWorkerEvent::ReasoningSelected(_)
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
@@ -477,7 +477,7 @@ pub(super) fn latest_assistant_reply(chat: &Chat) -> Option<String> {
     entries(chat)
         .into_iter()
         .rev()
-        .find(|entry| !entry.reply.trim().is_empty())
+        .find(|entry| entry.state == State::Done && !entry.reply.trim().is_empty())
         .map(|entry| entry.reply)
 }
 
