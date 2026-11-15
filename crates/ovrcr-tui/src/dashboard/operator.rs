@@ -13,12 +13,12 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr_protocol::{
-    ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
-    OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorModelCatalogEntry, OperatorRequest, OperatorResponse,
-    OperatorSessionInfo, OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus,
-    OperatorTreeEntryKind, OperatorTurnId, OperatorTurnIdentity, OperatorTurnState,
-    OperatorWorkerEvent, Request, Response, SessionId, SessionRunId,
+    ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorBranchSummaryRequest, OperatorContext,
+    OperatorConversationId as Id, OperatorConversationSummary as Summary, OperatorHistory,
+    OperatorMessage, OperatorMessageContent, OperatorModelCatalogEntry, OperatorRequest,
+    OperatorResponse, OperatorSessionInfo, OperatorThinkingLevel as ThinkingLevel,
+    OperatorToolStatus, OperatorTreeEntryKind, OperatorTurnId, OperatorTurnIdentity,
+    OperatorTurnState, OperatorWorkerEvent, Request, Response, SessionId, SessionRunId,
 };
 use ratatui::{
     Frame,
@@ -28,7 +28,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use tree::{MAX_TREE_SEARCH_BYTES, TreeModal, TreePicker};
+use tree::{BranchSummaryChoice, MAX_TREE_SEARCH_BYTES, TreeModal, TreePicker, TreePickerStep};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
@@ -184,6 +184,13 @@ enum SubmitOrigin {
     Composer,
     Quick { generation: u64 },
 }
+#[derive(Clone, Debug)]
+struct PendingBranchSummaryUi {
+    turn: OperatorTurnId,
+    editor_text: Option<String>,
+    restored_context: Option<OperatorContext>,
+}
+
 struct Chat {
     summary: Summary,
     /// The fixed agent working directory; the captured target is per message.
@@ -210,6 +217,8 @@ struct Chat {
     unread: Option<OperatorTurnId>,
     reviewed: Option<OperatorTurnId>,
     compact_turn: Option<OperatorTurnId>,
+    branch_summary_turn: Option<OperatorTurnId>,
+    branch_summary_pending: Option<PendingBranchSummaryUi>,
     /// Wrapped journal rows, reused until an input in their key changes.
     rows: std::cell::RefCell<Option<(render::RowsKey, Vec<render::TranscriptRow>)>>,
 }
@@ -238,6 +247,8 @@ impl Chat {
             unread: None,
             reviewed: None,
             compact_turn: None,
+            branch_summary_turn: None,
+            branch_summary_pending: None,
             rows: std::cell::RefCell::new(None),
         }
     }
@@ -494,6 +505,20 @@ fn conversation_activity(chat: &Chat) -> Option<ConversationActivity> {
         {
             return Some(ConversationActivity {
                 label: "Compacting context…".into(),
+                animated: true,
+            });
+        }
+        if chat.branch_summary_turn == Some(turn.identity.turn)
+            || chat.messages.iter().any(|message| {
+                message.turn == turn.identity.turn
+                    && matches!(
+                        message.content,
+                        OperatorMessageContent::BranchSummary { .. }
+                    )
+            })
+        {
+            return Some(ConversationActivity {
+                label: "Summarizing branch…".into(),
                 animated: true,
             });
         }
@@ -1531,15 +1556,175 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    fn operator_submit_navigate_tree(
+        &mut self,
+        target_entry_id: String,
+        summarize: Option<OperatorBranchSummaryRequest>,
+    ) -> DashboardAction {
+        let check = self
+            .operator
+            .chat
+            .as_ref()
+            .map(|chat| (chat.summary.id, chat.summary.run, chat.can_navigate_tree()));
+        let Some((id, expected_run, result)) = check else {
+            return DashboardAction::Redraw;
+        };
+        if let Err(reason) = result {
+            if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                picker.error = Some(reason.into());
+            }
+            if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(reason.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+            picker.submitting = true;
+            picker.error = None;
+        }
+        self.operator_request(
+            Pending::NavigateTree { id },
+            OperatorRequest::NavigateTree {
+                conversation: id,
+                expected_run,
+                target_entry_id,
+                summarize,
+            },
+        );
+        DashboardAction::Redraw
+    }
+
     fn operator_tree_modal_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let Some(modal) = self.operator.tree_modal.as_mut() else {
+            return DashboardAction::Redraw;
+        };
+        let TreeModal::Loaded(picker) = modal else {
+            if key.code == KeyCode::Esc {
+                self.operator.tree_modal = None;
+                self.operator.pending_tree_modal = false;
+            }
+            return DashboardAction::Redraw;
+        };
+
+        if picker.submitting {
+            return DashboardAction::Redraw;
+        }
+
+        match &mut picker.step {
+            TreePickerStep::CustomInstructions {
+                target_entry_id,
+                target_preview,
+                input,
+                cursor,
+            } => {
+                if key.code == KeyCode::Esc {
+                    let target_entry_id = target_entry_id.clone();
+                    let target_preview = target_preview.clone();
+                    picker.step = TreePickerStep::ConfirmSummarize {
+                        target_entry_id,
+                        target_preview,
+                        choice: BranchSummaryChoice::CustomPrompt,
+                    };
+                    picker.error = None;
+                    return DashboardAction::Redraw;
+                }
+                if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+                    let trimmed = input.trim().to_owned();
+                    if trimmed.is_empty() {
+                        picker.error = Some(
+                            "Enter custom summarization instructions, or press Esc to go back."
+                                .into(),
+                        );
+                        return DashboardAction::Redraw;
+                    }
+                    let target_entry_id = target_entry_id.clone();
+                    return self.operator_submit_navigate_tree(
+                        target_entry_id,
+                        Some(OperatorBranchSummaryRequest {
+                            instructions: Some(trimmed),
+                        }),
+                    );
+                }
+                if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+                    input.clear();
+                    *cursor = TextCursor::default();
+                } else if !cursor.edit_key(input, key) {
+                    match key.code {
+                        KeyCode::Char(ch)
+                            if !ch.is_control()
+                                && (key.modifiers.is_empty()
+                                    || key.modifiers == KeyModifiers::SHIFT) =>
+                        {
+                            let ch_str = ch.to_string();
+                            if input.len().saturating_add(ch_str.len()) <= MAX_OPERATOR_TEXT_BYTES {
+                                cursor.insert(input, &ch_str);
+                            }
+                        }
+                        KeyCode::Backspace
+                        | KeyCode::Delete
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Home
+                        | KeyCode::End => cursor.key(input, key.code),
+                        _ => {}
+                    }
+                }
+                picker.error = None;
+                return DashboardAction::Redraw;
+            }
+            TreePickerStep::ConfirmSummarize {
+                target_entry_id,
+                target_preview,
+                choice,
+            } => {
+                match key.code {
+                    KeyCode::Esc => {
+                        picker.step = TreePickerStep::Browse;
+                        picker.error = None;
+                    }
+                    KeyCode::Up | KeyCode::BackTab => {
+                        *choice = choice.prev();
+                    }
+                    KeyCode::Down | KeyCode::Tab => {
+                        *choice = choice.next();
+                    }
+                    KeyCode::Enter if key.modifiers.is_empty() => match *choice {
+                        BranchSummaryChoice::NoSummary => {
+                            let target_entry_id = target_entry_id.clone();
+                            return self.operator_submit_navigate_tree(target_entry_id, None);
+                        }
+                        BranchSummaryChoice::Summarize => {
+                            let target_entry_id = target_entry_id.clone();
+                            return self.operator_submit_navigate_tree(
+                                target_entry_id,
+                                Some(OperatorBranchSummaryRequest { instructions: None }),
+                            );
+                        }
+                        BranchSummaryChoice::CustomPrompt => {
+                            let target_entry_id = target_entry_id.clone();
+                            let target_preview = target_preview.clone();
+                            picker.step = TreePickerStep::CustomInstructions {
+                                target_entry_id,
+                                target_preview,
+                                input: String::new(),
+                                cursor: TextCursor::default(),
+                            };
+                            picker.error = None;
+                        }
+                    },
+                    _ => {}
+                }
+                return DashboardAction::Redraw;
+            }
+            TreePickerStep::Browse => {}
+        }
+
         if key.code == KeyCode::Esc {
             self.operator.tree_modal = None;
             self.operator.pending_tree_modal = false;
             return DashboardAction::Redraw;
         }
-        let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() else {
-            return DashboardAction::Redraw;
-        };
         if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('f'))
             || (key.modifiers.is_empty() && key.code == KeyCode::Tab)
         {
@@ -1574,9 +1759,6 @@ impl Dashboard {
                 return DashboardAction::Redraw;
             }
             KeyCode::Enter if key.modifiers.is_empty() => {
-                if picker.submitting {
-                    return DashboardAction::Redraw;
-                }
                 if picker.tree.entries.is_empty() {
                     self.operator.tree_modal = None;
                     self.operator.pending_tree_modal = false;
@@ -1590,15 +1772,15 @@ impl Dashboard {
                     self.operator.pending_tree_modal = false;
                     return DashboardAction::Redraw;
                 }
-                let check = self
+                let can_nav = self
                     .operator
                     .chat
                     .as_ref()
-                    .map(|chat| (chat.summary.id, chat.summary.run, chat.can_navigate_tree()));
-                let Some((id, expected_run, result)) = check else {
+                    .map(|chat| chat.can_navigate_tree());
+                let Some(can_nav) = can_nav else {
                     return DashboardAction::Redraw;
                 };
-                if let Err(reason) = result {
+                if let Err(reason) = can_nav {
                     if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
                         picker.error = Some(reason.into());
                     }
@@ -1608,19 +1790,24 @@ impl Dashboard {
                     }
                     return DashboardAction::Redraw;
                 }
-                if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
-                    picker.submitting = true;
-                    picker.error = None;
+                if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_ref()
+                    && TreePicker::should_prompt_summarize(&picker.tree, &entry)
+                {
+                    if let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut() {
+                        picker.step = TreePickerStep::ConfirmSummarize {
+                            target_entry_id: entry.id,
+                            target_preview: format!(
+                                "{}: {}",
+                                tree::entry_role_label(entry.kind),
+                                entry.preview
+                            ),
+                            choice: BranchSummaryChoice::NoSummary,
+                        };
+                        picker.error = None;
+                    }
+                    return DashboardAction::Redraw;
                 }
-                self.operator_request(
-                    Pending::NavigateTree { id },
-                    OperatorRequest::NavigateTree {
-                        conversation: id,
-                        expected_run,
-                        target_entry_id: entry.id,
-                    },
-                );
-                return DashboardAction::Redraw;
+                return self.operator_submit_navigate_tree(entry.id, None);
             }
             _ => {}
         }
@@ -2243,16 +2430,31 @@ impl Dashboard {
         if let Some(modal) = self.operator.tree_modal.as_mut() {
             if let TreeModal::Loaded(picker) = modal {
                 let clean: String = text.chars().filter(|ch| !ch.is_control()).collect();
-                if !clean.is_empty()
-                    && picker.query.len().saturating_add(clean.len()) <= MAX_TREE_SEARCH_BYTES
-                {
-                    let before = picker.query.clone();
-                    picker.cursor.insert(&mut picker.query, &clean);
-                    if picker.query != before {
-                        picker.on_query_changed();
+                match &mut picker.step {
+                    TreePickerStep::Browse => {
+                        if !clean.is_empty()
+                            && picker.query.len().saturating_add(clean.len())
+                                <= MAX_TREE_SEARCH_BYTES
+                        {
+                            let before = picker.query.clone();
+                            picker.cursor.insert(&mut picker.query, &clean);
+                            if picker.query != before {
+                                picker.on_query_changed();
+                            }
+                        }
+                        return DashboardAction::Redraw;
                     }
+                    TreePickerStep::CustomInstructions { input, cursor, .. } => {
+                        if !clean.is_empty()
+                            && input.len().saturating_add(clean.len()) <= MAX_OPERATOR_TEXT_BYTES
+                        {
+                            cursor.insert(input, &clean);
+                            picker.error = None;
+                        }
+                        return DashboardAction::Redraw;
+                    }
+                    TreePickerStep::ConfirmSummarize { .. } => return DashboardAction::None,
                 }
-                return DashboardAction::Redraw;
             }
             return DashboardAction::None;
         }
@@ -2475,6 +2677,12 @@ impl Dashboard {
                     | Pending::Tree { .. }
                     | Pending::NavigateTree { .. }
             );
+            if let Pending::NavigateTree { .. } = pending
+                && let Some(TreeModal::Loaded(picker)) = self.operator.tree_modal.as_mut()
+            {
+                picker.submitting = false;
+                picker.error = Some(display_text(message));
+            }
             if chat_error {
                 if let Some(chat) = self.operator.chat.as_mut() {
                     chat.notice = None;
@@ -2910,8 +3118,9 @@ impl Dashboard {
                     .is_some_and(|chat| chat.summary.id == id) =>
             {
                 if self.operator.tree_modal.is_some() {
-                    self.operator.tree_modal =
-                        Some(TreeModal::Loaded(TreePicker::new((**tree).clone())));
+                    self.operator.tree_modal = Some(TreeModal::Loaded(Box::new(TreePicker::new(
+                        (**tree).clone(),
+                    ))));
                 }
             }
             (
@@ -2920,63 +3129,95 @@ impl Dashboard {
             ) if nav.conversation.id == id => {
                 self.operator.tree_modal = None;
                 self.operator.pending_tree_modal = false;
-                let attach_context = nav.restored_context.clone().unwrap_or_else(|| {
-                    self.operator.chat.as_ref().map_or_else(
+                if let Some(turn) = nav.submitted.clone() {
+                    let current_context = self.operator.chat.as_ref().map_or_else(
                         || self.operator.context.clone(),
                         |chat| chat.context.clone(),
-                    )
-                });
-                if !self.operator_attach(nav.conversation.clone(), attach_context) {
-                    self.operator.error = Some(UNAVAILABLE_REASON.into());
-                    return true;
-                }
-                if !nav.noop {
-                    self.operator
-                        .pending
-                        .retain(|_, pending| !matches!(pending, Pending::Read { id: pid, .. } if *pid == id));
+                    );
+                    if !self.operator_attach(nav.conversation.clone(), current_context) {
+                        self.operator.error = Some(UNAVAILABLE_REASON.into());
+                        return true;
+                    }
                     if let Some(chat) = self.operator.chat.as_mut() {
-                        chat.messages.clear();
-                        chat.ordinal = 0;
-                        chat.confirmed_tail = None;
-                        chat.reading = false;
+                        chat.branch_summary_turn = Some(turn.identity.turn);
+                        chat.branch_summary_pending = Some(PendingBranchSummaryUi {
+                            turn: turn.identity.turn,
+                            editor_text: nav.editor_text.clone(),
+                            restored_context: nav.restored_context.clone(),
+                        });
                         chat.dirty = true;
+                        chat.follow = true;
                         chat.scroll = 0;
                         chat.anchor = None;
-                        chat.expanded.clear();
-                        chat.entry_focus = None;
-                        chat.follow = true;
-                        chat.compact_turn = None;
-                        *chat.rows.borrow_mut() = None;
                         chat.error = None;
-                        if let Some(text) = &nav.editor_text {
-                            chat.draft = text.clone();
-                            chat.cursor = TextCursor::default();
-                            if let Some(ctx) = &nav.restored_context {
-                                chat.context = ctx.clone();
-                            }
-                            chat.notice = Some(
-                                "Rewound Operator branch; prompt restored to composer.".into(),
-                            );
-                        } else {
-                            chat.draft.clear();
-                            chat.cursor = TextCursor::default();
-                            chat.notice = Some("Switched Operator branch.".into());
-                        }
-                        if let Some(quick) = self.operator.quick.as_mut()
-                            && quick.seeded
-                        {
-                            quick.text = chat.draft.clone();
-                            quick.cursor = chat.cursor;
-                            if let Some(ctx) = &nav.restored_context {
-                                quick.context = ctx.clone();
-                            }
-                        }
+                        chat.notice = None;
                     }
                     self.operator.editing = true;
                     self.operator.transcript_focus = false;
                     self.operator.slash_selected = 0;
                     self.operator.slash_dismissed_for = None;
                     self.operator_read();
+                } else {
+                    let attach_context = nav.restored_context.clone().unwrap_or_else(|| {
+                        self.operator.chat.as_ref().map_or_else(
+                            || self.operator.context.clone(),
+                            |chat| chat.context.clone(),
+                        )
+                    });
+                    if !self.operator_attach(nav.conversation.clone(), attach_context) {
+                        self.operator.error = Some(UNAVAILABLE_REASON.into());
+                        return true;
+                    }
+                    if !nav.noop {
+                        self.operator
+                            .pending
+                            .retain(|_, pending| !matches!(pending, Pending::Read { id: pid, .. } if *pid == id));
+                        if let Some(chat) = self.operator.chat.as_mut() {
+                            chat.messages.clear();
+                            chat.ordinal = 0;
+                            chat.confirmed_tail = None;
+                            chat.reading = false;
+                            chat.dirty = true;
+                            chat.scroll = 0;
+                            chat.anchor = None;
+                            chat.expanded.clear();
+                            chat.entry_focus = None;
+                            chat.follow = true;
+                            chat.compact_turn = None;
+                            chat.branch_summary_turn = None;
+                            chat.branch_summary_pending = None;
+                            *chat.rows.borrow_mut() = None;
+                            chat.error = None;
+                            if let Some(text) = &nav.editor_text {
+                                chat.draft = text.clone();
+                                chat.cursor = TextCursor::default();
+                                if let Some(ctx) = &nav.restored_context {
+                                    chat.context = ctx.clone();
+                                }
+                                chat.notice = Some(
+                                    "Rewound Operator branch; prompt restored to composer.".into(),
+                                );
+                            } else {
+                                chat.draft.clear();
+                                chat.cursor = TextCursor::default();
+                                chat.notice = Some("Switched Operator branch.".into());
+                            }
+                            if let Some(quick) = self.operator.quick.as_mut()
+                                && quick.seeded
+                            {
+                                quick.text = chat.draft.clone();
+                                quick.cursor = chat.cursor;
+                                if let Some(ctx) = &nav.restored_context {
+                                    quick.context = ctx.clone();
+                                }
+                            }
+                        }
+                        self.operator.editing = true;
+                        self.operator.transcript_focus = false;
+                        self.operator.slash_selected = 0;
+                        self.operator.slash_dismissed_for = None;
+                        self.operator_read();
+                    }
                 }
             }
             (pending, _) => {
@@ -3073,6 +3314,8 @@ impl Dashboard {
             chat.unread = None;
             chat.reviewed = None;
             chat.compact_turn = None;
+            chat.branch_summary_turn = None;
+            chat.branch_summary_pending = None;
             *chat.rows.borrow_mut() = None;
             self.operator.reasoning_picker = None;
             self.operator.model_picker = None;
@@ -3167,6 +3410,75 @@ impl Dashboard {
             && chat.reviewed != Some(turn.identity.turn)
         {
             chat.unread = Some(turn.identity.turn);
+        }
+        if let Some(pending_turn) = chat.branch_summary_pending.as_ref().map(|p| p.turn) {
+            let summary_state = chat
+                .summary
+                .current_turn
+                .as_ref()
+                .filter(|t| t.identity.turn == pending_turn)
+                .map(|t| t.state);
+            let completed = summary_state == Some(OperatorTurnState::Complete)
+                || history.messages.iter().any(|m| {
+                    m.turn == pending_turn
+                        && matches!(
+                            m.content,
+                            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. })
+                        )
+                });
+            let aborted_or_failed = matches!(
+                summary_state,
+                Some(OperatorTurnState::Interrupted | OperatorTurnState::Error)
+            ) || history.messages.iter().any(|m| {
+                m.turn == pending_turn
+                    && matches!(
+                        m.content,
+                        OperatorMessageContent::Interrupted
+                            | OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(_))
+                    )
+            });
+            if completed {
+                let pending_ui = chat.branch_summary_pending.take().unwrap();
+                chat.branch_summary_turn = None;
+                chat.error = None;
+                if let Some(text) = pending_ui.editor_text {
+                    chat.draft = text;
+                    chat.cursor = TextCursor::default();
+                    if let Some(ctx) = pending_ui.restored_context.clone() {
+                        chat.context = ctx;
+                    }
+                    chat.notice = Some("Summarized branch; prompt restored to composer.".into());
+                } else {
+                    chat.draft.clear();
+                    chat.cursor = TextCursor::default();
+                    chat.notice = Some("Summarized and switched Operator branch.".into());
+                }
+                if let Some(quick) = self.operator.quick.as_mut()
+                    && quick.seeded
+                {
+                    quick.text = chat.draft.clone();
+                    quick.cursor = chat.cursor;
+                    if let Some(ctx) = pending_ui.restored_context {
+                        quick.context = ctx;
+                    }
+                }
+                if after > 0 {
+                    chat.messages.clear();
+                    chat.ordinal = 0;
+                    chat.confirmed_tail = None;
+                    chat.dirty = true;
+                    chat.scroll = 0;
+                    chat.anchor = None;
+                    chat.expanded.clear();
+                    chat.entry_focus = None;
+                    chat.follow = true;
+                    *chat.rows.borrow_mut() = None;
+                    return;
+                }
+            } else if aborted_or_failed {
+                chat.branch_summary_pending = None;
+                chat.branch_summary_turn = None;
+            }
         }
         if history.next_after.is_some() {
             chat.dirty = true;

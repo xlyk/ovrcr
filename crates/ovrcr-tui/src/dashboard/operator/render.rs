@@ -1321,7 +1321,7 @@ impl Dashboard {
         let width = outer.width.min(92);
         let inner_width = usize::from(width.saturating_sub(2));
 
-        let (lines, title, search_cursor_col) = match modal {
+        let (lines, title, modal_cursor) = match modal {
             TreeModal::Loading => {
                 let rows = vec![
                     Line::raw(" Loading Operator session tree…")
@@ -1331,130 +1331,233 @@ impl Dashboard {
                 ];
                 (rows, " Operator tree · /tree ".to_owned(), None)
             }
-            TreeModal::Loaded(picker) => {
-                let pos = picker.cursor.position(&picker.query);
-                let before = display_text(&picker.query[..pos]);
-                let after = display_text(&picker.query[pos..]);
-                let search_prefix = "Search: ";
-                let search_room = inner_width.saturating_sub(search_prefix.width() + 1);
-                let search_text = format!("{before}▏{after}");
-                let mut rows: Vec<Line<'static>> = vec![Line::from(vec![
-                    Span::styled(
-                        search_prefix,
-                        Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        clip_text(&search_text, search_room.max(1)),
-                        Style::default().fg(TEXT()),
-                    ),
-                ])];
-
-                if let Some(error) = &picker.error {
-                    rows.extend(wrapped_lines(
-                        vec![Line::styled(
-                            display_text(error),
-                            Style::default().fg(super::super::render::RED()),
-                        )],
-                        width.saturating_sub(2),
-                    ));
-                }
-
-                let visible = picker.visible_rows();
-                let selected = picker.selected.min(visible.len().saturating_sub(1));
-                let max_list_rows = usize::from(outer.height.saturating_sub(7)).clamp(1, 14);
-
-                if picker.tree.entries.is_empty() {
-                    rows.push(
-                        Line::raw("No turns in this Operator session yet.")
-                            .style(Style::default().fg(SUBTEXT())),
-                    );
-                } else if visible.is_empty() {
-                    rows.push(
-                        Line::raw("No tree entries match current filter or search.")
-                            .style(Style::default().fg(PEACH())),
-                    );
-                } else {
-                    let start = selected.saturating_add(1).saturating_sub(max_list_rows);
-                    for (idx, row) in visible.iter().enumerate().skip(start).take(max_list_rows) {
-                        let active_sel = idx == selected;
-                        let bg = if active_sel { SURFACE2() } else { BASE() };
-                        let marker = if row.active_branch { "● " } else { "  " };
-                        let role_fg = match row.kind {
-                            OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage => {
-                                MAUVE()
-                            }
-                            OperatorTreeEntryKind::Assistant { .. } => BLUE(),
-                            OperatorTreeEntryKind::Compaction
-                            | OperatorTreeEntryKind::BranchSummary => PEACH(),
-                            OperatorTreeEntryKind::ToolResult
-                            | OperatorTreeEntryKind::ModelChange
-                            | OperatorTreeEntryKind::ThinkingLevelChange
-                            | OperatorTreeEntryKind::Other => SUBTEXT(),
-                        };
-                        let leaf_badge = if row.current_leaf { " ← active" } else { "" };
-                        let role_tag = format!("{}: ", row.role_label);
-                        let prefix_width =
-                            row.connector.width() + marker.width() + role_tag.width();
-                        let preview_room = inner_width.saturating_sub(prefix_width);
-                        let preview_raw = format!("{}{leaf_badge}", display_text(&row.preview));
-                        let clipped_preview = clip_text(&preview_raw, preview_room);
-                        let used = prefix_width + clipped_preview.width();
-                        let pad = inner_width.saturating_sub(used);
-
-                        rows.push(Line::from(vec![
-                            Span::styled(
-                                row.connector.clone(),
-                                Style::default()
-                                    .fg(if active_sel { TEXT() } else { SUBTEXT() })
-                                    .bg(bg),
+            TreeModal::Loaded(picker) => match &picker.step {
+                TreePickerStep::ConfirmSummarize {
+                    target_preview,
+                    choice,
+                    ..
+                } => {
+                    let mut rows: Vec<Line<'static>> = vec![
+                        Line::styled(
+                            "Summarize abandoned branch entries before switching?",
+                            Style::default().fg(TEXT()).add_modifier(Modifier::BOLD),
+                        ),
+                        Line::styled(
+                            clip_text(
+                                &format!("Target: {}", display_text(target_preview)),
+                                inner_width,
                             ),
-                            Span::styled(
-                                marker,
-                                Style::default()
-                                    .fg(if row.active_branch {
-                                        GREEN()
-                                    } else {
-                                        SUBTEXT()
-                                    })
-                                    .bg(bg)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(
-                                role_tag,
-                                Style::default()
-                                    .fg(role_fg)
-                                    .bg(bg)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(
-                                format!("{clipped_preview}{}", " ".repeat(pad)),
-                                Style::default().fg(TEXT()).bg(bg),
-                            ),
-                        ]));
+                            Style::default().fg(SUBTEXT()),
+                        ),
+                    ];
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
                     }
+                    rows.push(Line::default());
+                    for item in BranchSummaryChoice::ALL {
+                        let active = item == *choice;
+                        let bg = if active { SURFACE2() } else { BASE() };
+                        let prefix = if active { "▸ " } else { "  " };
+                        let row_text = clip_text(&format!("{prefix}{}", item.label()), inner_width);
+                        let pad = inner_width.saturating_sub(row_text.width());
+                        rows.push(Line::raw(format!("{row_text}{}", " ".repeat(pad))).style(
+                            Style::default().fg(TEXT()).bg(bg).add_modifier(if active {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                        ));
+                    }
+                    rows.push(Line::default());
+                    rows.push(
+                        Line::raw("↑↓ select · Enter confirm · Esc back to /tree")
+                            .style(Style::default().fg(MAUVE())),
+                    );
+                    (rows, " Summarize branch? · /tree ".to_owned(), None)
                 }
-
-                rows.push(
-                    Line::raw(
-                        "Type search · ↑↓ select · Tab/Ctrl-f filter · Enter switch · Esc close",
+                TreePickerStep::CustomInstructions {
+                    target_preview,
+                    input,
+                    cursor,
+                    ..
+                } => {
+                    let pos = cursor.position(input);
+                    let before = display_text(&input[..pos]);
+                    let after = display_text(&input[pos..]);
+                    let prompt_prefix = "Instructions: ";
+                    let prompt_room = inner_width.saturating_sub(prompt_prefix.width() + 1);
+                    let prompt_text = format!("{before}▏{after}");
+                    let mut rows: Vec<Line<'static>> = vec![
+                        Line::styled(
+                            clip_text(
+                                &format!("Target: {}", display_text(target_preview)),
+                                inner_width,
+                            ),
+                            Style::default().fg(SUBTEXT()),
+                        ),
+                        Line::from(vec![
+                            Span::styled(
+                                prompt_prefix,
+                                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                clip_text(&prompt_text, prompt_room.max(1)),
+                                Style::default().fg(TEXT()),
+                            ),
+                        ]),
+                    ];
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
+                    }
+                    rows.push(Line::default());
+                    rows.push(
+                        Line::raw("Type instructions · Enter summarize · Esc back")
+                            .style(Style::default().fg(MAUVE())),
+                    );
+                    let cursor_col = prompt_prefix.width() + before.width();
+                    (
+                        rows,
+                        " Summarize branch · Custom prompt ".to_owned(),
+                        Some((cursor_col, 2u16)),
                     )
-                    .style(Style::default().fg(MAUVE())),
-                );
-                let leaf_status = if picker.tree.entries.is_empty() {
-                    "empty"
-                } else if picker.tree.current_leaf_id.is_some() {
-                    "active"
-                } else {
-                    "root"
-                };
-                let title = format!(
-                    " Operator tree · /tree · filter: {} · {} ",
-                    picker.filter.as_str(),
-                    leaf_status
-                );
-                let cursor_col = search_prefix.width() + before.width();
-                (rows, title, Some(cursor_col))
-            }
+                }
+                TreePickerStep::Browse => {
+                    let pos = picker.cursor.position(&picker.query);
+                    let before = display_text(&picker.query[..pos]);
+                    let after = display_text(&picker.query[pos..]);
+                    let search_prefix = "Search: ";
+                    let search_room = inner_width.saturating_sub(search_prefix.width() + 1);
+                    let search_text = format!("{before}▏{after}");
+                    let mut rows: Vec<Line<'static>> = vec![Line::from(vec![
+                        Span::styled(
+                            search_prefix,
+                            Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            clip_text(&search_text, search_room.max(1)),
+                            Style::default().fg(TEXT()),
+                        ),
+                    ])];
+
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
+                    }
+
+                    let visible = picker.visible_rows();
+                    let selected = picker.selected.min(visible.len().saturating_sub(1));
+                    let max_list_rows = usize::from(outer.height.saturating_sub(7)).clamp(1, 14);
+
+                    if picker.tree.entries.is_empty() {
+                        rows.push(
+                            Line::raw("No turns in this Operator session yet.")
+                                .style(Style::default().fg(SUBTEXT())),
+                        );
+                    } else if visible.is_empty() {
+                        rows.push(
+                            Line::raw("No tree entries match current filter or search.")
+                                .style(Style::default().fg(PEACH())),
+                        );
+                    } else {
+                        let start = selected.saturating_add(1).saturating_sub(max_list_rows);
+                        for (idx, row) in visible.iter().enumerate().skip(start).take(max_list_rows)
+                        {
+                            let active_sel = idx == selected;
+                            let bg = if active_sel { SURFACE2() } else { BASE() };
+                            let marker = if row.active_branch { "● " } else { "  " };
+                            let role_fg = match row.kind {
+                                OperatorTreeEntryKind::User
+                                | OperatorTreeEntryKind::CustomMessage => MAUVE(),
+                                OperatorTreeEntryKind::Assistant { .. } => BLUE(),
+                                OperatorTreeEntryKind::Compaction
+                                | OperatorTreeEntryKind::BranchSummary => PEACH(),
+                                OperatorTreeEntryKind::ToolResult
+                                | OperatorTreeEntryKind::ModelChange
+                                | OperatorTreeEntryKind::ThinkingLevelChange
+                                | OperatorTreeEntryKind::Other => SUBTEXT(),
+                            };
+                            let leaf_badge = if row.current_leaf { " ← active" } else { "" };
+                            let role_tag = format!("{}: ", row.role_label);
+                            let prefix_width =
+                                row.connector.width() + marker.width() + role_tag.width();
+                            let preview_room = inner_width.saturating_sub(prefix_width);
+                            let preview_raw = format!("{}{leaf_badge}", display_text(&row.preview));
+                            let clipped_preview = clip_text(&preview_raw, preview_room);
+                            let used = prefix_width + clipped_preview.width();
+                            let pad = inner_width.saturating_sub(used);
+
+                            rows.push(Line::from(vec![
+                                Span::styled(
+                                    row.connector.clone(),
+                                    Style::default()
+                                        .fg(if active_sel { TEXT() } else { SUBTEXT() })
+                                        .bg(bg),
+                                ),
+                                Span::styled(
+                                    marker,
+                                    Style::default()
+                                        .fg(if row.active_branch {
+                                            GREEN()
+                                        } else {
+                                            SUBTEXT()
+                                        })
+                                        .bg(bg)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    role_tag,
+                                    Style::default()
+                                        .fg(role_fg)
+                                        .bg(bg)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    format!("{clipped_preview}{}", " ".repeat(pad)),
+                                    Style::default().fg(TEXT()).bg(bg),
+                                ),
+                            ]));
+                        }
+                    }
+
+                    rows.push(
+                        Line::raw(
+                            "Type search · ↑↓ select · Tab/Ctrl-f filter · Enter switch · Esc close",
+                        )
+                        .style(Style::default().fg(MAUVE())),
+                    );
+                    let leaf_status = if picker.tree.entries.is_empty() {
+                        "empty"
+                    } else if picker.tree.current_leaf_id.is_some() {
+                        "active"
+                    } else {
+                        "root"
+                    };
+                    let title = format!(
+                        " Operator tree · /tree · filter: {} · {} ",
+                        picker.filter.as_str(),
+                        leaf_status
+                    );
+                    let cursor_col = search_prefix.width() + before.width();
+                    (rows, title, Some((cursor_col, 1u16)))
+                }
+            },
         };
 
         let height = (lines.len() as u16 + 2).min(outer.height);
@@ -1475,12 +1578,12 @@ impl Dashboard {
             ),
             area,
         );
-        if let Some(col) = search_cursor_col
-            && area.height >= 3
+        if let Some((col, row_offset)) = modal_cursor
+            && area.height > row_offset + 1
             && area.width >= 12
         {
             let bounded = col.min(usize::from(area.width.saturating_sub(3))) as u16;
-            frame.set_cursor_position((area.x + 1 + bounded, area.y + 1));
+            frame.set_cursor_position((area.x + 1 + bounded, area.y + row_offset));
         }
     }
 }

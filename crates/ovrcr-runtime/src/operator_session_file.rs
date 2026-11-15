@@ -60,6 +60,7 @@ pub struct StoredTurnLineage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedTreeTarget {
     pub noop: bool,
+    pub can_summarize: bool,
     pub active_tip_turn: Option<OperatorTurnId>,
     pub pi_tree_target_id: Option<String>,
     pub current_leaf_id: Option<String>,
@@ -281,6 +282,7 @@ pub fn resolve_tree_target(
         );
         return Ok(ResolvedTreeTarget {
             noop: true,
+            can_summarize: false,
             active_tip_turn,
             pi_tree_target_id: existing_tree_target_id.map(str::to_owned),
             current_leaf_id: prior_effective_leaf_id,
@@ -331,8 +333,20 @@ pub fn resolve_tree_target(
         Some(target.id.clone())
     };
 
+    let can_summarize = if let Some(old_leaf_id) = prior_effective_leaf_id.as_deref()
+        && let Some(&old_idx) = index_by_id.get(old_leaf_id)
+        && old_leaf_id != target.id
+    {
+        let target_branch_ancestors =
+            branch_path_indices(&entries, &index_by_id, new_effective_leaf_id.as_deref());
+        !target_branch_ancestors.contains(&old_idx)
+    } else {
+        false
+    };
+
     Ok(ResolvedTreeTarget {
         noop: false,
+        can_summarize,
         active_tip_turn,
         pi_tree_target_id,
         current_leaf_id: new_effective_leaf_id,
@@ -563,7 +577,9 @@ fn correlate_entry_turns(
             }
             let starts_turn = matches!(
                 entry.kind,
-                OperatorTreeEntryKind::User | OperatorTreeEntryKind::Compaction
+                OperatorTreeEntryKind::User
+                    | OperatorTreeEntryKind::Compaction
+                    | OperatorTreeEntryKind::BranchSummary
             );
             let is_bookkeeping = matches!(
                 entry.kind,
@@ -1639,9 +1655,10 @@ mod tests {
         )
         .unwrap();
         assert!(noop.noop);
+        assert!(!noop.can_summarize);
         assert_eq!(noop.active_tip_turn, Some(OperatorTurnId(3)));
 
-        // 6. Switch to Branch A assistant entry a2a.
+        // 6. Switch to Branch A assistant entry a2a (abandons u2b -> a2b => can_summarize = true).
         let nav_a = resolve_tree_target(
             root.path(),
             OperatorConversationId(5),
@@ -1652,13 +1669,14 @@ mod tests {
         )
         .unwrap();
         assert!(!nav_a.noop);
+        assert!(nav_a.can_summarize);
         assert_eq!(nav_a.active_tip_turn, Some(OperatorTurnId(2)));
         assert_eq!(nav_a.pi_tree_target_id.as_deref(), Some("a2a"));
         assert_eq!(nav_a.current_leaf_id.as_deref(), Some("a2a"));
         assert_eq!(nav_a.editor_text, None);
         assert_eq!(nav_a.restored_context, None);
 
-        // 7. Rewind u2a (whose parent is m2 -> a1): active_tip_turn must be T1, NOT T2!
+        // 7. Rewind u2a (whose parent is m2 -> a1): active_tip_turn must be T1, NOT T2, and abandons u2a..a2a!
         let rewind_u2a = resolve_tree_target(
             root.path(),
             OperatorConversationId(5),
@@ -1669,13 +1687,14 @@ mod tests {
         )
         .unwrap();
         assert!(!rewind_u2a.noop);
+        assert!(rewind_u2a.can_summarize);
         assert_eq!(rewind_u2a.active_tip_turn, Some(OperatorTurnId(1)));
         assert_eq!(rewind_u2a.pi_tree_target_id.as_deref(), Some("u2a"));
         assert_eq!(rewind_u2a.current_leaf_id.as_deref(), Some("m2"));
         assert_eq!(rewind_u2a.editor_text.as_deref(), Some("explore branch A"));
         assert_eq!(rewind_u2a.restored_context, Some(ctx2a));
 
-        // 8. Rewind root u1 (whose parent is m1 -> null): active_tip_turn must be None!
+        // 8. Rewind root u1 (whose parent is m1 -> null): active_tip_turn must be None, and abandons u1..a2b!
         let rewind_u1 = resolve_tree_target(
             root.path(),
             OperatorConversationId(5),
@@ -1686,6 +1705,7 @@ mod tests {
         )
         .unwrap();
         assert!(!rewind_u1.noop);
+        assert!(rewind_u1.can_summarize);
         assert_eq!(rewind_u1.active_tip_turn, None);
         assert_eq!(rewind_u1.pi_tree_target_id.as_deref(), Some("u1"));
         assert_eq!(rewind_u1.current_leaf_id.as_deref(), Some("m1"));
@@ -1694,5 +1714,30 @@ mod tests {
             Some("first prompt\nline two")
         );
         assert_eq!(rewind_u1.restored_context, Some(ctx1));
+
+        // 9. Moving forward from an ancestor (`a1`) to a descendant (`a2b` or `u2b`) has zero abandoned entries!
+        let forward_descendant = resolve_tree_target(
+            root.path(),
+            OperatorConversationId(5),
+            OperatorTurnId(3),
+            Some("a1"),
+            &completed_turns,
+            "a2b",
+        )
+        .unwrap();
+        assert!(!forward_descendant.noop);
+        assert!(!forward_descendant.can_summarize);
+
+        let child_user_from_ancestor = resolve_tree_target(
+            root.path(),
+            OperatorConversationId(5),
+            OperatorTurnId(3),
+            Some("a1"),
+            &completed_turns,
+            "u2b",
+        )
+        .unwrap();
+        assert!(!child_user_from_ancestor.noop);
+        assert!(!child_user_from_ancestor.can_summarize);
     }
 }

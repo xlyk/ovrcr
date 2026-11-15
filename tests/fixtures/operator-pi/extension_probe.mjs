@@ -1057,6 +1057,8 @@ try {
     parentId: "entry-assistant-1",
     summary: "Branch recap",
   };
+  const sessionEntries = new Map([[summaryEntry.id, summaryEntry]]);
+  treeCtx.sessionManager.getEntry = (id) => sessionEntries.get(id) ?? null;
   nextNavigateResult = { cancelled: false, summaryEntry };
   await treeControl.handler(
     JSON.stringify({
@@ -1078,7 +1080,67 @@ try {
     summaryEntry,
   });
 
-  console.log("EXTENSION_PROBE PASS sequential=5 watches=add,list,remove,catchup tree=auth,nav timeout_ms=" + elapsed);
+  // Pi 0.87.1 RPC mode (`rpc-mode.js`) strips `summaryEntry` from `ctx.navigateTree`'s
+  // return value and only returns `{ cancelled }`, while updating `sessionManager` leaf
+  // (and emitting `session_tree`). The extension must still surface `summaryEntry`.
+  const rpcSummaryEntry = {
+    type: "branch_summary",
+    id: "entry-summary-rpc-5",
+    parentId: "entry-assistant-1",
+    fromId: "entry-tail",
+    summary: "RPC branch recap",
+  };
+  sessionEntries.set(rpcSummaryEntry.id, rpcSummaryEntry);
+  const origNavigate = treeCtx.navigateTree;
+  treeCtx.navigateTree = async (targetId, options) => {
+    navigateCalls.push([targetId, options]);
+    currentLeaf = rpcSummaryEntry.id;
+    await handlers.get("session_tree")?.(
+      {
+        type: "session_tree",
+        newLeafId: currentLeaf,
+        oldLeafId: "entry-tail",
+        summaryEntry: rpcSummaryEntry,
+      },
+      treeCtx,
+    );
+    return { cancelled: false };
+  };
+  await treeControl.handler(
+    JSON.stringify({
+      targetId: "entry-user-2",
+      summarize: true,
+    }),
+    treeCtx,
+  );
+  assert.equal(treeStatuses.at(-1)[0], "ovrcr_operator_tree_result");
+  assert.deepEqual(treeStatuses.at(-1)[1], {
+    cancelled: false,
+    leafId: rpcSummaryEntry.id,
+    summaryEntry: rpcSummaryEntry,
+  });
+
+  // Authorized summarization error reports structured error status without uncaught command throw.
+  treeCtx.navigateTree = async () => {
+    throw new Error("No model available for summarization");
+  };
+  await treeControl.handler(
+    JSON.stringify({
+      targetId: "entry-user-2",
+      summarize: true,
+    }),
+    treeCtx,
+  );
+  assert.equal(treeStatuses.at(-1)[0], "ovrcr_operator_tree_result");
+  assert.deepEqual(treeStatuses.at(-1)[1], {
+    cancelled: false,
+    leafId: rpcSummaryEntry.id,
+    summaryEntry: null,
+    error: "No model available for summarization",
+  });
+  treeCtx.navigateTree = origNavigate;
+
+  console.log("EXTENSION_PROBE PASS sequential=5 watches=add,list,remove,catchup tree=auth,nav,summary timeout_ms=" + elapsed);
 } finally {
   if (typeof originalExecutable === "undefined") delete process.env.OVRCR_EXECUTABLE;
   else process.env.OVRCR_EXECUTABLE = originalExecutable;

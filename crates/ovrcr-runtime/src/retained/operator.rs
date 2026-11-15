@@ -589,7 +589,7 @@ impl SessionStore {
         self.require_current_operator(id)?;
         let conversation = self.operator_conversation(id)?;
         let mut query = self.connection.prepare(
-            "WITH RECURSIVE active_branch(id, parent_turn, depth) AS (
+            "WITH RECURSIVE branch_ancestors(id, parent_turn, depth) AS (
                  SELECT t.id, t.parent_turn, 0
                  FROM operator_conversations c
                  JOIN operator_turns t ON t.id=c.active_tip_turn AND t.conversation=c.id
@@ -597,12 +597,31 @@ impl SessionStore {
                  UNION ALL
                  SELECT p.id, p.parent_turn, b.depth + 1
                  FROM operator_turns p
-                 JOIN active_branch b ON p.id=b.parent_turn
+                 JOIN branch_ancestors b ON p.id=b.parent_turn
                  WHERE p.conversation=?1 AND p.session_epoch=?2 AND b.depth < 100000
+             ),
+             visible_turns(id) AS (
+                 SELECT id FROM branch_ancestors
+                 UNION
+                 SELECT id FROM (
+                     SELECT t.id, t.state
+                     FROM operator_turns t
+                     WHERE t.conversation=?1 AND t.session_epoch=?2
+                     ORDER BY t.id DESC LIMIT 1
+                 ) latest
+                 WHERE latest.state='Running'
+                    OR (
+                        latest.state IN ('Interrupted', 'Error')
+                        AND EXISTS (
+                            SELECT 1 FROM operator_messages m0
+                            WHERE m0.conversation=?1 AND m0.turn=latest.id
+                              AND m0.content LIKE '{\"BranchSummary\":%'
+                        )
+                    )
              )
              SELECT m.ordinal,m.turn,m.content
              FROM operator_messages m
-             JOIN active_branch b ON b.id=m.turn
+             JOIN visible_turns v ON v.id=m.turn
              WHERE m.conversation=?1 AND m.ordinal>?3
              ORDER BY m.ordinal LIMIT ?4",
         )?;
@@ -1251,6 +1270,13 @@ impl SessionStore {
             OperatorMessageContent::Compaction { instructions } => {
                 OperatorWorkerSubmission::Compact { instructions }
             }
+            OperatorMessageContent::BranchSummary {
+                target_entry_id,
+                instructions,
+            } => OperatorWorkerSubmission::BranchSummary {
+                target_entry_id,
+                instructions,
+            },
             _ => bail!("operator submission missing"),
         };
         let (checkpoint_turn, tree_target_id) = match checkpoint_row {
@@ -1276,6 +1302,11 @@ impl SessionStore {
             && checkpoint_turn.is_none()
         {
             bail!("operator compact turn is missing a current-epoch checkpoint");
+        }
+        if matches!(submission, OperatorWorkerSubmission::BranchSummary { .. })
+            && checkpoint_turn.is_none()
+        {
+            bail!("operator branch-summary turn is missing a current-epoch checkpoint");
         }
         Ok(OperatorWorkerStart {
             identity,
@@ -1597,6 +1628,104 @@ impl SessionStore {
             bail!("operator session epoch changed concurrently");
         }
         self.operator_conversation(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn submit_operator_branch_summary_turn(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+        expected_epoch: u64,
+        expected_checkpoint: OperatorTurnId,
+        target_branch_parent_turn: Option<OperatorTurnId>,
+        target_entry_id: String,
+        instructions: Option<String>,
+        settings: OperatorSettings,
+    ) -> Result<OperatorTurn> {
+        OperatorRequest::NavigateTree {
+            conversation: id,
+            expected_run,
+            target_entry_id: target_entry_id.clone(),
+            summarize: Some(ovrcr_protocol::operator::OperatorBranchSummaryRequest {
+                instructions: instructions.clone(),
+            }),
+        }
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+        if let Some(model) = &settings.model {
+            validate_operator_model(model).map_err(anyhow::Error::msg)?;
+        }
+        let verified = self.ensure_operator_tree_navigable(id, expected_run)?;
+        if verified.summary.session_epoch != expected_epoch
+            || verified.checkpoint_turn != Some(expected_checkpoint)
+        {
+            bail!("Operator session changed while navigating tree; retry /tree.");
+        }
+        let run = SessionRunId(
+            expected_run
+                .0
+                .checked_add(1)
+                .context("session run exhausted")?,
+        );
+        let transaction = self.connection.transaction()?;
+        let started_unix_ms = wall_clock_ms();
+        let changed = transaction.execute(
+            "UPDATE retained_sessions SET run=?1,boot_id=?2,stopped=0,failure=NULL,title_revision=0,disposition=0
+             WHERE id=?3 AND run=?4 AND stopped=1 AND disposition IN (0,2)",
+            params![
+                sql_integer(run.0)?,
+                self.boot_id,
+                sql_integer(verified.summary.session.0)?,
+                sql_integer(expected_run.0)?,
+            ],
+        )?;
+        if changed != 1 {
+            bail!("operator session run changed");
+        }
+        transaction.execute(
+            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms,session_epoch,parent_turn)
+             VALUES(?1,?2,'Running',?3,?4,?5,?6,?7)",
+            params![
+                sql_integer(id.0)?,
+                sql_integer(run.0)?,
+                settings.model,
+                serde_json::to_string(&settings.thinking_level)?,
+                sql_integer(started_unix_ms)?,
+                sql_integer(expected_epoch)?,
+                target_branch_parent_turn.map(|t| sql_integer(t.0)).transpose()?,
+            ],
+        )?;
+        let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
+        // Intentionally leave `active_tip_turn` and `pi_tree_target_id` at their
+        // pre-switch values until `Completed`, so foreground `Stop` or RPC failure
+        // preserves the current branch checkpoint and active lineage untouched.
+        append_message(
+            &transaction,
+            sql_integer(id.0)?,
+            sql_integer(turn.0)?,
+            &OperatorMessageContent::BranchSummary {
+                target_entry_id,
+                instructions,
+            },
+        )?;
+        transaction.commit()?;
+        let row = self.records.get_mut(&verified.summary.session).unwrap();
+        row.run = run;
+        row.disposition = Disposition::Active;
+        row.stopped = false;
+        row.boot_id = self.boot_id.clone();
+        row.failure = None;
+        row.title_revision = 0;
+        Ok(OperatorTurn {
+            identity: OperatorTurnIdentity {
+                conversation: id,
+                turn,
+                session: verified.summary.session,
+                run,
+            },
+            state: OperatorTurnState::Running,
+            sequence: 0,
+        })
     }
 }
 

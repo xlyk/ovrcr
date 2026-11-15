@@ -2797,6 +2797,7 @@ fn tree_target_restores_leaf_on_cold_start_and_warm_rollback_and_tracks_entry_id
             conversation: opened.id,
             expected_run: after_two.conversation.run,
             target_entry_id: turn_two_user_id.clone(),
+            summarize: None,
         }))
     else {
         panic!("expected TreeNavigated");
@@ -2941,4 +2942,344 @@ fn unsolicited_tree_control_dialog_is_rejected_and_fails_the_turn() {
     let unsolicited = fake.events("unsolicited_tree_control");
     assert_eq!(unsolicited.len(), 1);
     assert_eq!(unsolicited[0]["confirmed"], false);
+}
+
+#[test]
+fn branch_summary_turn_records_summary_advances_branch_and_applies_prior_tree_target() {
+    use ovrcr::protocol::{
+        OperatorBranchSummaryRequest, OperatorRequest, OperatorResponse, OperatorTreeEntryKind,
+    };
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    // Turn 1: root
+    let turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    // Turn 2: Branch A
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::Tree(tree_after_two)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let turn_one_assistant_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "Root answer.")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_user_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A prompt")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_assistant_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "Branch A answer.")
+        .unwrap()
+        .id
+        .clone();
+
+    // Zero-token rewind to Turn 2's user node, then run Turn 3 (Branch B) so checkpoint_turn = Turn 3 (Branch B).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound_for_b)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    scenario.steps(vec![Step::assistant("Branch B answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_three = client.submit_turn(&rewound_for_b.conversation, "branch B prompt");
+    let after_three = client.wait_stopped(opened.id);
+
+    // Zero-token switch back to Branch A's assistant leaf (`pi_tree_target_id = Some(turn_two_assistant_id)`).
+    let Response::Operator(OperatorResponse::TreeNavigated(switched_to_a)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_three.conversation.run,
+            target_entry_id: turn_two_assistant_id.clone(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated back to Branch A");
+    };
+
+    // Now summarize Branch A while rewinding to `turn_two_user_id` with custom instructions!
+    fake.clear_log();
+    let Response::Operator(OperatorResponse::TreeNavigated(summary_nav)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: switched_to_a.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on branch A decisions".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated with submitted branch-summary turn");
+    };
+    let summary_turn = summary_nav
+        .submitted
+        .as_ref()
+        .expect("branch summary must submit a worker turn");
+    assert_eq!(summary_nav.editor_text.as_deref(), Some("branch A prompt"));
+
+    let after_summary = client.wait_stopped(opened.id);
+    assert_eq!(
+        after_summary
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| (t.identity, t.state)),
+        Some((summary_turn.identity, OperatorTurnState::Complete))
+    );
+    assert!(
+        after_summary.messages.iter().any(|m| {
+            m.turn == summary_turn.identity.turn
+                && matches!(
+                    &m.content,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id,
+                        instructions: Some(inst),
+                    } if target_entry_id == &turn_two_user_id && inst == "focus on branch A decisions"
+                )
+        }),
+        "missing BranchSummary opener: {after_summary:#?}"
+    );
+    assert!(
+        after_summary.messages.iter().any(|m| {
+            m.turn == summary_turn.identity.turn
+                && matches!(
+                    &m.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary == "Branch summary (focus on branch A decisions)"
+                )
+        }),
+        "missing BranchSummary worker event: {after_summary:#?}"
+    );
+    // Active branch history now contains Turn 1 + Turn 4 (BranchSummary), hiding abandoned Branch A & Branch B turns!
+    let visible_turns: Vec<u64> = after_summary
+        .messages
+        .iter()
+        .fold(Vec::new(), |mut acc, m| {
+            if !acc.contains(&m.turn.0) {
+                acc.push(m.turn.0);
+            }
+            acc
+        });
+    assert_eq!(
+        visible_turns,
+        vec![turn_one.identity.turn.0, summary_turn.identity.turn.0]
+    );
+
+    // Fake-pi must have applied `pi_tree_target_id` (`turn_two_assistant_id`, summarize: false) FIRST,
+    // then summarized from `fromId == turn_two_assistant_id`!
+    let nav_events = fake.events("tree_navigated");
+    assert_eq!(nav_events.len(), 2, "{nav_events:#?}");
+    assert_eq!(nav_events[0]["targetId"], turn_two_assistant_id);
+    assert_eq!(nav_events[0]["summarized"], false);
+    assert_eq!(nav_events[1]["targetId"], turn_two_user_id);
+    assert_eq!(nav_events[1]["summarized"], true);
+    assert_eq!(nav_events[1]["fromId"], turn_two_assistant_id);
+    assert_eq!(
+        nav_events[1]["customInstructions"],
+        "focus on branch A decisions"
+    );
+
+    let Response::Operator(OperatorResponse::Tree(tree_after_summary)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree after summary");
+    };
+    let summary_entry = tree_after_summary
+        .entries
+        .iter()
+        .find(|e| e.kind == OperatorTreeEntryKind::BranchSummary)
+        .expect("branch_summary entry in tree");
+    assert_eq!(
+        summary_entry.parent_id.as_deref(),
+        Some(turn_one_assistant_id.as_str())
+    );
+    assert_eq!(
+        tree_after_summary.current_leaf_id.as_deref(),
+        Some(summary_entry.id.as_str())
+    );
+
+    // Follow-up prompt Turn 5 continues from the branch_summary leaf!
+    fake.clear_log();
+    scenario.steps(vec![Step::assistant("Post-summary answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_five = client.submit_turn(&after_summary.conversation, "post-summary prompt");
+    let after_five = client.wait_stopped(opened.id);
+    assert!(harness::has_assistant(&after_five, "Post-summary answer."));
+    let prompts = fake.events("prompt");
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0]["parentLeafId"], summary_entry.id);
+}
+
+#[test]
+fn branch_summary_turn_stop_and_failure_preserve_checkpoint_and_active_branch() {
+    use ovrcr::protocol::{OperatorBranchSummaryRequest, OperatorRequest, OperatorResponse};
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    let _turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::Tree(tree_before)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let turn_two_user_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A prompt")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_assistant_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "Branch A answer.")
+        .unwrap()
+        .id
+        .clone();
+
+    let checkpoint_path = live
+        .config
+        .join("operator-pi/turns")
+        .join(turn_two.identity.turn.0.to_string())
+        .join("session.jsonl");
+    let checkpoint_bytes_before = std::fs::read(&checkpoint_path).unwrap();
+
+    // 1. Stop mid-summarization ("hold") -> Interrupted, pre-switch branch & checkpoint preserved!
+    let ready_file = live.root.path().join("tree-summary-ready");
+    scenario
+        .tree_summary_mode("hold")
+        .set("tree_summary_ready_file", ready_file.display().to_string());
+    fake.clear_log();
+    fake.script(&scenario);
+
+    let Response::Operator(OperatorResponse::TreeNavigated(hold_nav)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    let hold_turn = hold_nav.submitted.expect("submitted hold turn");
+    let deadline = std::time::Instant::now() + harness::BUDGET;
+    while !ready_file.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tree summary never reached hold"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    client.stop_turn(hold_turn.identity);
+    let after_stop = client.wait_stopped(opened.id);
+    assert_eq!(
+        after_stop
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| (t.identity, t.state)),
+        Some((hold_turn.identity, OperatorTurnState::Interrupted))
+    );
+    assert_eq!(fake.events("tree_summary_aborted").len(), 1);
+    assert_eq!(
+        std::fs::read(&checkpoint_path).unwrap(),
+        checkpoint_bytes_before
+    );
+    let Response::Operator(OperatorResponse::Tree(tree_after_stop)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree after stop");
+    };
+    assert_eq!(
+        tree_after_stop.current_leaf_id.as_deref(),
+        Some(turn_two_assistant_id.as_str())
+    );
+    assert!(harness::has_assistant(&after_stop, "Branch A answer."));
+
+    // 2. Provider error ("error") and corrupt session ("corrupt_session") -> Error, checkpoint & leaf preserved!
+    let mut current_conv = after_stop.conversation;
+    for mode in ["error", "corrupt_session"] {
+        scenario.tree_summary_mode(mode);
+        fake.script(&scenario);
+        let Response::Operator(OperatorResponse::TreeNavigated(err_nav)) =
+            client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+                conversation: opened.id,
+                expected_run: current_conv.run,
+                target_entry_id: turn_two_user_id.clone(),
+                summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+            }))
+        else {
+            panic!("expected TreeNavigated for {mode}");
+        };
+        let err_turn = err_nav.submitted.expect("submitted turn");
+        let after_err = client.wait_stopped(opened.id);
+        assert_eq!(
+            after_err
+                .conversation
+                .current_turn
+                .as_ref()
+                .map(|t| (t.identity, t.state)),
+            Some((err_turn.identity, OperatorTurnState::Error))
+        );
+        assert_eq!(
+            std::fs::read(&checkpoint_path).unwrap(),
+            checkpoint_bytes_before,
+            "checkpoint corrupted after {mode}"
+        );
+        let Response::Operator(OperatorResponse::Tree(tree_after_err)) =
+            client.exchange(Request::Operator(OperatorRequest::Tree {
+                conversation: opened.id,
+            }))
+        else {
+            panic!("expected Tree after {mode}");
+        };
+        assert_eq!(
+            tree_after_err.current_leaf_id.as_deref(),
+            Some(turn_two_assistant_id.as_str())
+        );
+        current_conv = after_err.conversation;
+    }
 }

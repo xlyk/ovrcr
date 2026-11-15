@@ -174,7 +174,12 @@ pub(super) fn dispatch_control(
 ) -> Option<Response> {
     let slot = match &request {
         OperatorRequest::Submit { conversation, .. }
-        | OperatorRequest::Compact { conversation, .. } => ControlSlot::Conversation(*conversation),
+        | OperatorRequest::Compact { conversation, .. }
+        | OperatorRequest::NavigateTree {
+            conversation,
+            summarize: Some(_),
+            ..
+        } => ControlSlot::Conversation(*conversation),
         OperatorRequest::Stop { identity } => ControlSlot::Conversation(identity.conversation),
         OperatorRequest::Models => ControlSlot::Models,
         _ => return None,
@@ -624,6 +629,7 @@ impl ServerState {
                 conversation,
                 expected_run,
                 target_entry_id,
+                summarize,
             } => {
                 let (nav, changed) = {
                     let _mutation = self.mutation_lock.lock().unwrap();
@@ -676,45 +682,102 @@ impl ServerState {
                         &snapshot.completed_turns,
                         &target_entry_id,
                     )?;
-                    if resolved.noop {
-                        let published = self.publish_worker_live(snapshot.summary)?;
-                        (
-                            OperatorTreeNavigation {
-                                conversation: published,
-                                current_leaf_id: resolved.current_leaf_id,
-                                noop: true,
-                                editor_text: None,
-                                restored_context: None,
-                            },
-                            false,
-                        )
-                    } else {
-                        let summary = {
-                            let mut retained = self.retained.lock();
-                            self.dashboard
-                                .with_owned(owner, |_| {
-                                    retained.apply_operator_tree_navigation(
-                                        conversation,
-                                        expected_run,
-                                        snapshot.summary.session_epoch,
-                                        checkpoint_turn,
-                                        resolved.active_tip_turn,
-                                        resolved.pi_tree_target_id.as_deref(),
-                                    )
-                                })
-                                .context("dashboard owner changed")??
-                        };
-                        let published = self.publish_worker_live(summary)?;
-                        (
-                            OperatorTreeNavigation {
-                                conversation: published,
-                                current_leaf_id: resolved.current_leaf_id,
-                                noop: false,
-                                editor_text: resolved.editor_text,
-                                restored_context: resolved.restored_context,
-                            },
-                            true,
-                        )
+                    match summarize {
+                        None => {
+                            if resolved.noop {
+                                let published = self.publish_worker_live(snapshot.summary)?;
+                                (
+                                    OperatorTreeNavigation {
+                                        conversation: published,
+                                        current_leaf_id: resolved.current_leaf_id,
+                                        noop: true,
+                                        submitted: None,
+                                        editor_text: None,
+                                        restored_context: None,
+                                    },
+                                    false,
+                                )
+                            } else {
+                                let summary = {
+                                    let mut retained = self.retained.lock();
+                                    self.dashboard
+                                        .with_owned(owner, |_| {
+                                            retained.apply_operator_tree_navigation(
+                                                conversation,
+                                                expected_run,
+                                                snapshot.summary.session_epoch,
+                                                checkpoint_turn,
+                                                resolved.active_tip_turn,
+                                                resolved.pi_tree_target_id.as_deref(),
+                                            )
+                                        })
+                                        .context("dashboard owner changed")??
+                                };
+                                let published = self.publish_worker_live(summary)?;
+                                (
+                                    OperatorTreeNavigation {
+                                        conversation: published,
+                                        current_leaf_id: resolved.current_leaf_id,
+                                        noop: false,
+                                        submitted: None,
+                                        editor_text: resolved.editor_text,
+                                        restored_context: resolved.restored_context,
+                                    },
+                                    true,
+                                )
+                            }
+                        }
+                        Some(summary_req) => {
+                            if resolved.noop || !resolved.can_summarize {
+                                bail!(
+                                    "Selected tree target has no abandoned branch entries to summarize."
+                                );
+                            }
+                            let settings = self
+                                .settings
+                                .lock()
+                                .unwrap()
+                                .report
+                                .settings
+                                .operator
+                                .clone();
+                            let turn = {
+                                let mut retained = self.retained.lock();
+                                self.dashboard
+                                    .with_owned(owner, |_| {
+                                        retained.submit_operator_branch_summary_turn(
+                                            conversation,
+                                            expected_run,
+                                            snapshot.summary.session_epoch,
+                                            checkpoint_turn,
+                                            resolved.active_tip_turn,
+                                            target_entry_id,
+                                            summary_req.instructions,
+                                            settings,
+                                        )
+                                    })
+                                    .context("dashboard owner changed")??
+                            };
+                            let _ = self.finish_submitted_operator_turn(
+                                conversation,
+                                turn.clone(),
+                                false,
+                            )?;
+                            let summary =
+                                self.retained.lock().operator_conversation(conversation)?;
+                            let published = self.publish_worker_live(summary)?;
+                            (
+                                OperatorTreeNavigation {
+                                    conversation: published,
+                                    current_leaf_id: resolved.current_leaf_id,
+                                    noop: false,
+                                    submitted: Some(turn),
+                                    editor_text: resolved.editor_text,
+                                    restored_context: resolved.restored_context,
+                                },
+                                false,
+                            )
+                        }
                     }
                 };
                 if changed {

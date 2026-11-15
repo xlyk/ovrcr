@@ -381,6 +381,21 @@ fn run_turn(
                 termination,
             );
         }
+        OperatorWorkerSubmission::BranchSummary {
+            target_entry_id,
+            instructions,
+        } => {
+            return run_branch_summary_turn(
+                connection,
+                journal,
+                state,
+                paths,
+                turn,
+                target_entry_id,
+                instructions.as_deref(),
+                termination,
+            );
+        }
     }
     connection.stream(journal, state)?;
     if state.pending.is_some() || state.last_assistant_stop().as_deref() != Some("stop") {
@@ -526,6 +541,141 @@ fn run_compact_turn(
             leased,
             pi_first_entry_id,
             pi_leaf_entry_id,
+        },
+    ])?;
+    Ok(leased)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_branch_summary_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+    target_entry_id: &str,
+    instructions: Option<&str>,
+    termination: &Termination,
+) -> std::result::Result<bool, Failure> {
+    if turn.checkpoint_turn.is_none() || !valid_token(target_entry_id) {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
+    let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+
+    state.tree_control_result = None;
+    state.pending_tree_control = Some(PendingTreeControl {
+        target_id: target_entry_id.to_owned(),
+        summarize: true,
+        custom_instructions: instructions.map(str::to_owned),
+    });
+    let mut args = json!({
+        "targetId": target_entry_id,
+        "summarize": true,
+    });
+    if let Some(instructions) = instructions {
+        args["customInstructions"] = json!(instructions);
+    }
+    let encoded = serde_json::to_string(&args).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    let message = format!("{TREE_CONTROL_COMMAND} {encoded}");
+    let control_id = format!("ovrcr-{}", connection.next_id);
+    connection.next_id += 1;
+    connection.send(&json!({
+        "id": &control_id,
+        "type": "prompt",
+        "message": message,
+    }))?;
+    state.pending_tree_control_id = Some(control_id.clone());
+
+    let control_response = loop {
+        let message = match connection.next_message(journal, None) {
+            Ok(message) => message,
+            Err(err) => {
+                state.pending_tree_control = None;
+                return Err(err);
+            }
+        };
+        match message {
+            RpcMessage::Response(response) if response.id == control_id => {
+                state.pending_tree_control_id = None;
+                state.pending_tree_control = None;
+                break response;
+            }
+            RpcMessage::Response(_) => {
+                state.pending_tree_control = None;
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            RpcMessage::Event(event) => {
+                if let Err(err) = connection.event(journal, state, event) {
+                    state.pending_tree_control = None;
+                    return Err(err);
+                }
+            }
+        }
+    };
+
+    if !control_response.success || state.pending.is_some() {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let Some(result) = state.tree_control_result.take() else {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    };
+    if result.error.is_some() || result.cancelled {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let expected_summary_id = result
+        .summary_entry_id
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    if result.leaf_id.as_deref() != Some(expected_summary_id.as_str()) {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    let leased = state.active_watches > 0;
+    if !leased {
+        connection.settle(journal, state, SHUTDOWN_GRACE)?;
+    }
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let _ = snapshot_session(
+        &attempt_dir,
+        &state.session_root,
+        native,
+        &state.session_id,
+        &state.workdir,
+        state.turn_start_file_len,
+    )?;
+    let file_summary = extract_branch_summary_entry(
+        &attempt_dir.join("session.jsonl"),
+        state.turn_start_file_len,
+        &expected_summary_id,
+    )?;
+    let summary = sanitize_summary(&file_summary);
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit_events(vec![
+        OperatorWorkerEvent::BranchSummary { summary },
+        OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id: Some(expected_summary_id.clone()),
+            pi_leaf_entry_id: Some(expected_summary_id),
         },
     ])?;
     Ok(leased)
@@ -861,6 +1011,7 @@ impl Connection {
     ) -> std::result::Result<(), Failure> {
         let until = Instant::now() + ROLLBACK_DEADLINE;
         let should_wait = state.prompted && !state.settled;
+        state.pending_tree_control = None;
         for command in ["clear_queue", "abort"] {
             let id = format!("ovrcr-{}", self.next_id);
             self.next_id += 1;
@@ -874,22 +1025,16 @@ impl Connection {
                         break;
                     }
                     RpcMessage::Response(response)
-                        if state.pending_compact_id.as_deref() == Some(response.id.as_str()) =>
-                    {
-                        state.pending_compact_id = None;
-                    }
+                        if state.take_pending_control_response(&response.id) => {}
                     RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
                     RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
                 }
             }
         }
-        while state.pending_compact_id.is_some() {
+        while state.has_pending_control_response() {
             match self.next_message(journal, Some(until))? {
                 RpcMessage::Response(response)
-                    if state.pending_compact_id.as_deref() == Some(response.id.as_str()) =>
-                {
-                    state.pending_compact_id = None;
-                }
+                    if state.take_pending_control_response(&response.id) => {}
                 RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
                 RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
             }
@@ -947,6 +1092,11 @@ impl Connection {
             {
                 self.read_watch_status(state, &event)?;
             }
+            Some("extension_ui_request")
+                if !matches!(
+                    event["method"].as_str(),
+                    Some("confirm" | "select" | "input" | "editor")
+                ) => {}
             Some("extension_ui_request") => {
                 if let Some(dialog) = event["id"].as_str() {
                     self.send(&json!({
@@ -1522,6 +1672,18 @@ impl Connection {
             Some(Value::String(id)) if valid_token(id) => Some(id.clone()),
             _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
         };
+        let summary_entry_id = match payload.get("summaryEntry") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(entry)) => Some(
+                entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| valid_token(id))
+                    .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?
+                    .to_owned(),
+            ),
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        };
         let error = payload
             .get("error")
             .and_then(Value::as_str)
@@ -1529,6 +1691,7 @@ impl Connection {
         state.tree_control_result = Some(TreeControlResult {
             cancelled,
             leaf_id,
+            summary_entry_id,
             error,
         });
         Ok(())
@@ -1579,6 +1742,7 @@ struct PendingTreeControl {
 struct TreeControlResult {
     cancelled: bool,
     leaf_id: Option<String>,
+    summary_entry_id: Option<String>,
     error: Option<String>,
 }
 
@@ -1614,6 +1778,7 @@ struct TurnState {
     /// Its summary stream is never journaled and never shares message state.
     compacting: bool,
     pending_compact_id: Option<String>,
+    pending_tree_control_id: Option<String>,
     compaction_started_seen: bool,
     compaction_ended_seen: bool,
     compaction_failed_event: bool,
@@ -1675,6 +1840,7 @@ impl TurnState {
             deferred_bytes: 0,
             compacting: false,
             pending_compact_id: None,
+            pending_tree_control_id: None,
             compaction_started_seen: false,
             compaction_ended_seen: false,
             compaction_failed_event: false,
@@ -1712,11 +1878,28 @@ impl TurnState {
         self.prompted = false;
         self.compacting = false;
         self.pending_compact_id = None;
+        self.pending_tree_control_id = None;
         self.compaction_started_seen = false;
         self.compaction_ended_seen = false;
         self.compaction_failed_event = false;
         self.pending_tree_control = None;
         self.tree_control_result = None;
+    }
+
+    fn take_pending_control_response(&mut self, id: &str) -> bool {
+        if self.pending_compact_id.as_deref() == Some(id) {
+            self.pending_compact_id = None;
+            return true;
+        }
+        if self.pending_tree_control_id.as_deref() == Some(id) {
+            self.pending_tree_control_id = None;
+            return true;
+        }
+        false
+    }
+
+    fn has_pending_control_response(&self) -> bool {
+        self.pending_compact_id.is_some() || self.pending_tree_control_id.is_some()
     }
 
     fn note_display(&mut self, index: usize) {
@@ -3140,6 +3323,52 @@ fn extract_turn_entry_ids(
         }
     }
     Ok((first_id, leaf_id))
+}
+
+fn extract_branch_summary_entry(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+    expected_id: &str,
+) -> std::result::Result<String, Failure> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(session_path)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut reader = BufReader::new(file);
+    let header = read_header(&mut reader)?;
+    let mut offset = header.len() as u64;
+    let start_offset = turn_start_file_len.unwrap_or(0);
+    let mut found_summary: Option<String> = None;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .by_ref()
+            .take((MAX_CHECKPOINT_RECORD + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        if read == 0 {
+            break;
+        }
+        let record_offset = offset;
+        offset = offset.saturating_add(read as u64);
+        if line.iter().all(u8::is_ascii_whitespace) || record_offset < start_offset {
+            continue;
+        }
+        let value: Value =
+            serde_json::from_slice(&line).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        if value["type"].as_str() == Some("branch_summary")
+            && value["id"].as_str() == Some(expected_id)
+        {
+            let summary = value["summary"]
+                .as_str()
+                .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?
+                .to_owned();
+            found_summary = Some(summary);
+        }
+    }
+    found_summary.ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))
 }
 
 fn read_header(reader: &mut BufReader<File>) -> std::result::Result<Vec<u8>, Failure> {

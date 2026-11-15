@@ -108,6 +108,10 @@ let compactRunning = false;
 let compactCount = 0;
 let compactAborted = false;
 let pendingCompactPromise = null;
+let treeSummaryRunning = false;
+let treeSummaryCount = 0;
+let treeSummaryAborted = false;
+let pendingTreeSummaryPromise = null;
 let aborted = false;
 let rollbackSwitchSeen = false;
 let rollbackWakeupOffered = false;
@@ -985,13 +989,164 @@ function handleCommand(command) {
             respond("prompt", id);
             return;
           }
-          if (payload.targetId !== currentLeafId) {
-            const isUserOrCustom =
-              (target.type === "message" && target.message?.role === "user") ||
-              target.type === "custom_message";
-            currentLeafId = isUserOrCustom ? (target.parentId ?? null) : target.id;
+          const isUserOrCustom =
+            (target.type === "message" && target.message?.role === "user") ||
+            target.type === "custom_message";
+          const newLeafId = isUserOrCustom ? (target.parentId ?? null) : target.id;
+          if (payload.summarize === true) {
+            const summaryIndex = treeSummaryCount++;
+            const mode =
+              scenario.tree_summary_modes?.[summaryIndex] ?? scenario.tree_summary_mode ?? "ok";
+            const oldLeafId = currentLeafId;
+            treeSummaryRunning = true;
+            treeSummaryAborted = false;
+            pendingTreeSummaryPromise = (async () => {
+              try {
+                if (mode === "hold") {
+                  if (scenario.tree_summary_ready_file) {
+                    appendLine(scenario.tree_summary_ready_file, "ready");
+                  }
+                  const releaseFile = scenario.tree_summary_release_file;
+                  const deadline = Date.now() + 20_000;
+                  while (
+                    !treeSummaryAborted &&
+                    !stdinClosed &&
+                    Date.now() < deadline &&
+                    !(releaseFile && existsSync(releaseFile))
+                  ) {
+                    await sleep(10);
+                  }
+                  if (treeSummaryAborted || stdinClosed) {
+                    record({
+                      event: "tree_summary_aborted",
+                      targetId: payload.targetId,
+                      leafId: oldLeafId,
+                    });
+                    writeRecord({
+                      type: "extension_ui_request",
+                      id: `status-${++dialogSequence}`,
+                      method: "setStatus",
+                      statusKey: "ovrcr_operator_tree_result",
+                      statusText: JSON.stringify({
+                        cancelled: true,
+                        leafId: oldLeafId,
+                        summaryEntry: null,
+                      }),
+                    });
+                    respond("prompt", id);
+                    return;
+                  }
+                }
+                if (mode === "cancel") {
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: true,
+                      leafId: oldLeafId,
+                      summaryEntry: null,
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                if (mode === "error") {
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: false,
+                      leafId: oldLeafId,
+                      summaryEntry: null,
+                      error: scenario.tree_summary_error ?? "Branch summary provider failed",
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                if (mode === "corrupt_session") {
+                  if (sessionFile) appendLine(sessionFile, "not-valid-json");
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: false,
+                      leafId: "corrupt-leaf",
+                      summaryEntry: {
+                        type: "branch_summary",
+                        id: "corrupt-leaf",
+                        parentId: newLeafId,
+                        fromId: oldLeafId ?? "root",
+                        summary: "Corrupt summary",
+                      },
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                const summary =
+                  scenario.tree_summary_text ??
+                  (payload.customInstructions
+                    ? `Branch summary (${payload.customInstructions})`
+                    : `Summarized abandoned branch from ${oldLeafId ?? "root"}.`);
+                let summaryEntry = null;
+                if (sessionFile) {
+                  const timestamp = isoNow();
+                  const entryBody = {
+                    type: "branch_summary",
+                    parentId: newLeafId,
+                    fromId: oldLeafId ?? "root",
+                    summary,
+                    details: { readFiles: [], modifiedFiles: [] },
+                    fromHook: false,
+                    timestamp,
+                  };
+                  const summaryId = appendSessionEntry(entryBody);
+                  summaryEntry = { ...entryBody, id: summaryId };
+                }
+                record({
+                  event: "tree_navigated",
+                  targetId: payload.targetId,
+                  leafId: currentLeafId,
+                  summarized: true,
+                  fromId: oldLeafId,
+                  customInstructions: payload.customInstructions ?? null,
+                });
+                writeRecord({
+                  type: "extension_ui_request",
+                  id: `status-${++dialogSequence}`,
+                  method: "setStatus",
+                  statusKey: "ovrcr_operator_tree_result",
+                  statusText: JSON.stringify({
+                    cancelled: false,
+                    leafId: currentLeafId,
+                    summaryEntry,
+                  }),
+                });
+                respond("prompt", id);
+              } finally {
+                treeSummaryRunning = false;
+                pendingTreeSummaryPromise = null;
+              }
+            })();
+            await pendingTreeSummaryPromise;
+            return;
           }
-          record({ event: "tree_navigated", targetId: payload.targetId, leafId: currentLeafId });
+          if (payload.targetId !== currentLeafId) {
+            currentLeafId = newLeafId;
+          }
+          record({
+            event: "tree_navigated",
+            targetId: payload.targetId,
+            leafId: currentLeafId,
+            summarized: false,
+          });
           writeRecord({
             type: "extension_ui_request",
             id: `status-${++dialogSequence}`,
@@ -1170,8 +1325,13 @@ function handleCommand(command) {
       }
       if (promptRunning) aborted = true;
       if (compactRunning) compactAborted = true;
-      if (pendingCompactPromise && scenario.abort_before_compact_response !== true) {
-        void pendingCompactPromise.then(() => {
+      if (treeSummaryRunning) treeSummaryAborted = true;
+      const pendingControl =
+        pendingCompactPromise && scenario.abort_before_compact_response !== true
+          ? pendingCompactPromise
+          : pendingTreeSummaryPromise;
+      if (pendingControl) {
+        void pendingControl.then(() => {
           respond("abort", id);
           for (const raw of scenario.abort_records ?? []) writeRaw(raw);
         });

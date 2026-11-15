@@ -2851,6 +2851,18 @@ mod wire_snapshot {
                     conversation: identity.conversation,
                     expected_run: identity.run,
                     target_entry_id: "entry-1".into(),
+                    summarize: None,
+                },
+            ),
+            (
+                "NavigateTreeSummarize",
+                OperatorRequest::NavigateTree {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    target_entry_id: "entry-1".into(),
+                    summarize: Some(crate::OperatorBranchSummaryRequest {
+                        instructions: Some("focus on failures".into()),
+                    }),
                 },
             ),
         ] {
@@ -2916,6 +2928,12 @@ mod wire_snapshot {
                 OperatorWorkerEvent::CompactionSummary {
                     summary: "summary".into(),
                     tokens_before: 1200,
+                },
+            ),
+            (
+                "BranchSummary",
+                OperatorWorkerEvent::BranchSummary {
+                    summary: "branch summary".into(),
                 },
             ),
         ] {
@@ -3051,6 +3069,18 @@ mod wire_snapshot {
                     noop: false,
                     editor_text: Some("hello".into()),
                     restored_context: Some(context.clone()),
+                    submitted: None,
+                })),
+            ),
+            (
+                "TreeNavigatedSubmitted",
+                OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+                    conversation: summary.clone(),
+                    current_leaf_id: Some("entry-2".into()),
+                    noop: false,
+                    editor_text: Some("hello".into()),
+                    restored_context: Some(context.clone()),
+                    submitted: Some(turn.clone()),
                 })),
             ),
         ] {
@@ -3092,6 +3122,22 @@ mod wire_snapshot {
                     },
                     checkpoint_turn: Some(OperatorTurnId(2)),
                     tree_target_id: None,
+                }),
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::StartBranchSummary".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Start(
+                Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    submission: OperatorWorkerSubmission::BranchSummary {
+                        target_entry_id: "entry-1".into(),
+                        instructions: Some("focus on failures".into()),
+                    },
+                    checkpoint_turn: Some(OperatorTurnId(2)),
+                    tree_target_id: Some("entry-2".into()),
                 }),
             ))),
         ));
@@ -3222,6 +3268,21 @@ mod wire_snapshot {
                 OperatorWorkerEvent::CompactionSummary {
                     summary: "summary".into(),
                     tokens_before: 1200,
+                },
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::BranchSummary".into(),
+            encode(&OperatorMessageContent::BranchSummary {
+                target_entry_id: "entry-1".into(),
+                instructions: Some("focus on failures".into()),
+            }),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerBranchSummary".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::BranchSummary {
+                    summary: "branch summary".into(),
                 },
             )),
         ));
@@ -4861,7 +4922,11 @@ mod wire_snapshot {
         ("Request::Operator::Tree", "390901"),
         (
             "Request::Operator::NavigateTree",
-            "390a010407656e7472792d31",
+            "390a010407656e7472792d3100",
+        ),
+        (
+            "Request::Operator::NavigateTreeSummarize",
+            "390a010407656e7472792d31010111666f637573206f6e206661696c75726573",
         ),
         (
             "Request::OperatorExchange::AssistantDelta",
@@ -4906,6 +4971,10 @@ mod wire_snapshot {
         (
             "Request::OperatorExchange::CompactionSummary",
             "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010a0773756d6d617279fbb004",
+        ),
+        (
+            "Request::OperatorExchange::BranchSummary",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010b0e6272616e63682073756d6d617279",
         ),
         (
             "Request::OperatorWorker::Start",
@@ -4964,7 +5033,11 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::TreeNavigated",
-            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020000010568656c6c6f0101017001056c6162656c0106737461626c6501022f7701050106",
+            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020000010568656c6c6f0101017001056c6162656c0106737461626c6501022f770105010600",
+        ),
+        (
+            "Response::Operator::TreeNavigatedSubmitted",
+            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020107656e7472792d3200010568656c6c6f0101017001056c6162656c0106737461626c6501022f770105010601010203040000",
         ),
         ("Response::OperatorExchange", "1a010203040100"),
         (
@@ -4974,6 +5047,10 @@ mod wire_snapshot {
         (
             "Response::OperatorWorker::StartCompact",
             "1b0001020304000101117072657365727665206272616e6368657301020000",
+        ),
+        (
+            "Response::OperatorWorker::StartBranchSummary",
+            "1b0001020304000207656e7472792d310111666f637573206f6e206661696c757265730102000107656e7472792d32",
         ),
         (
             "Response::OperatorWorker::StartTurn",
@@ -5012,6 +5089,14 @@ mod wire_snapshot {
         (
             "OperatorMessageContent::WorkerCompactionSummary",
             "010a0773756d6d617279fbb004",
+        ),
+        (
+            "OperatorMessageContent::BranchSummary",
+            "0507656e7472792d310111666f637573206f6e206661696c75726573",
+        ),
+        (
+            "OperatorMessageContent::WorkerBranchSummary",
+            "010b0e6272616e63682073756d6d617279",
         ),
     ];
 

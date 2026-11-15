@@ -5501,6 +5501,14 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
     );
     d.event_action(Event::Paste("alpha assistant".into()));
     d.key(KeyCode::Enter);
+    let summarize_prompt = draw_text(&mut d, 120, 32);
+    assert!(
+        summarize_prompt.contains("Summarize branch?")
+            && summarize_prompt.contains("No summary")
+            && summarize_prompt.contains("Summarize with custom prompt"),
+        "switching away from `a2b` must prompt `Summarize branch?`:\n{summarize_prompt}"
+    );
+    d.key(KeyCode::Enter); // confirm default `No summary`
     let nav_req = d
         .drain_outbox()
         .into_iter()
@@ -5511,6 +5519,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                     conversation: OperatorConversationId(7),
                     expected_run: SessionRunId(3),
                     target_entry_id,
+                    summarize: None,
                 }) if target_entry_id == "a2a"
             )
         })
@@ -5524,6 +5533,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
             noop: false,
             editor_text: None,
             restored_context: None,
+            submitted: None,
         })),
     );
     let reload = follow
@@ -5652,6 +5662,11 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
     );
     d.event_action(Event::Paste("restart alpha".into()));
     d.key(KeyCode::Enter);
+    assert!(
+        draw_text(&mut d, 120, 32).contains("Summarize branch?"),
+        "rewinding `u2a` while `a2a` is leaf must prompt `Summarize branch?`"
+    );
+    d.key(KeyCode::Enter); // confirm `No summary`
     let rewind_req = d
         .drain_outbox()
         .into_iter()
@@ -5660,6 +5675,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                 &m.request,
                 Request::Operator(OperatorRequest::NavigateTree {
                     target_entry_id,
+                    summarize: None,
                     ..
                 }) if target_entry_id == "u2a"
             )
@@ -5674,6 +5690,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
             noop: false,
             editor_text: Some("restart alpha worker".into()),
             restored_context: Some(target_ctx),
+            submitted: None,
         })),
     );
     let rewind_read = read_request(&rewind_follow);
@@ -5762,5 +5779,453 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
         !cold_screen.contains("Quick message · Ctrl-o")
             && cold_screen.contains("No turns in this Operator session yet."),
         "{cold_screen}"
+    );
+}
+
+#[test]
+fn tree_summarize_branch_modal_supports_esc_back_navigation_custom_prompt_composer_restore_and_stop()
+ {
+    use ovrcr_protocol::{
+        OperatorBranchSummaryRequest, OperatorSessionTree, OperatorTreeEntry,
+        OperatorTreeEntryKind, OperatorTreeNavigation, OperatorTurn, OperatorTurnIdentity,
+    };
+
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(3);
+    seeded.current_turn = Some(turn(3, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read_req = read_request(&out);
+    respond(
+        &mut d,
+        read_req.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    3,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "check beta latency".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Beta p99 is 12ms.".into(),
+                    )),
+                ),
+                turn_message(
+                    3,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2b".into()),
+                        pi_leaf_entry_id: Some("a2b".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    let entries = vec![
+        OperatorTreeEntry {
+            id: "u1".into(),
+            parent_id: None,
+            kind: OperatorTreeEntryKind::User,
+            preview: "inspect logs".into(),
+        },
+        OperatorTreeEntry {
+            id: "a1".into(),
+            parent_id: Some("u1".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Found two sessions.".into(),
+        },
+        OperatorTreeEntry {
+            id: "u2a".into(),
+            parent_id: Some("a1".into()),
+            kind: OperatorTreeEntryKind::User,
+            preview: "restart alpha worker".into(),
+        },
+        OperatorTreeEntry {
+            id: "a2a".into(),
+            parent_id: Some("u2a".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Alpha restarted.".into(),
+        },
+        OperatorTreeEntry {
+            id: "u2b".into(),
+            parent_id: Some("a1".into()),
+            kind: OperatorTreeEntryKind::User,
+            preview: "check beta latency".into(),
+        },
+        OperatorTreeEntry {
+            id: "a2b".into(),
+            parent_id: Some("u2b".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Beta p99 is 12ms.".into(),
+        },
+    ];
+
+    // 1. Navigating forward to a descendant (`current_leaf_id = Some("a1")` -> `"a2a"`) has ZERO
+    //    abandoned entries on `a1`, so it must NOT prompt `"Summarize branch?"`!
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req_1 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        tree_req_1.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a1".into()),
+            entries: entries.clone(),
+        })),
+    );
+    d.event_action(Event::Paste("Alpha restarted".into()));
+    d.key(KeyCode::Enter);
+    let forward_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    summarize: None,
+                    ..
+                }) if target_entry_id == "a2a"
+            )
+        })
+        .expect("descendant navigation with zero abandoned entries must not prompt");
+    let forward_follow = respond(
+        &mut d,
+        forward_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a2b".into()),
+            noop: true,
+            editor_text: None,
+            restored_context: None,
+            submitted: None,
+        })),
+    );
+    assert!(forward_follow.is_empty());
+
+    // 2. Navigating from `a2b` to `u2a` with filter `user-only` + search `"restart alpha"` opens
+    //    `"Summarize branch?"`; `Esc` from custom-instructions -> `"Summarize branch?"` -> `/tree`
+    //    preserves filter, search query, and selected node!
+    d.event_action(Event::Paste("unsent draft before summary".into()));
+    d.ctrl('c'); // clear draft so `/tree` can be entered
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req_2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        tree_req_2.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a2b".into()),
+            entries: entries.clone(),
+        })),
+    );
+    d.key(KeyCode::Tab); // no-tools
+    d.key(KeyCode::Tab); // user-only
+    d.event_action(Event::Paste("restart alpha".into()));
+    assert!(draw_text(&mut d, 120, 32).contains("filter: user-only"));
+
+    d.key(KeyCode::Enter); // -> "Summarize branch?"
+    let confirm_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        confirm_screen.contains("Summarize branch?")
+            && confirm_screen.contains("▸ No summary")
+            && confirm_screen.contains("  Summarize")
+            && confirm_screen.contains("  Summarize with custom prompt"),
+        "{confirm_screen}"
+    );
+    d.key(KeyCode::Down); // Summarize
+    d.key(KeyCode::Down); // Summarize with custom prompt
+    d.key(KeyCode::Enter); // -> Custom instructions input
+    let custom_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        custom_screen.contains("Instructions:")
+            && custom_screen.contains("Summarize branch · Custom prompt"),
+        "{custom_screen}"
+    );
+
+    // `Esc` from custom instructions -> back to `"Summarize branch?"` with `Summarize with custom prompt` still selected!
+    d.key(KeyCode::Esc);
+    let back_to_confirm = draw_text(&mut d, 120, 32);
+    assert!(
+        back_to_confirm.contains("Summarize branch?")
+            && back_to_confirm.contains("▸ Summarize with custom prompt"),
+        "{back_to_confirm}"
+    );
+
+    // `Esc` from `"Summarize branch?"` -> back to `/tree` preserving `filter: user-only`, `Search: restart alpha▏`, and `u2a`!
+    d.key(KeyCode::Esc);
+    let back_to_tree = draw_text(&mut d, 120, 32);
+    assert!(
+        back_to_tree.contains("filter: user-only")
+            && back_to_tree.contains("Search: restart alpha▏")
+            && back_to_tree.contains("user: restart alpha worker"),
+        "{back_to_tree}"
+    );
+
+    // 3. Re-enter -> `Summarize with custom prompt` -> submit `"focus on auth"` -> running activity -> completion reloads
+    //    feed with receipt AND restores unwrapped `"restart alpha worker"` + `OperatorContext` into composer!
+    d.key(KeyCode::Enter); // -> "Summarize branch?"
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Enter); // -> Custom instructions
+    d.event_action(Event::Paste("focus on auth".into()));
+    d.key(KeyCode::Enter);
+
+    let sum_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    summarize: Some(OperatorBranchSummaryRequest {
+                        instructions: Some(inst),
+                    }),
+                    ..
+                }) if target_entry_id == "u2a" && inst == "focus on auth"
+            )
+        })
+        .expect("expected NavigateTree with custom instructions");
+
+    let target_ctx = captured_context(&fixture_hierarchy(), SessionId(1));
+    let running_turn = OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: seeded.id,
+            session: seeded.session,
+            run: SessionRunId(4),
+            turn: OperatorTurnId(4),
+        },
+        state: OperatorTurnState::Running,
+        sequence: 0,
+    };
+    let mut running_summary = seeded.clone();
+    running_summary.run = SessionRunId(4);
+    running_summary.current_turn = Some(running_turn.clone());
+    running_summary.worker_live = true;
+    running_summary.worker_stopped = false;
+
+    let sum_follow = respond(
+        &mut d,
+        sum_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: running_summary.clone(),
+            current_leaf_id: Some("a2b".into()),
+            noop: false,
+            editor_text: Some("restart alpha worker".into()),
+            restored_context: Some(target_ctx.clone()),
+            submitted: Some(running_turn.clone()),
+        })),
+    );
+    let inc_read = read_request(&sum_follow);
+    respond(
+        &mut d,
+        inc_read.request_id,
+        history_of(
+            running_summary.clone(),
+            vec![turn_message(
+                4,
+                7,
+                OperatorMessageContent::BranchSummary {
+                    target_entry_id: "u2a".into(),
+                    instructions: Some("focus on auth".into()),
+                },
+            )],
+            None,
+        ),
+    );
+    let running_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        running_screen.contains("Summarizing branch…")
+            && running_screen.contains("Summarize branch · focus on auth")
+            && !running_screen.contains("> restart alpha worker"),
+        "while running, show `Summarizing branch…` without prematurely overwriting composer:\n{running_screen}"
+    );
+
+    // Complete Turn 3 -> triggers full `Read { after: 0 }` and restores composer + context!
+    let mut completed_summary = running_summary.clone();
+    completed_summary.current_turn = Some(OperatorTurn {
+        state: OperatorTurnState::Complete,
+        sequence: 2,
+        ..running_turn
+    });
+    completed_summary.worker_live = false;
+    completed_summary.worker_stopped = true;
+
+    let changed_reqs = d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(
+        seeded.id,
+    )));
+    let tail_read = changed_reqs
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 7, .. })
+            )
+        })
+        .expect("incremental tail Read");
+    let complete_follow = respond(
+        &mut d,
+        tail_read.request_id,
+        history_of(
+            completed_summary.clone(),
+            vec![
+                turn_message(
+                    4,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary {
+                        summary: "Abandoned beta branch checked latency.".into(),
+                    }),
+                ),
+                turn_message(
+                    4,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("bs3".into()),
+                        pi_leaf_entry_id: Some("bs3".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let full_reload = complete_follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 0, .. })
+            )
+        })
+        .expect("completing branch summary must reload active-branch feed from after=0");
+    respond(
+        &mut d,
+        full_reload.request_id,
+        history_of(
+            completed_summary.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    4,
+                    7,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id: "u2a".into(),
+                        instructions: Some("focus on auth".into()),
+                    },
+                ),
+                turn_message(
+                    4,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary {
+                        summary: "Abandoned beta branch checked latency.".into(),
+                    }),
+                ),
+                turn_message(
+                    4,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("bs3".into()),
+                        pi_leaf_entry_id: Some("bs3".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    let completed_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        completed_screen.contains("Branch summary recorded")
+            && completed_screen.contains("Abandoned beta branch checked latency.")
+            && !completed_screen.contains("Beta p99 is 12ms.")
+            && completed_screen.contains("> restart alpha worker▏"),
+        "expected branch summary receipt + active branch projection + composer restore:\n{completed_screen}"
+    );
+    d.key(KeyCode::Char('?'));
+    let restored_ctx_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        restored_ctx_screen.contains("Managing consigint / auth / #1 run 1")
+            && restored_ctx_screen.contains("> restart alpha worker?▏"),
+        "{restored_ctx_screen}"
+    );
+
+    // 4. Interrupted branch-summary turn renders interruption receipt without clobbering composer!
+    let interrupted_turn = OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: seeded.id,
+            session: seeded.session,
+            run: SessionRunId(5),
+            turn: OperatorTurnId(5),
+        },
+        state: OperatorTurnState::Interrupted,
+        sequence: 1,
+    };
+    let mut interrupted_summary = completed_summary;
+    interrupted_summary.run = SessionRunId(5);
+    interrupted_summary.current_turn = Some(interrupted_turn);
+    let int_reqs = d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(
+        seeded.id,
+    )));
+    let int_read = int_reqs
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 9, .. })
+            )
+        })
+        .unwrap();
+    respond(
+        &mut d,
+        int_read.request_id,
+        history_of(
+            interrupted_summary,
+            vec![
+                turn_message(
+                    5,
+                    10,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id: "u1".into(),
+                        instructions: None,
+                    },
+                ),
+                turn_message(5, 11, OperatorMessageContent::Interrupted),
+            ],
+            None,
+        ),
+    );
+    let interrupted_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        interrupted_screen
+            .contains("Interrupted · branch summarization cancelled; current branch preserved.")
+            && interrupted_screen.contains("> restart alpha worker?▏"),
+        "{interrupted_screen}"
     );
 }

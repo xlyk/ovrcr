@@ -78,6 +78,10 @@ impl Scenario {
         self.set("compact", json!(mode))
     }
 
+    pub fn tree_summary_mode(&mut self, mode: &str) -> &mut Self {
+        self.set("tree_summary_mode", json!(mode))
+    }
+
     pub fn default_model(&mut self, provider: &str, id: &str) -> &mut Self {
         self.set(
             "default_model",

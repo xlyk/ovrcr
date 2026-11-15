@@ -23,7 +23,10 @@ work lease, that process stays live across warm user turns on the same run.
   prompt, ordered journal batches, lease-aware Completed and authenticated Retire.
 - `src/pi-operator-extension.mjs` — the only custom code loaded into pi. It
   publishes the readiness contract, overrides `bash` with an attached execution
-  adapter, and turns pi's tool callbacks into the durable admission handshake.
+  adapter, turns pi's tool callbacks into the durable admission handshake, and
+  registers `/ovrcr_tree_control` (authenticated by a worker-generated nonce and
+  paired with `session_tree` + bounded `ovrcr_operator_tree_result` status) for
+  `/tree` leaf restoration and branch summarization.
   The worker consumes the bounded `ovrcr_operator_watches` status as its work
   lease count; the separate watch tool owns producing that status.
 
@@ -116,9 +119,9 @@ Server.
    Warm dispatch uses the same run identity; authenticated
    `StartTurn` returns the next accepted user turn without changing that run.
    The returned `OperatorWorkerStart` carries the turn's captured `model` and
-   `thinking_level` overrides, `checkpoint_turn`, and typed
-   `OperatorWorkerSubmission` (`Prompt { text, context, async_wakeup }` or
-   `Compact { instructions }`).
+   `thinking_level` overrides, `checkpoint_turn`, optional `tree_target_id`, and
+   typed `OperatorWorkerSubmission` (`Prompt { text, context, async_wakeup }`,
+   `Compact { instructions }`, or `BranchSummary { target_entry_id, instructions }`).
 2. Create the exclusive turn attempt and run directory, materialize the
    extension and coordinator skill, then launch pi. `get_state` resolves the
    fresh profile's model and thinking level; the
@@ -144,9 +147,23 @@ Server.
    `ReasoningSelected` with the effective level, supported list and captured
    request.
    A missing or unavailable model fails the turn; there is no fallback.
-5. Send exactly one `prompt` whose message is the
-   captured context JSON followed by the user text, so input such as `/new` is
-   never a native command.
+5. Execute the typed `OperatorWorkerSubmission`:
+   - `Prompt`: single-segment leading `/commands` at index `0` in the Dashboard
+     composer or Quick message are handled locally before submission; ordinary
+     prompts (including multi-segment Unix paths like `/etc/hosts` or
+     leading-space ` /new`) send one `prompt` whose message prefixes the
+     captured context JSON before the user text so user input can never invoke an
+     untrusted native pi command. If `tree_target_id` was active on restore,
+     `/ovrcr_tree_control` (`summarize: false`) positions pi's leaf first.
+   - `Compact`: sends pi's `compact` RPC (with optional `customInstructions`),
+     verifies the appended `compaction` entry on `session.jsonl`, and emits
+     `CompactionSummary { summary, tokens_before }`.
+   - `BranchSummary`: applies any prior `tree_target_id` (`summarize: false`) so
+     `oldLeafId` matches the active branch, then sends authorized
+     `/ovrcr_tree_control` with `summarize: true` (and optional
+     `customInstructions`), reads `ovrcr_operator_tree_result`, verifies the
+     appended `branch_summary` entry on `session.jsonl`, and emits
+     `BranchSummary { summary }`.
 6. Stream until `agent_settled`. `prompt.success` is acceptance only. Success
    also requires the final assistant message's `stopReason == "stop"`, no
    unresolved admitted tool, and no transport or extension error. Auto-compaction
@@ -207,12 +224,16 @@ an existing checkpoint in the current `session_epoch`, executing pi's `compact`
 RPC on cold or warm `watch_sessions`-leased workers, committing
 `CompactionSummary { summary, tokens_before }` atomically with checkpoint
 promotion, and rolling back to the pre-compaction checkpoint on foreground
-`Stop` or RPC failure), and `/tree` turn lineage (`active_tip_turn` and
-`pi_tree_target_id` on `operator_conversations`, `parent_turn`,
-`pi_first_entry_id`, and `pi_leaf_entry_id` on `operator_turns`, zero-spawn
-`Tree` reading + idle/unleased `NavigateTree` branch switching and user-prompt
-rewind, active-branch `read_operator_history` projection, and worker-gated
-`/ovrcr_tree_control` leaf restoration on cold restore and warm rollback).
+`Stop` or RPC failure), and `/tree` turn lineage and branch summarization
+(`active_tip_turn` and `pi_tree_target_id` on `operator_conversations`,
+`parent_turn`, `pi_first_entry_id`, and `pi_leaf_entry_id` on `operator_turns`,
+zero-spawn `Tree` reading + idle/unleased `NavigateTree` zero-token branch
+switching, user-prompt rewind, and `summarize: Some(...)` `BranchSummary` turns
+attached to `target_branch_parent_turn` that preserve pre-switch
+`active_tip_turn`/`pi_tree_target_id` on `Stop` or failure and advance
+`active_tip_turn` on completion, active-branch `read_operator_history`
+projection, and worker-gated `/ovrcr_tree_control` leaf restoration and
+summarization).
 
 ## Workspace coordination watches
 

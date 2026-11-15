@@ -105,7 +105,60 @@ pub(super) struct TreeRow {
 
 pub(super) enum TreeModal {
     Loading,
-    Loaded(TreePicker),
+    Loaded(Box<TreePicker>),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum BranchSummaryChoice {
+    #[default]
+    NoSummary,
+    Summarize,
+    CustomPrompt,
+}
+
+impl BranchSummaryChoice {
+    pub(super) const ALL: [Self; 3] = [Self::NoSummary, Self::Summarize, Self::CustomPrompt];
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::NoSummary => "No summary",
+            Self::Summarize => "Summarize",
+            Self::CustomPrompt => "Summarize with custom prompt",
+        }
+    }
+
+    pub(super) fn next(self) -> Self {
+        match self {
+            Self::NoSummary => Self::Summarize,
+            Self::Summarize => Self::CustomPrompt,
+            Self::CustomPrompt => Self::NoSummary,
+        }
+    }
+
+    pub(super) fn prev(self) -> Self {
+        match self {
+            Self::NoSummary => Self::CustomPrompt,
+            Self::Summarize => Self::NoSummary,
+            Self::CustomPrompt => Self::Summarize,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) enum TreePickerStep {
+    #[default]
+    Browse,
+    ConfirmSummarize {
+        target_entry_id: String,
+        target_preview: String,
+        choice: BranchSummaryChoice,
+    },
+    CustomInstructions {
+        target_entry_id: String,
+        target_preview: String,
+        input: String,
+        cursor: TextCursor,
+    },
 }
 
 pub(super) struct TreePicker {
@@ -114,6 +167,7 @@ pub(super) struct TreePicker {
     pub query: String,
     pub cursor: TextCursor,
     pub selected: usize,
+    pub step: TreePickerStep,
     pub submitting: bool,
     pub error: Option<String>,
 }
@@ -126,6 +180,7 @@ impl TreePicker {
             query: String::new(),
             cursor: TextCursor::default(),
             selected: 0,
+            step: TreePickerStep::Browse,
             submitting: false,
             error: None,
         };
@@ -139,6 +194,45 @@ impl TreePicker {
             entry.kind,
             OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
         ) && tree.current_leaf_id.as_deref() == Some(entry.id.as_str())
+    }
+
+    /// Returns `true` when switching to `entry` abandons one or more entries on the
+    /// effective current leaf past the common ancestor with `entry`'s target branch point.
+    pub(super) fn should_prompt_summarize(
+        tree: &OperatorSessionTree,
+        entry: &OperatorTreeEntry,
+    ) -> bool {
+        let Some(old_id) = tree.current_leaf_id.as_deref() else {
+            return false;
+        };
+        if old_id == entry.id {
+            return false;
+        }
+        let by_id: HashMap<&str, &OperatorTreeEntry> = tree
+            .entries
+            .iter()
+            .map(|item| (item.id.as_str(), item))
+            .collect();
+        if !by_id.contains_key(old_id) {
+            return false;
+        }
+        let target_branch_point = if matches!(
+            entry.kind,
+            OperatorTreeEntryKind::User | OperatorTreeEntryKind::CustomMessage
+        ) {
+            entry.parent_id.as_deref()
+        } else {
+            Some(entry.id.as_str())
+        };
+        let mut target_ancestors: HashSet<&str> = HashSet::new();
+        let mut cur = target_branch_point;
+        while let Some(id) = cur {
+            if !target_ancestors.insert(id) {
+                break;
+            }
+            cur = by_id.get(id).and_then(|item| item.parent_id.as_deref());
+        }
+        !target_ancestors.contains(old_id)
     }
 
     pub(super) fn visible_rows(&self) -> Vec<TreeRow> {
@@ -518,6 +612,43 @@ mod tests {
         assert!(!TreePicker::is_noop_selection(
             &picker.tree,
             &picker.tree.entries[7]
+        ));
+
+        // `should_prompt_summarize`:
+        // - Active leaf `a2b` -> `a2b` (current leaf): false
+        assert!(!TreePicker::should_prompt_summarize(
+            &picker.tree,
+            &picker.tree.entries[8]
+        ));
+        // - Active leaf `a2b` -> `a2a` (sibling), `u2b` (user rewind), `a1` (ancestor): true
+        assert!(TreePicker::should_prompt_summarize(
+            &picker.tree,
+            &picker.tree.entries[6]
+        ));
+        assert!(TreePicker::should_prompt_summarize(
+            &picker.tree,
+            &picker.tree.entries[7]
+        ));
+        assert!(TreePicker::should_prompt_summarize(
+            &picker.tree,
+            &picker.tree.entries[4]
+        ));
+        // - Active leaf `a1` -> `a2a` (descendant) or `u2a` (child user message): false
+        let mut at_a1 = sample_branched_tree();
+        at_a1.current_leaf_id = Some("a1".into());
+        assert!(!TreePicker::should_prompt_summarize(
+            &at_a1,
+            &at_a1.entries[6]
+        ));
+        assert!(!TreePicker::should_prompt_summarize(
+            &at_a1,
+            &at_a1.entries[5]
+        ));
+        // - Rewound to root (`None`) -> any node: false
+        at_a1.current_leaf_id = None;
+        assert!(!TreePicker::should_prompt_summarize(
+            &at_a1,
+            &at_a1.entries[6]
         ));
     }
 }

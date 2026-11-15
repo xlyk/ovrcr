@@ -773,6 +773,14 @@ export default function ovrcrOperatorExtension(pi) {
     pi.registerTool({ ...definition, executionMode: "sequential" });
   }
 
+  let capturingTreeSummary = false;
+  let capturedTreeSummaryEntry = null;
+  pi.on("session_tree", (event) => {
+    if (capturingTreeSummary) {
+      capturedTreeSummaryEntry = event?.summaryEntry ?? null;
+    }
+  });
+
   pi.registerCommand("ovrcr_tree_control", {
     description: "Internal OVRCR worker tree navigation control.",
     async handler(args, ctx) {
@@ -784,17 +792,31 @@ export default function ovrcrOperatorExtension(pi) {
       if (!confirmed) {
         throw new Error("OVRCR tree control refused");
       }
+      capturingTreeSummary = true;
+      capturedTreeSummaryEntry = null;
       try {
         const result = await ctx.navigateTree(request.targetId, {
           summarize: request.summarize,
           customInstructions: request.customInstructions ?? undefined,
         });
+        const cancelled = Boolean(result?.cancelled);
+        const leafId = ctx.sessionManager.getLeafId?.() ?? null;
+        let summaryEntry = null;
+        if (!cancelled) {
+          summaryEntry = result?.summaryEntry ?? capturedTreeSummaryEntry ?? null;
+          if (!summaryEntry && request.summarize && leafId) {
+            const candidate = ctx.sessionManager.getEntry?.(leafId) ?? null;
+            if (candidate?.type === "branch_summary") {
+              summaryEntry = candidate;
+            }
+          }
+        }
         ctx.ui.setStatus(
           TREE_RESULT_KEY,
           JSON.stringify({
-            cancelled: Boolean(result?.cancelled),
-            leafId: ctx.sessionManager.getLeafId?.() ?? null,
-            summaryEntry: result?.summaryEntry ?? null,
+            cancelled,
+            leafId,
+            summaryEntry,
           }),
         );
       } catch (error) {
@@ -807,7 +829,9 @@ export default function ovrcrOperatorExtension(pi) {
             error: error instanceof Error ? error.message : String(error),
           }),
         );
-        throw error;
+      } finally {
+        capturingTreeSummary = false;
+        capturedTreeSummaryEntry = null;
       }
     },
   });

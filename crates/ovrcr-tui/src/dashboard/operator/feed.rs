@@ -276,6 +276,9 @@ enum Opener<'a> {
     Compaction {
         instructions: Option<&'a str>,
     },
+    BranchSummary {
+        instructions: Option<&'a str>,
+    },
     Wake(&'a str),
     /// Worker events with no request before them, as in a legacy journal.
     Orphan,
@@ -305,6 +308,7 @@ struct Entry<'a> {
     reply: String,
     replying: bool,
     compaction_summary: Option<(&'a str, u64)>,
+    branch_summary: Option<&'a str>,
     /// The thinking that trails the journal; shown only while the turn runs.
     thought: String,
     failure: Option<&'a str>,
@@ -338,6 +342,11 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
             OperatorMessageContent::Compaction { instructions } => Some(Opener::Compaction {
                 instructions: instructions.as_deref(),
             }),
+            OperatorMessageContent::BranchSummary { instructions, .. } => {
+                Some(Opener::BranchSummary {
+                    instructions: instructions.as_deref(),
+                })
+            }
             OperatorMessageContent::AsyncWakeup { text } => Some(Opener::Wake(text)),
             _ if entries
                 .last()
@@ -357,6 +366,7 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                 reply: String::new(),
                 replying: false,
                 compaction_summary: None,
+                branch_summary: None,
                 thought: String::new(),
                 failure: None,
                 state: State::Done,
@@ -425,6 +435,9 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                 tokens_before,
             }) => {
                 entry.compaction_summary = Some((summary.as_str(), *tokens_before));
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary }) => {
+                entry.branch_summary = Some(summary.as_str());
             }
             OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. }) => {
                 (entry.state, entry.recorded) = (State::Done, true);
@@ -523,6 +536,10 @@ impl Entry<'_> {
                 instructions: Some(instructions),
             } => format!("Compact context · {}", display_text(instructions)),
             Opener::Compaction { instructions: None } => "Compact context".into(),
+            Opener::BranchSummary {
+                instructions: Some(instructions),
+            } => format!("Summarize branch · {}", display_text(instructions)),
+            Opener::BranchSummary { instructions: None } => "Summarize branch".into(),
             Opener::Wake(text) => display_text(&wake_title(text)),
             Opener::Orphan => "Operator".into(),
         }
@@ -550,6 +567,14 @@ impl Entry<'_> {
                             format!("from {} tokens", super::render::format_count(tokens_before)),
                             SUBTEXT(),
                         );
+                    }
+                }
+                if matches!(self.opener, Opener::BranchSummary { .. }) {
+                    if self.state == State::Running {
+                        return ("summarizing".into(), SUBTEXT());
+                    }
+                    if self.branch_summary.is_some() {
+                        return ("branch summary".into(), SUBTEXT());
                     }
                 }
                 let count =
@@ -737,6 +762,11 @@ impl Entry<'_> {
                     );
                 }
             }
+            Opener::BranchSummary { .. } => {
+                if self.branch_summary.is_some() {
+                    lines(rows, "Branch summary recorded", 2, quiet, CONTEXT, 0, None);
+                }
+            }
             Opener::Wake(text) => lines(rows, &display_text(text), 2, quiet, CONTEXT, 0, None),
             _ => {}
         }
@@ -785,6 +815,8 @@ impl Entry<'_> {
 
         let body_markdown = if let Some((summary, _)) = self.compaction_summary {
             summary.trim_end()
+        } else if let Some(summary) = self.branch_summary {
+            summary.trim_end()
         } else {
             self.reply.trim_end()
         };
@@ -817,6 +849,8 @@ impl Entry<'_> {
                 rows,
                 if matches!(self.opener, Opener::Compaction { .. }) {
                     "Interrupted · compaction cancelled; previous context preserved."
+                } else if matches!(self.opener, Opener::BranchSummary { .. }) {
+                    "Interrupted · branch summarization cancelled; current branch preserved."
                 } else {
                     "Interrupted · operations may finish; file changes remain."
                 },

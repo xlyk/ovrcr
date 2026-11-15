@@ -1,0 +1,171 @@
+OVRCR Operator slash commands #481 / #490
+Target: /Users/xlyk/.gemini/antigravity-cli/worktrees/8e7164ff-a249-4e06-b817-978e9f424385/subagent-Implementer--490-self-43170654/target/OVRCR GUI.app
+Evidence directory: /Users/xlyk/.gemini/antigravity-cli/worktrees/8e7164ff-a249-4e06-b817-978e9f424385/subagent-Implementer--490-self-43170654/research/operator-slash-commands-481/native/attempt-01
+
+All six requested visual acceptance flows passed in the supplied disposable fixture.
+
+Startup deviation: n was echoed; Return submitted the decline. A persistent status footer required Escape before BROWSE was visible. No hooks were connected.
+
+Flow 1: /mo live menu contained filtered /model above composer rule; Tab produced > /model; /modle showed Unknown slash command "/modle" and retained > /modle.
+
+Flow 2: model picker exposed Harness default and both fixture models; fast filter left fixture/operator-fixture-fast; selection confirmation and later session stats showed the fast model. /thinking showed default (Pi's choice), with supported levels unavailable before the first turn.
+
+Flow 3: GUI_SLASH_SEED and GUI_BRANCH_ALPHA completed with Idle and complete header, no Sending/Responding. /session showed conversation #1, session #13, run 2, epoch 0, pi operator-1, checkpoint turn #2, active/configured fixture/operator-fixture-fast, medium reasoning configured default, 2 total/completed turns, 4 messages (2 user/2 assistant), 0 tokens and $0.0000. /copy showed Copied latest assistant reply to clipboard. Clipboard payload was not independently pasted/read back.
+
+Flow 4: /compact focus on protocol 88 completed; receipt said Compacted from 5,026 tokens and showed FIXTURE_COMPACTION_SUMMARY.
+
+Flow 5: active tree showed ● seed/alpha/compaction markers; two Tabs reached user-only; searching GUI_BRANCH_ALPHA selected its user node. Summarize branch? showed all three choices; Down selected Summarize. Receipt showed Branch summary recorded and Summarized abandoned branch before switching, and composer restored exact unwrapped > GUI_BRANCH_ALPHA. After beta completion, tree showed alpha and beta, ├─ / └─ / │ connectors and [branch summary]. Selecting Alpha branch exploration assistant with No summary restored alpha feed, with Beta branch exploration absent.
+
+Flow 6: /new cleared prior feed and confirmed epoch 1. Escape returned BROWSE. Ctrl-o showed Quick message; /session was captured before submission. Return opened full Operator session modal at epoch 1, conversation #1/session #13/run 5, no Pi checkpoint, zero turns/messages/tokens, configured fast model retained. Escape closed modal.
+
+UI observation: the footer Clipboard request sent; paste to verify persisted from /copy through later full-Operator flows, despite completed/Idle state. Browse navigation cleared it. This did not prevent the requested commands.
+
+Scope: UI acceptance only, no production provider validation, no source/revision inspection, no build/test reruns. No external work-diary write because user restricted writes to this evidence directory.
+
+All captures used getAXStateAndScreenshot({disableDiffing:true,emit:false}); each screenshot signature was checked. Full AX text preserved without shortening in files. Timestamps are UTC capture receipt times.
+
+CAPTURES
+00-initial-state | 2026-11-15T21:29:40.329Z | JPEG 193842 bytes | AX 2417 bytes
+  AX/visual verified: Startup optional Connect agent status offer visible
+
+01-slash-menu-filtered | 2026-11-15T21:31:10.013Z | JPEG 252167 bytes | AX 14461 bytes
+  AX/visual verified: Composer > /mo
+  AX/visual verified: Live / menu filtered to /model above top composer rule
+
+02-typo-rejection-draft-retained | 2026-11-15T21:31:14.508Z | JPEG 250829 bytes | AX 14218 bytes
+  AX/visual verified: Unknown slash command "/modle"
+  AX/visual verified: Composer retains > /modle
+
+03-model-picker | 2026-11-15T21:31:33.860Z | JPEG 278833 bytes | AX 14471 bytes
+  AX/visual verified: Model picker shows Harness default, fixture/operator-fixture, fixture/operator-fixture-fast
+
+04-thinking-picker | 2026-11-15T21:31:57.546Z | JPEG 260420 bytes | AX 14406 bytes
+  AX/visual verified: Reasoning picker shows default (Pi's choice)
+
+05-session-modal | 2026-11-15T21:32:34.816Z | JPEG 358829 bytes | AX 14536 bytes
+  AX/visual verified: Operator session · /session modal
+  AX/visual verified: Epoch, session id, model, turns, and token counters visible
+
+06-copy-confirmation | 2026-11-15T21:32:38.696Z | JPEG 270370 bytes | AX 14225 bytes
+  AX/visual verified: Copied confirmation visible after /copy
+
+07-compact-receipt | 2026-11-15T21:32:53.311Z | JPEG 281092 bytes | AX 14488 bytes
+  AX/visual verified: Compacted from receipt visible
+  AX/visual verified: FIXTURE_COMPACTION_SUMMARY visible
+  AX/visual verified: Turn complete with Idle and no Sending/Responding
+
+08-tree-active-branch | 2026-11-15T21:32:56.179Z | JPEG 369959 bytes | AX 14795 bytes
+  AX/visual verified: Operator tree · /tree open
+  AX/visual verified: Active ● markers for GUI_SLASH_SEED, GUI_BRANCH_ALPHA, and [compaction]
+
+09-tree-summarize-modal | 2026-11-15T21:33:14.782Z | JPEG 331536 bytes | AX 14823 bytes
+  AX/visual verified: Summarize branch? · /tree
+  AX/visual verified: No summary, Summarize, Summarize with custom prompt choices
+
+10-branch-summary-composer-restore | 2026-11-15T21:33:31.866Z | JPEG 300841 bytes | AX 14243 bytes
+  AX/visual verified: Branch summary recorded in feed
+  AX/visual verified: Summarized abandoned branch in feed
+  AX/visual verified: Composer restores unwrapped > GUI_BRANCH_ALPHA
+  AX/visual verified: Turn complete and idle
+
+11-tree-diverging-branches | 2026-11-15T21:33:57.148Z | JPEG 400809 bytes | AX 14558 bytes
+  AX/visual verified: Tree shows alpha and beta branches
+  AX/visual verified: ├─ / └─ / │ connectors visible
+  AX/visual verified: [branch summary] node visible
+
+12-branch-switched-feed | 2026-11-15T21:34:01.559Z | JPEG 266857 bytes | AX 14225 bytes
+  AX/visual verified: Alpha branch exploration visible in feed
+  AX/visual verified: Beta branch exploration absent
+  AX/visual verified: Tree and summarize modal closed
+
+13-new-session-reset | 2026-11-15T21:34:21.316Z | JPEG 236100 bytes | AX 14218 bytes
+  AX/visual verified: Visible Operator feed cleared
+  AX/visual verified: New Operator session confirmation
+
+14-quick-message-slash-input | 2026-11-15T21:34:26.098Z | JPEG 259016 bytes | AX 14762 bytes
+  AX/visual verified: Quick message · Ctrl-o open
+  AX/visual verified: /session in Quick message input before Return
+
+15-quick-message-slash-executed | 2026-11-15T21:34:45.864Z | JPEG 319337 bytes | AX 14531 bytes
+  AX/visual verified: Quick message transitioned to full Operator
+  AX/visual verified: Operator session · /session modal shows epoch 1
+  AX/visual verified: Zero turns and zero messages for new epoch
+
+ADDITIONAL MILESTONE OBSERVATIONS
+{"name":"startup-browse","timestamp":"2026-11-15T21:30:53.528Z","verified":"n + Return declined offer; Escape dismissed persistent status and revealed BROWSE"}
+{"name":"tab-autocomplete","timestamp":"2026-11-15T21:31:10.866Z","verified":"After Tab AX composer shows > /model","ax":["\t\t60 text (settable) Grok · usage off                       │ > /model ▏                                                                                                                   "]}
+{"name":"model-picker-open","timestamp":"2026-11-15T21:31:33.745Z","result":"passed"}
+{"name":"model-filter-fast","timestamp":"2026-11-15T21:31:53.581Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · ready                                                                                 [Reasoning — ▾ Ctrl-t]\n┌ Operator model · Harness default ────────────────────────────────────┐\n│Filter: fast▏                                                         │\n│  fixture/operator-fixture-fast · Fixture Operator Fast               │\n│Type filter · ↑↓ Enter pick · Esc close                               │\nManaging consigint / main / #1 run 1\n> ▏\nOPERATOR  Enter Pick"}
+{"name":"model-fast-selected","timestamp":"2026-11-15T21:31:54.500Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · ready                                                                                 [Reasoning — ▾ Ctrl-t]\nSet Operator model to fixture/operator-fixture-fast.\n> ▏\nOPERATOR  Shift-Enter Newline  Ctrl-g Browse"}
+{"name":"seed-turn-settled","timestamp":"2026-11-15T21:32:19.443Z","result":"passed"}
+{"name":"seed-turn-evidence","timestamp":"2026-11-15T21:32:19.443Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]\n▌ ✓ GUI_SLASH_SEED\n▌   → consigint / main / #1 run 1\n▌   Seeded root turn for Operator slash commands.\n▌\n▌   - Protocol version: 88\n▌   - Registry schema: 35\nManaging consigint / main / #1 run 1\n> ▏\nOPERATOR  Shift-Enter Newline  Ctrl-g Browse"}
+{"name":"alpha-turn-settled","timestamp":"2026-11-15T21:32:23.240Z","result":"passed"}
+{"name":"alpha-turn-evidence","timestamp":"2026-11-15T21:32:23.240Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]\n▌ ✓ GUI_SLASH_SEED\n▌ ✓ GUI_BRANCH_ALPHA\n▌   Alpha branch exploration: verified /model, /thinking, /session, and /compact checkpoints.\nManaging consigint / main / #1 run 1\n> ▏\nOPERATOR  Shift-Enter Newline  Ctrl-g Browse"}
+{"name":"compaction-settled","timestamp":"2026-11-15T21:32:53.216Z","result":"passed"}
+{"name":"tree-active-branch","timestamp":"2026-11-15T21:32:56.062Z","result":"passed"}
+{"name":"tree-alpha-user-selected","timestamp":"2026-11-15T21:33:13.910Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]\n┌ Operator tree · /tree · filter: user-only · active ──────────────────────────────────────┐\nSearch: GUI_BRANCH_ALPHA▏                                                                 │\n● user: GUI_BRANCH_ALPHA                                                                  │\nType search · ↑↓ select · Tab/Ctrl-f filter · Enter switch · Esc close                    │\n▌ ✓ GUI_SLASH_SEED\n▌ ✓ GUI_BRANCH_ALPHA\n▌ ✓ Compact context · focus on protocol 88\n▌   Compacted from 5,026 tokens\n▌   FIXTURE_COMPACTION_SUMMARY\n▌\n▌   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n▌\n▌   Turn Context (split turn):\n▌\n▌   FIXTURE_COMPACTION_SUMMARY\nManaging consigint / main / #1 run 1\n> ▏\nClipboard request sent; paste to verify"}
+{"name":"branch-summary-and-draft-restore","timestamp":"2026-11-15T21:33:31.773Z","result":"passed"}
+{"name":"beta-turn-settled","timestamp":"2026-11-15T21:33:38.216Z","result":"passed"}
+{"name":"beta-turn-evidence","timestamp":"2026-11-15T21:33:38.216Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]\n▌ ✓ GUI_SLASH_SEED\n▌ ✓ Summarize branch                                                                                            branch summary\n▌ ✓ GUI_BRANCH_BETA\n▌   Beta branch exploration: verified /tree active-branch switching and branch summarization.\nManaging consigint / main / #1 run 1\n> ▏\nClipboard request sent; paste to verify"}
+{"name":"alpha-leaf-switch-no-summary","timestamp":"2026-11-15T21:34:00.633Z","ax":"󰚩 OVRCR                                                                                                                                              [Commands] [Menu]\nOperator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]\n$ local                         ┌ Summarize branch? · /tree ───────────────────────────────────────────────────────────────┐\nSummarize abandoned branch entries before switching?                                      │\nTarget: assistant: Alpha branch exploration: verified `/model`, `/thinking`, `/session`, …│\n▸ No summary                                                                              │\nSummarize                                                                               │\nSummarize with custom prompt                                                            │\n↑↓ select · Enter confirm · Esc back to /tree                                             │\n▌ ✓ GUI_SLASH_SEED\n▌ ✓ Summarize branch                                                                                            branch summary\n▌ ✓ GUI_BRANCH_BETA\n▌   Beta branch exploration: verified /tree active-branch switching and branch summarization.\nManaging consigint / main / #1 run 1\n> ▏\nClipboard request sent; paste to verify"}
+{"name":"new-session-browse","timestamp":"2026-11-15T21:34:22.244Z","verified":"BROWSE footer visible"}
+{"name":"quick-message-session-executed","timestamp":"2026-11-15T21:34:45.746Z","result":"passed"}
+{"name":"final-session-modal-closed","timestamp":"2026-11-15T21:34:46.614Z","verified":"Esc closed /session; full Operator visible"}
+
+FILE INTEGRITY
+All 32 capture files reread and matched recorded byte sizes and SHA-256 hashes.
+
+SAVED FILES
+00-initial-state.jpg
+00-initial-state.ax.txt
+01-slash-menu-filtered.jpg
+01-slash-menu-filtered.ax.txt
+02-typo-rejection-draft-retained.jpg
+02-typo-rejection-draft-retained.ax.txt
+03-model-picker.jpg
+03-model-picker.ax.txt
+04-thinking-picker.jpg
+04-thinking-picker.ax.txt
+05-session-modal.jpg
+05-session-modal.ax.txt
+06-copy-confirmation.jpg
+06-copy-confirmation.ax.txt
+07-compact-receipt.jpg
+07-compact-receipt.ax.txt
+08-tree-active-branch.jpg
+08-tree-active-branch.ax.txt
+09-tree-summarize-modal.jpg
+09-tree-summarize-modal.ax.txt
+10-branch-summary-composer-restore.jpg
+10-branch-summary-composer-restore.ax.txt
+11-tree-diverging-branches.jpg
+11-tree-diverging-branches.ax.txt
+12-branch-switched-feed.jpg
+12-branch-switched-feed.ax.txt
+13-new-session-reset.jpg
+13-new-session-reset.ax.txt
+14-quick-message-slash-input.jpg
+14-quick-message-slash-input.ax.txt
+15-quick-message-slash-executed.jpg
+15-quick-message-slash-executed.ax.txt
+manifest.json
+cua-report.txt
+
+CLOSURE
+{
+  "timestamp": "2026-11-15T21:36:15.284Z",
+  "action": "Cmd-q via CUA super+q",
+  "observed": [
+    {
+      "displayName": "OVRCR GUI",
+      "id": "dev.ovrcr.gui",
+      "isRunning": false,
+      "lastUsedDate": 816220800,
+      "useCount": 5
+    }
+  ],
+  "closed": true,
+  "verification": "CUA application inventory reports dev.ovrcr.gui isRunning:false; no post-close screenshot or app AX call",
+  "note": "Initial 500 ms inventory still reported running; subsequent inventory confirmed exit without further input."
+}
+Window closed cleanly: target application no longer running.

@@ -3450,6 +3450,12 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
 
     ui.dashboard.key(KeyCode::Up);
     ui.dashboard.key(KeyCode::Enter);
+    assert!(
+        ui.render().contains("Summarize branch? · /tree"),
+        "leaving Branch A tip must offer Summarize branch? modal"
+    );
+    // Confirm default `No summary` choice.
+    ui.dashboard.key(KeyCode::Enter);
     ui.flush();
     ui.pump();
     assert_eq!(
@@ -3537,6 +3543,8 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
     ui.dashboard
         .event_action(Event::Paste("alpha assistant".into()));
     ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
+    ui.dashboard.key(KeyCode::Enter);
     ui.flush();
     ui.pump();
     let on_alpha = ui.render();
@@ -3565,6 +3573,8 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
     ui.pump();
     ui.dashboard
         .event_action(Event::Paste("beta assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
     ui.dashboard.key(KeyCode::Enter);
     ui.flush();
     ui.pump();
@@ -3645,6 +3655,7 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
         conversation: conversation_id,
         expected_run: running.conversation.run,
         target_entry_id: alpha_id.clone(),
+        summarize: None,
     })) {
         Response::Error {
             code: ErrorCode::Conflict,
@@ -3667,6 +3678,7 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
         conversation: conversation_id,
         expected_run: leased.conversation.run,
         target_entry_id: alpha_id,
+        summarize: None,
     })) {
         Response::Error {
             code: ErrorCode::Conflict,
@@ -3686,6 +3698,240 @@ fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_
     ui.wait_history(conversation_id, |history| {
         has_assistant(history, "Watch released.") && history.conversation.worker_stopped
     });
+}
+
+#[test]
+fn dashboard_slash_tree_summarize_branch_supports_custom_prompt_user_rewind_and_stop_rollback() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::OperatorResponse;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let summary_ready = live.root.path().join("summary-ready");
+    let summary_release = live.root.path().join("summary-release");
+
+    let mut s1 = Scenario::new();
+    s1.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    fake.script(&s1);
+
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 1. Seed Turn 1 (`Root prompt`) and Turn 2 (`Branch alpha prompt`).
+    ui.dashboard
+        .event_action(Event::Paste("Root prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Root answer.") && history.conversation.worker_stopped
+    });
+
+    let mut s2 = Scenario::new();
+    s2.steps(vec![Step::assistant("Alpha exploration."), Step::Settle]);
+    fake.script(&s2);
+    ui.dashboard
+        .event_action(Event::Paste("Branch alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Alpha exploration.") && history.conversation.worker_stopped
+    });
+
+    // 2. Open `/tree`: selecting the current leaf (`Alpha exploration.`) does NOT prompt
+    //    `"Summarize branch?"`.
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert!(
+        !ui.render().contains("Summarize branch? · /tree")
+            && !ui.render().contains("Operator tree · /tree"),
+        "selecting current leaf must close `/tree` without prompting Summarize branch?"
+    );
+
+    // 3. Reopen `/tree`, filter + search for `Branch alpha prompt`, verify `Esc` back-navigation
+    //    from Custom prompt -> Summarize branch? -> `/tree` preserves filter/search/selection,
+    //    then submit `Summarize with custom prompt` onto user entry `Branch alpha prompt`!
+    let mut s_sum = Scenario::new();
+    s_sum.set("tree_summary_mode", json!("ok"));
+    s_sum.set(
+        "tree_summary_text",
+        json!("## Goal\nCaptured alpha exploration findings."),
+    );
+    fake.script(&s_sum);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.key(KeyCode::Tab);
+    ui.dashboard.key(KeyCode::Tab); // Filter: user-only
+    ui.dashboard
+        .event_action(Event::Paste("alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    let confirm_screen = ui.render();
+    assert!(
+        confirm_screen.contains("Summarize branch? · /tree")
+            && confirm_screen.contains("No summary")
+            && confirm_screen.contains("Summarize")
+            && confirm_screen.contains("Summarize with custom prompt"),
+        "expected Summarize branch? choices:\n{confirm_screen}"
+    );
+    // Navigate to `Summarize with custom prompt`, open it, type draft, then Esc twice back to `/tree`.
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch · Custom prompt"));
+    ui.dashboard
+        .event_action(Event::Paste("temporary draft".into()));
+    ui.dashboard.key(KeyCode::Esc);
+    assert!(
+        ui.render().contains("Summarize branch? · /tree"),
+        "Esc in custom prompt returns to Summarize branch?"
+    );
+    ui.dashboard.key(KeyCode::Esc);
+    let back_to_tree = ui.render();
+    assert!(
+        back_to_tree.contains("Operator tree · /tree")
+            && back_to_tree.contains("filter: user-only")
+            && back_to_tree.contains("alpha prompt")
+            && back_to_tree.contains("Branch alpha prompt"),
+        "Esc from Summarize branch? must preserve `/tree` filter, query, and selection:\n{back_to_tree}"
+    );
+
+    // Now confirm `Summarize with custom prompt` (`preserve alpha hypothesis`) onto `Branch alpha prompt`.
+    ui.dashboard.key(KeyCode::Enter);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Enter);
+    ui.dashboard
+        .event_action(Event::Paste("preserve alpha hypothesis".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+
+    let summarized_history = ui.wait_history(conversation_id, |history| {
+        history.conversation.worker_stopped
+            && history.messages.iter().any(|msg| {
+                matches!(
+                    &msg.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary.contains("Captured alpha exploration findings.")
+                )
+            })
+    });
+    assert!(
+        fake.log().iter().any(|entry| {
+            entry["event"] == "tree_control"
+                && entry["summarize"] == true
+                && entry["customInstructions"] == "preserve alpha hypothesis"
+        }),
+        "expected worker to pass customInstructions to authorized tree_control: {:?}",
+        fake.log()
+    );
+    // Drain server notifications + automatic history reload so TUI restores user prompt to composer.
+    for _ in 0..4 {
+        ui.pump();
+    }
+    let after_summary = ui.render();
+    assert!(
+        after_summary.contains("Captured alpha exploration findings.")
+            && after_summary.contains("Branch summary recorded")
+            && after_summary.contains("▌ ✓ Root prompt")
+            && !after_summary.contains("▌ ✓ Branch alpha prompt")
+            && !after_summary.contains("Alpha exploration.")
+            && after_summary.contains("> Branch alpha prompt▏"),
+        "branch summary onto user entry must show summary receipt, project target branch, and restore unwrapped prompt to composer:\n{after_summary}"
+    );
+
+    // 4. Submit the restored composer prompt (edited to `Branch beta prompt`) to advance past the
+    //    branch_summary entry, then start a held `Summarize` switch back to `Alpha exploration.`
+    //    and cancel it via foreground `Stop` (`Esc`) -> active Branch B and checkpoint survive!
+    let mut s3 = Scenario::new();
+    s3.steps(vec![Step::assistant("Beta branch reply."), Step::Settle]);
+    fake.script(&s3);
+    ui.dashboard.ctrl('c');
+    ui.dashboard
+        .event_action(Event::Paste("Branch beta prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Beta branch reply.") && history.conversation.worker_stopped
+    });
+    let checkpoint_before_stop =
+        operator_harness::Registry::of(&live).checkpoint(conversation_id.0);
+
+    let mut s_hold = Scenario::new();
+    s_hold.set("tree_summary_mode", json!("hold"));
+    s_hold.set(
+        "tree_summary_ready_file",
+        json!(summary_ready.display().to_string()),
+    );
+    s_hold.set(
+        "tree_summary_release_file",
+        json!(summary_release.display().to_string()),
+    );
+    fake.script(&s_hold);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let tree_with_summary = ui.render();
+    assert!(
+        tree_with_summary.contains("[branch summary]:"),
+        "expected persisted branch_summary node in `/tree`:\n{tree_with_summary}"
+    );
+    ui.dashboard
+        .event_action(Event::Paste("Alpha exploration".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
+    ui.dashboard.key(KeyCode::Down); // `Summarize`
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !summary_ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "held branch summary never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    ui.pump();
+    let running_summary = ui.render();
+    assert!(
+        running_summary.contains("Summarizing branch"),
+        "expected live Summarizing branch activity label:\n{running_summary}"
+    );
+
+    // Foreground `Ctrl-x` stops the in-flight branch summarization and preserves Branch B!
+    ui.dashboard.ctrl('x');
+    ui.flush();
+    let aborted = ui.wait_history(conversation_id, |history| {
+        history.conversation.worker_stopped
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state == OperatorTurnState::Interrupted)
+    });
+    assert!(has_assistant(&aborted, "Beta branch reply."));
+    assert!(!has_assistant(&aborted, "Alpha exploration."));
+    assert_eq!(
+        operator_harness::Registry::of(&live).checkpoint(conversation_id.0),
+        checkpoint_before_stop,
+        "aborted branch summarization must preserve pre-switch session.jsonl checkpoint"
+    );
+    let _ = summarized_history;
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
@@ -4813,6 +5059,23 @@ mod installed_pi {
     ) -> operator_provider::Handler {
         let counters: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
         Box::new(move |body: &Value, _index: usize| {
+            if operator_provider::is_branch_summary_request(body) {
+                let user = operator_provider::last_user_text(body);
+                let focus = user
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Additional focus: "))
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty());
+                let summary = match focus {
+                    Some(focus) => format!(
+                        "## Goal\nSummarized abandoned branch ({focus}).\n\n## Key Decisions\n- Preserved branch context before switching."
+                    ),
+                    None => String::from(
+                        "## Goal\nSummarized abandoned branch before switching.\n\n## Key Decisions\n- Preserved branch context on the target branch.",
+                    ),
+                };
+                return Plan::text(&summary);
+            }
             if operator_provider::is_compaction_request(body) {
                 let plan = Plan::text("FIXTURE_COMPACTION_SUMMARY");
                 return if mode.hold_compaction {
@@ -4844,6 +5107,9 @@ mod installed_pi {
                 "REQUEST_THINKING_LONG_HELD",
                 "COMPACT_ONE",
                 "COMPACT_TWO",
+                "GUI_SLASH_SEED",
+                "GUI_BRANCH_ALPHA",
+                "GUI_BRANCH_BETA",
             ]
             .into_iter()
             .find(|marker| user.contains(marker))
@@ -5110,6 +5376,15 @@ mod installed_pi {
                 }
                 ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
                 ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
+                ("GUI_SLASH_SEED", _) => Plan::text(
+                    "Seeded root turn for Operator slash commands.\n\n- Protocol version: `88`\n- Registry schema: `35`",
+                ),
+                ("GUI_BRANCH_ALPHA", _) => Plan::text(
+                    "Alpha branch exploration: verified `/model`, `/thinking`, `/session`, and `/compact` checkpoints.",
+                ),
+                ("GUI_BRANCH_BETA", _) => Plan::text(
+                    "Beta branch exploration: verified `/tree` active-branch switching and branch summarization.",
+                ),
                 _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
             }
         })
@@ -6375,6 +6650,139 @@ PY"#
         );
     }
 
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_tree_branch_summarization_and_slash_commands() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let workspace = live.root.path().join("operator-target");
+        std::fs::create_dir(&workspace).unwrap();
+        let marker = workspace.join("slash-marker.txt");
+        let background_pid = workspace.join("slash-background.pid");
+        let provider = Provider::start(scenario_handler(workspace.clone(), marker, background_pid));
+        provider.seed_profile_with(
+            &live.config,
+            200_000,
+            Some(json!({"enabled": false, "reserveTokens": 1024, "keepRecentTokens": 1})),
+        );
+        live.start_binary_env(&launcher_environment(&pi));
+
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let opened = driver.conversation();
+
+        // 1. `/model` discovers both synthetic loopback models (`operator-fixture` + `operator-fixture-fast`).
+        driver.submit("/model");
+        let model_screen = driver.screen();
+        assert!(
+            model_screen.contains("Harness default")
+                && model_screen.contains("fixture/operator-fixture")
+                && model_screen.contains("fixture/operator-fixture-fast"),
+            "installed pi `/model` picker must discover loopback catalog:\n{model_screen}"
+        );
+        driver.dashboard.key(KeyCode::Esc);
+
+        // 2. Seed Turn 1 (`GUI_SLASH_SEED`) and Turn 2 (`GUI_BRANCH_ALPHA`).
+        driver.submit("GUI_SLASH_SEED");
+        let seed_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&seed_history).contains("Seeded root turn"));
+        wait_stopped(&mut driver, opened.id);
+
+        driver.submit("GUI_BRANCH_ALPHA");
+        let alpha_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&alpha_history).contains("Alpha branch exploration"));
+        wait_stopped(&mut driver, opened.id);
+
+        // 3. `/compact` runs real manual compaction against installed `pi 0.87.1`.
+        driver.submit("/compact focus on protocol 88");
+        let compacted = driver.wait_history(opened.id, |history| {
+            history.conversation.worker_stopped
+                && history.messages.iter().any(|msg| {
+                    matches!(
+                        &msg.content,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary { summary, .. })
+                            if summary.contains("FIXTURE_COMPACTION_SUMMARY")
+                    )
+                })
+        });
+        for _ in 0..4 {
+            driver.pump();
+        }
+        let compacted_screen = driver.screen();
+        assert!(
+            compacted_screen.contains("Compacted from")
+                && compacted_screen.contains("FIXTURE_COMPACTION_SUMMARY"),
+            "expected `/compact` receipt in installed-pi Dashboard:\n{compacted_screen}"
+        );
+        let _ = compacted;
+
+        // 4. Open `/tree`, select user node `GUI_BRANCH_ALPHA`, choose `Summarize with custom prompt`,
+        //    and verify real `pi 0.87.1` `ctx.navigateTree(..., { summarize: true, customInstructions })`
+        //    appends a `branch_summary` entry, updates the feed, and restores `GUI_BRANCH_ALPHA` into the composer!
+        driver.submit("/tree");
+        let tree_screen = driver.screen();
+        assert!(
+            tree_screen.contains("GUI_SLASH_SEED")
+                && tree_screen.contains("GUI_BRANCH_ALPHA")
+                && tree_screen.contains("[compaction]:"),
+            "expected real session.jsonl entries in `/tree`:\n{tree_screen}"
+        );
+        driver.dashboard.key(KeyCode::Tab);
+        driver.dashboard.key(KeyCode::Tab);
+        driver
+            .dashboard
+            .event_action(Event::Paste("GUI_BRANCH_ALPHA".into()));
+        driver.dashboard.key(KeyCode::Enter);
+        assert!(
+            driver.screen().contains("Summarize branch? · /tree"),
+            "expected Summarize branch? modal on installed pi"
+        );
+        driver.dashboard.key(KeyCode::Down);
+        driver.dashboard.key(KeyCode::Down);
+        driver.dashboard.key(KeyCode::Enter);
+        driver
+            .dashboard
+            .event_action(Event::Paste("keep protocol notes".into()));
+        driver.dashboard.key(KeyCode::Enter);
+        driver.flush();
+
+        let summarized = driver.wait_history(opened.id, |history| {
+            history.conversation.worker_stopped && history.messages.iter().any(|msg| {
+                matches!(
+                    &msg.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary.contains("Summarized abandoned branch (keep protocol notes).")
+                )
+            })
+        });
+        for _ in 0..4 {
+            driver.pump();
+        }
+        let after_summary = driver.screen();
+        assert!(
+            after_summary.contains("Branch summary recorded")
+                && after_summary.contains("Summarized abandoned branch (keep protocol notes).")
+                && after_summary.contains("> GUI_BRANCH_ALPHA▏"),
+            "installed pi branch summary must render receipt and restore user prompt to composer:\n{after_summary}"
+        );
+
+        // 5. Submit Turn 4 (`GUI_BRANCH_BETA`) on the new summarized branch and verify the provider
+        //    receives `pi`'s native `<branch_summary>` message in the next model request!
+        driver.dashboard.ctrl('c');
+        driver.submit("GUI_BRANCH_BETA");
+        let beta_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&beta_history).contains("Beta branch exploration"));
+        wait_stopped(&mut driver, opened.id);
+
+        let last_request = provider.requests().pop().expect("beta request");
+        let payload = operator_provider::non_system_text(&last_request.body);
+        assert!(
+            payload.contains("Summarized abandoned branch (keep protocol notes)."),
+            "installed pi must include the branch_summary in subsequent branch context:\n{payload}"
+        );
+        let _ = summarized;
+    }
+
     // ------------------------------------------------------------ GUI provider
 
     /// The GUI smoke's scripted provider. It refuses anything but a
@@ -6410,8 +6818,10 @@ PY"#
             .is_some_and(|value| !value.is_empty());
         let coordinator = std::env::var_os("OVRCR_OPERATOR_GUI_COORDINATOR")
             .is_some_and(|value| !value.is_empty());
+        let slash =
+            std::env::var_os("OVRCR_OPERATOR_GUI_SLASH").is_some_and(|value| !value.is_empty());
         assert!(
-            !(compaction && coordinator),
+            usize::from(compaction) + usize::from(coordinator) + usize::from(slash) <= 1,
             "run one GUI provider mode at a time"
         );
         let provider = Provider::start(scenario_handler_mode(
@@ -6429,6 +6839,12 @@ PY"#
                 &root,
                 COMPACTION_CONTEXT_WINDOW,
                 Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
+            );
+        } else if slash {
+            provider.seed_profile_with(
+                &root,
+                200_000,
+                Some(json!({"enabled": false, "reserveTokens": 1024, "keepRecentTokens": 1})),
             );
         } else {
             provider.seed_profile(&root);

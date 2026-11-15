@@ -463,6 +463,19 @@ fn operator_worker_fixture() {
             );
             vec![OperatorWorkerEvent::CompactionStarted]
         }
+        OperatorWorkerSubmission::BranchSummary {
+            target_entry_id, ..
+        } => {
+            assert!(!target_entry_id.is_empty());
+            assert!(
+                start.checkpoint_turn.is_some(),
+                "branch summary must always resume a checkpoint"
+            );
+            vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+                provider: "fixture".into(),
+                id: "offline".into(),
+            })]
+        }
     };
     assert!(
         start.model.is_none(),
@@ -506,8 +519,12 @@ fn operator_worker_fixture() {
     fs::rename(ready.with_extension("tmp"), &ready).unwrap();
     let complete = root.join(format!("complete-{}", identity.conversation.0));
     let complete_leased = root.join(format!("complete-leased-{}", identity.conversation.0));
+    let fail = root.join(format!("fail-{}", identity.conversation.0));
     wait_until(|| {
-        complete.exists() || complete_leased.exists() || abort_requested.load(Ordering::Acquire)
+        complete.exists()
+            || complete_leased.exists()
+            || fail.exists()
+            || abort_requested.load(Ordering::Acquire)
     });
     if abort_requested.load(Ordering::Acquire) {
         // Model the native worker's soft-stop handshake: acknowledge its exact
@@ -536,19 +553,60 @@ fn operator_worker_fixture() {
         );
         return;
     }
-    let leased = complete_leased.exists();
-    assert!(matches!(
-        worker_exchange(
+    if fail.exists() {
+        assert!(matches!(
+            worker_exchange(
+                &mut stream,
+                batch(
+                    2,
+                    vec![OperatorWorkerEvent::Failed(
+                        "Operator request failed; inspect the retained session before retrying"
+                            .into()
+                    )],
+                )
+            ),
+            Response::OperatorExchange(_)
+        ));
+        fs::write(
+            root.join(format!("acked-{}", identity.conversation.0)),
+            b"ack",
+        )
+        .unwrap();
+        wait_until(|| {
+            root.join(format!("retire-{}", identity.conversation.0))
+                .exists()
+        });
+        let _ = worker_exchange(
             &mut stream,
-            batch(
-                2,
-                vec![OperatorWorkerEvent::Completed {
-                    leased,
-                    pi_first_entry_id: None,
-                    pi_leaf_entry_id: None,
-                }],
-            )
-        ),
+            Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::Retire { identity },
+            }),
+        );
+        loop {
+            thread::park_timeout(Duration::from_secs(1));
+        }
+    }
+    let leased = complete_leased.exists();
+    let final_events = match &start.submission {
+        OperatorWorkerSubmission::BranchSummary { .. } => vec![
+            OperatorWorkerEvent::BranchSummary {
+                summary: "Summary of abandoned branch.".into(),
+            },
+            OperatorWorkerEvent::Completed {
+                leased,
+                pi_first_entry_id: Some("bs1".into()),
+                pi_leaf_entry_id: Some("bs1".into()),
+            },
+        ],
+        _ => vec![OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id: None,
+            pi_leaf_entry_id: None,
+        }],
+    };
+    assert!(matches!(
+        worker_exchange(&mut stream, batch(2, final_events)),
         Response::OperatorExchange(_)
     ));
     fs::write(
@@ -2167,6 +2225,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
             conversation: c.id,
             expected_run: c.run,
             target_entry_id: "u1".into(),
+            summarize: None,
         })),
         Response::Error {
             code: ErrorCode::Conflict,
@@ -2259,6 +2318,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
         conversation: c.id,
         expected_run: leased_summary.run,
         target_entry_id: "u1".into(),
+        summarize: None,
     }))
     else {
         panic!("expected leased NavigateTree refusal");
@@ -2308,6 +2368,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
             conversation: c.id,
             expected_run: t2.identity.run,
             target_entry_id: "a1".into(),
+            summarize: None,
         })),
         Response::Error {
             code: ErrorCode::Conflict,
@@ -2364,11 +2425,13 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
             conversation: c.id,
             expected_run: idle.run,
             target_entry_id: "a2a".into(),
+            summarize: None,
         }))
     else {
         panic!("expected noop TreeNavigated");
     };
     assert!(noop_nav.noop);
+    assert_eq!(noop_nav.submitted, None);
     assert_eq!(noop_nav.current_leaf_id.as_deref(), Some("a2a"));
     assert_eq!(noop_nav.editor_text, None);
 
@@ -2378,11 +2441,13 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
             conversation: c.id,
             expected_run: idle.run,
             target_entry_id: "u2a".into(),
+            summarize: None,
         }))
     else {
         panic!("expected user rewind TreeNavigated");
     };
     assert!(!rewind_nav.noop);
+    assert_eq!(rewind_nav.submitted, None);
     assert_eq!(rewind_nav.current_leaf_id.as_deref(), Some("a1"));
     assert_eq!(rewind_nav.editor_text.as_deref(), Some("branch A prompt"));
     assert_eq!(rewind_nav.restored_context, Some(ctx2a));
@@ -2408,12 +2473,302 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
             conversation: c.id,
             expected_run: idle.run,
             target_entry_id: "a2a".into(),
+            summarize: None,
         }))
     else {
         panic!("expected forward TreeNavigated");
     };
     assert!(!forward_nav.noop);
+    assert_eq!(forward_nav.submitted, None);
     assert_eq!(forward_nav.current_leaf_id.as_deref(), Some("a2a"));
     assert_eq!(forward_nav.editor_text, None);
     assert_eq!(live.history(&c).messages.len(), 4);
+}
+
+#[test]
+fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error() {
+    use ovrcr_protocol::operator::OperatorBranchSummaryRequest;
+
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let registry_path = live.state.registry_path.clone();
+    let workdir = registry_path.join("operator-workdir");
+    fs::create_dir_all(&workdir).unwrap();
+    fs::set_permissions(&workdir, fs::Permissions::from_mode(0o700)).unwrap();
+    let write_checkpoint = |turn: OperatorTurnId, entries: &[serde_json::Value]| {
+        let dir = crate::operator_session_file::checkpoint_dir(&registry_path, turn);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let file = dir.join("session.jsonl");
+        let mut body = format!(
+            "{}\n",
+            serde_json::to_string(&serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": format!("operator-{}", c.id.0),
+                "cwd": workdir.to_str().unwrap(),
+            }))
+            .unwrap()
+        );
+        for entry in entries {
+            body.push_str(&serde_json::to_string(entry).unwrap());
+            body.push('\n');
+        }
+        fs::write(&file, body).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let root_path = live.root.path().to_path_buf();
+    let cleanup_worker_flags = |id: u64| {
+        for prefix in [
+            "acked",
+            "retire",
+            "complete",
+            "complete-leased",
+            "fail",
+            "ready",
+        ] {
+            let _ = fs::remove_file(root_path.join(format!("{prefix}-{id}")));
+        }
+    };
+
+    // Turn 1 (`u1 -> a1`) and Turn 2 (`u2a -> a2a`).
+    let Response::Operator(OperatorResponse::Submitted(t1)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: c.run,
+            text: "root prompt".into(),
+            context: OperatorContext::default(),
+        }))
+    else {
+        panic!("submit t1");
+    };
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let after_t1 = live.current().unwrap();
+    let ctx2a = OperatorContext {
+        project: Some("ovrcr".into()),
+        workspace: Some("branch-a".into()),
+        cwd: Some(live.root.path().to_path_buf()),
+        ..OperatorContext::default()
+    };
+    let Response::Operator(OperatorResponse::Submitted(t2)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: after_t1.run,
+            text: "branch A prompt".into(),
+            context: ctx2a.clone(),
+        }))
+    else {
+        panic!("submit t2");
+    };
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let entries = vec![
+        serde_json::json!({
+            "type": "message",
+            "id": "u1",
+            "parentId": null,
+            "message": { "role": "user", "content": "wrapped root prompt" }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "a1",
+            "parentId": "u1",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "root answer" }] }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "u2a",
+            "parentId": "a1",
+            "message": { "role": "user", "content": "wrapped branch A prompt" }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "a2a",
+            "parentId": "u2a",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "branch A answer" }] }
+        }),
+    ];
+    write_checkpoint(t2.identity.turn, &entries);
+    {
+        let retained = live.state.retained.lock();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u1', pi_leaf_entry_id='a1' WHERE id=?1",
+                [t1.identity.turn.0 as i64],
+            )
+            .unwrap();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u2a', pi_leaf_entry_id='a2a' WHERE id=?1",
+                [t2.identity.turn.0 as i64],
+            )
+            .unwrap();
+    }
+
+    // 1. Summarizing the already-active leaf `a2a` refuses cleanly (zero abandoned entries).
+    let idle = live.current().unwrap();
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "a2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    // 2. Summarize while rewinding `u2a`, then Stop mid-summarization -> preserves `t2` active tip & checkpoint!
+    let Response::Operator(OperatorResponse::TreeNavigated(stop_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("preserve findings".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated with submitted turn");
+    };
+    let stop_turn = stop_nav
+        .submitted
+        .expect("expected submitted BranchSummary turn");
+    assert_eq!(stop_nav.editor_text.as_deref(), Some("branch A prompt"));
+    assert_eq!(stop_nav.restored_context, Some(ctx2a.clone()));
+    let _ = live.ready(&c);
+
+    // While running, live history includes `t1`, `t2`, and the running BranchSummary opener.
+    let running_history = live.history(&c);
+    assert!(running_history.messages.iter().any(|m| matches!(
+        &m.content,
+        OperatorMessageContent::BranchSummary {
+            target_entry_id,
+            instructions: Some(inst),
+        } if target_entry_id == "u2a" && inst == "preserve findings"
+    )));
+
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: stop_turn.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let Response::Operator(OperatorResponse::SessionInfo(after_stop_info)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after Stop");
+    };
+    assert_eq!(after_stop_info.checkpoint_turn, Some(t2.identity.turn));
+    assert_eq!(after_stop_info.active_tip_turn, Some(t2.identity.turn));
+
+    // 3. Summarize while rewinding `u2a`, then Fail -> preserves `t2` active tip & checkpoint!
+    let after_stop = live.current().unwrap();
+    let Response::Operator(OperatorResponse::TreeNavigated(fail_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: after_stop.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        }))
+    else {
+        panic!("expected TreeNavigated for failing BranchSummary");
+    };
+    assert!(fail_nav.submitted.is_some());
+    let _ = live.ready(&c);
+    live.command(&c, "fail");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let Response::Operator(OperatorResponse::SessionInfo(after_fail_info)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after Fail");
+    };
+    assert_eq!(after_fail_info.checkpoint_turn, Some(t2.identity.turn));
+    assert_eq!(after_fail_info.active_tip_turn, Some(t2.identity.turn));
+
+    // 4. Summarize while rewinding `u2a`, then Complete -> advances `active_tip_turn` to the
+    // BranchSummary turn parented at `t1` (`u1 -> a1`), hiding `t2` (`u2a -> a2a`) from active feed!
+    let after_fail = live.current().unwrap();
+    let Response::Operator(OperatorResponse::TreeNavigated(ok_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: after_fail.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on root cause".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated for completing BranchSummary");
+    };
+    let ok_turn = ok_nav.submitted.expect("expected submitted turn");
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let mut summary_entries = entries.clone();
+    summary_entries.push(serde_json::json!({
+        "type": "branch_summary",
+        "id": "bs1",
+        "parentId": "a1",
+        "fromId": "a2a",
+        "summary": "Summary of abandoned branch."
+    }));
+    write_checkpoint(ok_turn.identity.turn, &summary_entries);
+
+    let completed_history = live.history(&c);
+    let turns_in_feed: Vec<OperatorTurnId> =
+        completed_history.messages.iter().map(|m| m.turn).collect();
+    assert!(turns_in_feed.contains(&t1.identity.turn));
+    assert!(!turns_in_feed.contains(&t2.identity.turn));
+    assert!(turns_in_feed.contains(&ok_turn.identity.turn));
+    assert!(completed_history.messages.iter().any(|m| matches!(
+        &m.content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+            if summary == "Summary of abandoned branch."
+    )));
 }

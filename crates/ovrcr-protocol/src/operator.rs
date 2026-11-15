@@ -313,6 +313,11 @@ impl OperatorSessionTree {
         Ok(())
     }
 }
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorBranchSummaryRequest {
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorTreeNavigation {
     pub conversation: OperatorConversationSummary,
@@ -320,6 +325,8 @@ pub struct OperatorTreeNavigation {
     pub noop: bool,
     pub editor_text: Option<String>,
     pub restored_context: Option<OperatorContext>,
+    #[serde(default)]
+    pub submitted: Option<OperatorTurn>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -363,6 +370,10 @@ pub enum OperatorWorkerEvent {
     CompactionSummary {
         summary: String,
         tokens_before: u64,
+    },
+    /// Durable receipt emitted when `/tree` branch summarization finishes appending `branch_summary`.
+    BranchSummary {
+        summary: String,
     },
 }
 impl OperatorWorkerEvent {
@@ -409,6 +420,12 @@ impl OperatorEventBatch {
                 OperatorWorkerEvent::CompactionSummary { summary, .. } => {
                     if summary.len() > MAX_OPERATOR_TEXT_BYTES || summary.contains('\0') {
                         return Err("invalid operator compaction summary".into());
+                    }
+                    bytes += summary.len();
+                }
+                OperatorWorkerEvent::BranchSummary { summary } => {
+                    if summary.len() > MAX_OPERATOR_TEXT_BYTES || summary.contains('\0') {
+                        return Err("invalid operator branch summary".into());
                     }
                     bytes += summary.len();
                 }
@@ -490,6 +507,12 @@ pub enum OperatorMessageContent {
     },
     /// User-initiated `/compact` turn opener with optional summarization instructions.
     Compaction {
+        instructions: Option<String>,
+    },
+    /// User-initiated `/tree` branch-summarization turn opener targeting `target_entry_id`.
+    BranchSummary {
+        target_entry_id: String,
+        #[serde(default)]
         instructions: Option<String>,
     },
 }
@@ -583,11 +606,14 @@ pub enum OperatorRequest {
     Tree {
         conversation: OperatorConversationId,
     },
-    /// Navigates the active leaf to `target_entry_id` (zero-token switch or user-prompt rewind).
+    /// Navigates the active leaf to `target_entry_id` (zero-token switch, user-prompt rewind,
+    /// or managed branch-summarization turn when `summarize` is present).
     NavigateTree {
         conversation: OperatorConversationId,
         expected_run: SessionRunId,
         target_entry_id: String,
+        #[serde(default)]
+        summarize: Option<OperatorBranchSummaryRequest>,
     },
 }
 impl OperatorRequest {
@@ -607,12 +633,22 @@ impl OperatorRequest {
             Self::NavigateTree {
                 conversation,
                 target_entry_id,
+                summarize,
                 ..
             } => {
                 if conversation.0 == 0 {
                     return Err("zero conversation identity".into());
                 }
-                validate_token(target_entry_id)
+                validate_token(target_entry_id)?;
+                if let Some(summary) = summarize
+                    && let Some(instructions) = &summary.instructions
+                {
+                    validate_text(instructions)?;
+                    if instructions.trim().is_empty() {
+                        return Err("empty branch summary instructions".into());
+                    }
+                }
+                Ok(())
             }
             Self::Submit {
                 conversation,
@@ -695,7 +731,7 @@ impl Default for OperatorSettings {
     }
 }
 
-/// Worker turn payload generalized across prompt, manual compaction, and future branch summary turns.
+/// Worker turn payload generalized across prompt, manual compaction, and branch summary turns.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerSubmission {
     Prompt {
@@ -705,6 +741,10 @@ pub enum OperatorWorkerSubmission {
         async_wakeup: bool,
     },
     Compact {
+        instructions: Option<String>,
+    },
+    BranchSummary {
+        target_entry_id: String,
         instructions: Option<String>,
     },
 }
@@ -1272,25 +1312,49 @@ mod tests {
                     conversation: OperatorConversationId(1),
                     expected_run: SessionRunId(1),
                     target_entry_id: invalid.into(),
+                    summarize: None,
                 }
                 .validate()
                 .is_err()
             );
         }
-        let nav_req = crate::Request::Operator(OperatorRequest::NavigateTree {
-            conversation: OperatorConversationId(1),
-            expected_run: SessionRunId(2),
-            target_entry_id: "entry-user-2".into(),
-        });
-        if let crate::Request::Operator(inner) = &nav_req {
-            assert!(inner.validate().is_ok());
+        for invalid_instructions in ["", "   ", "bad\0instructions"] {
+            assert!(
+                OperatorRequest::NavigateTree {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(1),
+                    target_entry_id: "entry-user-2".into(),
+                    summarize: Some(OperatorBranchSummaryRequest {
+                        instructions: Some(invalid_instructions.into()),
+                    }),
+                }
+                .validate()
+                .is_err()
+            );
         }
-        let mut req_bytes = Vec::new();
-        crate::write_frame(&mut req_bytes, &nav_req).unwrap();
-        assert_eq!(
-            crate::read_frame::<crate::Request>(&mut req_bytes.as_slice()).unwrap(),
-            nav_req
-        );
+        for summarize in [
+            None,
+            Some(OperatorBranchSummaryRequest { instructions: None }),
+            Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on failing tests".into()),
+            }),
+        ] {
+            let nav_req = crate::Request::Operator(OperatorRequest::NavigateTree {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(2),
+                target_entry_id: "entry-user-2".into(),
+                summarize,
+            });
+            if let crate::Request::Operator(inner) = &nav_req {
+                assert!(inner.validate().is_ok());
+            }
+            let mut req_bytes = Vec::new();
+            crate::write_frame(&mut req_bytes, &nav_req).unwrap();
+            assert_eq!(
+                crate::read_frame::<crate::Request>(&mut req_bytes.as_slice()).unwrap(),
+                nav_req
+            );
+        }
 
         let tree = OperatorSessionTree {
             pi_session_id: Some("operator-1".into()),
@@ -1340,6 +1404,16 @@ mod tests {
                         cwd: Some("/work".into()),
                         session: None,
                         run: None,
+                    }),
+                    submitted: Some(OperatorTurn {
+                        identity: OperatorTurnIdentity {
+                            conversation: OperatorConversationId(1),
+                            turn: OperatorTurnId(3),
+                            session: SessionId(3),
+                            run: SessionRunId(2),
+                        },
+                        state: OperatorTurnState::Running,
+                        sequence: 0,
                     }),
                 },
             ))),

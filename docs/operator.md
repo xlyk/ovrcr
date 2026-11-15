@@ -194,8 +194,9 @@ It shows `Sending` while submission acceptance is pending, then `Responding` whi
 the turn is running, including quiet periods. `Waiting for <tool> result` (or a
 count) means a recorded call has no matching result in the current turn's
 caught-up history; it does not certify that an operation is still executing.
-While pi replaces old context automatically, it says `Compacting context…` and
-clears when the next model request resumes. Paging history falls back to
+While pi replaces old context automatically or runs `/compact`, it says
+`Compacting context…`; while `/tree` generates a branch summary, it says
+`Summarizing branch…`. Paging history falls back to
 `Responding`. These labels scroll away with older history and return when you
 scroll to the tail. Stopping has its own label, and `Stop unconfirmed` is static
 until stop proof arrives.
@@ -263,7 +264,27 @@ message's target. The agent's working directory is fixed for the life of the
 conversation and is shown separately in a request's expanded target, so it
 never silently follows the Dashboard selection.
 
-## Model, compaction and checkpoints
+## Slash commands, model, compaction and checkpoints
+
+Typing a single-segment `/command` at the very start of the full Operator
+composer opens a live slash-command menu above the input rule (`Up`/`Down`
+select, `Tab` autocomplete, `Enter` run, `Esc` dismiss menu only while keeping
+the draft). Both the full composer and Quick message (`Ctrl-o`) support seven
+built-in slash commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`,
+`/compact`, `/tree`). Multi-segment Unix paths such as `/etc/hosts` or drafts
+with leading whitespace (` /copy`) submit as normal user prompts, whereas an
+unknown single-segment `/command` is rejected locally with the draft preserved.
+In Quick message, `/copy`, `/thinking <level>`, `/model default`, exact
+`/model <provider/id>` matches and `/new` complete directly; `/session`,
+`/compact`, `/tree`, bare `/thinking`, bare `/model` and filtered
+`/model <query>` transition into the full Operator view.
+
+- `/copy` copies the latest visible assistant reply on the active branch as raw
+  Markdown (OSC 52 clipboard, capped at 64 KiB) without starting a worker, or
+  reports locally when no assistant reply exists yet.
+- `/thinking` opens the reasoning picker (matching `Ctrl-t`), and
+  `/thinking <level>` saves `default`, `off`, `minimal`, `low`, `medium`,
+  `high`, `xhigh` or `max` immediately.
 
 Change the model with `/model` in Operator or Quick message (`Ctrl-o`), in Settings,
 or in the instance's `dashboard.toml`:
@@ -322,7 +343,25 @@ and unleased. Selecting a user entry rewinds the active branch to right before
 that prompt and restores the unwrapped prompt text and captured
 workspace/session context into the composer; selecting an assistant, compaction
 or branch-summary entry positions the active leaf there with an empty composer
-while preserving sibling branches in SQLite and `session.jsonl`. After each
+while preserving sibling branches in SQLite and `session.jsonl`. Whenever a
+selected target switches away from a branch whose active leaf has entries past
+the common ancestor with the target branch point, `/tree` opens **Summarize
+branch?** with three choices:
+
+- **No summary** — switches or rewinds immediately without spawning `pi` or
+  spending tokens;
+- **Summarize** — runs a managed `Summarizing branch…` turn through pi's branch
+  summarizer, records a `[branch summary]` checkpoint and feed receipt on the
+  target branch (restoring the unwrapped user prompt and captured context into
+  the composer when a user entry was targeted), and keeps that summary in
+  context for subsequent turns on the branch;
+- **Summarize with custom prompt** — opens an inline custom-instructions input
+  before running the branch summary (`Esc` returns to **Summarize branch?**, and
+  `Esc` there returns to `/tree` with your selected node, filter and search
+  intact).
+
+Pressing **Stop** (`Ctrl-x`) during branch summarization cancels the summary and
+preserves the pre-switch active branch and checkpoint. After each
 successful
 turn, OVRCR keeps that turn's completed pi session as the context checkpoint for
 the next turn. A failed, interrupted or uncertain turn keeps its partial journal
