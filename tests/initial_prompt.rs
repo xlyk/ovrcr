@@ -272,7 +272,7 @@ fn install_fake_agy(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_AGY_CATALOG__' >> \"${AGY_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${AGY_CAPTURE_ENV}\"; done\n    printf 'Fetching available models...\\n' >&2\n    cat \"${AGY_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_AGY_LAUNCH_MARKER}' >> \"${AGY_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${AGY_CAPTURE_ENV}\"; done\nexit 0\n"
+            "#!/bin/sh\nif [ \"$1\" = \"-p\" ] && [ \"$2\" = \"/usage\" ]; then\n  printf '%s\\n' '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.8,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}'\n  exit 0\nfi\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_AGY_CATALOG__' >> \"${AGY_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${AGY_CAPTURE_ENV}\"; done\n    printf 'Fetching available models...\\n' >&2\n    cat \"${AGY_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_AGY_LAUNCH_MARKER}' >> \"${AGY_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${AGY_CAPTURE_ENV}\"; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -964,6 +964,41 @@ fn agy_model_catalog_and_initial_prompt_use_detected_interactive_grammar() {
     assert_public_stores_exclude(&live, "literal prompt text");
 
     drop(dashboard);
+    assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+    live.join();
+}
+
+#[test]
+fn agy_background_quota_check_does_not_pollute_interactive_argv_capture() {
+    let live = Live::idle().bounded();
+    let (fake_agy, capture, catalog) = install_fake_agy(&live);
+    write_settings(
+        &live,
+        "agents = []\n[quota]\nenabled = true\n[quota.codex]\ncommand = '/no-codex-fixture'\n[quota.grok]\ncommand = '/no-grok-fixture'\n",
+    );
+    start_server_with_agy(&live, &fake_agy, &capture, &catalog);
+
+    let mut conn = dashboard(&live);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "Agy background quota check did not reach Current"
+        );
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snap)) =
+            read_frame::<ServerMessage>(&mut conn).unwrap()
+            && snap.agy.state == ovrcr::protocol::QuotaState::Current
+        {
+            break;
+        }
+    }
+    assert!(
+        !capture.exists(),
+        "background agy -p /usage wrote into interactive launch argv capture: {}",
+        std::fs::read_to_string(&capture).unwrap_or_default()
+    );
+
+    drop(conn);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
     live.join();
 }

@@ -12,7 +12,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, atomic::Ordering, mpsc::TrySendError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -50,12 +50,23 @@ pub(super) struct Refresh {
     pub(super) claude_probe_due: bool,
     /// Latest Claude account read (`GET /api/oauth/usage`). Not a status-line sample.
     pub(super) claude_account: Option<ProviderQuota>,
+    /// Latest Antigravity account read (`agy -p /usage --output-format json`).
+    pub(super) agy_account: Option<ProviderQuota>,
     /// Latest probe signal. The allowance merge decides whether it becomes the row.
     pub(super) claude_probe: Option<super::claude_allowance::ProbeSignal>,
 }
 
+pub struct AgyQuotaUpdate {
+    pub(super) config: NativeCommand,
+    pub(super) native: NativeQuotaUpdate,
+}
+
 pub(super) fn take_cursor_due(state: &ServerState) -> bool {
     std::mem::take(&mut state.quota_refresh.lock().unwrap().due[2])
+}
+
+pub(super) fn take_agy_due(state: &ServerState) -> bool {
+    std::mem::take(&mut state.quota_refresh.lock().unwrap().due[3])
 }
 
 fn slot(provider: QuotaProvider) -> Option<usize> {
@@ -221,6 +232,9 @@ pub(super) fn sync_consent(state: &ServerState) -> bool {
         }
         transitions
     };
+    if !enabled {
+        state.quota_refresh.lock().unwrap().agy_account = None;
+    }
     for (provider, before_state, before_reason, after_state, after_reason) in transitions {
         note_transition(
             state,
@@ -1136,6 +1150,917 @@ fn require_usage(windows: Vec<QuotaWindow>) -> Result<Vec<QuotaWindow>> {
     }
 }
 
+const AGY_MAX_RESET_UNIX_MS: u64 = 4_102_444_800_000; // 2100-01-01T00:00:00Z
+const AGY_MAX_STDERR: usize = 64 * 1024;
+
+const AGY_STDERR_LOGIN_MARKERS: [&str; 7] = [
+    "authentication required",
+    "please visit the url to log in",
+    "select login method",
+    "you are not logged into antigravity",
+    "login required",
+    "please log in",
+    "please sign in",
+];
+
+pub(super) fn apply_agy(state: &ServerState, update: AgyQuotaUpdate) {
+    let current = state.quota_settings();
+    if current.enabled && current.agy == update.config {
+        apply(state, update.native);
+        let agy = state.quotas.lock().unwrap().agy.clone();
+        state.quota_refresh.lock().unwrap().agy_account = Some(agy);
+    }
+}
+
+pub(super) fn run_agy_quota(state: Arc<ServerState>) {
+    let mut config: Option<(bool, NativeCommand)> = None;
+    let mut generation = 1u64;
+    let mut due = Instant::now();
+    let mut hold: Option<Instant> = None;
+    let mut failures = 0u32;
+    let mut pending: Option<Box<AgyQuotaUpdate>> = None;
+    while !state.shutdown.load(Ordering::Acquire) && !state.stopping.load(Ordering::Acquire) {
+        let settings = state.quota_settings();
+        let key = (settings.enabled, settings.agy.clone());
+        if config.as_ref() != Some(&key) {
+            let had_previous = config.is_some();
+            config = Some(key.clone());
+            if had_previous {
+                generation = generation.saturating_add(1);
+            }
+            failures = 0;
+            due = Instant::now();
+            hold = None;
+            pending = None;
+            if had_previous && key.0 {
+                pending = Some(Box::new(AgyQuotaUpdate {
+                    config: key.1.clone(),
+                    native: NativeQuotaUpdate {
+                        provider: QuotaProvider::Agy,
+                        generation,
+                        report: QuotaReport {
+                            windows: None,
+                            state: QuotaState::Checking,
+                        },
+                        checked: false,
+                        reason: None,
+                        next_check_unix_ms: None,
+                    },
+                }));
+            }
+        }
+        if let Some(update) = pending.take() {
+            match state.dispatch.try_send(DispatchMessage::AgyQuota(update)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(DispatchMessage::AgyQuota(update))) => {
+                    pending = Some(update);
+                    std::thread::park_timeout(Duration::from_millis(100));
+                    continue;
+                }
+                Err(_) => break,
+            }
+        }
+        if !key.0 || !state.dashboard.is_claimed() {
+            std::thread::park_timeout(Duration::from_millis(100));
+            continue;
+        }
+        if take_agy_due(&state) && hold.is_none_or(|until| Instant::now() >= until) {
+            due = Instant::now();
+        }
+        if Instant::now() < due {
+            std::thread::park_timeout(Duration::from_millis(100));
+            continue;
+        }
+        let result = read_agy_allowance(&state, &key.1);
+        if state.shutdown.load(Ordering::Acquire) || state.stopping.load(Ordering::Acquire) {
+            break;
+        }
+        let (report, checked, reason, delay) = match result {
+            Ok(windows) => {
+                failures = 0;
+                hold = None;
+                (
+                    QuotaReport {
+                        windows: Some(windows),
+                        state: QuotaState::Current,
+                    },
+                    true,
+                    None,
+                    POLL,
+                )
+            }
+            Err(failure) if failure.interrupted => {
+                continue;
+            }
+            Err(failure) => {
+                failures = failures.saturating_add(1);
+                let delay = backoff(failures, failure.deterministic, failure.retry_after);
+                hold = failure.retry_after.map(|_| Instant::now() + delay);
+                (
+                    QuotaReport {
+                        windows: None,
+                        state: failure.state,
+                    },
+                    false,
+                    Some(failure.reason),
+                    delay,
+                )
+            }
+        };
+        let _ = take_agy_due(&state);
+        due = Instant::now() + delay;
+        let next_check = delay.as_millis() as u64;
+        pending = Some(Box::new(AgyQuotaUpdate {
+            config: key.1,
+            native: NativeQuotaUpdate {
+                provider: QuotaProvider::Agy,
+                generation,
+                report,
+                checked,
+                reason,
+                next_check_unix_ms: Some(now_ms().saturating_add(next_check)),
+            },
+        }));
+    }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    CString::new(path.as_os_str().as_bytes())
+        .is_ok_and(|c_path| unsafe { libc::access(c_path.as_ptr(), libc::X_OK) == 0 })
+}
+
+fn resolve_agy_executable(program: &NativeCommand) -> Result<PathBuf> {
+    if program.command.as_os_str().is_empty() {
+        return Err(Failure {
+            deterministic: true,
+            ..Failure::unavailable("agy not found at the configured path")
+        });
+    }
+    if program
+        .command
+        .as_os_str()
+        .as_encoded_bytes()
+        .contains(&b'/')
+    {
+        let candidate = if program.command.is_absolute() {
+            program.command.clone()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(&program.command))
+                .unwrap_or_else(|_| program.command.clone())
+        };
+        return match std::fs::metadata(&candidate) {
+            Ok(meta) if !meta.is_dir() && is_executable_file(&candidate) => Ok(candidate),
+            Ok(_) => Err(Failure {
+                deterministic: true,
+                ..Failure::unavailable("agy could not start")
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(Failure {
+                deterministic: true,
+                ..Failure::unavailable("agy not found at the configured path")
+            }),
+            Err(_) => Err(Failure {
+                deterministic: true,
+                ..Failure::unavailable("agy could not start")
+            }),
+        };
+    }
+    let mut saw_non_executable = false;
+    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        let candidate = dir.join(&program.command);
+        let Ok(meta) = std::fs::metadata(&candidate) else {
+            continue;
+        };
+        if meta.is_dir() {
+            continue;
+        }
+        if is_executable_file(&candidate) {
+            return Ok(if candidate.is_absolute() {
+                candidate
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&candidate))
+                    .unwrap_or(candidate)
+            });
+        }
+        saw_non_executable = true;
+    }
+    Err(Failure {
+        deterministic: true,
+        ..Failure::unavailable(if saw_non_executable {
+            "agy could not start"
+        } else {
+            "agy not found on PATH"
+        })
+    })
+}
+
+struct AgyChild {
+    child: Child,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    reaped: Option<ExitStatus>,
+    _workspace: tempfile::TempDir,
+}
+
+impl AgyChild {
+    fn spawn(program: &NativeCommand) -> Result<Self> {
+        let resolved = resolve_agy_executable(program)?;
+        let workspace = tempfile::tempdir()
+            .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+        let bin_dir = workspace.path().join("bin");
+        std::fs::create_dir(&bin_dir)
+            .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+        let open_stub = bin_dir.join("open");
+        let xdg_open_stub = bin_dir.join("xdg-open");
+        let system_false = [Path::new("/usr/bin/false"), Path::new("/bin/false")]
+            .into_iter()
+            .find(|candidate| is_executable_file(candidate));
+        for stub in [&open_stub, &xdg_open_stub] {
+            if let Some(target) = system_false {
+                std::os::unix::fs::symlink(target, stub)
+                    .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+            } else {
+                std::fs::write(stub, b"#!/bin/sh\nexit 1\n")
+                    .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+                std::fs::set_permissions(stub, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+            }
+        }
+        let child_path = std::env::join_paths(std::iter::once(bin_dir).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .map_err(|_| Failure::unavailable("could not create a native workspace"))?;
+        let mut command = Command::new(&resolved);
+        command
+            .args([
+                "-p",
+                "/usage",
+                "--output-format",
+                "json",
+                "--settings",
+                "{}",
+            ])
+            .current_dir(workspace.path())
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
+            .env("BROWSER", &open_stub)
+            .env("PATH", child_path);
+        for name in [
+            "OVRCR_HOOK_SOCKET",
+            "OVRCR_HOOK_TOKEN",
+            "OVRCR_SESSION_ID",
+            "OVRCR_SOCKET",
+            "OVRCR_CONFIG",
+        ] {
+            command.env_remove(name);
+        }
+        for (name, _) in std::env::vars_os() {
+            let text = name.to_string_lossy();
+            if text.starts_with("OVRCR_HOOK_") || text.starts_with("OVRCR_AGENT_") {
+                command.env_remove(name);
+            }
+        }
+        if let Some(home) = &program.home {
+            command.env("HOME", home).env("SSH_TTY", "ovrcr-quota");
+        }
+        let mut child = command.spawn().map_err(|error| {
+            let reason = if error.kind() != std::io::ErrorKind::NotFound {
+                "agy could not start"
+            } else if program
+                .command
+                .as_os_str()
+                .as_encoded_bytes()
+                .contains(&b'/')
+            {
+                "agy not found at the configured path"
+            } else {
+                "agy not found on PATH"
+            };
+            Failure {
+                deterministic: true,
+                ..Failure::unavailable(reason)
+            }
+        })?;
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let runner = Self {
+            child,
+            stdout,
+            stderr,
+            reaped: None,
+            _workspace: workspace,
+        };
+        for fd in [runner.stdout.as_raw_fd(), runner.stderr.as_raw_fd()] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(Failure::unavailable("agy could not start"));
+            }
+        }
+        Ok(runner)
+    }
+
+    fn terminate_group(pgid: libc::pid_t) {
+        if unsafe { libc::kill(-pgid, 0) } != 0 {
+            return;
+        }
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+        let grace = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < grace {
+            if unsafe { libc::kill(-pgid, 0) } != 0 {
+                return;
+            }
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+
+    fn wait_status(
+        &mut self,
+        state: &ServerState,
+        program: &NativeCommand,
+        deadline: Instant,
+    ) -> Result<ExitStatus> {
+        let pgid = self.child.id() as libc::pid_t;
+        loop {
+            if state.stopping.load(Ordering::Acquire)
+                || state.shutdown.load(Ordering::Acquire)
+                || !state.dashboard.is_claimed()
+            {
+                return Err(interrupted());
+            }
+            let current = state.quota_settings();
+            if !current.enabled || current.agy != *program {
+                return Err(interrupted());
+            }
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.reaped = Some(status);
+                    Self::terminate_group(pgid);
+                    return Ok(status);
+                }
+                Ok(None) => {}
+                Err(_) => return Err(Failure::unavailable("agy output failed")),
+            }
+            if Instant::now() >= deadline {
+                return Err(timed_out());
+            }
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for AgyChild {
+    fn drop(&mut self) {
+        if self.reaped.is_some() {
+            return;
+        }
+        let pgid = self.child.id() as libc::pid_t;
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+        std::thread::park_timeout(Duration::from_millis(100));
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.reaped = Some(status);
+                    return;
+                }
+                Err(_) => break,
+                _ => std::thread::park_timeout(Duration::from_millis(10)),
+            }
+        }
+        eprintln!("native agy quota process cleanup remains unverified");
+    }
+}
+
+fn contains_agy_stderr_login_marker(bytes: &[u8]) -> bool {
+    let lower = String::from_utf8_lossy(bytes).to_ascii_lowercase();
+    AGY_STDERR_LOGIN_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn read_agy_allowance(state: &ServerState, program: &NativeCommand) -> Result<Vec<QuotaWindow>> {
+    let mut runner = AgyChild::spawn(program)?;
+    let deadline = Instant::now() + REQUEST;
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+    let mut stdout_eof = false;
+    let mut stderr_eof = false;
+    while !stdout_eof || !stderr_eof {
+        if state.stopping.load(Ordering::Acquire)
+            || state.shutdown.load(Ordering::Acquire)
+            || !state.dashboard.is_claimed()
+        {
+            return Err(interrupted());
+        }
+        let current = state.quota_settings();
+        if !current.enabled || current.agy != *program {
+            return Err(interrupted());
+        }
+        if Instant::now() >= deadline {
+            return Err(timed_out());
+        }
+        let mut progressed = false;
+        let mut chunk = [0u8; 8192];
+        while !stderr_eof {
+            match runner.stderr.read(&mut chunk) {
+                Ok(0) => stderr_eof = true,
+                Ok(count) => {
+                    progressed = true;
+                    let remaining = AGY_MAX_STDERR.saturating_sub(stderr_buf.len());
+                    if remaining > 0 {
+                        let keep = count.min(remaining);
+                        stderr_buf.extend_from_slice(&chunk[..keep]);
+                        if contains_agy_stderr_login_marker(&stderr_buf) {
+                            return Err(Failure::new(QuotaState::NotSignedIn));
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return Err(Failure::unavailable("native output failed")),
+            }
+        }
+        while !stdout_eof {
+            match runner.stdout.read(&mut chunk) {
+                Ok(0) => stdout_eof = true,
+                Ok(count) => {
+                    progressed = true;
+                    if stdout_buf.len() + count > MAX_RESPONSE {
+                        return Err(Failure::new(QuotaState::Invalid).because("reply too large"));
+                    }
+                    stdout_buf.extend_from_slice(&chunk[..count]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return Err(Failure::unavailable("native output failed")),
+            }
+        }
+        if !progressed && (!stdout_eof || !stderr_eof) {
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+    let status = runner.wait_status(state, program, deadline)?;
+    if contains_agy_stderr_login_marker(&stderr_buf) {
+        return Err(Failure::new(QuotaState::NotSignedIn));
+    }
+    if !status.success() {
+        if let Ok(value) = serde_json::from_slice::<Value>(&stdout_buf)
+            && let Some(object) = value.as_object()
+            && let Some(failure) = agy_error_failure(object)
+        {
+            return Err(failure);
+        }
+        let stderr_text = String::from_utf8_lossy(&stderr_buf);
+        if contains_agy_auth_marker(&stderr_text) {
+            return Err(Failure::new(QuotaState::NotSignedIn));
+        }
+        let stderr_lower = stderr_text.to_ascii_lowercase();
+        if stderr_lower.contains("unknown command")
+            || stderr_lower.contains("unrecognized command")
+            || stderr_lower.contains("unknown option")
+            || stderr_lower.contains("unrecognized option")
+            || stderr_lower.contains("unknown argument")
+        {
+            return Err(unrecognized(QuotaProvider::Agy));
+        }
+        return Err(Failure::unavailable("agy command failed"));
+    }
+    let value: Value =
+        serde_json::from_slice(&stdout_buf).map_err(|_| unrecognized(QuotaProvider::Agy))?;
+    agy_windows(&value)
+}
+
+const AGY_AUTH_MARKERS: [&str; 10] = [
+    "authentication required",
+    "authentication failed",
+    "please visit the url to log in",
+    "select login method",
+    "you are not logged into antigravity",
+    "not logged in",
+    "not signed in",
+    "unauthenticated",
+    "login required",
+    "please log in",
+];
+
+fn contains_agy_auth_marker(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    AGY_AUTH_MARKERS.iter().any(|marker| lower.contains(marker)) || lower.contains("please sign in")
+}
+
+fn agy_error_failure(object: &serde_json::Map<String, Value>) -> Option<Failure> {
+    let status = object.get("status").and_then(Value::as_str)?;
+    if status.eq_ignore_ascii_case("SUCCESS") {
+        return None;
+    }
+    let command = object.get("command").and_then(Value::as_object);
+    if let Some(name) = command.and_then(|c| c.get("name")).and_then(Value::as_str)
+        && name != "usage"
+    {
+        return Some(unrecognized(QuotaProvider::Agy));
+    }
+    let candidates = [
+        Some(status),
+        object.get("error").and_then(Value::as_str),
+        object
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str),
+        object
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Value::as_str),
+        object.get("message").and_then(Value::as_str),
+        command.and_then(|c| c.get("error")).and_then(Value::as_str),
+        command
+            .and_then(|c| c.get("message"))
+            .and_then(Value::as_str),
+    ];
+    if candidates
+        .into_iter()
+        .flatten()
+        .any(contains_agy_auth_marker)
+    {
+        return Some(Failure::new(QuotaState::NotSignedIn));
+    }
+    let unsupported = [
+        object.get("error").and_then(Value::as_str),
+        object
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str),
+        object.get("message").and_then(Value::as_str),
+        command.and_then(|c| c.get("error")).and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| {
+        let lower = text.to_ascii_lowercase();
+        lower.contains("unknown command")
+            || lower.contains("unrecognized command")
+            || lower.contains("unknown slash command")
+    });
+    if unsupported {
+        return Some(unrecognized(QuotaProvider::Agy));
+    }
+    let http_status = object
+        .get("httpStatus")
+        .or_else(|| object.get("http_status"))
+        .or_else(|| object.get("error").and_then(|e| e.get("status")))
+        .and_then(Value::as_u64);
+    let retry_after = object
+        .get("retryAfterSeconds")
+        .or_else(|| object.get("retry_after_seconds"))
+        .or_else(|| object.get("retry_after"))
+        .or_else(|| {
+            object
+                .get("error")
+                .and_then(|e| e.get("retryAfterSeconds").or_else(|| e.get("retry_after")))
+        })
+        .and_then(Value::as_u64)
+        .map(|seconds| Duration::from_secs(seconds.clamp(60, 86_400)));
+    let failure = match http_status {
+        Some(401 | 403) => Failure::new(QuotaState::NotSignedIn),
+        Some(code @ 100..=599) => Failure::unavailable(format!("HTTP {code}")),
+        _ => Failure::unavailable("request failed"),
+    };
+    Some(Failure {
+        retry_after,
+        ..failure
+    })
+}
+
+struct ParsedAgyBucket {
+    id: String,
+    label: String,
+    is_gemini_group: bool,
+    used_basis_points: Option<u16>,
+    resets_unix_ms: Option<u64>,
+}
+
+fn agy_duration_rank(label: &str) -> u8 {
+    match label {
+        "5h" => 0,
+        "7d" => 1,
+        _ => 2,
+    }
+}
+
+fn agy_bucket_label(
+    id: &str,
+    window_hint: Option<&str>,
+    display_name: Option<&str>,
+) -> Result<String> {
+    match id {
+        "gemini-5h" | "3p-5h" => return Ok("5h".into()),
+        "gemini-weekly" | "3p-weekly" => return Ok("7d".into()),
+        _ => {}
+    }
+    if let Some(hint) = window_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        let lower = hint.to_ascii_lowercase();
+        match lower.as_str() {
+            "5h" | "five_hour" | "5-hour" | "5_hour" => return Ok("5h".into()),
+            "weekly" | "7d" | "seven_day" | "7-day" | "1w" => return Ok("7d".into()),
+            "daily" | "1d" | "24h" => return Ok("1d".into()),
+            "monthly" | "mo" | "30d" | "1m" => return Ok("mo".into()),
+            _ => {
+                if lower.len() <= 16
+                    && lower.ends_with(['h', 'd', 'm'])
+                    && lower[..lower.len() - 1]
+                        .parse::<u32>()
+                        .is_ok_and(|count| count > 0)
+                {
+                    return Ok(lower);
+                }
+            }
+        }
+    }
+    let id_lower = id.to_ascii_lowercase();
+    if id_lower.ends_with("-5h") || id_lower.ends_with("_5h") {
+        return Ok("5h".into());
+    }
+    if id_lower.ends_with("-weekly")
+        || id_lower.ends_with("_weekly")
+        || id_lower.ends_with("-7d")
+        || id_lower.ends_with("_7d")
+    {
+        return Ok("7d".into());
+    }
+    if id_lower.ends_with("-daily")
+        || id_lower.ends_with("_daily")
+        || id_lower.ends_with("-1d")
+        || id_lower.ends_with("_1d")
+    {
+        return Ok("1d".into());
+    }
+    if id_lower.ends_with("-monthly") || id_lower.ends_with("_monthly") {
+        return Ok("mo".into());
+    }
+    let raw = display_name.unwrap_or(id);
+    let mut sanitized = String::new();
+    let mut last_space = true;
+    for ch in raw.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !last_space {
+                sanitized.push(' ');
+                last_space = true;
+            }
+        } else {
+            sanitized.push(ch);
+            last_space = false;
+        }
+    }
+    let trimmed = sanitized.trim();
+    if trimmed.is_empty() {
+        return Err(Failure::new(QuotaState::Invalid));
+    }
+    let mut bounded = String::new();
+    for ch in trimmed.chars() {
+        if bounded.len() + ch.len_utf8() > 16 {
+            break;
+        }
+        bounded.push(ch);
+    }
+    let bounded = bounded.trim_end().to_owned();
+    if bounded.is_empty() {
+        return Err(Failure::new(QuotaState::Invalid));
+    }
+    Ok(bounded)
+}
+
+fn agy_remaining_fraction(bucket: &serde_json::Map<String, Value>) -> Result<Option<u16>> {
+    let raw = bucket
+        .get("remaining_fraction")
+        .filter(|v| !v.is_null())
+        .or_else(|| bucket.get("remainingFraction").filter(|v| !v.is_null()))
+        .or_else(|| {
+            bucket
+                .get("remaining")
+                .and_then(Value::as_object)
+                .and_then(|rem| {
+                    rem.get("remainingFraction")
+                        .filter(|v| !v.is_null())
+                        .or_else(|| rem.get("remaining_fraction").filter(|v| !v.is_null()))
+                })
+        });
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let fraction = value
+        .as_f64()
+        .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+        .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
+    Ok(Some(((1.0 - fraction) * 10_000.0).floor() as u16))
+}
+
+fn agy_reset_ms(bucket: &serde_json::Map<String, Value>) -> Result<Option<u64>> {
+    let raw = bucket
+        .get("reset_time")
+        .filter(|v| !v.is_null())
+        .or_else(|| bucket.get("resetTime").filter(|v| !v.is_null()))
+        .or_else(|| {
+            bucket
+                .get("remaining")
+                .and_then(Value::as_object)
+                .and_then(|rem| {
+                    rem.get("resetTime")
+                        .filter(|v| !v.is_null())
+                        .or_else(|| rem.get("reset_time").filter(|v| !v.is_null()))
+                })
+        });
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let max_reset = now_ms()
+        .saturating_add(366 * 86_400_000)
+        .max(AGY_MAX_RESET_UNIX_MS);
+    if let Some(text) = value.as_str() {
+        let stamp = chrono::DateTime::parse_from_rfc3339(text)
+            .map_err(|_| Failure::new(QuotaState::Invalid))?;
+        let ms = u64::try_from(stamp.timestamp_millis())
+            .map_err(|_| Failure::new(QuotaState::Invalid))?;
+        if ms == 0 || ms > max_reset {
+            return Err(Failure::new(QuotaState::Invalid));
+        }
+        return Ok(Some(ms));
+    }
+    if let Some(seconds) = value.as_u64() {
+        let ms = seconds
+            .checked_mul(1000)
+            .filter(|ms| *ms > 0 && *ms <= max_reset)
+            .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
+        return Ok(Some(ms));
+    }
+    Err(Failure::new(QuotaState::Invalid))
+}
+
+fn agy_windows(value: &Value) -> Result<Vec<QuotaWindow>> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| unrecognized(QuotaProvider::Agy))?;
+    if let Some(failure) = agy_error_failure(object) {
+        return Err(failure);
+    }
+    let groups = if let Some(groups) = object.get("groups") {
+        groups
+            .as_array()
+            .ok_or_else(|| unrecognized(QuotaProvider::Agy))?
+    } else if object
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("SUCCESS"))
+        && object
+            .get("command")
+            .and_then(|cmd| cmd.get("name"))
+            .and_then(Value::as_str)
+            == Some("usage")
+    {
+        object["command"]["data"]["groups"]
+            .as_array()
+            .ok_or_else(|| unrecognized(QuotaProvider::Agy))?
+    } else {
+        return Err(unrecognized(QuotaProvider::Agy));
+    };
+    if groups.len() > 32 {
+        return Err(Failure::new(QuotaState::Invalid));
+    }
+    let mut parsed = Vec::new();
+    for group in groups {
+        let group = group
+            .as_object()
+            .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
+        let group_name = group
+            .get("name")
+            .or_else(|| group.get("displayName"))
+            .or_else(|| group.get("display_name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let group_lower = group_name.trim().to_ascii_lowercase();
+        let is_gemini_group = group_lower == "gemini"
+            || (group_lower.contains("gemini")
+                && !group_lower.contains("3p")
+                && !group_lower.contains("third")
+                && !group_lower.contains("claude")
+                && !group_lower.contains("gpt"));
+        let buckets = match group.get("buckets").filter(|v| !v.is_null()) {
+            None => &[][..],
+            Some(buckets) => buckets
+                .as_array()
+                .ok_or_else(|| Failure::new(QuotaState::Invalid))?
+                .as_slice(),
+        };
+        if buckets.len() > 64 {
+            return Err(Failure::new(QuotaState::Invalid));
+        }
+        for entry in buckets {
+            let bucket = entry
+                .as_object()
+                .ok_or_else(|| Failure::new(QuotaState::Invalid))?;
+            let disabled = match bucket.get("disabled").filter(|v| !v.is_null()) {
+                None => false,
+                Some(flag) => flag
+                    .as_bool()
+                    .ok_or_else(|| Failure::new(QuotaState::Invalid))?,
+            };
+            if disabled {
+                continue;
+            }
+            let id = bucket
+                .get("id")
+                .or_else(|| bucket.get("bucketId"))
+                .or_else(|| bucket.get("bucket_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control))
+                .ok_or_else(|| Failure::new(QuotaState::Invalid))?
+                .to_owned();
+            let display_name = bucket
+                .get("name")
+                .or_else(|| bucket.get("displayName"))
+                .or_else(|| bucket.get("display_name"))
+                .and_then(Value::as_str);
+            let window_hint = bucket.get("window").and_then(Value::as_str);
+            let label = agy_bucket_label(&id, window_hint, display_name)?;
+            let used_basis_points = agy_remaining_fraction(bucket)?;
+            let resets_unix_ms = agy_reset_ms(bucket)?;
+            parsed.push(ParsedAgyBucket {
+                id,
+                label,
+                is_gemini_group,
+                used_basis_points,
+                resets_unix_ms,
+            });
+        }
+    }
+    let has_ordinary_gemini = parsed
+        .iter()
+        .any(|b| matches!(b.id.as_str(), "gemini-5h" | "gemini-weekly"));
+    let mut ranked: Vec<((u8, u8, String), QuotaWindow)> = parsed
+        .into_iter()
+        .map(|bucket| {
+            let (general, rank) = match bucket.id.as_str() {
+                "gemini-5h" => (true, (0, 0, String::new())),
+                "gemini-weekly" => (true, (0, 1, String::new())),
+                _ if !has_ordinary_gemini
+                    && bucket.is_gemini_group
+                    && !bucket.id.starts_with("3p-") =>
+                {
+                    (
+                        true,
+                        (1, agy_duration_rank(&bucket.label), bucket.id.clone()),
+                    )
+                }
+                "3p-5h" => (false, (2, 0, String::new())),
+                "3p-weekly" => (false, (2, 1, String::new())),
+                _ => (
+                    false,
+                    (3, agy_duration_rank(&bucket.label), bucket.id.clone()),
+                ),
+            };
+            (
+                rank,
+                QuotaWindow {
+                    id: bucket.id,
+                    label: bucket.label,
+                    general,
+                    used_basis_points: bucket.used_basis_points,
+                    over_limit: false,
+                    resets_unix_ms: bucket.resets_unix_ms,
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.cmp(&b.0));
+    let windows: Vec<QuotaWindow> = ranked.into_iter().map(|(_, window)| window).collect();
+    QuotaReport {
+        windows: Some(windows.clone()),
+        state: QuotaState::Current,
+    }
+    .validate()
+    .map_err(|_| Failure::new(QuotaState::Invalid))?;
+    require_usage(windows)
+}
+
 fn native_identity(provider: QuotaProvider, value: &Value) -> Result<String> {
     if provider == QuotaProvider::Codex {
         return codex_identity(value);
@@ -1176,6 +2101,7 @@ pub fn normalize_native_quota(
 fn native_windows(provider: QuotaProvider, value: &Value) -> Result<Vec<QuotaWindow>> {
     match provider {
         QuotaProvider::Codex => return codex_windows(value),
+        QuotaProvider::Agy => return agy_windows(value),
         QuotaProvider::Grok => {}
         other => return Err(unrecognized(other)),
     }

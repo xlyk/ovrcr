@@ -203,6 +203,16 @@ fn dispatch_weight(message: &DispatchMessage) -> usize {
                     .sum()
             })
         }
+        DispatchMessage::AgyQuota(update) => {
+            update.native.report.windows.as_ref().map_or(0, |windows| {
+                windows
+                    .iter()
+                    .map(|window| {
+                        std::mem::size_of_val(window) + window.id.len() + window.label.len()
+                    })
+                    .sum()
+            })
+        }
         DispatchMessage::CursorQuota(update) => {
             update.native.report.windows.as_ref().map_or(0, |windows| {
                 windows

@@ -206,10 +206,12 @@ fn quota_enabled_flipped_in_the_file_starts_and_stops_the_collector() {
     let enabled = quota_until(
         &mut socket,
         "enabling quota did not reach the Dashboard",
-        |snapshot| snapshot.codex.state == QuotaState::Current,
+        |snapshot| {
+            snapshot.codex.state == QuotaState::Current && snapshot.agy.state == QuotaState::Current
+        },
     );
     assert_ne!(enabled.codex.state, QuotaState::Disabled);
-    assert_eq!(enabled.agy.state, QuotaState::Checking);
+    assert_eq!(enabled.agy.state, QuotaState::Current);
     assert_eq!(enabled.agy.reason, None);
     let first = newest_pid(&pids);
     assert!(alive(first), "collector exited before quota was turned off");

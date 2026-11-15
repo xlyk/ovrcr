@@ -1180,10 +1180,15 @@ fn quota_until(
         if let ServerMessage::Event(ServerEvent::QuotaChanged(snapshot)) =
             read_frame::<ServerMessage>(socket).unwrap()
         {
-            for row in [&snapshot.claude, &snapshot.codex, &snapshot.grok] {
+            for row in snapshot.providers() {
                 let reason = row.reason.as_deref().unwrap_or_default();
                 assert!(
-                    !reason.contains("fixture") && !reason.contains("overloaded"),
+                    !reason.contains("fixture")
+                        && !reason.contains("FIXTURE_BODY")
+                        && !reason.contains("overloaded")
+                        && !reason.contains('@')
+                        && !reason.contains("http://")
+                        && !reason.contains("https://"),
                     "a Quota reason echoed native bytes: {reason}"
                 );
             }
@@ -1214,7 +1219,9 @@ fn enabled_attach_shows_checking_then_current_within_one_read() {
     assert_eq!(first.claude.state, QuotaState::Checking);
     assert_eq!(first.claude.reason.as_deref(), Some(CLAUDE_WAITING));
     let current = quota_until(&mut socket, "native quotas never became current", |q| {
-        q.codex.state == QuotaState::Current && q.grok.state == QuotaState::Current
+        q.codex.state == QuotaState::Current
+            && q.grok.state == QuotaState::Current
+            && q.agy.state == QuotaState::Current
     });
     assert_eq!(reads(&fixture, "account/rateLimits/read"), 1);
     assert_eq!(http_reads(&fixture, "/v1/billing?format=credits"), 1);
@@ -1229,7 +1236,9 @@ fn enabled_attach_shows_checking_then_current_within_one_read() {
     );
 
     assert_eq!(current.codex.reason, None);
+    assert_eq!(current.agy.reason, None);
     assert_next_check(&current.codex, 300);
+    assert_next_check(&current.agy, 300);
     // Claude has no native reader: it keeps waiting for a managed session.
     assert_eq!(current.claude.state, QuotaState::Checking);
     assert!(matches!(
@@ -1420,7 +1429,7 @@ fn claude_auth_status_sets_the_claude_row_and_keeps_no_identifier() {
     let mut claude_until = |what: &str, state: QuotaState, reason: &str| {
         let snapshot = quota_until(&mut socket, what, |q| {
             seen.push(format!("{q:?}"));
-            q.claude.state == state
+            q.claude.state == state && q.claude.reason.as_deref() == Some(reason)
         });
         assert_eq!(snapshot.claude.reason.as_deref(), Some(reason), "{what}");
         assert_eq!(snapshot.claude.source, None);
@@ -2439,5 +2448,763 @@ fn cursor_redirect_and_invalid_or_unsupported_http_bodies_preserve_stale_reading
     assert!(
         http.requests.try_recv().is_err(),
         "Cursor redirect was followed"
+    );
+}
+
+fn write_agy_fixture_script(path: &std::path::Path, body: &str) {
+    std::fs::write(path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn agy_native_read_reaches_sidebar_and_details_with_hardened_child_env_and_browser_guard() {
+    let fixture = live::Live::idle().bounded();
+    let agy_home = fixture.root.path().join("agy-profile-home");
+    std::fs::create_dir_all(&agy_home).unwrap();
+    let trace = fixture.root.path().join("agy-env-trace.log");
+    let count_file = fixture.root.path().join("agy-invocations");
+    let fake_agy = fixture.root.path().join("custom-agy");
+    write_agy_fixture_script(
+        &fake_agy,
+        &format!(
+            "printf 'x\\n' >> '{count}'\n\
+             open 'https://auth.example.invalid' >/dev/null 2>&1 && exit 91\n\
+             xdg-open 'https://auth.example.invalid' >/dev/null 2>&1 && exit 92\n\
+             \"$BROWSER\" 'https://auth.example.invalid' >/dev/null 2>&1 && exit 93\n\
+             {{\n\
+               printf 'ARGV=%s\\n' \"$*\"\n\
+               printf 'CWD=%s\\n' \"$PWD\"\n\
+               printf 'AUTO_UPDATE=%s\\n' \"$AGY_CLI_DISABLE_AUTO_UPDATE\"\n\
+               printf 'HOME=%s\\n' \"$HOME\"\n\
+               printf 'SSH_TTY=%s\\n' \"$SSH_TTY\"\n\
+               printf 'BROWSER=%s\\n' \"$BROWSER\"\n\
+               env | grep '^OVRCR_' || true\n\
+             }} > '{trace}'\n\
+             cat <<'JSON'\n\
+             {{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"description\":\"{body} https://auth.example.invalid\",\"groups\":[\
+               {{\"name\":\"Gemini\",\"buckets\":[\
+                 {{\"id\":\"gemini-weekly\",\"name\":\"Gemini Weekly\",\"remaining_fraction\":0.81,\"reset_time\":\"2099-01-02T00:00:00Z\",\"window\":\"weekly\"}},\
+                 {{\"id\":\"gemini-5h\",\"name\":\"Gemini 5h\",\"remaining_fraction\":0.63,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}},\
+                 {{\"id\":\"gemini-4-argon-weekly\",\"name\":\"Gemini Argon Weekly\",\"remaining_fraction\":0.45,\"reset_time\":\"2099-01-02T00:00:00Z\",\"window\":\"weekly\"}}\
+               ]}},\
+               {{\"name\":\"Claude + GPT\",\"buckets\":[\
+                 {{\"id\":\"3p-weekly\",\"name\":\"Claude + GPT Weekly\",\"remaining_fraction\":0.9,\"reset_time\":\"2099-01-02T00:00:00Z\",\"window\":\"weekly\"}},\
+                 {{\"id\":\"3p-5h\",\"name\":\"Claude + GPT 5h\",\"remaining_fraction\":0.72,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}\
+               ]}}\
+             ]}}}}}}\n\
+             JSON\n",
+            count = count_file.display(),
+            trace = trace.display(),
+            body = FIXTURE_BODY,
+        ),
+    );
+
+    let write_cfg = |enabled: bool| {
+        std::fs::write(
+            settings_document(&fixture),
+            format!(
+                "[quota]\nenabled = {enabled}\n\
+                 [quota.codex]\ncommand = '/no-codex-fixture'\n\
+                 [quota.grok]\ncommand = '/no-grok-fixture'\n\
+                 [quota.agy]\ncommand = {}\nhome = {}\n",
+                toml::Value::String(fake_agy.display().to_string()),
+                toml::Value::String(agy_home.display().to_string()),
+            ),
+        )
+        .unwrap();
+    };
+    write_cfg(false);
+    fixture.start_binary_env(&[
+        ("OVRCR_HOOK_SOCKET", std::ffi::OsStr::new("/tmp/leak.sock")),
+        (
+            "OVRCR_HOOK_TOKEN",
+            std::ffi::OsStr::new("secret-hook-token"),
+        ),
+        ("OVRCR_SESSION_ID", std::ffi::OsStr::new("leak-session")),
+        (
+            "OVRCR_AGENT_TOKEN",
+            std::ffi::OsStr::new("secret-agent-token"),
+        ),
+    ]);
+    let mut socket = attach(&fixture);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        !count_file.exists(),
+        "disabled quota spawned an agy collector process"
+    );
+
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("true".into()),
+        }),
+        Response::Ok
+    );
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 36,
+        cols: 100,
+    });
+    dashboard.install_area(ratatui::layout::Rect::new(0, 0, 100, 36));
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let current = loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Agy native quota never became Current"
+        );
+        let msg: ServerMessage = read_frame(&mut socket).unwrap();
+        let agy_current = match &msg {
+            ServerMessage::Event(ServerEvent::QuotaChanged(snap))
+                if snap.agy.state == QuotaState::Current =>
+            {
+                Some(snap.agy.clone())
+            }
+            _ => None,
+        };
+        dashboard.handle_server_message(msg);
+        if let Some(agy) = agy_current {
+            break agy;
+        }
+    };
+    assert!(current.checked_unix_ms.is_some());
+    assert!(current.observed_unix_ms.is_some());
+    assert_next_check(&current, 300);
+    assert_eq!(current.windows.len(), 5);
+
+    let env_log = std::fs::read_to_string(&trace).unwrap();
+    assert!(
+        env_log.contains("ARGV=-p /usage --output-format json --settings {}\n"),
+        "{env_log}"
+    );
+    assert!(env_log.contains("AUTO_UPDATE=true\n"), "{env_log}");
+    assert!(
+        env_log.contains(&format!("HOME={}\n", agy_home.display())),
+        "{env_log}"
+    );
+    assert!(env_log.contains("SSH_TTY=ovrcr-quota\n"), "{env_log}");
+    assert!(
+        !env_log.contains(&format!("CWD={}\n", fixture.root.path().display())),
+        "agy must run in an isolated task-owned tempdir: {env_log}"
+    );
+    for forbidden in [
+        "OVRCR_HOOK_",
+        "OVRCR_SESSION_ID=",
+        "OVRCR_SOCKET=",
+        "OVRCR_CONFIG=",
+        "OVRCR_AGENT_",
+    ] {
+        assert!(
+            !env_log.contains(forbidden),
+            "leaked {forbidden} into agy collector env: {env_log}"
+        );
+    }
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 36)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let sidebar_screen = (0..36)
+        .map(|y| {
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        sidebar_screen
+            .lines()
+            .any(|line| line.contains("Agy") && line.contains("5h") && line.contains("63%")),
+        "Agy 5h bar missing from sidebar: {sidebar_screen}"
+    );
+    assert!(
+        sidebar_screen
+            .lines()
+            .any(|line| line.contains("7d") && line.contains("81%")),
+        "Agy 7d bar missing from sidebar: {sidebar_screen}"
+    );
+    assert!(
+        !sidebar_screen.contains("72%") && !sidebar_screen.contains("45%"),
+        "non-general buckets leaked onto compact sidebar: {sidebar_screen}"
+    );
+
+    dashboard.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('u'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let details_screen = (0..36)
+        .map(|y| {
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for expected in [
+        "Agy · up to date",
+        "5-hour (3p-5h)",
+        "weekly (3p-weekly)",
+        "weekly (gemini-4-argon-weekly)",
+    ] {
+        assert!(
+            details_screen.contains(expected),
+            "missing '{expected}' in Quota details:\n{details_screen}"
+        );
+    }
+
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.enabled".into(),
+            value: Some("false".into()),
+        }),
+        Response::Ok
+    );
+    let disabled = quota_until(&mut socket, "disabling quota did not clear Agy", |q| {
+        q.agy.state == QuotaState::Disabled
+    });
+    assert!(disabled.agy.windows.is_empty());
+    assert_eq!(
+        disabled.agy.reason.as_deref(),
+        Some(ovrcr::settings::QUOTA_OFF)
+    );
+    let invocations_after_off = std::fs::read_to_string(&count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(invocations_after_off, 1);
+
+    let events = fixture
+        .command()
+        .arg("events")
+        .output()
+        .expect("run ovrcr events");
+    assert!(events.status.success());
+    let events_text = String::from_utf8_lossy(&events.stdout);
+    assert!(!events_text.contains(FIXTURE_BODY) && !events_text.contains('@'));
+}
+
+#[test]
+fn agy_signed_out_stderr_reaps_hanging_login_immediately_and_missing_or_unsupported_classify_deterministically()
+ {
+    let fixture = live::Live::idle().bounded();
+    std::fs::write(
+        settings_document(&fixture),
+        "[quota]\nenabled = true\n\
+         [quota.codex]\ncommand = '/no-codex-fixture'\n\
+         [quota.grok]\ncommand = '/no-grok-fixture'\n\
+         [quota.agy]\ncommand = 'ovrcr-no-such-agy-on-path'\n",
+    )
+    .unwrap();
+    fixture.start_binary();
+    let mut socket = attach(&fixture);
+
+    let missing_path = quota_until(&mut socket, "missing PATH agy not classified", |q| {
+        q.agy.reason.as_deref() == Some("agy not found on PATH")
+    });
+    assert_eq!(missing_path.agy.state, QuotaState::Unavailable);
+    assert_next_check(&missing_path.agy, 600);
+
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.agy.command".into(),
+            value: Some("'/no/such/configured/agy'".into()),
+        }),
+        Response::Ok
+    );
+    let missing_configured =
+        quota_until(&mut socket, "missing configured agy not classified", |q| {
+            q.agy.reason.as_deref() == Some("agy not found at the configured path")
+        });
+    assert_eq!(missing_configured.agy.state, QuotaState::Unavailable);
+    assert_next_check(&missing_configured.agy, 600);
+
+    // Signed-out agy prints login prompt to stderr and hangs waiting on OAuth callback.
+    let signed_out_agy = fixture.root.path().join("signed-out-agy");
+    let pids = fixture.root.path().join("signed-out-pids");
+    write_agy_fixture_script(
+        &signed_out_agy,
+        &format!(
+            "sleep 60 &\n\
+             printf '%s\\n%s\\n' \"$$\" \"$!\" > '{pids}'\n\
+             printf 'Authentication required. Please visit the URL to log in:\\n  https://auth.example.invalid/oauth?email=fixture@example.invalid&body={body}\\n' >&2\n\
+             wait\n",
+            pids = pids.display(),
+            body = FIXTURE_BODY,
+        ),
+    );
+
+    let started = std::time::Instant::now();
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.agy.command".into(),
+            value: Some(toml::Value::String(signed_out_agy.display().to_string()).to_string()),
+        }),
+        Response::Ok
+    );
+    let not_signed_in = quota_until(&mut socket, "signed-out agy stderr not classified", |q| {
+        q.agy.state == QuotaState::NotSignedIn
+    });
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "signed-out agy waited for deadline instead of reaping on stderr prompt: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(not_signed_in.agy.reason.as_deref(), Some("not signed in"));
+    assert_next_check(&not_signed_in.agy, 600);
+    let spawned_pids: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap()
+        .lines()
+        .map(|line| line.trim().parse().unwrap())
+        .collect();
+    assert_eq!(spawned_pids.len(), 2);
+    wait_until("signed-out agy process group was not reaped", || {
+        spawned_pids.iter().all(|pid| !alive(*pid))
+    });
+
+    // Unrecognized output classifies deterministically as Unsupported (10m backoff).
+    let unsupported_agy = fixture.root.path().join("unsupported-agy");
+    write_agy_fixture_script(
+        &unsupported_agy,
+        &format!(
+            "printf '{{\"unexpected\":\"{body}\"}}\\n'\n",
+            body = FIXTURE_BODY
+        ),
+    );
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.agy.command".into(),
+            value: Some(toml::Value::String(unsupported_agy.display().to_string()).to_string()),
+        }),
+        Response::Ok
+    );
+    let unsupported = quota_until(&mut socket, "unsupported agy not classified", |q| {
+        q.agy.state == QuotaState::Unsupported
+    });
+    assert_eq!(
+        unsupported.agy.reason.as_deref(),
+        Some("unrecognized agy response")
+    );
+    assert_next_check(&unsupported.agy, 600);
+}
+
+#[test]
+fn agy_manual_refresh_cooldown_advances_checked_on_identical_values_and_transient_backoff_retains_stale_windows()
+ {
+    let fixture = live::Live::idle().bounded();
+    let mode_file = fixture.root.path().join("agy-mode");
+    let count_file = fixture.root.path().join("agy-count");
+    let script = fixture.root.path().join("scripted-agy");
+    std::fs::write(&mode_file, "ok").unwrap();
+    write_agy_fixture_script(
+        &script,
+        &format!(
+            "printf 'x\\n' >> '{count}'\n\
+             mode=$(cat '{mode}')\n\
+             case \"$mode\" in\n\
+               ok)\n\
+                 printf '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.75,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}\\n'\n\
+                 ;;\n\
+               fail)\n\
+                 printf '{body}\\n' >&2\n\
+                 exit 1\n\
+                 ;;\n\
+               rate_limit)\n\
+                 printf '{{\"status\":\"ERROR\",\"httpStatus\":429,\"retryAfterSeconds\":900,\"message\":\"{body}\"}}\\n'\n\
+                 exit 1\n\
+                 ;;\n\
+             esac\n",
+            count = count_file.display(),
+            mode = mode_file.display(),
+            body = FIXTURE_BODY,
+        ),
+    );
+    std::fs::write(
+        settings_document(&fixture),
+        format!(
+            "[quota]\nenabled = true\n\
+             [quota.codex]\ncommand = '/no-codex-fixture'\n\
+             [quota.grok]\ncommand = '/no-grok-fixture'\n\
+             [quota.agy]\ncommand = {}\n",
+            toml::Value::String(script.display().to_string())
+        ),
+    )
+    .unwrap();
+    let clock = fixture.root.path().join("quota-clock");
+    let base_clock: u64 = 1_800_000_000_000;
+    std::fs::write(&clock, base_clock.to_string()).unwrap();
+    fixture.start_binary_env(&[("OVRCR_QUOTA_CLOCK", clock.as_os_str())]);
+    let mut socket = attach(&fixture);
+
+    let first = quota_until(&mut socket, "initial Agy read not Current", |q| {
+        q.agy.state == QuotaState::Current
+    });
+    assert_eq!(first.agy.checked_unix_ms, Some(base_clock));
+    assert_eq!(first.agy.observed_unix_ms, Some(base_clock));
+    assert_eq!(first.agy.windows[0].remaining_basis_points(), Some(7_500));
+
+    // Manual refresh inside 30s cooldown is refused.
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Agy)
+        }),
+        Response::Ok
+    );
+    // Wait for that first manual refresh to execute at base_clock, then verify immediate second is refused.
+    wait_until("first manual refresh did not run", || {
+        std::fs::read_to_string(&count_file)
+            .unwrap_or_default()
+            .lines()
+            .count()
+            == 2
+    });
+    assert!(matches!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Agy)
+        }),
+        Response::QuotaCooldown { .. }
+    ));
+
+    // Advance clock past 30s cooldown and refresh with identical bucket values:
+    // checked_unix_ms MUST advance while observed_unix_ms stays at base_clock.
+    let second_clock = base_clock + 30_001;
+    std::fs::write(&clock, second_clock.to_string()).unwrap();
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Agy)
+        }),
+        Response::Ok
+    );
+    let refreshed_same = quota_until(
+        &mut socket,
+        "identical Agy read did not advance checked_unix_ms",
+        |q| q.agy.checked_unix_ms == Some(second_clock),
+    );
+    assert_eq!(refreshed_same.agy.observed_unix_ms, Some(base_clock));
+    assert_eq!(refreshed_same.agy.windows, first.agy.windows);
+
+    // Transient failures climb 1m -> 2m -> 5m -> 10m while retaining last-good windows marked stale.
+    std::fs::write(&mode_file, "fail").unwrap();
+    for (step, expected_delay_ms) in [
+        (2_u64, 60_000_u64),
+        (3, 120_000),
+        (4, 300_000),
+        (5, 600_000),
+    ] {
+        let now = base_clock + step * 30_001;
+        std::fs::write(&clock, now.to_string()).unwrap();
+        assert_eq!(
+            fixture.request(Request::RefreshQuota {
+                provider: Some(QuotaProvider::Agy)
+            }),
+            Response::Ok
+        );
+        let failed = quota_until(&mut socket, "transient Agy backoff step missing", |q| {
+            q.agy.state == QuotaState::Unavailable
+                && q.agy.next_check_unix_ms == Some(now + expected_delay_ms)
+        });
+        assert_eq!(failed.agy.reason.as_deref(), Some("agy command failed"));
+        assert_eq!(failed.agy.windows, first.agy.windows);
+        assert_eq!(failed.agy.checked_unix_ms, Some(second_clock));
+        assert!(failed.agy.stale(now));
+    }
+
+    // Retry-After ceiling (900s) overrides ladder and holds against manual refresh.
+    std::fs::write(&mode_file, "rate_limit").unwrap();
+    let rl_clock = base_clock + 6 * 30_001;
+    std::fs::write(&clock, rl_clock.to_string()).unwrap();
+    assert_eq!(
+        fixture.request(Request::RefreshQuota {
+            provider: Some(QuotaProvider::Agy)
+        }),
+        Response::Ok
+    );
+    let limited = quota_until(&mut socket, "Agy Retry-After not published", |q| {
+        q.agy.reason.as_deref() == Some("HTTP 429")
+    });
+    assert_eq!(limited.agy.next_check_unix_ms, Some(rl_clock + 900_000));
+    assert_eq!(limited.agy.windows, first.agy.windows);
+    let count_before_hold = std::fs::read_to_string(&count_file)
+        .unwrap()
+        .lines()
+        .count();
+
+    std::fs::write(&clock, (base_clock + 7 * 30_001).to_string()).unwrap();
+    assert_eq!(
+        fixture.request(Request::RefreshQuota { provider: None }),
+        Response::Ok
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    let count_during_hold = std::fs::read_to_string(&count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(
+        count_during_hold, count_before_hold,
+        "manual RefreshQuota bypassed Agy Retry-After hold"
+    );
+}
+
+#[test]
+fn agy_source_a_to_b_to_a_fences_generations_clears_prior_windows_and_reaps_in_flight_descendants()
+{
+    let fixture = live::Live::idle().bounded();
+    let home_a = fixture.root.path().join("agy-home-a");
+    let home_b = fixture.root.path().join("agy-home-b");
+    std::fs::create_dir_all(&home_a).unwrap();
+    std::fs::create_dir_all(&home_b).unwrap();
+    let b_pids = fixture.root.path().join("agy-b-pids");
+    let script = fixture.root.path().join("profile-agy");
+    write_agy_fixture_script(
+        &script,
+        &format!(
+            "if [ \"$HOME\" = '{}' ]; then\n\
+               sleep 60 &\n\
+               printf '%s\\n%s\\n' \"$$\" \"$!\" > '{}'\n\
+               wait\n\
+               exit 0\n\
+             fi\n\
+             printf '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.6,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}\\n'\n",
+            home_b.display(),
+            b_pids.display(),
+        ),
+    );
+
+    std::fs::write(
+        settings_document(&fixture),
+        format!(
+            "[quota]\nenabled = true\n\
+             [quota.codex]\ncommand = '/no-codex-fixture'\n\
+             [quota.grok]\ncommand = '/no-grok-fixture'\n\
+             [quota.agy]\ncommand = {}\nhome = {}\n",
+            toml::Value::String(script.display().to_string()),
+            toml::Value::String(home_a.display().to_string()),
+        ),
+    )
+    .unwrap();
+    fixture.start_binary();
+    let mut socket = attach(&fixture);
+
+    let first_a = quota_until(&mut socket, "profile A first read not Current", |q| {
+        q.agy.state == QuotaState::Current
+    });
+    assert_eq!(first_a.agy.windows.len(), 1);
+    assert_eq!(first_a.agy.windows[0].remaining_basis_points(), Some(6_000));
+
+    // Switch A -> B (B hangs): old A windows must clear immediately to Checking.
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.agy.home".into(),
+            value: Some(toml::Value::String(home_b.display().to_string()).to_string()),
+        }),
+        Response::Ok
+    );
+    let checking_b = quota_until(&mut socket, "switching A -> B kept old A windows", |q| {
+        q.agy.state == QuotaState::Checking && q.agy.source != first_a.agy.source
+    });
+    assert!(checking_b.agy.windows.is_empty());
+    assert_eq!(checking_b.agy.checked_unix_ms, None);
+    wait_until("profile B child did not start", || b_pids.exists());
+    let b_spawned: Vec<i32> = std::fs::read_to_string(&b_pids)
+        .unwrap()
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert_eq!(b_spawned.len(), 2);
+
+    // Switch B -> A while B is still in flight: B's process group must be reaped and A gets a fresh generation.
+    assert_eq!(
+        fixture.request(Request::SetSetting {
+            path: "quota.agy.home".into(),
+            value: Some(toml::Value::String(home_a.display().to_string()).to_string()),
+        }),
+        Response::Ok
+    );
+    wait_until("switching B -> A did not reap B's process group", || {
+        b_spawned.iter().all(|pid| !alive(*pid))
+    });
+    let second_a = quota_until(&mut socket, "returning B -> A did not reach Current", |q| {
+        q.agy.state == QuotaState::Current
+            && q.agy.source != first_a.agy.source
+            && q.agy.source != checking_b.agy.source
+    });
+    assert_eq!(
+        second_a.agy.windows[0].remaining_basis_points(),
+        Some(6_000)
+    );
+}
+
+#[test]
+fn agy_hung_collector_times_out_at_twenty_seconds_and_reaps_process_group() {
+    let fixture = live::Live::idle().bounded();
+    let pids = fixture.root.path().join("hung-agy-pids");
+    let hung = fixture.root.path().join("hung-agy");
+    write_agy_fixture_script(
+        &hung,
+        &format!(
+            "sleep 60 &\n\
+             printf '%s\\n%s\\n' \"$$\" \"$!\" > '{}'\n\
+             wait\n",
+            pids.display()
+        ),
+    );
+    std::fs::write(
+        settings_document(&fixture),
+        format!(
+            "[quota]\nenabled = true\n\
+             [quota.codex]\ncommand = '/no-codex-fixture'\n\
+             [quota.grok]\ncommand = '/no-grok-fixture'\n\
+             [quota.agy]\ncommand = {}\n",
+            toml::Value::String(hung.display().to_string())
+        ),
+    )
+    .unwrap();
+    fixture.start_binary();
+    let mut socket = attach(&fixture);
+    socket
+        .set_read_timeout(Some(Duration::from_secs(26)))
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(26);
+    let timed_out = loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "hung agy did not time out within 26s"
+        );
+        if let ServerMessage::Event(ServerEvent::QuotaChanged(snap)) =
+            read_frame::<ServerMessage>(&mut socket).unwrap()
+            && snap.agy.reason.as_deref() == Some("timed out after 20 s")
+        {
+            break snap.agy;
+        }
+    };
+    assert_eq!(timed_out.state, QuotaState::Unavailable);
+    assert_next_check(&timed_out, 60);
+    let spawned: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap()
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert_eq!(spawned.len(), 2);
+    wait_until("timed-out agy process group was not reaped", || {
+        spawned.iter().all(|pid| !alive(*pid))
+    });
+}
+
+#[test]
+fn fifty_live_sessions_share_one_agy_account_read_without_blocking_terminal_io() {
+    let fixture = live::Live::idle().bounded();
+    let count_file = fixture.root.path().join("agy-50-count");
+    let started_file = fixture.root.path().join("agy-50-started");
+    let release_file = fixture.root.path().join("agy-50-release");
+    let slow_agy = fixture.root.path().join("slow-agy");
+    write_agy_fixture_script(
+        &slow_agy,
+        &format!(
+            "printf 'x\\n' >> '{count}'\n\
+             touch '{started}'\n\
+             while [ ! -f '{release}' ]; do sleep 0.1; done\n\
+             printf '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.5,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}\\n'\n",
+            count = count_file.display(),
+            started = started_file.display(),
+            release = release_file.display(),
+        ),
+    );
+    std::fs::write(
+        settings_document(&fixture),
+        format!(
+            "[quota]\nenabled = true\n\
+             [quota.codex]\ncommand = '/no-codex-fixture'\n\
+             [quota.grok]\ncommand = '/no-grok-fixture'\n\
+             [quota.agy]\ncommand = {}\n",
+            toml::Value::String(slow_agy.display().to_string())
+        ),
+    )
+    .unwrap();
+    fixture.start_binary();
+    fixture.ready("feat/agy-50");
+
+    // ready creates 1 shell; echo_session adds 1 interactive session; fill the remaining 48 slots to reach 50.
+    let (pty_session, pty_run) = echo_session(&fixture, "pty-50");
+    wait_until("pty-50 session ready", || {
+        terminal_text(&fixture, pty_session).contains("READY")
+    });
+    for idx in 0..48 {
+        assert!(matches!(
+            fixture.request(Request::CreateSession(CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: format!("term-{idx}"),
+                label: None,
+                argv: vec!["sh".into(), "-c".into(), "while :; do sleep 1; done".into()],
+                kind: SessionKind::Terminal,
+            })),
+            Response::CreatedSession(_)
+        ));
+    }
+    let Response::Hierarchy(hierarchy) = fixture.request(Request::List) else {
+        panic!("no hierarchy")
+    };
+    assert_eq!(
+        hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .count(),
+        50
+    );
+
+    let mut socket = attach(&fixture);
+    wait_until("Agy collector did not start on attach", || {
+        started_file.exists()
+    });
+
+    // Drive Dashboard Select + terminal Input while Agy is blocked mid-read.
+    let io_start = std::time::Instant::now();
+    let size = TerminalSize { rows: 12, cols: 40 };
+    dashboard_send(
+        &mut socket,
+        10,
+        Request::Select {
+            session: pty_session,
+            size,
+        },
+    );
+    dashboard_ok(&mut socket, 10);
+    dashboard_send(
+        &mut socket,
+        11,
+        Request::Input {
+            session: pty_session,
+            run: pty_run,
+            bytes: b"fifty-ok\n".to_vec(),
+        },
+    );
+    dashboard_ok(&mut socket, 11);
+    wait_until("terminal echo stalled while Agy read was in flight", || {
+        terminal_text(&fixture, pty_session).contains("got:fifty-ok")
+    });
+    assert!(
+        io_start.elapsed() < Duration::from_secs(2),
+        "terminal I/O stalled behind held agy collector: {:?}",
+        io_start.elapsed()
+    );
+
+    std::fs::write(&release_file, b"ok").unwrap();
+    let current = quota_until(
+        &mut socket,
+        "Agy did not reach Current with 50 sessions",
+        |q| q.agy.state == QuotaState::Current,
+    );
+    assert_eq!(current.agy.windows[0].remaining_basis_points(), Some(5_000));
+    let invocations = std::fs::read_to_string(&count_file)
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(
+        invocations, 1,
+        "50 live sessions triggered {invocations} agy reads instead of sharing 1"
     );
 }

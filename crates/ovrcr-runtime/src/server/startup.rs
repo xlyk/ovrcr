@@ -297,6 +297,10 @@ fn run_server_inner(
     let grok_quota_thread = thread::Builder::new()
         .name("ovrcr-grok-quota".into())
         .spawn(move || quota::run(grok_state, ovrcr_protocol::QuotaProvider::Grok))?;
+    let agy_state = Arc::clone(&state);
+    let agy_quota_thread = thread::Builder::new()
+        .name("ovrcr-agy-quota".into())
+        .spawn(move || quota::run_agy_quota(agy_state))?;
     let cursor_state = Arc::clone(&state);
     let cursor_quota_thread = thread::Builder::new()
         .name("ovrcr-cursor-quota".into())
@@ -416,6 +420,7 @@ fn run_server_inner(
     title_thread.thread().unpark();
     quota_thread.thread().unpark();
     grok_quota_thread.thread().unpark();
+    agy_quota_thread.thread().unpark();
     cursor_quota_thread.thread().unpark();
     claude_auth_thread.thread().unpark();
     claude_account_thread.thread().unpark();
@@ -430,6 +435,7 @@ fn run_server_inner(
     }
     let _ = quota_thread.join();
     let _ = grok_quota_thread.join();
+    let _ = agy_quota_thread.join();
     let _ = cursor_quota_thread.join();
     let _ = claude_auth_thread.join();
     let _ = claude_account_thread.join();

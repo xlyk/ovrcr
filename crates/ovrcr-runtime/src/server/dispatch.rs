@@ -15,6 +15,7 @@ pub enum DispatchMessage {
     },
     RefreshHierarchy,
     NativeQuota(Box<super::quota::NativeQuotaUpdate>),
+    AgyQuota(Box<super::quota::AgyQuotaUpdate>),
     CursorQuota(Box<super::cursor_quota::Update>),
     /// `claude auth status` gave a new answer; the Claude row follows it.
     ClaudeAuth,
@@ -95,6 +96,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             }
             DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
             DispatchMessage::NativeQuota(update) => super::quota::apply(&state, *update),
+            DispatchMessage::AgyQuota(update) => super::quota::apply_agy(&state, *update),
             DispatchMessage::CursorQuota(update) => super::cursor_quota::apply(&state, *update),
             DispatchMessage::ClaudeAuth => state.refresh_claude_quota(),
             DispatchMessage::ClaudeAccount(update) => {
