@@ -3513,3 +3513,638 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
     assert!(!screen.contains("Compacting context…"), "{screen}");
     assert!(screen.contains("Responding"), "{screen}");
 }
+
+#[test]
+fn unknown_single_segment_slash_commands_fail_locally_while_paths_and_leading_spaces_submit() {
+    // 1. Cold Quick message rejects unknown single-segment /commands before even sending Open.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    assert!(cold.drain_outbox().is_empty());
+    cold.event_action(Event::Paste("/compcat".into()));
+    cold.key(KeyCode::Enter);
+    assert!(
+        cold.drain_outbox().is_empty(),
+        "mistyped /command must never open or send to the model"
+    );
+    let quick_screen = draw_text(&mut cold, 120, 30);
+    assert!(
+        quick_screen.contains("Quick message · Ctrl-o"),
+        "{quick_screen}"
+    );
+    assert!(quick_screen.contains("/compcat"), "{quick_screen}");
+    assert!(
+        quick_screen.to_lowercase().contains("unknown") && quick_screen.contains("/copy"),
+        "expected inline unknown-command error in Quick message: {quick_screen}"
+    );
+
+    // Bare `/` in Quick message also fails locally while preserving `/`.
+    cold.ctrl('c');
+    cold.event_action(Event::Paste("/".into()));
+    cold.key(KeyCode::Enter);
+    assert!(cold.drain_outbox().is_empty());
+    let bare_screen = draw_text(&mut cold, 120, 30);
+    assert!(
+        bare_screen.contains("Quick message · Ctrl-o"),
+        "{bare_screen}"
+    );
+    assert!(
+        bare_screen.to_lowercase().contains("unknown"),
+        "{bare_screen}"
+    );
+
+    // 2. Full Operator rejects unknown single-segment /commands locally with draft preserved.
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, summary());
+    dashboard.event_action(Event::Paste("/compcat focus".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "unknown single-segment /command must not enqueue Submit"
+    );
+    let screen = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        screen.contains("/compcat focus"),
+        "composer draft must be preserved: {screen}"
+    );
+    assert!(
+        screen.to_lowercase().contains("unknown") && screen.contains("/thinking"),
+        "expected local error notice in Operator: {screen}"
+    );
+
+    // 3. Leading whitespace (` /copy`) passes through as an ordinary user prompt.
+    dashboard.ctrl('c');
+    dashboard.event_action(Event::Paste(" /copy".into()));
+    dashboard.key(KeyCode::Enter);
+    let out = dashboard.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. }) if text == " /copy"
+        )),
+        "leading-space draft must submit as normal prompt: {out:?}"
+    );
+
+    // 4. Multi-segment Unix paths (`/etc/hosts ...` and `/Users/alice/repo`) submit as normal prompts.
+    let mut path_dashboard = dashboard_fixture();
+    open_and_settle(&mut path_dashboard, summary());
+    path_dashboard.event_action(Event::Paste("/etc/hosts is missing an entry".into()));
+    path_dashboard.key(KeyCode::Enter);
+    let out = path_dashboard.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. })
+                if text == "/etc/hosts is missing an entry"
+        )),
+        "multi-segment path in composer must submit as normal prompt: {out:?}"
+    );
+
+    let mut quick_path = dashboard_fixture();
+    open_and_settle(&mut quick_path, summary());
+    quick_path.key(KeyCode::Esc);
+    quick_path.drain_outbox();
+    quick_path.ctrl('o');
+    quick_path.event_action(Event::Paste("/Users/alice/repo".into()));
+    quick_path.key(KeyCode::Enter);
+    let out = quick_path.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. })
+                if text == "/Users/alice/repo"
+        )),
+        "multi-segment path in Quick message must submit as normal prompt: {out:?}"
+    );
+}
+
+#[test]
+fn composer_slash_menu_filters_completes_and_dismisses_while_quick_stays_compact() {
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, with_model(summary()));
+
+    // Typing `/` opens the slash menu above the composer rule showing `/copy` and `/thinking`.
+    dashboard.key(KeyCode::Char('/'));
+    let rows = rendered_rows(&dashboard, 120, 30);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("Copy latest assistant reply Markdown"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Choose or set reasoning effort level"),
+        "{screen}"
+    );
+    let menu_row = rows
+        .iter()
+        .position(|r| r.contains("Copy latest assistant reply Markdown"))
+        .expect("slash menu row present");
+    let rule_row = rows
+        .iter()
+        .rposition(|r| r.contains("────────"))
+        .expect("composer rule present");
+    // There are two rules (top_rule and bottom_rule); both are below the popup.
+    let top_rule_row = rows[..rule_row]
+        .iter()
+        .rposition(|r| r.contains("────────"))
+        .expect("top composer rule present");
+    assert!(
+        menu_row < top_rule_row,
+        "slash popup ({menu_row}) must appear above composer top rule ({top_rule_row}):\n{screen}"
+    );
+
+    // Case-insensitive live filtering: `/CO` matches `/copy` and hides `/thinking`.
+    dashboard.key(KeyCode::Char('C'));
+    dashboard.key(KeyCode::Char('O'));
+    let filtered = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        filtered.contains("Copy latest assistant reply Markdown"),
+        "{filtered}"
+    );
+    assert!(
+        !filtered.contains("Choose or set reasoning effort level"),
+        "{filtered}"
+    );
+
+    // Backspacing back to `/` restores both entries; Down + Tab completes `/thinking ` with space.
+    dashboard.key(KeyCode::Backspace);
+    dashboard.key(KeyCode::Backspace);
+    let restored = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        restored.contains("Choose or set reasoning effort level"),
+        "{restored}"
+    );
+    dashboard.key(KeyCode::Down);
+    dashboard.key(KeyCode::Tab);
+    let after_thinking_tab = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !after_thinking_tab.contains("Choose or set reasoning effort level"),
+        "menu closes after Tab completion with trailing space:\n{after_thinking_tab}"
+    );
+    assert!(
+        after_thinking_tab.contains("> /thinking ▏"),
+        "expected `/thinking ` with trailing space before caret:\n{after_thinking_tab}"
+    );
+
+    // Zero-arg `/copy` completes via Tab without trailing space and dismisses the menu.
+    dashboard.ctrl('c');
+    dashboard.key(KeyCode::Char('/'));
+    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Tab);
+    let after_copy_tab = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !after_copy_tab.contains("Copy latest assistant reply Markdown"),
+        "menu closes after Tab completion:\n{after_copy_tab}"
+    );
+    assert!(
+        after_copy_tab.contains("> /copy▏"),
+        "expected `/copy` with no trailing space:\n{after_copy_tab}"
+    );
+
+    // Esc dismisses only the `/` menu while keeping draft and staying in Operator;
+    // a second Esc leaves Operator for Browse.
+    dashboard.ctrl('c');
+    dashboard.event_action(Event::Paste("/t".into()));
+    let open_menu = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        open_menu.contains("Choose or set reasoning effort level"),
+        "{open_menu}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    let dismissed = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !dismissed.contains("Choose or set reasoning effort level"),
+        "Esc must dismiss the `/` menu:\n{dismissed}"
+    );
+    assert!(
+        dismissed.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "first Esc must stay inside Operator:\n{dismissed}"
+    );
+    assert!(
+        dismissed.contains("> /t▏"),
+        "draft must be retained on menu dismissal:\n{dismissed}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
+
+    // Quick message (`Ctrl-o`) never renders the `/` popup while typing.
+    dashboard.drain_outbox();
+    dashboard.ctrl('o');
+    dashboard.ctrl('c');
+    dashboard.key(KeyCode::Char('/'));
+    let quick_slash = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        quick_slash.contains("Quick message · Ctrl-o"),
+        "{quick_slash}"
+    );
+    assert!(
+        !quick_slash.contains("Copy latest assistant reply Markdown")
+            && !quick_slash.contains("Choose or set reasoning effort level"),
+        "Quick message must never render the `/` popup:\n{quick_slash}"
+    );
+    dashboard.key(KeyCode::Char('c'));
+    dashboard.key(KeyCode::Char('o'));
+    let quick_co = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !quick_co.contains("Copy latest assistant reply Markdown"),
+        "Quick message must stay compact while typing `/co`:\n{quick_co}"
+    );
+}
+
+#[test]
+fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() {
+    // 1. Empty conversation: `/copy` reports a clear notice in both composer and Quick message.
+    let mut empty = dashboard_fixture();
+    open_and_settle(&mut empty, summary());
+    empty.event_action(Event::Paste("/copy".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(empty.drain_outbox().is_empty());
+    let empty_screen = draw_text(&mut empty, 120, 30);
+    assert!(
+        empty_screen
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "expected empty-reply notice in Operator:\n{empty_screen}"
+    );
+
+    empty.key(KeyCode::Esc);
+    empty.drain_outbox();
+    empty.ctrl('o');
+    empty.event_action(Event::Paste("/copy".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(empty.drain_outbox().is_empty());
+    let empty_quick = draw_text(&mut empty, 120, 30);
+    assert!(
+        empty_quick.contains("Quick message · Ctrl-o"),
+        "{empty_quick}"
+    );
+    assert!(
+        empty_quick
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "expected empty-reply notice in Quick message:\n{empty_quick}"
+    );
+
+    // 2. Unexpected arguments (`/copy extra`) fail locally preserving draft.
+    empty.ctrl('c');
+    empty.event_action(Event::Paste("/copy extra".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    let bad_args = draw_text(&mut empty, 120, 30);
+    assert!(bad_args.contains("/copy extra"), "{bad_args}");
+    assert!(
+        bad_args.to_lowercase().contains("no arguments"),
+        "{bad_args}"
+    );
+
+    // 3. Latest visible assistant reply raw Markdown (even when a later turn has no reply yet).
+    let raw_md = "# Deployment Plan\n\n```sh\novrcr list\n```\n\n- **step 1**";
+    let mut d = dashboard_fixture();
+    let mut done = with_model(summary());
+    done.run = SessionRunId(3);
+    done.current_turn = Some(turn(3, OperatorTurnState::Interrupted));
+    let out = opened(&mut d, done.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            done,
+            vec![
+                OperatorMessage {
+                    ordinal: 1,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::User {
+                        text: "first".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 2,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "# Old Reply\n\nShould not be copied.".into(),
+                    )),
+                },
+                OperatorMessage {
+                    ordinal: 3,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                    }),
+                },
+                OperatorMessage {
+                    ordinal: 4,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::User {
+                        text: "second".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 5,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        raw_md.into(),
+                    )),
+                },
+                OperatorMessage {
+                    ordinal: 6,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                    }),
+                },
+                OperatorMessage {
+                    ordinal: 7,
+                    turn: OperatorTurnId(3),
+                    content: OperatorMessageContent::User {
+                        text: "third interrupted".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 8,
+                    turn: OperatorTurnId(3),
+                    content: OperatorMessageContent::Interrupted,
+                },
+            ],
+            None,
+        ),
+    );
+
+    // Run `/copy` directly from the `/` menu via Enter (`/` highlights `/copy` first).
+    d.key(KeyCode::Char('/'));
+    let action = d.key(KeyCode::Enter);
+    assert_eq!(action, DashboardAction::CopyText(raw_md.into()));
+    assert!(d.drain_outbox().is_empty());
+    let mut osc52 = Vec::new();
+    ovrcr::tui::write_clipboard(&mut osc52, raw_md).unwrap();
+    let osc52_str = String::from_utf8(osc52).unwrap();
+    assert!(
+        osc52_str.starts_with("\x1b]52;c;"),
+        "expected OSC 52 clipboard sequence: {osc52_str:?}"
+    );
+    let copied_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        copied_screen.to_lowercase().contains("copied"),
+        "expected copy confirmation in Operator:\n{copied_screen}"
+    );
+    assert!(
+        copied_screen.contains("> ▏"),
+        "composer draft must be cleared after `/copy`:\n{copied_screen}"
+    );
+
+    // Quick message (`Ctrl-o`) also executes `/copy` in place, closes Quick, and returns CopyText.
+    d.key(KeyCode::Esc);
+    d.drain_outbox();
+    d.ctrl('o');
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_md.into())
+    );
+    assert!(d.drain_outbox().is_empty());
+    let browse_after_quick_copy = draw_text(&mut d, 120, 30);
+    assert!(
+        !browse_after_quick_copy.contains("Quick message · Ctrl-o"),
+        "Quick message closes on successful `/copy`:\n{browse_after_quick_copy}"
+    );
+    assert!(
+        browse_after_quick_copy.to_lowercase().contains("copied"),
+        "expected copy confirmation in Browse footer:\n{browse_after_quick_copy}"
+    );
+
+    // 4. Exact 64 KiB (65,536 bytes) succeeds; 65,537 bytes fails with a clear >64 KiB notice.
+    let exact_max = "m".repeat(65_536);
+    let mut max_ok = dashboard_fixture();
+    let out = opened(&mut max_ok, summary());
+    let read = read_request(&out);
+    respond(
+        &mut max_ok,
+        read.request_id,
+        history_of(
+            summary(),
+            vec![
+                user(1, "big", OperatorContext::default()),
+                delta(2, &exact_max),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    max_ok.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        max_ok.key(KeyCode::Enter),
+        DashboardAction::CopyText(exact_max)
+    );
+
+    let too_big = "m".repeat(65_537);
+    let mut oversized = dashboard_fixture();
+    let out = opened(&mut oversized, summary());
+    let read = read_request(&out);
+    respond(
+        &mut oversized,
+        read.request_id,
+        history_of(
+            summary(),
+            vec![
+                user(1, "too big", OperatorContext::default()),
+                delta(2, &too_big),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    oversized.event_action(Event::Paste("/copy".into()));
+    assert_eq!(oversized.key(KeyCode::Enter), DashboardAction::Redraw);
+    let over_screen = draw_text(&mut oversized, 120, 30);
+    assert!(
+        over_screen.contains("64 KiB"),
+        "expected >64 KiB notice in Operator:\n{over_screen}"
+    );
+    oversized.key(KeyCode::Esc);
+    oversized.drain_outbox();
+    oversized.ctrl('o');
+    oversized.event_action(Event::Paste("/copy".into()));
+    assert_eq!(oversized.key(KeyCode::Enter), DashboardAction::Redraw);
+    let over_quick = draw_text(&mut oversized, 120, 30);
+    assert!(over_quick.contains("64 KiB"), "{over_quick}");
+}
+
+#[test]
+fn slash_thinking_opens_picker_validates_capabilities_and_writes_settings_across_entry_points() {
+    // 1. Cold Quick message `/thinking` (no args) closes Quick, opens full Operator,
+    //    and opens ReasoningPicker with full capabilities once Opened arrives.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/thinking".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/thinking` opens Operator");
+    assert!(
+        !open_msgs
+            .iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. }))),
+        "must never submit `/thinking` as a prompt: {open_msgs:?}"
+    );
+    let out = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(reasoning_summary(false)),
+    );
+    let read = read_request(&out);
+    respond(
+        &mut cold,
+        read.request_id,
+        history_of(reasoning_summary(false), Vec::new(), None),
+    );
+    let cold_screen = draw_text(&mut cold, 140, 35);
+    assert!(
+        !cold_screen.contains("Quick message · Ctrl-o"),
+        "Quick message must be closed:\n{cold_screen}"
+    );
+    assert!(
+        cold_screen.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "full Operator must be open:\n{cold_screen}"
+    );
+    assert!(
+        cold_screen.contains("default (Pi's choice)")
+            && cold_screen.contains("not offered: off, xhigh, max")
+            && cold_screen.contains("Enter pick"),
+        "ReasoningPicker must be open with model capabilities:\n{cold_screen}"
+    );
+    cold.key(KeyCode::Esc);
+    let after_picker_esc = draw_text(&mut cold, 140, 35);
+    assert!(
+        !after_picker_esc.contains("Enter pick") && after_picker_esc.contains("> ▏"),
+        "Quick draft was cleared and composer is clean:\n{after_picker_esc}"
+    );
+
+    // 2. Before capabilities are known (`reasoning: None`), all 8 levels match case-insensitively,
+    //    while invalid names fail locally listing all 8 valid choices with draft preserved.
+    let mut unknown_caps = dashboard_fixture();
+    open_and_settle(&mut unknown_caps, summary());
+    for (input, expected) in [
+        ("/thinking DEFAULT", "\"default\""),
+        ("/thinking Off", "\"off\""),
+        ("/thinking MINIMAL", "\"minimal\""),
+        ("/thinking low", "\"low\""),
+        ("/thinking Medium", "\"medium\""),
+        ("/thinking HIGH", "\"high\""),
+        ("/thinking xHigh", "\"xhigh\""),
+        ("/thinking MAX", "\"max\""),
+    ] {
+        unknown_caps.event_action(Event::Paste(input.into()));
+        unknown_caps.key(KeyCode::Enter);
+        let out = unknown_caps.drain_outbox();
+        assert!(
+            out.iter().any(|m| matches!(
+                &m.request,
+                Request::SetSetting { path, value: Some(v) }
+                    if path == "operator.thinking_level" && v == expected
+            )),
+            "expected SetSetting {expected} for `{input}`, got {out:?}"
+        );
+    }
+    unknown_caps.event_action(Event::Paste("/thinking turbo".into()));
+    unknown_caps.key(KeyCode::Enter);
+    assert!(unknown_caps.drain_outbox().is_empty());
+    let invalid_screen = draw_text(&mut unknown_caps, 140, 30);
+    assert!(
+        invalid_screen.contains("> /thinking turbo▏"),
+        "{invalid_screen}"
+    );
+    for choice in [
+        "default", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+    ] {
+        assert!(
+            invalid_screen.contains(choice),
+            "expected `{choice}` listed in error:\n{invalid_screen}"
+        );
+    }
+
+    // 3. When model capabilities are known (`minimal, low, medium, high`), even during a running turn:
+    //    - `/th` + Enter in `/` menu opens ReasoningPicker
+    //    - `/thinking medium` and `/thinking DEFAULT` write SetSetting (in composer and Quick)
+    //    - `/thinking max` and `/thinking off` fail locally listing supported choices and keeping draft
+    let mut active = dashboard_fixture();
+    open_and_settle(&mut active, reasoning_summary(true));
+
+    active.event_action(Event::Paste("/th".into()));
+    active.key(KeyCode::Enter);
+    let picker_screen = draw_text(&mut active, 140, 35);
+    assert!(picker_screen.contains("Enter pick"), "{picker_screen}");
+    active.key(KeyCode::Esc);
+
+    active.event_action(Event::Paste("/thinking max".into()));
+    active.key(KeyCode::Enter);
+    assert!(active.drain_outbox().is_empty());
+    let unsupported_screen = draw_text(&mut active, 140, 30);
+    assert!(
+        unsupported_screen.contains("> /thinking max▏"),
+        "draft must be preserved on unsupported level:\n{unsupported_screen}"
+    );
+    assert!(
+        unsupported_screen.contains("default, minimal, low, medium, high"),
+        "expected supported choices listed:\n{unsupported_screen}"
+    );
+
+    active.ctrl('c');
+    active.event_action(Event::Paste("/thinking MEDIUM".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"medium\""
+        )),
+        "supported level writes SetSetting even while turn is running: {out:?}"
+    );
+
+    active.event_action(Event::Paste("/thinking DEFAULT".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"default\""
+        )),
+        "`default` is always allowed even when capabilities omit Default: {out:?}"
+    );
+
+    // Quick message (`Ctrl-o`) capability check and direct SetSetting execution.
+    active.key(KeyCode::Esc);
+    active.drain_outbox();
+    active.ctrl('o');
+    active.event_action(Event::Paste("/thinking OFF".into()));
+    active.key(KeyCode::Enter);
+    assert!(active.drain_outbox().is_empty());
+    let quick_unsupported = draw_text(&mut active, 140, 30);
+    assert!(
+        quick_unsupported.contains("Quick message · Ctrl-o")
+            && quick_unsupported.contains("/thinking OFF")
+            && quick_unsupported.contains("default, minimal, low, medium, high"),
+        "Quick message must reject model-unsupported level inline with draft preserved:\n{quick_unsupported}"
+    );
+
+    active.ctrl('c');
+    active.event_action(Event::Paste("/thinking low".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"low\""
+        )),
+        "Quick message valid `/thinking low` writes SetSetting directly: {out:?}"
+    );
+    let after_quick_set = draw_text(&mut active, 140, 30);
+    assert!(
+        !after_quick_set.contains("Quick message · Ctrl-o"),
+        "Quick message closes after valid `/thinking low`:\n{after_quick_set}"
+    );
+}

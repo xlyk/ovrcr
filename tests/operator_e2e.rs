@@ -1786,6 +1786,370 @@ fn operator_session_identity_is_the_conversation_session() {
     assert!(!row.archived);
 }
 
+#[test]
+fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{
+        self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorResponse,
+        ServerMessage, Settings, TerminalSize,
+    };
+    use ovrcr::tui::{Dashboard, DashboardAction, write_clipboard};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use std::collections::VecDeque;
+
+    struct LiveDashboard {
+        stream: std::os::unix::net::UnixStream,
+        dashboard: Dashboard,
+        pending: VecDeque<ClientMessage>,
+        next_probe_id: u64,
+    }
+
+    impl LiveDashboard {
+        fn connect(live: &Live) -> Self {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            let budget = Duration::from_secs(5);
+            stream.set_read_timeout(Some(budget)).unwrap();
+            stream.set_write_timeout(Some(budget)).unwrap();
+            let hierarchy =
+                match protocol::client::request(&mut stream, 900_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_area(Rect::new(0, 0, 160, 40));
+            dashboard.install_settings(Settings::default());
+            Self {
+                stream,
+                dashboard,
+                pending: VecDeque::new(),
+                next_probe_id: 900_001,
+            }
+        }
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_probe_id += 1;
+            let id = self.next_probe_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                let matched = match &incoming {
+                    ServerMessage::Response {
+                        request_id,
+                        response,
+                    } if *request_id == id => Some(response.clone()),
+                    _ => None,
+                };
+                self.pending
+                    .extend(self.dashboard.handle_server_message(incoming));
+                self.pending.extend(self.dashboard.drain_outbox());
+                if let Some(response) = matched {
+                    self.flush();
+                    return response;
+                }
+            }
+        }
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
+                }
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!("Dashboard outbox did not converge");
+        }
+
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
+        }
+
+        fn current_id(&mut self) -> OperatorConversationId {
+            match self.exchange(Request::Operator(OperatorRequest::Current)) {
+                Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+                other => panic!("expected current conversation, got {other:?}"),
+            }
+        }
+
+        fn wait_turn_settled(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && history.conversation.worker_stopped
+                {
+                    self.pump();
+                    return history;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for settled turn: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn render(&mut self) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    let raw_markdown = "# Deployment Plan\n\n```sh\ncargo test\n```";
+    let mut scenario = Scenario::new();
+    scenario.set(
+        "available_thinking_levels",
+        json!(["minimal", "low", "medium", "high"]),
+    );
+    scenario.prompt_steps(vec![
+        vec![Step::assistant(raw_markdown), Step::Settle],
+        vec![
+            Step::assistant("Second reply with high thinking."),
+            Step::Settle,
+        ],
+    ]);
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold Quick message (`Ctrl-o`) rejects `/compcat` and empty `/copy` locally,
+    //    then transitions into full Operator with ReasoningPicker open on `/thinking`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/compcat".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let quick_err = ui.render();
+    assert!(
+        quick_err.contains("Unknown slash command \"/compcat\"") && quick_err.contains("/compcat"),
+        "{quick_err}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "must not start Pi on unknown slash command"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let quick_no_reply = ui.render();
+    assert!(
+        quick_no_reply.contains("No assistant reply to copy yet."),
+        "{quick_no_reply}"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/thinking".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let opened_picker = ui.render();
+    assert!(
+        !opened_picker.contains("Quick message · Ctrl-o")
+            && opened_picker.contains("default (Pi's choice)")
+            && opened_picker.contains("Enter pick"),
+        "Quick `/thinking` must open full Operator with ReasoningPicker:\n{opened_picker}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "`/thinking` picker must not start Pi"
+    );
+    ui.dashboard.key(KeyCode::Esc);
+
+    // 2. Full Operator `/` menu shows only `#485` commands (`/copy`, `/thinking`) and
+    //    dismisses cleanly on `Esc` without leaving Operator.
+    ui.dashboard.event_action(Event::Paste("/".into()));
+    let menu_screen = ui.render();
+    assert!(
+        menu_screen.contains("/copy")
+            && menu_screen.contains("/thinking [level]")
+            && !menu_screen.contains("/model")
+            && !menu_screen.contains("/compact"),
+        "{menu_screen}"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    let menu_dismissed = ui.render();
+    assert!(
+        !menu_dismissed.contains("Copy latest assistant reply Markdown")
+            && menu_dismissed.contains("> /▏"),
+        "{menu_dismissed}"
+    );
+    ui.dashboard.ctrl('c');
+
+    // 3. Multi-segment path `/etc/hosts` submits as a real prompt to `FakePi`.
+    ui.dashboard
+        .event_action(Event::Paste("/etc/hosts audit".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let conversation_id = ui.current_id();
+    ui.wait_turn_settled(conversation_id);
+    let after_turn_one = ui.render();
+    assert!(
+        after_turn_one.contains("Deployment Plan") && after_turn_one.contains("cargo test"),
+        "{after_turn_one}"
+    );
+
+    // 4. `/copy` returns raw Markdown (`DashboardAction::CopyText`) from both the `/` menu
+    //    and Quick message (`Ctrl-o`), and writes valid OSC 52 bytes via `write_clipboard`.
+    ui.dashboard.event_action(Event::Paste("/co".into()));
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_markdown.into())
+    );
+    let mut osc52 = Vec::new();
+    write_clipboard(&mut osc52, raw_markdown).unwrap();
+    let osc52_str = String::from_utf8(osc52).unwrap();
+    assert_eq!(
+        osc52_str,
+        "\x1b]52;c;IyBEZXBsb3ltZW50IFBsYW4KCmBgYHNoCmNhcmdvIHRlc3QKYGBg\x1b\\"
+    );
+
+    ui.dashboard.key(KeyCode::Esc);
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_markdown.into())
+    );
+
+    // 5. Reopen Operator: model capabilities (`minimal, low, medium, high`) reject `/thinking max`
+    //    locally while `/thinking HIGH` persists via real Server `SetSetting` and applies to the
+    //    next turn, and leading-space ` /copy` submits as a normal prompt.
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.pump();
+
+    ui.dashboard
+        .event_action(Event::Paste("/thinking max".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let unsupported = ui.render();
+    assert!(
+        unsupported.contains("Unsupported thinking level \"max\"")
+            && unsupported.contains("default, minimal, low, medium, high")
+            && unsupported.contains("> /thinking max▏"),
+        "{unsupported}"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard
+        .event_action(Event::Paste("/thinking HIGH".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let after_thinking = ui.render();
+    assert!(
+        after_thinking.contains("Set thinking level to high.")
+            || after_thinking.contains("set: high"),
+        "{after_thinking}"
+    );
+
+    let dashboard_toml = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        dashboard_toml.contains("thinking_level = \"high\""),
+        "{dashboard_toml}"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste(" /copy literal prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let second_history = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        second_history
+            .conversation
+            .reasoning
+            .as_ref()
+            .unwrap()
+            .level,
+        ovrcr::protocol::OperatorThinkingLevel::High
+    );
+    let prompts: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|entry| entry["event"] == "prompt")
+        .map(|entry| {
+            let msg = entry["message"].as_str().unwrap_or_default();
+            msg.rsplit_once("User request:\n")
+                .map_or(msg, |(_, body)| body)
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        prompts,
+        vec!["/etc/hosts audit", " /copy literal prompt"],
+        "multi-segment path and leading-space draft must both submit as prompts"
+    );
+}
+
 #[cfg(feature = "acceptance-diagnostics")]
 mod installed_pi {
     use super::{

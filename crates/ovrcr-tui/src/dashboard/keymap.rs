@@ -556,6 +556,18 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 ],
             }];
         }
+        if dashboard.operator_slash_menu_open() {
+            return vec![KeyGroup {
+                title: "Operator commands".into(),
+                keys: vec![
+                    native("↑/↓", "Select command", KeyCode::Down, KeyModifiers::NONE),
+                    native("Tab", "Complete", Tab, KeyModifiers::NONE),
+                    native("Enter", "Run", Enter, KeyModifiers::NONE),
+                    native("Esc", "Dismiss", Esc, KeyModifiers::NONE),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
+                ],
+            }];
+        }
         if dashboard.operator_transcript_focused() {
             return vec![KeyGroup {
                 title: "Operator transcript".into(),

@@ -4,6 +4,7 @@
 mod feed;
 mod markdown;
 mod render;
+mod slash;
 
 use super::text_cursor::TextCursor;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -47,6 +48,9 @@ pub(super) struct Hub {
     quick: Option<QuickMessage>,
     quick_generation: u64,
     reasoning_picker: Option<ReasoningPicker>,
+    pending_reasoning_picker: bool,
+    slash_selected: usize,
+    slash_dismissed_for: Option<String>,
 }
 struct ReasoningPicker {
     choices: Vec<ThinkingLevel>,
@@ -90,6 +94,7 @@ struct Chat {
     /// The fixed agent working directory; the captured target is per message.
     workdir: Option<std::path::PathBuf>,
     error: Option<String>,
+    notice: Option<String>,
     draft: String,
     cursor: TextCursor,
     context: OperatorContext,
@@ -118,6 +123,7 @@ impl Chat {
             summary,
             workdir: None,
             error: None,
+            notice: None,
             draft: String::new(),
             cursor: TextCursor::default(),
             context,
@@ -480,6 +486,27 @@ impl Dashboard {
                         return DashboardAction::None;
                     }
                     quick.error = None;
+                    let quick_text = quick.text.clone();
+                    if let slash::ParsedDraft::Slash { name, args } =
+                        slash::parse_draft(&quick_text)
+                    {
+                        let Some(spec) = slash::find_command(name) else {
+                            let error = slash::unknown_command_error(name);
+                            if let Some(q) = &mut self.operator.quick {
+                                q.error = Some(display_text(&error));
+                            }
+                            return DashboardAction::Redraw;
+                        };
+                        return match spec.kind {
+                            slash::SlashCommandKind::Copy => self.operator_run_copy(args, true),
+                            slash::SlashCommandKind::Thinking => {
+                                self.operator_run_thinking(args, true)
+                            }
+                        };
+                    }
+                    let Some(quick) = &mut self.operator.quick else {
+                        return DashboardAction::Redraw;
+                    };
                     let generation = quick.generation;
                     if self.operator.chat.is_some() {
                         quick.phase = QuickPhase::Submitting;
@@ -558,10 +585,18 @@ impl Dashboard {
         self.operator.visible && self.operator.transcript_focus
     }
     pub(super) fn operator_submit_available(&self) -> bool {
-        self.operator
-            .chat
-            .as_ref()
-            .is_some_and(|chat| chat.can_submit() && !chat.draft.trim().is_empty())
+        self.operator.chat.as_ref().is_some_and(|chat| {
+            let trimmed = chat.draft.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            if let slash::ParsedDraft::Slash { name, .. } = slash::parse_draft(&chat.draft)
+                && slash::find_command(name).is_some()
+            {
+                return true;
+            }
+            chat.can_submit()
+        })
     }
     pub(super) fn operator_stop_available(&self) -> bool {
         self.operator.chat.as_ref().is_some_and(|chat| {
@@ -718,7 +753,22 @@ impl Dashboard {
                 (quick.text.clone(), quick.context.clone())
             }
         };
+        if let slash::ParsedDraft::Slash { name, .. } = slash::parse_draft(&text)
+            && slash::find_command(name).is_none()
+        {
+            let error = slash::unknown_command_error(name);
+            chat.notice = None;
+            chat.error = Some(display_text(&error));
+            if matches!(origin, SubmitOrigin::Composer) {
+                self.operator.slash_dismissed_for = Some(text);
+            }
+            if let SubmitOrigin::Quick { generation } = origin {
+                self.operator_quick_failed(generation, &error);
+            }
+            return;
+        }
         if !chat.can_submit() {
+            chat.notice = None;
             chat.error = Some(BUSY_REASON.into());
             if let SubmitOrigin::Quick { generation } = origin {
                 self.operator_quick_failed(generation, BUSY_REASON);
@@ -735,6 +785,7 @@ impl Dashboard {
         chat.submitting = true;
         chat.context = context.clone();
         chat.error = None;
+        chat.notice = None;
         self.operator_request(
             Pending::Submit {
                 id,
@@ -812,21 +863,191 @@ impl Dashboard {
         self.operator.reasoning_picker.is_some()
     }
 
-    fn operator_open_reasoning(&mut self) {
-        let mut choices = vec![ThinkingLevel::Default];
-        if let Some(reasoning) = self
+    fn operator_slash_menu_specs(&self) -> Vec<&'static slash::SlashCommandSpec> {
+        if !self.operator.visible
+            || !self.operator.editing
+            || self.operator.transcript_focus
+            || self.operator.reasoning_picker.is_some()
+        {
+            return Vec::new();
+        }
+        let Some(chat) = self.operator.chat.as_ref() else {
+            return Vec::new();
+        };
+        if self.operator.slash_dismissed_for.as_deref() == Some(chat.draft.as_str()) {
+            return Vec::new();
+        }
+        slash::menu_candidates(&chat.draft)
+    }
+
+    pub(super) fn operator_slash_menu_open(&self) -> bool {
+        !self.operator_slash_menu_specs().is_empty()
+    }
+
+    fn operator_reset_slash_menu(&mut self) {
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.notice = None;
+        }
+    }
+
+    fn operator_run_copy(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        if !args.is_empty() {
+            let error = "Usage: /copy (takes no arguments).";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        let reply = self
             .operator
             .chat
             .as_ref()
-            .and_then(|chat| chat.summary.reasoning.as_ref())
-        {
-            choices.extend(
-                ThinkingLevel::ALL
-                    .into_iter()
-                    .skip(1)
-                    .filter(|level| reasoning.available.contains(level)),
-            );
+            .and_then(feed::latest_assistant_reply);
+        let Some(text) = reply else {
+            let msg = "No assistant reply to copy yet.";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(msg.into());
+                }
+            } else {
+                if let Some(chat) = self.operator.chat.as_mut() {
+                    chat.draft.clear();
+                    chat.cursor = TextCursor::default();
+                    chat.notice = None;
+                    chat.error = Some(msg.into());
+                }
+                self.operator.slash_selected = 0;
+                self.operator.slash_dismissed_for = None;
+            }
+            return DashboardAction::Redraw;
+        };
+        if text.len() > super::copy::MAX_COPY_BYTES {
+            let msg = "Latest assistant reply exceeds 64 KiB clipboard limit.";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(msg.into());
+                }
+            } else {
+                if let Some(chat) = self.operator.chat.as_mut() {
+                    chat.draft.clear();
+                    chat.cursor = TextCursor::default();
+                    chat.notice = None;
+                    chat.error = Some(msg.into());
+                }
+                self.operator.slash_selected = 0;
+                self.operator.slash_dismissed_for = None;
+            }
+            return DashboardAction::Redraw;
         }
+        let confirmation = "Copied latest assistant reply to clipboard.";
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.draft.clear();
+            chat.cursor = TextCursor::default();
+            chat.error = None;
+            chat.notice = Some(confirmation.into());
+        }
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if from_quick {
+            self.operator.quick = None;
+            self.desktop.notice = Some(confirmation.into());
+        }
+        DashboardAction::CopyText(text)
+    }
+
+    fn operator_write_thinking_setting(&mut self, level: ThinkingLevel) {
+        let request_id = self.next_request_id();
+        self.operator.error = None;
+        self.operator
+            .pending
+            .insert(request_id, Pending::ReasoningSetting);
+        self.enqueue_request(ClientMessage {
+            request_id,
+            request: Request::SetSetting {
+                path: "operator.thinking_level".into(),
+                value: Some(format!("\"{}\"", level.as_str())),
+            },
+        });
+    }
+
+    fn operator_run_thinking(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        if args.is_empty() {
+            if let Some(chat) = self.operator.chat.as_mut() {
+                chat.draft.clear();
+                chat.cursor = TextCursor::default();
+                chat.error = None;
+                chat.notice = None;
+            }
+            self.operator.slash_selected = 0;
+            self.operator.slash_dismissed_for = None;
+            if from_quick {
+                self.operator.quick = None;
+                self.operator.pending_reasoning_picker = true;
+                self.open_operator();
+                if self.operator.chat.is_some() {
+                    self.operator_open_reasoning();
+                }
+            } else {
+                self.operator_open_reasoning();
+            }
+            return DashboardAction::Redraw;
+        }
+        let parsed = slash::parse_thinking_level(args);
+        let reasoning = self
+            .operator
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.summary.reasoning.as_ref());
+        let allowed = slash::allowed_thinking_levels(reasoning);
+        let Some(level) = parsed.filter(|level| allowed.contains(level)) else {
+            let error = slash::thinking_level_error(args, reasoning, parsed.is_some());
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(display_text(&error));
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(display_text(&error));
+            }
+            return DashboardAction::Redraw;
+        };
+        self.operator_write_thinking_setting(level);
+        let confirmation = format!("Set thinking level to {}.", level.as_str());
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.draft.clear();
+            chat.cursor = TextCursor::default();
+            chat.error = None;
+            chat.notice = Some(confirmation.clone());
+        }
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if from_quick {
+            self.operator.quick = None;
+            self.desktop.notice = Some(confirmation);
+        }
+        DashboardAction::Redraw
+    }
+
+    fn operator_open_reasoning(&mut self) {
+        let choices = slash::allowed_thinking_levels(Some(
+            &self
+                .operator
+                .chat
+                .as_ref()
+                .and_then(|chat| chat.summary.reasoning.clone())
+                .unwrap_or(ovrcr_protocol::OperatorReasoning {
+                    requested: ThinkingLevel::Default,
+                    level: ThinkingLevel::Default,
+                    available: Vec::new(),
+                }),
+        ));
         let selected = choices
             .iter()
             .position(|level| *level == self.settings.operator.thinking_level)
@@ -837,30 +1058,23 @@ impl Dashboard {
     fn operator_reasoning_key(&mut self, key: KeyEvent) -> DashboardAction {
         let picker = self.operator.reasoning_picker.as_mut().unwrap();
         match key.code {
-            KeyCode::Esc => self.operator.reasoning_picker = None,
+            KeyCode::Esc => {
+                self.operator.reasoning_picker = None;
+                self.operator.pending_reasoning_picker = false;
+            }
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Down => picker.selected = (picker.selected + 1).min(picker.choices.len() - 1),
             KeyCode::Enter => {
                 let level = picker.choices[picker.selected];
                 self.operator.reasoning_picker = None;
+                self.operator.pending_reasoning_picker = false;
                 if !self
                     .operator
                     .pending
                     .values()
                     .any(|pending| matches!(pending, Pending::ReasoningSetting))
                 {
-                    let request_id = self.next_request_id();
-                    self.operator.error = None;
-                    self.operator
-                        .pending
-                        .insert(request_id, Pending::ReasoningSetting);
-                    self.enqueue_request(ClientMessage {
-                        request_id,
-                        request: Request::SetSetting {
-                            path: "operator.thinking_level".into(),
-                            value: Some(format!("\"{}\"", level.as_str())),
-                        },
-                    });
+                    self.operator_write_thinking_setting(level);
                 }
             }
             _ => {}
@@ -890,10 +1104,53 @@ impl Dashboard {
         {
             return DashboardAction::None;
         }
+        let slash_specs = self.operator_slash_menu_specs();
+        if !slash_specs.is_empty() && key.modifiers.is_empty() {
+            let selected = self
+                .operator
+                .slash_selected
+                .min(slash_specs.len().saturating_sub(1));
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(chat) = self.operator.chat.as_ref() {
+                        self.operator.slash_dismissed_for = Some(chat.draft.clone());
+                    }
+                    return DashboardAction::Redraw;
+                }
+                KeyCode::Up => {
+                    self.operator.slash_selected = selected.saturating_sub(1);
+                    return DashboardAction::Redraw;
+                }
+                KeyCode::Down => {
+                    self.operator.slash_selected =
+                        (selected + 1).min(slash_specs.len().saturating_sub(1));
+                    return DashboardAction::Redraw;
+                }
+                KeyCode::Tab => {
+                    let completed = slash::completion_text(slash_specs[selected]);
+                    if let Some(chat) = self.operator.chat.as_mut() {
+                        chat.draft = completed.clone();
+                        chat.cursor = TextCursor::default();
+                        chat.notice = None;
+                    }
+                    self.operator.slash_selected = 0;
+                    self.operator.slash_dismissed_for = Some(completed);
+                    return DashboardAction::Redraw;
+                }
+                KeyCode::Enter => {
+                    return match slash_specs[selected].kind {
+                        slash::SlashCommandKind::Copy => self.operator_run_copy("", false),
+                        slash::SlashCommandKind::Thinking => self.operator_run_thinking("", false),
+                    };
+                }
+                _ => {}
+            }
+        }
         if super::input::is_browse_key(key) || key.code == KeyCode::Esc {
             // Back to the terminal panes; the conversation keeps its draft.
             self.operator.editing = false;
             self.operator.visible = false;
+            self.operator.pending_reasoning_picker = false;
             self.retarget(super::state::PaneChange::Focus);
             // Ctrl-g is the navigation key: leaving Operator with it also
             // opens the label picker. Esc only leaves.
@@ -912,15 +1169,20 @@ impl Dashboard {
                     } else {
                         chat.draft.clear();
                         chat.cursor = TextCursor::default();
+                        self.operator_reset_slash_menu();
                     }
                 }
                 return DashboardAction::Redraw;
             }
             // Ctrl-l and Ctrl-x are commands, never draft text.
+            let before = chat.draft.clone();
             if !(key.modifiers == KeyModifiers::CONTROL
                 && matches!(key.code, KeyCode::Char('l' | 'x')))
                 && chat.cursor.edit_key(&mut chat.draft, key)
             {
+                if chat.draft != before {
+                    self.operator_reset_slash_menu();
+                }
                 return DashboardAction::Redraw;
             }
         }
@@ -1030,7 +1292,20 @@ impl Dashboard {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.operator_insert("\n")
             }
-            KeyCode::Enter => self.operator_submit(),
+            KeyCode::Enter => {
+                if let Some(draft) = self.operator.chat.as_ref().map(|c| c.draft.clone())
+                    && let slash::ParsedDraft::Slash { name, args } = slash::parse_draft(&draft)
+                    && let Some(spec) = slash::find_command(name)
+                {
+                    return match spec.kind {
+                        slash::SlashCommandKind::Copy => self.operator_run_copy(args, false),
+                        slash::SlashCommandKind::Thinking => {
+                            self.operator_run_thinking(args, false)
+                        }
+                    };
+                }
+                self.operator_submit();
+            }
             KeyCode::Up | KeyCode::Down => {
                 if let Some(chat) = self.operator.chat.as_mut() {
                     chat.cursor.vertical(&chat.draft, key.code == KeyCode::Down);
@@ -1040,8 +1315,14 @@ impl Dashboard {
             KeyCode::PageDown => self.operator_scroll(10),
             KeyCode::Char(ch) if !ch.is_control() => self.operator_insert(&ch.to_string()),
             code => {
+                let mut changed = false;
                 if let Some(chat) = self.operator.chat.as_mut() {
+                    let before = chat.draft.clone();
                     chat.cursor.key(&mut chat.draft, code);
+                    changed = chat.draft != before;
+                }
+                if changed {
+                    self.operator_reset_slash_menu();
                 }
             }
         }
@@ -1051,11 +1332,18 @@ impl Dashboard {
         self.operator.visible && self.operator.editing
     }
     fn operator_insert(&mut self, text: &str) {
+        let mut changed = false;
         if let Some(chat) = self.operator.chat.as_mut() {
             // Match the protocol's user-text bound without splitting UTF-8.
-            if chat.draft.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES {
+            if !text.is_empty()
+                && chat.draft.len().saturating_add(text.len()) <= MAX_OPERATOR_TEXT_BYTES
+            {
                 chat.cursor.insert(&mut chat.draft, text);
+                changed = true;
             }
+        }
+        if changed {
+            self.operator_reset_slash_menu();
         }
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
@@ -1094,6 +1382,7 @@ impl Dashboard {
         if self.operator.reasoning_picker.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.operator.reasoning_picker = None;
+                self.operator.pending_reasoning_picker = false;
             }
             return Some(DashboardAction::Redraw);
         }
@@ -1170,6 +1459,9 @@ impl Dashboard {
             }
         }
         if let Response::Error { message, .. } = response {
+            if matches!(pending, Pending::Open { .. }) {
+                self.operator.pending_reasoning_picker = false;
+            }
             match &pending {
                 Pending::Open {
                     origin: OpenOrigin::Quick(submission),
@@ -1210,6 +1502,7 @@ impl Dashboard {
                     OpenOrigin::Quick(submission) => submission.context.clone(),
                 };
                 if !self.operator_attach(summary.clone(), context) {
+                    self.operator.pending_reasoning_picker = false;
                     match origin {
                         OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
                         OpenOrigin::Quick(submission) => {
@@ -1219,7 +1512,15 @@ impl Dashboard {
                     return true;
                 }
                 match &origin {
-                    OpenOrigin::Manual => self.operator_read(),
+                    OpenOrigin::Manual => {
+                        if self.operator.pending_reasoning_picker {
+                            self.operator.pending_reasoning_picker = false;
+                            if self.operator.visible {
+                                self.operator_open_reasoning();
+                            }
+                        }
+                        self.operator_read();
+                    }
                     OpenOrigin::Quick(submission) => {
                         let Some(chat) = self.operator.chat.as_mut() else {
                             return true;
@@ -1490,7 +1791,12 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_commit_presented(&mut self) {
-        if !self.operator.visible || !self.operator.editing || self.operator.transcript_focus {
+        if !self.operator.visible
+            || !self.operator.editing
+            || self.operator.transcript_focus
+            || self.operator_slash_menu_open()
+            || self.operator_reasoning_picker_open()
+        {
             return;
         }
         let layout = self.operator_layout(self.outer_area);

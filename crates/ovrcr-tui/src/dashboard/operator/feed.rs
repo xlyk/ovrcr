@@ -446,6 +446,14 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
     entries
 }
 
+pub(super) fn latest_assistant_reply(chat: &Chat) -> Option<String> {
+    entries(chat)
+        .into_iter()
+        .rev()
+        .find(|entry| !entry.reply.trim().is_empty())
+        .map(|entry| entry.reply)
+}
+
 fn wake_title(text: &str) -> String {
     let sessions: Vec<String> = text
         .lines()

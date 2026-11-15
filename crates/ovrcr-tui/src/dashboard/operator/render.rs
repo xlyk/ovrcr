@@ -772,17 +772,17 @@ impl Dashboard {
             .collect();
         frame.render_widget(Paragraph::new(lines), layout.transcript);
         let error = chat.error.as_deref().or(self.operator.error.as_deref());
+        let notice = chat.notice.as_deref();
         let context = layout.context;
-        let caption = error.map_or_else(
-            || context_caption(&chat.context, context.width),
-            display_text,
-        );
+        let (caption, fg) = if let Some(error) = error {
+            (display_text(error), super::super::render::RED())
+        } else if let Some(notice) = notice {
+            (display_text(notice), GREEN())
+        } else {
+            (context_caption(&chat.context, context.width), BLUE())
+        };
         frame.render_widget(
-            Paragraph::new(caption).style(Style::default().fg(if error.is_some() {
-                super::super::render::RED()
-            } else {
-                BLUE()
-            })),
+            Paragraph::new(caption).style(Style::default().fg(fg)),
             context,
         );
         for (area, color) in [(layout.top_rule, MAUVE()), (layout.bottom_rule, SURFACE2())] {
@@ -841,7 +841,100 @@ impl Dashboard {
                 layout.composer.y + row.saturating_sub(offset) as u16,
             ));
         }
+        self.draw_operator_slash_menu(frame, &layout);
         self.draw_operator_reasoning_picker(frame);
+    }
+
+    fn draw_operator_slash_menu(&self, frame: &mut Frame<'_>, layout: &OperatorLayout) {
+        let specs = self.operator_slash_menu_specs();
+        if specs.is_empty() {
+            return;
+        }
+        let available_height = layout.top_rule.y.saturating_sub(layout.header.bottom());
+        if available_height == 0 || layout.top_rule.width < 12 {
+            return;
+        }
+        let width = layout.top_rule.width.min(76);
+        let selected = self
+            .operator
+            .slash_selected
+            .min(specs.len().saturating_sub(1));
+        let usage_col = specs
+            .iter()
+            .map(|spec| spec.usage.width())
+            .max()
+            .unwrap_or(0)
+            + 2;
+        let bordered = available_height >= 3;
+        let height = if bordered {
+            (specs.len() as u16 + 2).min(available_height)
+        } else {
+            (specs.len() as u16).min(available_height)
+        };
+        let inner_height = usize::from(if bordered {
+            height.saturating_sub(2)
+        } else {
+            height
+        })
+        .max(1);
+        let inner_width = usize::from(if bordered {
+            width.saturating_sub(2)
+        } else {
+            width
+        });
+        let start = selected.saturating_add(1).saturating_sub(inner_height);
+        let lines: Vec<Line<'static>> = specs
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(inner_height)
+            .map(|(index, spec)| {
+                let active = index == selected;
+                let row_bg = if active { SURFACE2() } else { BASE() };
+                let pad = usage_col.saturating_sub(spec.usage.width());
+                let left = format!(" {}{}", spec.usage, " ".repeat(pad));
+                let desc_room = inner_width.saturating_sub(left.width());
+                let desc = clip_text(spec.description, desc_room);
+                let tail_pad = inner_width.saturating_sub(left.width() + desc.width());
+                Line::from(vec![
+                    Span::styled(
+                        clip_text(&left, inner_width),
+                        Style::default()
+                            .fg(if active { TEXT() } else { MAUVE() })
+                            .bg(row_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{desc}{}", " ".repeat(tail_pad)),
+                        Style::default()
+                            .fg(if active { TEXT() } else { SUBTEXT() })
+                            .bg(row_bg),
+                    ),
+                ])
+            })
+            .collect();
+        let area = Rect::new(
+            layout.top_rule.x,
+            layout.top_rule.y.saturating_sub(height),
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let paragraph = Paragraph::new(lines).style(Style::default().fg(TEXT()).bg(BASE()));
+        if bordered {
+            frame.render_widget(
+                paragraph.block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Slash commands · ↑↓ Tab Enter Esc ")
+                        .style(Style::default().fg(TEXT()).bg(BASE()))
+                        .border_style(Style::default().fg(MAUVE())),
+                ),
+                area,
+            );
+        } else {
+            frame.render_widget(paragraph, area);
+        }
     }
 
     fn draw_operator_reasoning_picker(&self, frame: &mut Frame<'_>) {
