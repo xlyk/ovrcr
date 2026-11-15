@@ -2024,14 +2024,16 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
     );
     ui.dashboard.key(KeyCode::Esc);
 
-    // 2. Full Operator `/` menu shows only `#485` commands (`/copy`, `/thinking`) and
+    // 2. Full Operator `/` menu shows registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`) and
     //    dismisses cleanly on `Esc` without leaving Operator.
     ui.dashboard.event_action(Event::Paste("/".into()));
     let menu_screen = ui.render();
     assert!(
         menu_screen.contains("/copy")
             && menu_screen.contains("/thinking [level]")
-            && !menu_screen.contains("/model")
+            && menu_screen.contains("/model [provider/id | default]")
+            && menu_screen.contains("/new")
+            && menu_screen.contains("/session")
             && !menu_screen.contains("/compact"),
         "{menu_screen}"
     );
@@ -2147,6 +2149,402 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
         prompts,
         vec!["/etc/hosts audit", " /copy literal prompt"],
         "multi-segment path and leading-space draft must both submit as prompts"
+    );
+}
+
+#[test]
+fn dashboard_slash_model_picker_and_switching_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{
+        self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorModel,
+        OperatorResponse, ServerMessage, Settings, TerminalSize,
+    };
+    use ovrcr::tui::Dashboard;
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use std::collections::VecDeque;
+
+    struct LiveDashboard {
+        stream: std::os::unix::net::UnixStream,
+        dashboard: Dashboard,
+        pending: VecDeque<ClientMessage>,
+        next_probe_id: u64,
+    }
+
+    impl LiveDashboard {
+        fn connect(live: &Live) -> Self {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            let budget = Duration::from_secs(5);
+            stream.set_read_timeout(Some(budget)).unwrap();
+            stream.set_write_timeout(Some(budget)).unwrap();
+            let hierarchy =
+                match protocol::client::request(&mut stream, 900_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_area(Rect::new(0, 0, 160, 40));
+            dashboard.install_settings(Settings::default());
+            Self {
+                stream,
+                dashboard,
+                pending: VecDeque::new(),
+                next_probe_id: 900_001,
+            }
+        }
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_probe_id += 1;
+            let id = self.next_probe_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                let matched = match &incoming {
+                    ServerMessage::Response {
+                        request_id,
+                        response,
+                    } if *request_id == id => Some(response.clone()),
+                    _ => None,
+                };
+                self.pending
+                    .extend(self.dashboard.handle_server_message(incoming));
+                self.pending.extend(self.dashboard.drain_outbox());
+                if let Some(response) = matched {
+                    self.flush();
+                    return response;
+                }
+            }
+        }
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
+                }
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!("Dashboard outbox did not converge");
+        }
+
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
+        }
+
+        fn current_id(&mut self) -> OperatorConversationId {
+            match self.exchange(Request::Operator(OperatorRequest::Current)) {
+                Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+                other => panic!("expected current conversation, got {other:?}"),
+            }
+        }
+
+        fn wait_turn_running(&mut self, conversation: OperatorConversationId, expected_turn: u64) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history.conversation.current_turn.as_ref().is_some_and(|t| {
+                    t.identity.turn.0 == expected_turn && t.state == OperatorTurnState::Running
+                }) {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for running turn {expected_turn}: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn wait_turn_settled(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && history.conversation.worker_stopped
+                {
+                    self.pump();
+                    return history;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for settled turn: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn render(&mut self) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    let hold_gate = tempfile::tempdir().unwrap();
+    let release_turn_two = hold_gate.path().join("release-turn-two");
+
+    let mut scenario = Scenario::new();
+    scenario
+        .default_model("fixture", "default")
+        .models(vec![
+            ("fixture", "default", "Fixture Default"),
+            ("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ("openrouter", "vendor/sub/id", "Nested Router Model"),
+        ])
+        .prompt_steps(vec![
+            vec![Step::assistant("Reply 1 on sonnet"), Step::Settle],
+            vec![
+                Step::Start,
+                Step::Delta("Streaming turn 2...".into()),
+                Step::WaitFile(release_turn_two.clone()),
+                Step::assistant("Reply 2 finished cleanly"),
+                Step::Settle,
+            ],
+            vec![Step::assistant("Reply 3 on nested router"), Step::Settle],
+            vec![Step::assistant("Reply 4 on harness default"), Step::Settle],
+        ]);
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    fake.script(&scenario);
+
+    // Populate a conflicting ambient HOME/.pi catalog to prove the live Server + TUI
+    // only ever inspect `<OVRCR_HOME>/operator-pi`.
+    let ambient_home = live.root.path().join("ambient-home");
+    std::fs::create_dir_all(ambient_home.join(".pi")).unwrap();
+    std::fs::write(
+        ambient_home.join(".pi/fake-pi-scenario.json"),
+        serde_json::to_vec(&json!({
+            "models": [
+                {"provider": "ambient-leak", "id": "forbidden", "name": "Ambient Leak"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    live.start_binary_env(&[
+        fake_pi::executable_env(&fake),
+        ("HOME", ambient_home.as_os_str()),
+    ]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `Ctrl-o` `/model sonnet` discovers models from the dedicated `operator-pi` profile
+    //    without starting an RPC turn, ignores `ambient-leak/forbidden`, transitions into full
+    //    Operator, and opens `ModelPicker` pre-filtered by `sonnet`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/model sonnet".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+
+    let prefiltered = ui.render();
+    assert!(
+        !prefiltered.contains("Quick message · Ctrl-o")
+            && prefiltered.contains("Filter: sonnet▏")
+            && prefiltered.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && !prefiltered.contains("ambient-leak"),
+        "expected dedicated profile model picker pre-filtered by sonnet:\n{prefiltered}"
+    );
+    assert!(
+        !fake.log().iter().any(|entry| entry["event"] == "prompt"),
+        "model discovery must not submit an Operator turn: {:?}",
+        fake.log()
+    );
+
+    // Pick `anthropic/claude-sonnet-4-6` via Enter -> persists `operator.model` in dashboard.toml
+    // and applies to Turn 1.
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let toml_after_pick = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        toml_after_pick.contains("model = \"anthropic/claude-sonnet-4-6\""),
+        "{toml_after_pick}"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste("first turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let conversation_id = ui.current_id();
+    let turn_one = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_one.conversation.model,
+        Some(OperatorModel {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+        })
+    );
+
+    // 2. Start Turn 2 (held mid-flight) and run exact `/model openrouter/vendor/sub/id` DURING
+    //    the running turn: persists immediately without disrupting Turn 2, and takes effect on Turn 3.
+    ui.dashboard
+        .event_action(Event::Paste("second turn held".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_turn_running(conversation_id, 2);
+
+    ui.dashboard
+        .event_action(Event::Paste("/model openrouter/vendor/sub/id".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let mid_turn_screen = ui.render();
+    assert!(
+        !mid_turn_screen.contains("Filter:")
+            && mid_turn_screen.contains("Set Operator model to openrouter/vendor/sub/id."),
+        "exact `/model <provider/id>` writes setting immediately without opening picker:\n{mid_turn_screen}"
+    );
+
+    std::fs::write(&release_turn_two, "go").unwrap();
+    let turn_two = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_two.conversation.model,
+        Some(OperatorModel {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+        }),
+        "in-flight Turn 2 finishes on its already-selected model without disruption"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste("third turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let turn_three = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_three.conversation.model,
+        Some(OperatorModel {
+            provider: "openrouter".into(),
+            id: "vendor/sub/id".into(),
+        }),
+        "Turn 3 picks up the model switched during Turn 2"
+    );
+
+    // 3. `/model default` from Quick message (`Ctrl-o`) resets `operator.model` to `None`
+    //    without opening a picker, and Turn 4 uses the dedicated Pi profile's default (`fixture/default`).
+    ui.dashboard.key(KeyCode::Esc);
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/model default".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let after_quick_default = ui.render();
+    assert!(
+        !after_quick_default.contains("Quick message · Ctrl-o"),
+        "Quick message closes on `/model default`:\n{after_quick_default}"
+    );
+    let toml_after_default = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        !toml_after_default.contains("openrouter/vendor/sub/id"),
+        "`/model default` clears explicit operator.model from dashboard.toml:\n{toml_after_default}"
+    );
+
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.dashboard
+        .event_action(Event::Paste("fourth turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let turn_four = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_four.conversation.model,
+        Some(OperatorModel {
+            provider: "fixture".into(),
+            id: "default".into(),
+        }),
+        "Turn 4 delegates to dedicated Pi profile default (`Harness default`)"
+    );
+
+    // 4. Empty dedicated catalog surfaces clear `ovrcr operator setup` guidance while offering Harness default.
+    let mut empty_catalog = Scenario::new();
+    empty_catalog.models(Vec::new());
+    fake.script(&empty_catalog);
+    ui.dashboard.event_action(Event::Paste("/model".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let empty_screen = ui.render();
+    assert!(
+        empty_screen.contains("✓ Harness default") && empty_screen.contains("ovrcr operator setup"),
+        "empty catalog offers Harness default and setup guidance:\n{empty_screen}"
     );
 }
 

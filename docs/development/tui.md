@@ -367,7 +367,12 @@ Typing a single-segment `/prefix` in the full composer opens a live `/` menu
 above the top rule (`Up`/`Down` select, `Tab` complete, `Enter` run, `Esc`
 close menu only); Quick message stays compact, running `/copy` (OSC 52 raw
 Markdown of the latest visible assistant reply, bounded at 64 KiB),
-`/thinking <level>` and `/new` (idle/unleased session-epoch reset) directly,
-and transitioning into full Operator on bare `/thinking` (reasoning picker) or
-`/session` (dismissible read-only session inspection modal: `Esc`, `Enter` or
-`q` closes).
+`/thinking <level>`, `/model default`, exact `/model <provider/id>` matches and
+`/new` (idle/unleased session-epoch reset) directly, while transitioning into
+full Operator for bare `/thinking`, bare `/model`, non-exact `/model <query>`
+filters or `/session` (dismissible read-only session inspection modal: `Esc`,
+`Enter` or `q` closes). `ModelPicker` queries the dedicated profile via
+`OperatorRequest::Models`, lists `Harness default` ahead of `provider/id`
+entries, marks the active `Settings` snapshot selection, filters live
+case-insensitively by `provider/id` or display name, and writes the chosen model
+exclusively through `SetSetting` on `operator.model`.

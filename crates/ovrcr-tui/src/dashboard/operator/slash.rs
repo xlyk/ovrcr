@@ -6,6 +6,7 @@ use ovrcr_protocol::{OperatorReasoning, OperatorThinkingLevel};
 pub(super) enum SlashCommandKind {
     Copy,
     Thinking,
+    Model,
     New,
     Session,
 }
@@ -32,6 +33,13 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         name: "thinking",
         usage: "/thinking [level]",
         description: "Choose or set reasoning effort level",
+        takes_args: true,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Model,
+        name: "model",
+        usage: "/model [provider/id | default]",
+        description: "Choose or set Operator model",
         takes_args: true,
     },
     SlashCommandSpec {

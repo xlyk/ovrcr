@@ -194,6 +194,7 @@ impl Dashboard {
         }
         let hint = match quick.phase {
             QuickPhase::Editing => "Enter Send  Shift-Enter Newline  Ctrl-c Clear  Esc Dismiss",
+            QuickPhase::CheckingModels => "Checking Operator models… · Esc Dismiss",
             QuickPhase::Opening => "Opening Operator… · Esc Dismiss",
             QuickPhase::Submitting => "Sending message… · Esc Dismiss",
         };
@@ -843,6 +844,7 @@ impl Dashboard {
         }
         self.draw_operator_slash_menu(frame, &layout);
         self.draw_operator_reasoning_picker(frame);
+        self.draw_operator_model_picker(frame);
         self.draw_operator_session_modal(frame);
     }
 
@@ -1160,6 +1162,134 @@ impl Dashboard {
             ),
             area,
         );
+    }
+
+    fn draw_operator_model_picker(&self, frame: &mut Frame<'_>) {
+        let Some(picker) = &self.operator.model_picker else {
+            return;
+        };
+        let outer = frame.area();
+        if outer.width < 20 || outer.height < 6 {
+            return;
+        }
+        let width = outer.width.min(72);
+        let inner_width = usize::from(width.saturating_sub(2));
+        let active = self.settings.operator.model.as_deref();
+        let configured = active.unwrap_or("Harness default");
+
+        let pos = picker.cursor.position(&picker.query);
+        let before = display_text(&picker.query[..pos]);
+        let after = display_text(&picker.query[pos..]);
+        let filter_prefix = "Filter: ";
+        let filter_room = inner_width.saturating_sub(filter_prefix.width() + 1);
+        let filter_text = format!("{before}▏{after}");
+        let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+            Span::styled(
+                filter_prefix,
+                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                clip_text(&filter_text, filter_room.max(1)),
+                Style::default().fg(TEXT()),
+            ),
+        ])];
+
+        let filtered = picker.filtered_choices();
+        let selected = picker.selected.min(filtered.len().saturating_sub(1));
+        let max_list_rows = usize::from(outer.height.saturating_sub(6)).clamp(1, 12);
+
+        if filtered.is_empty() {
+            let empty_msg = if picker.entries.is_empty() {
+                EMPTY_MODEL_CATALOG_NOTICE.to_owned()
+            } else {
+                format!(
+                    "No Operator models match \"{}\".",
+                    display_text(picker.query.trim())
+                )
+            };
+            lines.extend(wrapped_lines(
+                vec![Line::styled(empty_msg, Style::default().fg(PEACH()))],
+                width.saturating_sub(2),
+            ));
+        } else {
+            let start = selected.saturating_add(1).saturating_sub(max_list_rows);
+            for (index, choice) in filtered
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(start)
+                .take(max_list_rows)
+            {
+                let tick = if picker.choice_is_active(choice, active) {
+                    "✓"
+                } else {
+                    " "
+                };
+                let label = match choice {
+                    ModelChoice::HarnessDefault => "Harness default (Pi profile default)".into(),
+                    ModelChoice::Catalog(idx) => {
+                        let entry = &picker.entries[idx];
+                        let full = display_text(&entry.full_id());
+                        match entry.name.as_deref() {
+                            Some(name) if !name.is_empty() && name != entry.id => {
+                                format!("{full} · {}", display_text(name))
+                            }
+                            _ => full,
+                        }
+                    }
+                };
+                let row_text = clip_text(&format!("{tick} {label}"), inner_width);
+                let pad = inner_width.saturating_sub(row_text.width());
+                lines.push(Line::raw(format!("{row_text}{}", " ".repeat(pad))).style(
+                    if index == selected {
+                        Style::default().fg(TEXT()).bg(SURFACE2())
+                    } else {
+                        Style::default().fg(TEXT())
+                    },
+                ));
+            }
+            if picker.entries.is_empty() {
+                lines.extend(wrapped_lines(
+                    vec![Line::styled(
+                        EMPTY_MODEL_CATALOG_NOTICE,
+                        Style::default().fg(PEACH()),
+                    )],
+                    width.saturating_sub(2),
+                ));
+            }
+        }
+
+        lines.push(
+            Line::raw("Type filter · ↑↓ Enter pick · Esc close")
+                .style(Style::default().fg(MAUVE())),
+        );
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let title_room = usize::from(width.saturating_sub(22)).max(8);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(
+                        " Operator model · {} ",
+                        clip_text(&display_text(configured), title_room)
+                    ))
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
+        if area.height >= 3 && area.width >= 12 {
+            let cursor_col = (filter_prefix.width() + before.width())
+                .min(usize::from(area.width.saturating_sub(3))) as u16;
+            frame.set_cursor_position((area.x + 1 + cursor_col, area.y + 1));
+        }
     }
 }
 

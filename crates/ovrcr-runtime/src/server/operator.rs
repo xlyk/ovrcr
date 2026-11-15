@@ -6,6 +6,10 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 
 const SOFT_STOP_GRACE: Duration = Duration::from_secs(5);
+const OPERATOR_MODEL_CATALOG_LIMIT: usize = 512 * 1024;
+const OPERATOR_MODEL_DIAGNOSTIC_LIMIT: usize = 16 * 1024;
+const OPERATOR_MODEL_CATALOG_DEADLINE: Duration = Duration::from_secs(20);
+const OPERATOR_MODEL_UNAVAILABLE_MSG: &str = "Operator model catalog is unavailable; run ovrcr operator setup or ovrcr operator models to check the dedicated Pi profile.";
 
 pub(super) struct OperatorRuntime {
     pub(super) executable: PathBuf,
@@ -14,10 +18,13 @@ pub(super) struct OperatorRuntime {
     pub(super) before_stop: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     pub(super) before_retained: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    pub(super) models_deadline: Mutex<Option<Duration>>,
 }
 #[derive(Default)]
 struct Controls {
     conversations: HashSet<OperatorConversationId>,
+    models_in_flight: bool,
     workers: Vec<JoinHandle<()>>,
     closed: bool,
     panicked: bool,
@@ -70,6 +77,8 @@ impl Default for OperatorRuntime {
             before_stop: Mutex::default(),
             #[cfg(test)]
             before_retained: Mutex::default(),
+            #[cfg(test)]
+            models_deadline: Mutex::default(),
         }
     }
 }
@@ -90,32 +99,83 @@ pub fn operator_worker_argv(executable: &Path, identity: OperatorRunIdentity) ->
     .into()
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOperatorModelCatalog {
+    models: Vec<RawOperatorModelEntry>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOperatorModelEntry {
+    provider: String,
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+fn parse_operator_model_catalog(stdout: &[u8]) -> Result<Vec<OperatorModelCatalogEntry>> {
+    anyhow::ensure!(
+        stdout.len() <= OPERATOR_MODEL_CATALOG_LIMIT,
+        "operator model catalog output bound"
+    );
+    let raw: RawOperatorModelCatalog =
+        serde_json::from_slice(stdout).context("parse operator model catalog json")?;
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+    for item in raw.models {
+        let name = item
+            .name
+            .filter(|name| !name.is_empty() && name != &item.id);
+        let entry = OperatorModelCatalogEntry {
+            provider: item.provider,
+            id: item.id,
+            name,
+        };
+        entry.validate().map_err(anyhow::Error::msg)?;
+        if seen.insert((entry.provider.clone(), entry.id.clone())) {
+            entries.push(entry);
+        }
+    }
+    validate_operator_model_catalog(&entries).map_err(anyhow::Error::msg)?;
+    Ok(entries)
+}
+
+#[derive(Clone, Copy)]
+enum ControlSlot {
+    Conversation(OperatorConversationId),
+    Models,
+}
+
 struct ControlJob {
     state: Arc<ServerState>,
-    conversation: OperatorConversationId,
+    slot: ControlSlot,
 }
 impl Drop for ControlJob {
     fn drop(&mut self) {
-        self.state
-            .operator
-            .controls
-            .lock()
-            .unwrap()
-            .conversations
-            .remove(&self.conversation);
+        let mut controls = self.state.operator.controls.lock().unwrap();
+        match self.slot {
+            ControlSlot::Conversation(conversation) => {
+                controls.conversations.remove(&conversation);
+            }
+            ControlSlot::Models => {
+                controls.models_in_flight = false;
+            }
+        }
     }
 }
 
-/// Keep submit/spawn and owned termination off the Dashboard reader. No global execution queue.
+/// Keep submit/spawn, owned termination, and catalog discovery off the Dashboard reader.
 pub(super) fn dispatch_control(
     state: &Arc<ServerState>,
     owner: &Arc<()>,
     request_id: u64,
     request: OperatorRequest,
 ) -> Option<Response> {
-    let conversation = match &request {
-        OperatorRequest::Submit { conversation, .. } => *conversation,
-        OperatorRequest::Stop { identity } => identity.conversation,
+    let slot = match &request {
+        OperatorRequest::Submit { conversation, .. } => ControlSlot::Conversation(*conversation),
+        OperatorRequest::Stop { identity } => ControlSlot::Conversation(identity.conversation),
+        OperatorRequest::Models => ControlSlot::Models,
         _ => return None,
     };
     if !state.dashboard.owns(owner) {
@@ -126,14 +186,25 @@ pub(super) fn dispatch_control(
     }
     let mut controls = state.operator.controls.lock().unwrap();
     controls.prune_finished();
-    if controls.closed
-        || controls.workers.len() >= MAX_LIVE_SESSIONS
-        || !controls.conversations.insert(conversation)
-    {
-        return Some(error_response(
-            ErrorCode::Conflict,
-            "operator control is busy; retry explicitly",
-        ));
+    let busy_message = match slot {
+        ControlSlot::Conversation(_) => "operator control is busy; retry explicitly",
+        ControlSlot::Models => "Operator model discovery is busy; retry in a moment.",
+    };
+    if controls.closed || controls.workers.len() >= MAX_LIVE_SESSIONS {
+        return Some(error_response(ErrorCode::Conflict, busy_message));
+    }
+    match slot {
+        ControlSlot::Conversation(conversation) => {
+            if !controls.conversations.insert(conversation) {
+                return Some(error_response(ErrorCode::Conflict, busy_message));
+            }
+        }
+        ControlSlot::Models => {
+            if controls.models_in_flight {
+                return Some(error_response(ErrorCode::Conflict, busy_message));
+            }
+            controls.models_in_flight = true;
+        }
     }
     let worker_state = state.clone();
     let owner = owner.clone();
@@ -142,7 +213,7 @@ pub(super) fn dispatch_control(
         .spawn(move || {
             let _job = ControlJob {
                 state: worker_state.clone(),
-                conversation,
+                slot,
             };
             let response = worker_state
                 .operator_request(&owner, request)
@@ -156,7 +227,14 @@ pub(super) fn dispatch_control(
             Some(Response::Ok)
         }
         Err(error) => {
-            controls.conversations.remove(&conversation);
+            match slot {
+                ControlSlot::Conversation(conversation) => {
+                    controls.conversations.remove(&conversation);
+                }
+                ControlSlot::Models => {
+                    controls.models_in_flight = false;
+                }
+            }
             Some(error_response(ErrorCode::Internal, error.to_string()))
         }
     }
@@ -229,6 +307,7 @@ impl ServerState {
                 self.stop_operator_dashboard(identity, owner)
                     .map(OperatorResponse::Stopped)
             }
+            OperatorRequest::Models => self.operator_models(owner).map(OperatorResponse::Models),
             OperatorRequest::Submit {
                 conversation,
                 expected_run,
@@ -506,6 +585,99 @@ impl ServerState {
                 }))
             }
         }
+    }
+
+    fn operator_models(&self, owner: &Arc<()>) -> Result<Vec<OperatorModelCatalogEntry>> {
+        self.reject_if_stopping()?;
+        if !self.dashboard.owns(owner) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "dashboard owner changed",
+            ));
+        }
+        let cwd = self.registry_path.join("operator-workdir");
+        fs::create_dir_all(&cwd)
+            .and_then(|()| fs::set_permissions(&cwd, fs::Permissions::from_mode(0o700)))
+            .map_err(|_| lifecycle_error(ErrorCode::Internal, OPERATOR_MODEL_UNAVAILABLE_MSG))?;
+        if self.operator.executable.as_os_str().is_empty() || !self.operator.executable.is_file() {
+            return Err(lifecycle_error(
+                ErrorCode::Internal,
+                OPERATOR_MODEL_UNAVAILABLE_MSG,
+            ));
+        }
+        let mut command = std::process::Command::new(&self.operator.executable);
+        command
+            .current_dir(&cwd)
+            .args(["operator", "models", "--json"])
+            .env(crate::config::HOME_ENV, &self.registry_path)
+            .env_remove(crate::config::CONFIG_ENV)
+            .env_remove("OVRCR_SOCKET");
+        for name in [
+            "OVRCR_AGENT_SOCKET",
+            "OVRCR_AGENT_TOKEN",
+            "OVRCR_HOOK_SOCKET",
+            "OVRCR_HOOK_TOKEN",
+            "OVRCR_SESSION_ID",
+            "OVRCR_DELEGATION_SESSION",
+            "OVRCR_DELEGATION_TOKEN",
+            "OVRCR_DELEGATION_SOCKET",
+            "OVRCR_DELEGATION_HOME",
+            "OVRCR_DELEGATION_INSTANCE",
+            "OVRCR_DELEGATION_EPOCH",
+            "OVRCR_PI_ENTRY",
+            crate::claude_delegation::ARTIFACT_ENV,
+            crate::codex_delegation::ARTIFACT_ENV,
+        ] {
+            command.env_remove(name);
+        }
+        #[cfg(test)]
+        let deadline = self
+            .operator
+            .models_deadline
+            .lock()
+            .unwrap()
+            .unwrap_or(OPERATOR_MODEL_CATALOG_DEADLINE);
+        #[cfg(not(test))]
+        let deadline = OPERATOR_MODEL_CATALOG_DEADLINE;
+
+        let output = self
+            .agent_model_catalog
+            .with_process_owner(|process_owner| {
+                process_owner.run_command(
+                    "Operator Pi",
+                    &mut command,
+                    OPERATOR_MODEL_CATALOG_LIMIT,
+                    OPERATOR_MODEL_DIAGNOSTIC_LIMIT,
+                    deadline,
+                    &self.shutdown,
+                )
+            })
+            .map_err(|error| {
+                let detail = error.to_string();
+                if self.shutdown.load(Ordering::Acquire) {
+                    lifecycle_error(ErrorCode::Conflict, "server is stopping")
+                } else if detail.contains("native model catalog process is active") {
+                    lifecycle_error(
+                        ErrorCode::Conflict,
+                        "Operator model discovery is busy; retry in a moment.",
+                    )
+                } else if detail.contains("model discovery deadline") {
+                    lifecycle_error(
+                        ErrorCode::Internal,
+                        "Operator model discovery timed out; run ovrcr operator models to diagnose.",
+                    )
+                } else {
+                    lifecycle_error(ErrorCode::Internal, OPERATOR_MODEL_UNAVAILABLE_MSG)
+                }
+            })?;
+        if !self.dashboard.owns(owner) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "dashboard owner changed",
+            ));
+        }
+        parse_operator_model_catalog(&output.stdout)
+            .map_err(|_| lifecycle_error(ErrorCode::Internal, OPERATOR_MODEL_UNAVAILABLE_MSG))
     }
 
     fn publish_worker_live(

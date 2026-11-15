@@ -1816,3 +1816,171 @@ fn session_info_reads_empty_populated_and_reset_epochs_with_zero_spawns() {
     assert_eq!(after_reset.cost_usd_nanos, 0);
     assert_eq!(after_reset.context_window.used_tokens, None);
 }
+
+#[test]
+fn operator_models_runs_off_dashboard_reader_with_isolated_home_and_serial_owner() {
+    let mut live = LiveOperator::new();
+    assert!(matches!(
+        live.control(Request::Operator(OperatorRequest::Models)),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+
+    let started = live.root.path().join("models-started");
+    let release = live.root.path().join("models-release");
+    let receipt = live.root.path().join("models-env");
+    let script = live.root.path().join("ovrcr");
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+printf '%s\n' "$1 $2 $3" > '{receipt}'
+printf 'home=%s\n' "${{OVRCR_HOME:-}}" >> '{receipt}'
+printf 'config=%s\n' "${{OVRCR_CONFIG:-}}" >> '{receipt}'
+printf 'socket=%s\n' "${{OVRCR_SOCKET:-}}" >> '{receipt}'
+printf 'agent_token=%s\n' "${{OVRCR_AGENT_TOKEN:-}}" >> '{receipt}'
+printf 'delegation_token=%s\n' "${{OVRCR_DELEGATION_TOKEN:-}}" >> '{receipt}'
+: > '{started}'
+while [ ! -f '{release}' ]; do
+  sleep 0.01
+done
+printf 'No Pi model selected; run ovrcr operator setup.\n' >&2
+printf '{{"models":[{{"provider":"openai","id":"gpt-5.4","name":"GPT-5.4"}},{{"provider":"vendor","id":"sub/id","name":"sub/id"}}]}}'
+"#,
+            receipt = receipt.display(),
+            started = started.display(),
+            release = release.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Send Models without waiting yet so we can prove the Dashboard reader stays live.
+    live.next_request += 1;
+    let models_req_id = live.next_request;
+    write_frame(
+        live.dashboard.as_mut().unwrap(),
+        &ClientMessage {
+            request_id: models_req_id,
+            request: Request::Operator(OperatorRequest::Models),
+        },
+    )
+    .unwrap();
+    wait_until(|| started.exists());
+
+    // While the catalog subprocess is blocked on `release`, the Dashboard reader
+    // still services `Current` immediately, and a second concurrent `Models`
+    // request is refused cleanly instead of spawning a second catalog process.
+    assert!(live.current().is_none());
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Models)),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    fs::write(&release, b"go").unwrap();
+    let models_response = loop {
+        match read_frame::<ServerMessage>(live.dashboard.as_mut().unwrap()).unwrap() {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } if request_id == models_req_id => break response,
+            _ => {}
+        }
+    };
+    assert_eq!(
+        models_response,
+        Response::Operator(OperatorResponse::Models(vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+                name: Some("GPT-5.4".into()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "vendor".into(),
+                id: "sub/id".into(),
+                name: None,
+            },
+        ]))
+    );
+    assert!(
+        live.current().is_none(),
+        "listing models must not open or create an Operator conversation"
+    );
+
+    let recorded = fs::read_to_string(&receipt).unwrap();
+    assert!(recorded.contains("operator models --json\n"), "{recorded}");
+    assert!(
+        recorded.contains(&format!("home={}\n", live.root.path().display())),
+        "{recorded}"
+    );
+    assert!(recorded.contains("config=\n"), "{recorded}");
+    assert!(recorded.contains("socket=\n"), "{recorded}");
+    assert!(recorded.contains("agent_token=\n"), "{recorded}");
+    assert!(recorded.contains("delegation_token=\n"), "{recorded}");
+}
+
+#[test]
+fn operator_models_redacts_failures_and_reaps_timed_out_process_group() {
+    let mut live = LiveOperator::new();
+    let script = live.root.path().join("ovrcr");
+
+    // 1. Non-zero exit with secret material on stdout/stderr is redacted.
+    fs::write(
+        &script,
+        r#"#!/bin/sh
+printf 'Bearer sk-secret-stderr-123\n' >&2
+printf 'sk-secret-stdout-456\n'
+exit 1
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let Response::Error { code, message } =
+        live.request(Request::Operator(OperatorRequest::Models))
+    else {
+        panic!("expected redacted error")
+    };
+    assert_eq!(code, ErrorCode::Internal);
+    assert!(
+        !message.contains("sk-secret-stderr-123") && !message.contains("sk-secret-stdout-456"),
+        "native output leaked in error: {message:?}"
+    );
+
+    // 2. Timeout reaps the entire process group including background descendants.
+    *live.state.operator.models_deadline.lock().unwrap() = Some(Duration::from_millis(120));
+    let descendant_pid_file = live.root.path().join("descendant.pid");
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+sleep 60 &
+printf '%s\n' "$!" > '{}'
+wait
+"#,
+            descendant_pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let Response::Error { message, .. } = live.request(Request::Operator(OperatorRequest::Models))
+    else {
+        panic!("expected timeout error")
+    };
+    assert!(
+        message.contains("timed out"),
+        "unexpected timeout message: {message:?}"
+    );
+    let pid: libc::pid_t = fs::read_to_string(&descendant_pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    wait_until(|| unsafe { libc::kill(pid, 0) != 0 });
+}

@@ -2806,6 +2806,7 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
+            ("Models", OperatorRequest::Models),
             (
                 "NewSession",
                 OperatorRequest::NewSession {
@@ -2953,6 +2954,21 @@ mod wire_snapshot {
                     state: OperatorTurnState::Interrupted,
                     ..turn
                 }),
+            ),
+            (
+                "Models",
+                OperatorResponse::Models(vec![
+                    OperatorModelCatalogEntry {
+                        provider: "openai".into(),
+                        id: "model".into(),
+                        name: Some("Model".into()),
+                    },
+                    OperatorModelCatalogEntry {
+                        provider: "vendor".into(),
+                        id: "sub/id".into(),
+                        name: None,
+                    },
+                ]),
             ),
             (
                 "Conversation",
@@ -4720,8 +4736,9 @@ mod wire_snapshot {
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
-        ("Request::Operator::NewSession", "39050104"),
-        ("Request::Operator::SessionInfo", "390601"),
+        ("Request::Operator::Models", "3905"),
+        ("Request::Operator::NewSession", "39060104"),
+        ("Request::Operator::SessionInfo", "390701"),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -4802,12 +4819,16 @@ mod wire_snapshot {
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
         (
+            "Response::Operator::Models",
+            "190502066f70656e6169056d6f64656c01054d6f64656c0676656e646f72067375622f696400",
+        ),
+        (
             "Response::Operator::Conversation",
-            "190504000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "190604000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::SessionInfo",
-            "190601030401010a6f70657261746f722d310102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c05010505020305020202020101056432190ab9fc60e3160001b901fc400d0300",
+            "190701030401010a6f70657261746f722d310102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c05010505020305020202020101056432190ab9fc60e3160001b901fc400d0300",
         ),
         ("Response::OperatorExchange", "1a010203040100"),
         (

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub const MAX_OPERATOR_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_OPERATOR_BATCH_EVENTS: usize = 32;
 pub const MAX_OPERATOR_PAGE_MESSAGES: u16 = 100;
+pub const MAX_OPERATOR_MODEL_CATALOG_ENTRIES: usize = 4096;
 
 /// `Default` leaves Pi's model-specific choice alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -407,6 +408,43 @@ pub struct OperatorHistory {
     pub messages: Vec<OperatorMessage>,
     pub next_after: Option<u64>,
 }
+/// One model entry discovered from the dedicated Operator Pi profile catalog.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorModelCatalogEntry {
+    pub provider: String,
+    pub id: String,
+    pub name: Option<String>,
+}
+impl OperatorModelCatalogEntry {
+    pub fn full_id(&self) -> String {
+        format!("{}/{}", self.provider, self.id)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        OperatorModel {
+            provider: self.provider.clone(),
+            id: self.id.clone(),
+        }
+        .validate()?;
+        if let Some(name) = &self.name {
+            validate_token(name)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_operator_model_catalog(
+    entries: &[OperatorModelCatalogEntry],
+) -> Result<(), String> {
+    if entries.len() > MAX_OPERATOR_MODEL_CATALOG_ENTRIES {
+        return Err("operator model catalog bounds exceeded".into());
+    }
+    for entry in entries {
+        entry.validate()?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorRequest {
     /// Reads the sole conversation; never creates a record or a process.
@@ -427,6 +465,8 @@ pub enum OperatorRequest {
     Stop {
         identity: OperatorTurnIdentity,
     },
+    /// Lists models available in the dedicated Operator Pi profile without starting a turn.
+    Models,
     /// Atomically resets the singleton conversation onto a new session epoch when idle and unleased.
     NewSession {
         conversation: OperatorConversationId,
@@ -477,6 +517,7 @@ pub enum OperatorResponse {
     History(OperatorHistory),
     Submitted(OperatorTurn),
     Stopped(OperatorTurn),
+    Models(Vec<OperatorModelCatalogEntry>),
     Conversation(OperatorConversationSummary),
     SessionInfo(Box<OperatorSessionInfo>),
 }
@@ -836,5 +877,79 @@ mod tests {
                 crate::read_frame::<crate::Response>(&mut bytes.as_slice()).unwrap();
             assert_eq!(response, decoded);
         }
+    }
+
+    #[test]
+    fn operator_model_catalog_validates_entries_and_round_trips_framed() {
+        assert!(OperatorRequest::Models.validate().is_ok());
+        let models_request = crate::Request::Operator(OperatorRequest::Models);
+        let mut bytes = Vec::new();
+        crate::write_frame(&mut bytes, &models_request).unwrap();
+        let decoded_request: crate::Request =
+            crate::read_frame::<crate::Request>(&mut bytes.as_slice()).unwrap();
+        assert_eq!(models_request, decoded_request);
+
+        let entries = vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+                name: Some("GPT-5.4".into()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "vendor".into(),
+                id: "nested/model-id".into(),
+                name: None,
+            },
+        ];
+        assert_eq!(entries[0].full_id(), "openai/gpt-5.4");
+        assert_eq!(entries[1].full_id(), "vendor/nested/model-id");
+        assert!(validate_operator_model_catalog(&entries).is_ok());
+
+        let models_response = crate::Response::Operator(OperatorResponse::Models(entries));
+        let mut response_bytes = Vec::new();
+        crate::write_frame(&mut response_bytes, &models_response).unwrap();
+        let decoded_response: crate::Response =
+            crate::read_frame::<crate::Response>(&mut response_bytes.as_slice()).unwrap();
+        assert_eq!(models_response, decoded_response);
+
+        for invalid in [
+            OperatorModelCatalogEntry {
+                provider: String::new(),
+                id: "gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "open/ai".into(),
+                id: "gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: " gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: Some(String::new()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: Some("bad\nname".into()),
+            },
+        ] {
+            assert!(invalid.validate().is_err(), "{invalid:?}");
+        }
+
+        let oversized = vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: None,
+            };
+            MAX_OPERATOR_MODEL_CATALOG_ENTRIES + 1
+        ];
+        assert!(validate_operator_model_catalog(&oversized).is_err());
     }
 }

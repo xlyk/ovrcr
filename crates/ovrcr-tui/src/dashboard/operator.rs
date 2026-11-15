@@ -14,10 +14,10 @@ use crossterm::event::{
 use ovrcr_protocol::{
     ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorSessionInfo,
-    OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus, OperatorTurnId,
-    OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request, Response, SessionId,
-    SessionRunId,
+    OperatorMessageContent, OperatorModelCatalogEntry, OperatorRequest, OperatorResponse,
+    OperatorSessionInfo, OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus,
+    OperatorTurnId, OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request,
+    Response, SessionId, SessionRunId,
 };
 use ratatui::{
     Frame,
@@ -49,6 +49,9 @@ pub(super) struct Hub {
     quick_generation: u64,
     reasoning_picker: Option<ReasoningPicker>,
     pending_reasoning_picker: bool,
+    model_picker: Option<ModelPicker>,
+    pending_model_picker: Option<ModelPicker>,
+    pending_model_notice: Option<String>,
     session_modal: Option<SessionModal>,
     pending_session_info: bool,
     slash_selected: usize,
@@ -61,6 +64,79 @@ enum SessionModal {
 struct ReasoningPicker {
     choices: Vec<ThinkingLevel>,
     selected: usize,
+}
+const MAX_MODEL_FILTER_BYTES: usize = 256;
+pub(super) const EMPTY_MODEL_CATALOG_NOTICE: &str =
+    "No Pi models configured; run ovrcr operator setup.";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModelChoice {
+    HarnessDefault,
+    Catalog(usize),
+}
+pub(super) struct ModelPicker {
+    pub(super) entries: Vec<OperatorModelCatalogEntry>,
+    pub(super) query: String,
+    pub(super) cursor: TextCursor,
+    pub(super) selected: usize,
+}
+impl ModelPicker {
+    fn new(
+        entries: Vec<OperatorModelCatalogEntry>,
+        initial_query: String,
+        active_model: Option<&str>,
+    ) -> Self {
+        let mut query = String::new();
+        let mut cursor = TextCursor::default();
+        cursor.insert(&mut query, &initial_query);
+        let mut picker = Self {
+            entries,
+            query,
+            cursor,
+            selected: 0,
+        };
+        picker.select_preferred(active_model);
+        picker
+    }
+    pub(super) fn filtered_choices(&self) -> Vec<ModelChoice> {
+        let needle = self.query.trim().to_lowercase();
+        let mut choices = Vec::new();
+        if needle.is_empty() || "harness default (pi profile default)".contains(&needle) {
+            choices.push(ModelChoice::HarnessDefault);
+        }
+        for (idx, entry) in self.entries.iter().enumerate() {
+            let id_match = entry.full_id().to_lowercase().contains(&needle);
+            let name_match = entry
+                .name
+                .as_deref()
+                .is_some_and(|name| name.to_lowercase().contains(&needle));
+            if needle.is_empty() || id_match || name_match {
+                choices.push(ModelChoice::Catalog(idx));
+            }
+        }
+        choices
+    }
+    pub(super) fn choice_is_active(&self, choice: ModelChoice, active_model: Option<&str>) -> bool {
+        match choice {
+            ModelChoice::HarnessDefault => active_model.is_none(),
+            ModelChoice::Catalog(idx) => {
+                active_model.is_some_and(|active| active == self.entries[idx].full_id())
+            }
+        }
+    }
+    fn select_preferred(&mut self, active_model: Option<&str>) {
+        let filtered = self.filtered_choices();
+        self.selected = filtered
+            .iter()
+            .position(|choice| self.choice_is_active(*choice, active_model))
+            .unwrap_or(0);
+    }
+    fn on_query_changed(&mut self, active_model: Option<&str>) {
+        if self.query.trim().is_empty() {
+            self.select_preferred(active_model);
+        } else {
+            self.selected = 0;
+        }
+    }
 }
 struct QuickMessage {
     generation: u64,
@@ -77,6 +153,7 @@ struct QuickMessage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum QuickPhase {
     Editing,
+    CheckingModels,
     Opening,
     Submitting,
 }
@@ -184,8 +261,20 @@ impl Chat {
         self.expanded.insert(entry.ordinal, !entry.expanded);
     }
 }
+#[derive(Clone)]
+enum ModelIntent {
+    OpenPicker,
+    ResolveArg {
+        query: String,
+        from_quick: Option<u64>,
+    },
+}
 enum Pending {
     ReasoningSetting,
+    ModelSetting,
+    Models {
+        intent: ModelIntent,
+    },
     Current,
     Open {
         origin: OpenOrigin,
@@ -477,15 +566,17 @@ impl Dashboard {
         DashboardAction::Redraw
     }
     pub(super) fn operator_dismiss_quick(&mut self) {
-        if self
-            .operator
-            .quick
-            .as_ref()
-            .is_some_and(|q| q.phase == QuickPhase::Editing && q.error.is_none() && !q.seeded)
-        {
+        if self.operator.quick.as_ref().is_some_and(|q| {
+            matches!(q.phase, QuickPhase::Editing | QuickPhase::CheckingModels)
+                && q.error.is_none()
+                && !q.seeded
+        }) {
             // A cancelled unsent Quick draft creates nothing and leaves no overlay.
             self.operator.quick = None;
         } else if let Some(quick) = &mut self.operator.quick {
+            if quick.phase == QuickPhase::CheckingModels {
+                quick.phase = QuickPhase::Editing;
+            }
             quick.visible = false;
         }
     }
@@ -536,6 +627,7 @@ impl Dashboard {
                             slash::SlashCommandKind::Thinking => {
                                 self.operator_run_thinking(args, true)
                             }
+                            slash::SlashCommandKind::Model => self.operator_run_model(args, true),
                             slash::SlashCommandKind::New => self.operator_run_new(args, true),
                             slash::SlashCommandKind::Session => {
                                 self.operator_run_session(args, true)
@@ -901,6 +993,10 @@ impl Dashboard {
         self.operator.reasoning_picker.is_some()
     }
 
+    pub(super) fn operator_model_picker_open(&self) -> bool {
+        self.operator.model_picker.is_some()
+    }
+
     pub(super) fn operator_session_modal_open(&self) -> bool {
         self.operator.session_modal.is_some()
     }
@@ -910,6 +1006,7 @@ impl Dashboard {
             || !self.operator.editing
             || self.operator.transcript_focus
             || self.operator.reasoning_picker.is_some()
+            || self.operator.model_picker.is_some()
             || self.operator.session_modal.is_some()
         {
             return Vec::new();
@@ -1172,6 +1269,10 @@ impl Dashboard {
             return;
         };
         self.operator.reasoning_picker = None;
+        self.operator.pending_reasoning_picker = false;
+        self.operator.model_picker = None;
+        self.operator.pending_model_picker = None;
+        self.operator.pending_model_notice = None;
         self.operator.session_modal = Some(SessionModal::Loading);
         if !self
             .operator
@@ -1231,6 +1332,11 @@ impl Dashboard {
     }
 
     fn operator_open_reasoning(&mut self) {
+        self.operator.model_picker = None;
+        self.operator.pending_model_picker = None;
+        self.operator.pending_model_notice = None;
+        self.operator.session_modal = None;
+        self.operator.pending_session_info = false;
         let choices = slash::allowed_thinking_levels(Some(
             &self
                 .operator
@@ -1248,6 +1354,187 @@ impl Dashboard {
             .position(|level| *level == self.settings.operator.thinking_level)
             .unwrap_or(0);
         self.operator.reasoning_picker = Some(ReasoningPicker { choices, selected });
+    }
+
+    fn operator_write_model_setting(&mut self, model: Option<&str>) {
+        let request_id = self.next_request_id();
+        self.operator.error = None;
+        self.operator
+            .pending
+            .insert(request_id, Pending::ModelSetting);
+        self.enqueue_request(ClientMessage {
+            request_id,
+            request: Request::SetSetting {
+                path: "operator.model".into(),
+                value: model.map(|id| toml_edit::Value::from(id).to_string()),
+            },
+        });
+    }
+
+    fn operator_apply_model_selection(&mut self, model: Option<&str>, from_quick: bool) {
+        self.operator.model_picker = None;
+        self.operator.pending_model_picker = None;
+        self.operator.pending_model_notice = None;
+        self.operator_write_model_setting(model);
+        let confirmation = match model {
+            Some(id) => format!("Set Operator model to {}.", display_text(id)),
+            None => "Set Operator model to Harness default.".into(),
+        };
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.draft.clear();
+            chat.cursor = TextCursor::default();
+            chat.error = None;
+            chat.notice = Some(confirmation.clone());
+        }
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if from_quick {
+            self.operator.quick = None;
+            self.desktop.notice = Some(confirmation);
+        }
+    }
+
+    fn operator_request_models(&mut self, intent: ModelIntent) {
+        for pending in self.operator.pending.values_mut() {
+            if let Pending::Models { intent: existing } = pending {
+                *existing = intent;
+                return;
+            }
+        }
+        self.operator_request(Pending::Models { intent }, OperatorRequest::Models);
+    }
+
+    fn operator_install_model_picker(&mut self, picker: ModelPicker, notice: Option<String>) {
+        self.operator.reasoning_picker = None;
+        self.operator.pending_reasoning_picker = false;
+        self.operator.session_modal = None;
+        self.operator.pending_session_info = false;
+        self.operator.error = None;
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.error = None;
+            chat.notice = notice;
+            if self.operator.visible {
+                self.operator.model_picker = Some(picker);
+            }
+        } else if self.operator.visible {
+            self.operator.pending_model_picker = Some(picker);
+            self.operator.pending_model_notice = notice;
+        }
+    }
+
+    fn operator_run_model(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        let trimmed = args.trim();
+        if trimmed.eq_ignore_ascii_case("default") {
+            self.operator_apply_model_selection(None, from_quick);
+            return DashboardAction::Redraw;
+        }
+        if trimmed.is_empty() {
+            if let Some(chat) = self.operator.chat.as_mut() {
+                chat.draft.clear();
+                chat.cursor = TextCursor::default();
+                chat.error = None;
+                chat.notice = None;
+            }
+            self.operator.slash_selected = 0;
+            self.operator.slash_dismissed_for = None;
+            if from_quick {
+                self.operator.quick = None;
+                self.open_operator();
+            }
+            self.operator_request_models(ModelIntent::OpenPicker);
+            return DashboardAction::Redraw;
+        }
+        if from_quick {
+            let Some(quick) = self.operator.quick.as_mut() else {
+                return DashboardAction::Redraw;
+            };
+            quick.error = None;
+            quick.phase = QuickPhase::CheckingModels;
+            let generation = quick.generation;
+            self.operator_request_models(ModelIntent::ResolveArg {
+                query: trimmed.to_owned(),
+                from_quick: Some(generation),
+            });
+        } else {
+            if let Some(chat) = self.operator.chat.as_mut() {
+                chat.error = None;
+                chat.notice = None;
+            }
+            self.operator.slash_selected = 0;
+            self.operator.slash_dismissed_for = None;
+            self.operator_request_models(ModelIntent::ResolveArg {
+                query: trimmed.to_owned(),
+                from_quick: None,
+            });
+        }
+        DashboardAction::Redraw
+    }
+
+    fn operator_model_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let active = self.settings.operator.model.clone();
+        let Some(picker) = self.operator.model_picker.as_mut() else {
+            return DashboardAction::None;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.operator.model_picker = None;
+                self.operator.pending_model_picker = None;
+                self.operator.pending_model_notice = None;
+                return DashboardAction::Redraw;
+            }
+            KeyCode::Up if key.modifiers.is_empty() => {
+                picker.selected = picker.selected.saturating_sub(1);
+                return DashboardAction::Redraw;
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                let len = picker.filtered_choices().len();
+                if len > 0 {
+                    picker.selected = (picker.selected + 1).min(len - 1);
+                }
+                return DashboardAction::Redraw;
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                let filtered = picker.filtered_choices();
+                let Some(choice) = filtered.get(picker.selected).copied() else {
+                    return DashboardAction::Redraw;
+                };
+                let selection = match choice {
+                    ModelChoice::HarnessDefault => None,
+                    ModelChoice::Catalog(idx) => Some(picker.entries[idx].full_id()),
+                };
+                self.operator_apply_model_selection(selection.as_deref(), false);
+                return DashboardAction::Redraw;
+            }
+            _ => {}
+        }
+        let before = picker.query.clone();
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+            picker.query.clear();
+            picker.cursor = TextCursor::default();
+        } else if !picker.cursor.edit_key(&mut picker.query, key) {
+            match key.code {
+                KeyCode::Char(ch)
+                    if !ch.is_control()
+                        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
+                {
+                    let ch_str = ch.to_string();
+                    if picker.query.len().saturating_add(ch_str.len()) <= MAX_MODEL_FILTER_BYTES {
+                        picker.cursor.insert(&mut picker.query, &ch_str);
+                    }
+                }
+                KeyCode::Backspace
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => picker.cursor.key(&mut picker.query, key.code),
+                _ => {}
+            }
+        }
+        if picker.query != before {
+            picker.on_query_changed(active.as_deref());
+        }
+        DashboardAction::Redraw
     }
 
     fn operator_reasoning_key(&mut self, key: KeyEvent) -> DashboardAction {
@@ -1283,6 +1570,9 @@ impl Dashboard {
         let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
+        }
+        if self.operator.model_picker.is_some() {
+            return self.operator_model_key(key);
         }
         if self.operator.reasoning_picker.is_some() {
             return self.operator_reasoning_key(key);
@@ -1339,6 +1629,7 @@ impl Dashboard {
                     return match slash_specs[selected].kind {
                         slash::SlashCommandKind::Copy => self.operator_run_copy("", false),
                         slash::SlashCommandKind::Thinking => self.operator_run_thinking("", false),
+                        slash::SlashCommandKind::Model => self.operator_run_model("", false),
                         slash::SlashCommandKind::New => self.operator_run_new("", false),
                         slash::SlashCommandKind::Session => self.operator_run_session("", false),
                     };
@@ -1351,6 +1642,9 @@ impl Dashboard {
             self.operator.editing = false;
             self.operator.visible = false;
             self.operator.pending_reasoning_picker = false;
+            self.operator.model_picker = None;
+            self.operator.pending_model_picker = None;
+            self.operator.pending_model_notice = None;
             self.operator.pending_session_info = false;
             self.operator.session_modal = None;
             self.retarget(super::state::PaneChange::Focus);
@@ -1504,6 +1798,7 @@ impl Dashboard {
                         slash::SlashCommandKind::Thinking => {
                             self.operator_run_thinking(args, false)
                         }
+                        slash::SlashCommandKind::Model => self.operator_run_model(args, false),
                         slash::SlashCommandKind::New => self.operator_run_new(args, false),
                         slash::SlashCommandKind::Session => self.operator_run_session(args, false),
                     };
@@ -1551,6 +1846,23 @@ impl Dashboard {
         }
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
+        if let Some(picker) = self.operator.model_picker.as_mut() {
+            let clean: String = text.chars().filter(|ch| !ch.is_control()).collect();
+            if !clean.is_empty()
+                && picker.query.len().saturating_add(clean.len()) <= MAX_MODEL_FILTER_BYTES
+            {
+                let before = picker.query.clone();
+                picker.cursor.insert(&mut picker.query, &clean);
+                if picker.query != before {
+                    let active = self.settings.operator.model.clone();
+                    picker.on_query_changed(active.as_deref());
+                }
+            }
+            return DashboardAction::Redraw;
+        }
+        if self.operator.session_modal.is_some() || self.operator.reasoning_picker.is_some() {
+            return DashboardAction::None;
+        }
         if self.operator.transcript_focus {
             return DashboardAction::None;
         }
@@ -1583,6 +1895,14 @@ impl Dashboard {
         area: Rect,
     ) -> Option<DashboardAction> {
         let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
+        if self.operator.model_picker.is_some() {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                self.operator.model_picker = None;
+                self.operator.pending_model_picker = None;
+                self.operator.pending_model_notice = None;
+            }
+            return Some(DashboardAction::Redraw);
+        }
         if self.operator.reasoning_picker.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.operator.reasoning_picker = None;
@@ -1649,7 +1969,7 @@ impl Dashboard {
             return false;
         };
         match &pending {
-            Pending::ReasoningSetting => {}
+            Pending::ReasoningSetting | Pending::ModelSetting | Pending::Models { .. } => {}
             Pending::Current => {}
             Pending::Open { .. } => self.operator.loading = false,
             Pending::Read { .. } => {
@@ -1673,10 +1993,37 @@ impl Dashboard {
         if let Response::Error { message, .. } = response {
             if matches!(pending, Pending::Open { .. }) {
                 self.operator.pending_reasoning_picker = false;
+                self.operator.pending_model_picker = None;
+                self.operator.pending_model_notice = None;
                 self.operator.pending_session_info = false;
             }
             if matches!(pending, Pending::SessionInfo { .. }) {
                 self.operator.session_modal = None;
+            }
+            if let Pending::Models { intent } = &pending {
+                match intent {
+                    ModelIntent::ResolveArg {
+                        from_quick: Some(generation),
+                        ..
+                    } => {
+                        self.operator_quick_failed(*generation, message);
+                        return true;
+                    }
+                    ModelIntent::OpenPicker
+                    | ModelIntent::ResolveArg {
+                        from_quick: None, ..
+                    } => {
+                        self.operator.pending_model_picker = None;
+                        self.operator.pending_model_notice = None;
+                        if let Some(chat) = self.operator.chat.as_mut() {
+                            chat.notice = None;
+                            chat.error = Some(display_text(message));
+                        } else {
+                            self.operator.error = Some(display_text(message));
+                        }
+                        return true;
+                    }
+                }
             }
             match &pending {
                 Pending::Open {
@@ -1715,7 +2062,68 @@ impl Dashboard {
             return true;
         }
         match (pending, response) {
-            (Pending::ReasoningSetting, Response::Ok) => {}
+            (Pending::ReasoningSetting | Pending::ModelSetting, Response::Ok) => {}
+            (Pending::Models { intent }, Response::Operator(OperatorResponse::Models(entries))) => {
+                match intent {
+                    ModelIntent::OpenPicker => {
+                        let notice = entries
+                            .is_empty()
+                            .then(|| EMPTY_MODEL_CATALOG_NOTICE.to_owned());
+                        let picker = ModelPicker::new(
+                            entries.clone(),
+                            String::new(),
+                            self.settings.operator.model.as_deref(),
+                        );
+                        self.operator_install_model_picker(picker, notice);
+                    }
+                    ModelIntent::ResolveArg { query, from_quick } => {
+                        if let Some(generation) = from_quick {
+                            let still_waiting = self.operator.quick.as_ref().is_some_and(|q| {
+                                q.generation == generation
+                                    && q.phase == QuickPhase::CheckingModels
+                                    && q.visible
+                            });
+                            if !still_waiting {
+                                return true;
+                            }
+                        }
+                        if let Some(exact) = entries.iter().find(|entry| entry.full_id() == query) {
+                            let exact_id = exact.full_id();
+                            self.operator_apply_model_selection(
+                                Some(&exact_id),
+                                from_quick.is_some(),
+                            );
+                        } else {
+                            if let Some(chat) = self.operator.chat.as_mut() {
+                                chat.draft.clear();
+                                chat.cursor = TextCursor::default();
+                            }
+                            self.operator.slash_selected = 0;
+                            self.operator.slash_dismissed_for = None;
+                            if from_quick.is_some() {
+                                self.operator.quick = None;
+                                self.open_operator();
+                            }
+                            let picker = ModelPicker::new(
+                                entries.clone(),
+                                query.clone(),
+                                self.settings.operator.model.as_deref(),
+                            );
+                            let notice = if entries.is_empty() {
+                                Some(EMPTY_MODEL_CATALOG_NOTICE.to_owned())
+                            } else if picker.filtered_choices().is_empty() {
+                                Some(format!(
+                                    "No Operator models match \"{}\".",
+                                    display_text(&query)
+                                ))
+                            } else {
+                                None
+                            };
+                            self.operator_install_model_picker(picker, notice);
+                        }
+                    }
+                }
+            }
             (Pending::Current, Response::Operator(OperatorResponse::Current(current))) => {
                 if let Some(summary) = current {
                     let context = self.operator.context.clone();
@@ -1733,6 +2141,8 @@ impl Dashboard {
                 };
                 if !self.operator_attach(summary.clone(), context) {
                     self.operator.pending_reasoning_picker = false;
+                    self.operator.pending_model_picker = None;
+                    self.operator.pending_model_notice = None;
                     self.operator.pending_session_info = false;
                     match origin {
                         OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
@@ -1747,6 +2157,16 @@ impl Dashboard {
                 }
                 match &origin {
                     OpenOrigin::Manual => {
+                        if let Some(picker) = self.operator.pending_model_picker.take() {
+                            let notice = self.operator.pending_model_notice.take();
+                            if self.operator.visible {
+                                self.operator_install_model_picker(picker, notice);
+                            }
+                        } else if let Some(notice) = self.operator.pending_model_notice.take()
+                            && let Some(chat) = self.operator.chat.as_mut()
+                        {
+                            chat.notice = Some(notice);
+                        }
                         if self.operator.pending_reasoning_picker {
                             self.operator.pending_reasoning_picker = false;
                             if self.operator.visible {
@@ -2040,6 +2460,9 @@ impl Dashboard {
             chat.reviewed = None;
             *chat.rows.borrow_mut() = None;
             self.operator.reasoning_picker = None;
+            self.operator.model_picker = None;
+            self.operator.pending_model_picker = None;
+            self.operator.pending_model_notice = None;
             self.operator.session_modal = None;
             chat.summary = summary;
             self.operator_quick_adopt_draft();
@@ -2139,6 +2562,7 @@ impl Dashboard {
             || self.operator.transcript_focus
             || self.operator_slash_menu_open()
             || self.operator_reasoning_picker_open()
+            || self.operator_model_picker_open()
             || self.operator_session_modal_open()
         {
             return;

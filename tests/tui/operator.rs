@@ -4157,7 +4157,7 @@ fn slash_menu_lists_and_completes_new_and_session_and_rejects_extra_args() {
 
     d.key(KeyCode::Char('/'));
     let menu = draw_text(&mut d, 120, 30);
-    for entry in ["/copy", "/thinking", "/new", "/session"] {
+    for entry in ["/copy", "/thinking", "/model", "/new", "/session"] {
         assert!(
             menu.contains(entry),
             "expected `{entry}` in slash menu:\n{menu}"
@@ -4603,4 +4603,276 @@ fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_en
             "expected `{expected}` in empty SessionModal:\n{empty_modal}"
         );
     }
+}
+
+#[test]
+fn slash_model_opens_searchable_picker_switches_default_and_exact_and_routes_quick_message() {
+    use ovrcr_protocol::OperatorModelCatalogEntry;
+
+    let catalog = vec![
+        OperatorModelCatalogEntry {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+            name: Some("Claude Sonnet 4.6".into()),
+        },
+        OperatorModelCatalogEntry {
+            provider: "openai".into(),
+            id: "gpt-5.4".into(),
+            name: None,
+        },
+        OperatorModelCatalogEntry {
+            provider: "openrouter".into(),
+            id: "vendor/sub/id".into(),
+            name: Some("Nested Router Model".into()),
+        },
+    ];
+
+    // 1. `/` menu includes `/model [provider/id | default]`, filters on `/MO`, Tab-completes `/model `,
+    //    and Enter in `/` menu triggers `OperatorRequest::Models`.
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, reasoning_summary(true)); // running turn (`true`) proves mid-turn switching works
+    d.key(KeyCode::Char('/'));
+    let menu_screen = draw_text(&mut d, 140, 30);
+    assert!(
+        menu_screen.contains("/model [provider/id | default]")
+            && menu_screen.contains("Choose or set Operator model"),
+        "expected `/model` in `/` popup:\n{menu_screen}"
+    );
+    d.key(KeyCode::Char('M'));
+    d.key(KeyCode::Char('O'));
+    let mo_screen = draw_text(&mut d, 140, 30);
+    assert!(
+        mo_screen.contains("Choose or set Operator model")
+            && !mo_screen.contains("Copy latest assistant reply Markdown"),
+        "case-insensitive `/MO` filter should isolate `/model`:\n{mo_screen}"
+    );
+    d.key(KeyCode::Tab);
+    let after_tab = draw_text(&mut d, 140, 30);
+    assert!(
+        after_tab.contains("> /model ▏") && !after_tab.contains("Choose or set Operator model"),
+        "Tab completes `/model ` with trailing space and dismisses menu:\n{after_tab}"
+    );
+
+    // 2. `/model DEFAULT` in both full Operator and cold Quick message writes `operator.model = None`
+    //    immediately without querying `OperatorRequest::Models` or opening a picker.
+    d.event_action(Event::Paste("DEFAULT".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: None } if path == "operator.model"
+        )),
+        "expected SetSetting operator.model = None, got {out:?}"
+    );
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Models))),
+        "`/model default` must not query catalog: {out:?}"
+    );
+    let after_default = draw_text(&mut d, 140, 30);
+    assert!(
+        after_default.contains("> ▏") && after_default.contains("Harness default"),
+        "composer cleared and confirmation shown:\n{after_default}"
+    );
+
+    let mut cold_default = dashboard_fixture();
+    cold_default.ctrl('o');
+    cold_default.event_action(Event::Paste("/model default".into()));
+    cold_default.key(KeyCode::Enter);
+    let out = cold_default.drain_outbox();
+    assert_eq!(out.len(), 1, "only SetSetting should be sent: {out:?}");
+    assert!(matches!(
+        &out[0].request,
+        Request::SetSetting { path, value: None } if path == "operator.model"
+    ));
+    let browse_screen = draw_text(&mut cold_default, 140, 30);
+    assert!(
+        !browse_screen.contains("Quick message · Ctrl-o")
+            && !browse_screen.contains("Operator · pi"),
+        "cold Quick `/model default` closes Quick without opening full Operator:\n{browse_screen}"
+    );
+
+    // 3. `/model` opens searchable `ModelPicker` with `Harness default` first, marks active setting,
+    //    filters live by substring on id or display name, closes on Esc, and writes SetSetting on Enter
+    //    even while a turn is running.
+    d.event_action(Event::Paste("/mo".into()));
+    d.key(KeyCode::Enter); // run `/model` directly from `/` menu
+    let out = d.drain_outbox();
+    let models_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("`/model` requests dedicated profile catalog");
+    respond(
+        &mut d,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    let picker_default_active = draw_text(&mut d, 140, 35);
+    assert!(
+        picker_default_active.contains("✓ Harness default")
+            && picker_default_active.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && picker_default_active.contains("openai/gpt-5.4")
+            && picker_default_active.contains("openrouter/vendor/sub/id · Nested Router Model"),
+        "picker lists Harness default first + catalog entries with display names:\n{picker_default_active}"
+    );
+
+    // Live substring filtering by display name ("Nested"), then Backspace + Enter selects `openrouter/vendor/sub/id`.
+    d.event_action(Event::Paste("nestedx".into()));
+    let no_match_live = draw_text(&mut d, 140, 35);
+    assert!(
+        no_match_live.contains("No Operator models match \"nestedx\""),
+        "live filter reports zero matches:\n{no_match_live}"
+    );
+    d.key(KeyCode::Backspace);
+    let filtered_nested = draw_text(&mut d, 140, 35);
+    assert!(
+        filtered_nested.contains("openrouter/vendor/sub/id · Nested Router Model")
+            && !filtered_nested.contains("openai/gpt-5.4"),
+        "backspacing live filter narrows to matching entry:\n{filtered_nested}"
+    );
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.model" && v == "\"openrouter/vendor/sub/id\""
+        )),
+        "Enter on filtered catalog model writes SetSetting mid-turn: {out:?}"
+    );
+
+    // Install updated Settings snapshot and verify `/model` marks `openrouter/vendor/sub/id` active (`✓`),
+    // and Esc closes only the picker while staying inside full Operator.
+    d.install_settings(ovrcr::tui::Settings {
+        operator: ovrcr_protocol::OperatorSettings {
+            model: Some("openrouter/vendor/sub/id".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    d.event_action(Event::Paste("/model".into()));
+    d.key(KeyCode::Enter);
+    let models_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("`/model` requests catalog");
+    respond(
+        &mut d,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    let picker_explicit_active = draw_text(&mut d, 140, 35);
+    assert!(
+        picker_explicit_active.contains("✓ openrouter/vendor/sub/id · Nested Router Model")
+            && !picker_explicit_active.contains("✓ Harness default"),
+        "picker marks configured Settings snapshot model active:\n{picker_explicit_active}"
+    );
+    assert_eq!(d.key(KeyCode::Esc), DashboardAction::Redraw);
+    let after_esc = draw_text(&mut d, 140, 35);
+    assert!(
+        !after_esc.contains("Filter:") && after_esc.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "Esc closes ModelPicker while keeping full Operator open:\n{after_esc}"
+    );
+
+    // 4. `/model <provider/id>` exact match (including slash-containing ID) from `Ctrl-o` Quick message
+    //    writes SetSetting immediately on catalog response and closes Quick without opening full Operator.
+    let mut quick_exact = dashboard_fixture();
+    quick_exact.ctrl('o');
+    quick_exact.event_action(Event::Paste("/model openrouter/vendor/sub/id".into()));
+    quick_exact.key(KeyCode::Enter);
+    let out = quick_exact.drain_outbox();
+    let models_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("Quick `/model <arg>` queries catalog");
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Open))),
+        "Quick exact `/model <provider/id>` should not force Open before checking catalog: {out:?}"
+    );
+    let out = respond(
+        &mut quick_exact,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.model" && v == "\"openrouter/vendor/sub/id\""
+        )),
+        "exact match from Quick writes SetSetting immediately: {out:?}"
+    );
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Open))),
+        "exact match from Quick does not force full Operator open: {out:?}"
+    );
+    let quick_exact_screen = draw_text(&mut quick_exact, 140, 30);
+    assert!(
+        !quick_exact_screen.contains("Quick message · Ctrl-o"),
+        "Quick closes after exact `/model <provider/id>`:\n{quick_exact_screen}"
+    );
+
+    // 5. Cold `Ctrl-o` `/model sonnet` (non-exact query) transitions into full Operator with
+    //    `ModelPicker` pre-filtered by `sonnet`, and empty catalog / zero-match queries surface clear notices.
+    let mut quick_partial = dashboard_fixture();
+    quick_partial.ctrl('o');
+    quick_partial.event_action(Event::Paste("/model sonnet".into()));
+    quick_partial.key(KeyCode::Enter);
+    let models_req = quick_partial
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("Quick `/model sonnet` queries catalog");
+    let out = respond(
+        &mut quick_partial,
+        models_req.request_id,
+        OperatorResponse::Models(catalog),
+    );
+    let open_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("non-exact Quick `/model <query>` transitions into full Operator");
+    let out = respond(
+        &mut quick_partial,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let read_req = read_request(&out);
+    respond(
+        &mut quick_partial,
+        read_req.request_id,
+        history_of(summary(), Vec::new(), None),
+    );
+    let prefiltered_screen = draw_text(&mut quick_partial, 140, 35);
+    assert!(
+        !prefiltered_screen.contains("Quick message · Ctrl-o")
+            && prefiltered_screen.contains("Filter: sonnet▏")
+            && prefiltered_screen.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && !prefiltered_screen.contains("openai/gpt-5.4"),
+        "Quick partial `/model sonnet` opens full Operator with pre-filtered ModelPicker:\n{prefiltered_screen}"
+    );
+
+    // Empty dedicated profile catalog surfaces a clear `ovrcr operator setup` notice.
+    quick_partial.key(KeyCode::Esc);
+    quick_partial.event_action(Event::Paste("/model anything".into()));
+    quick_partial.key(KeyCode::Enter);
+    let models_req = quick_partial
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("requests catalog");
+    respond(
+        &mut quick_partial,
+        models_req.request_id,
+        OperatorResponse::Models(Vec::new()),
+    );
+    let empty_catalog_screen = draw_text(&mut quick_partial, 140, 35);
+    assert!(
+        empty_catalog_screen.contains("ovrcr operator setup"),
+        "empty catalog must surface clear setup guidance:\n{empty_catalog_screen}"
+    );
 }
