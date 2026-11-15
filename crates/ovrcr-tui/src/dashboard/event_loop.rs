@@ -1859,6 +1859,7 @@ mod operator_loop_tests {
             worker_live: false,
             id: OperatorConversationId(1),
             session: SessionId(11),
+            session_epoch: 0,
             model: None,
             title: "Operator".into(),
             current_turn: None,

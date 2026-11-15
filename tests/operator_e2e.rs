@@ -2150,6 +2150,534 @@ fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
     );
 }
 
+#[test]
+fn dashboard_slash_new_and_zero_spawn_session_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{
+        self, ClientMessage, ErrorCode, OperatorConversationId, OperatorHistory, OperatorResponse,
+        ServerMessage, Settings, TerminalSize,
+    };
+    use ovrcr::tui::{Dashboard, DashboardAction};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use std::{collections::VecDeque, os::unix::fs::PermissionsExt};
+
+    struct LiveDashboard {
+        stream: std::os::unix::net::UnixStream,
+        dashboard: Dashboard,
+        pending: VecDeque<ClientMessage>,
+        next_probe_id: u64,
+    }
+
+    impl LiveDashboard {
+        fn connect(live: &Live) -> Self {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            let budget = Duration::from_secs(5);
+            stream.set_read_timeout(Some(budget)).unwrap();
+            stream.set_write_timeout(Some(budget)).unwrap();
+            let hierarchy =
+                match protocol::client::request(&mut stream, 910_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_area(Rect::new(0, 0, 160, 40));
+            dashboard.install_settings(Settings::default());
+            Self {
+                stream,
+                dashboard,
+                pending: VecDeque::new(),
+                next_probe_id: 910_001,
+            }
+        }
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_probe_id += 1;
+            let id = self.next_probe_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                let matched = match &incoming {
+                    ServerMessage::Response {
+                        request_id,
+                        response,
+                    } if *request_id == id => Some(response.clone()),
+                    _ => None,
+                };
+                self.pending
+                    .extend(self.dashboard.handle_server_message(incoming));
+                self.pending.extend(self.dashboard.drain_outbox());
+                if let Some(response) = matched {
+                    self.flush();
+                    return response;
+                }
+            }
+        }
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
+                }
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!("Dashboard outbox did not converge");
+        }
+
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
+        }
+
+        fn wait_history(
+            &mut self,
+            conversation: OperatorConversationId,
+            predicate: impl Fn(&OperatorHistory) -> bool,
+        ) -> OperatorHistory {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if predicate(&history) {
+                    self.pump();
+                    return history;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for history predicate: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn render(&mut self) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let release_turn_one = live.root.path().join("release-turn-one");
+
+    let models_json = fake.profile.join("models.json");
+    std::fs::write(
+        &models_json,
+        serde_json::to_vec_pretty(&json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "SECRET_DO_NOT_LEAK_487",
+                    "models": [
+                        {
+                            "id": "default",
+                            "name": "Fixture Default",
+                            "contextWindow": 100_000
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&models_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut scenario = Scenario::new();
+    scenario.set("record_tool_history", json!(true));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WaitFile(release_turn_one.clone()),
+            Step::WatchStatus(1),
+            Step::tool("call-1", "read", json!({"path": "README.md"}), "ok"),
+            Step::assistant("Epoch zero reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch complete."),
+            Step::Settle,
+        ],
+        vec![Step::assistant("Epoch one fresh reply."), Step::Settle],
+    ]);
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `/session` from `Ctrl-o` Quick message transitions into full Operator,
+    //    renders empty epoch-0 stats, never leaks `models.json` credentials, and spawns zero Pi processes.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let cold_modal = ui.render();
+    assert!(
+        !cold_modal.contains("Quick message · Ctrl-o")
+            && cold_modal.contains("Operator session · /session")
+            && cold_modal.contains("epoch 0 · pi none")
+            && cold_modal.contains("0 total (in 0 · out 0)")
+            && cold_modal.contains("$0.0000")
+            && cold_modal.contains("none yet")
+            && !cold_modal.contains("SECRET_DO_NOT_LEAK_487"),
+        "cold `/session` modal unexpected:\n{cold_modal}"
+    );
+    assert!(fake.log().is_empty(), "cold `/session` must never spawn Pi");
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Char('q')),
+        DashboardAction::Redraw
+    );
+    assert!(!ui.render().contains("Operator session · /session"));
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Start turn 1 and verify `/new` refuses while the turn is `Running`.
+    ui.dashboard
+        .event_action(Event::Paste("Inspect workspace".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let running_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+    });
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let busy_screen = ui.render();
+    assert!(
+        busy_screen.contains("Cannot start a new Operator session while a turn is running."),
+        "{busy_screen}"
+    );
+    ui.dashboard.ctrl('c');
+    match ui.exchange(Request::Operator(OperatorRequest::NewSession {
+        conversation: conversation_id,
+        expected_run: running_history.conversation.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("running") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict while turn is running, got {other:?}"),
+    }
+
+    // 3. Complete turn 1 under an active `watch_sessions` warm-worker lease and verify `/new` refuses.
+    std::fs::write(&release_turn_one, b"go\n").unwrap();
+    let leased_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let leased_screen = ui.render();
+    assert!(
+        leased_screen.contains(
+            "Cannot start a new Operator session while a watched-session lease or worker is active."
+        ),
+        "{leased_screen}"
+    );
+    ui.dashboard.ctrl('c');
+    match ui.exchange(Request::Operator(OperatorRequest::NewSession {
+        conversation: conversation_id,
+        expected_run: leased_history.conversation.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict while watch lease is active, got {other:?}"),
+    }
+
+    // 4. Finish the watched turn on the warm worker (`WatchStatus(0)`) so it retires cleanly,
+    //    and verify zero-spawn `/session` reads the promoted `session.jsonl` + `models.json`
+    //    contextWindow without spawning Pi.
+    let turn_one_id = leased_history
+        .conversation
+        .current_turn
+        .as_ref()
+        .expect("leased turn")
+        .identity
+        .turn
+        .0;
+    let turn_one_checkpoint = fake
+        .profile
+        .join("turns")
+        .join(turn_one_id.to_string())
+        .join("session.jsonl");
+    assert!(
+        turn_one_checkpoint.is_file(),
+        "leased turn checkpoint missing at {}",
+        turn_one_checkpoint.display()
+    );
+    ui.dashboard
+        .event_action(Event::Paste("Finish watch".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let settled_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != turn_one_id && turn.state == OperatorTurnState::Complete
+            })
+            && history.conversation.worker_stopped
+    });
+    let turn_two_id = settled_history
+        .conversation
+        .current_turn
+        .as_ref()
+        .expect("completed turn")
+        .identity
+        .turn
+        .0;
+    let checkpoint_path = fake
+        .profile
+        .join("turns")
+        .join(turn_two_id.to_string())
+        .join("session.jsonl");
+    assert!(
+        !turn_one_checkpoint.exists() && checkpoint_path.is_file(),
+        "expected turn 2 checkpoint promoted and turn 1 superseded: {} / {}",
+        turn_one_checkpoint.display(),
+        checkpoint_path.display()
+    );
+
+    let starts_before_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_before_session, 1);
+
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let populated_modal = ui.render();
+    assert!(
+        populated_modal.contains("Operator session · /session")
+            && populated_modal.contains(&format!("epoch 0 · pi operator-{}", conversation_id.0))
+            && populated_modal.contains("fixture/default")
+            && populated_modal.contains("medium")
+            && populated_modal.contains("2 total (2 completed)")
+            && populated_modal.contains("1 calls · 1 results")
+            && populated_modal.contains("2,500 total (in 1,600 · out 300)")
+            && populated_modal.contains("read 400 · write 200")
+            && populated_modal.contains("$0.0250")
+            && populated_modal.contains("1,250 / 100,000 tokens (1.2%)")
+            && !populated_modal.contains("SECRET_DO_NOT_LEAK_487"),
+        "populated `/session` modal unexpected:\n{populated_modal}"
+    );
+    let starts_after_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(
+        starts_after_session, starts_before_session,
+        "`/session` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // 5. `/new` advances `session_epoch` to 1, clears visible feed + `/copy`, deletes all
+    //    superseded prior-epoch checkpoint files on disk, and preserves prior-epoch SQLite audit rows.
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let reset_screen = ui.render();
+    assert!(
+        !reset_screen.contains("Epoch zero reply.")
+            && !reset_screen.contains("Watch complete.")
+            && reset_screen.contains("Started new Operator session (epoch 1)."),
+        "{reset_screen}"
+    );
+    assert!(
+        !turn_one_checkpoint.exists() && !checkpoint_path.exists(),
+        "superseded prior-epoch checkpoints should be removed: {} / {}",
+        turn_one_checkpoint.display(),
+        checkpoint_path.display()
+    );
+
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        ui.render().contains("No assistant reply to copy yet."),
+        "prior-epoch reply must not remain copyable after `/new`"
+    );
+
+    let registry = Registry::of(&live);
+    assert_eq!(registry.checkpoint(conversation_id.0), None);
+    let db = rusqlite::Connection::open(&registry.path).unwrap();
+    let conv_epoch: i64 = db
+        .query_row(
+            "SELECT session_epoch FROM operator_conversations WHERE id = ?1",
+            [conversation_id.0 as i64],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(conv_epoch, 1);
+    let (prior_turn_epoch, prior_turn_state, prior_msg_count): (i64, String, i64) = db
+        .query_row(
+            "SELECT t.session_epoch, t.state,
+                    (SELECT COUNT(*) FROM operator_messages m WHERE m.turn = t.id)
+               FROM operator_turns t WHERE t.id = ?1",
+            [turn_one_id as i64],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(prior_turn_epoch, 0);
+    assert_eq!(prior_turn_state, "Complete");
+    assert!(
+        prior_msg_count >= 2,
+        "epoch-0 messages must remain preserved"
+    );
+    drop(db);
+
+    // `/session` on the reset epoch reports zeroed stats and `pi none` without spawning Pi.
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let epoch_one_modal = ui.render();
+    assert!(
+        epoch_one_modal.contains("epoch 1 · pi none")
+            && epoch_one_modal.contains("0 total (in 0 · out 0)")
+            && epoch_one_modal.contains("$0.0000")
+            && epoch_one_modal.contains("none yet"),
+        "epoch-1 `/session` modal unexpected:\n{epoch_one_modal}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_before_session,
+        "`/session` after `/new` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+
+    // 6. Submitting a prompt in epoch 1 starts cold with fresh model context (zero `switch_session`).
+    let mut epoch_one_scenario = Scenario::new();
+    epoch_one_scenario.steps(vec![
+        Step::assistant("Epoch one fresh reply."),
+        Step::Settle,
+    ]);
+    fake.script(&epoch_one_scenario);
+    ui.dashboard
+        .event_action(Event::Paste("Fresh epoch one prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let epoch_one_history = ui.wait_history(conversation_id, |history| {
+        history.conversation.session_epoch == 1
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&epoch_one_history, "Epoch one fresh reply."));
+    assert!(
+        !has_assistant(&epoch_one_history, "Epoch zero reply."),
+        "epoch-1 history must not surface epoch-0 messages"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "switch")
+            .count(),
+        0,
+        "epoch-1 cold turn must not switch_session to epoch-0 checkpoint"
+    );
+}
+
 #[cfg(feature = "acceptance-diagnostics")]
 mod installed_pi {
     use super::{

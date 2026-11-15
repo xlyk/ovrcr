@@ -193,6 +193,12 @@ The migration is schema 32 → 33 and the wire change is 84 → 85. Older binari
 refuse the newer schema; clients and Server require matching wire versions.
 The history reader accepts legacy `{"Worker":"Completed"}` rows as unleased
 completion without rewriting their stored payloads or batch receipts.
+Registry schema 35 (protocol 88) adds monotonic `session_epoch` scoping on
+`operator_conversations` and `operator_turns` for `/new` (`NewSession`, gated on
+idle turn + unleased/stopped worker, removing superseded checkpoint files outside
+locks while keeping prior-epoch SQLite audit rows) and zero-spawn `/session`
+(`SessionInfo`, reading SQLite + bounded `O_NOFOLLOW` regular-file `session.jsonl`
+and `models.json` outside locks without starting `pi`).
 
 ## Workspace coordination watches
 

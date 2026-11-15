@@ -6,6 +6,8 @@ use ovrcr_protocol::{OperatorReasoning, OperatorThinkingLevel};
 pub(super) enum SlashCommandKind {
     Copy,
     Thinking,
+    New,
+    Session,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +33,20 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         usage: "/thinking [level]",
         description: "Choose or set reasoning effort level",
         takes_args: true,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::New,
+        name: "new",
+        usage: "/new",
+        description: "Start a fresh Operator session epoch",
+        takes_args: false,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Session,
+        name: "session",
+        usage: "/session",
+        description: "Inspect Operator session stats and usage",
+        takes_args: false,
     },
 ];
 

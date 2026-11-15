@@ -20,6 +20,7 @@ fn summary() -> OperatorConversationSummary {
         worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
+        session_epoch: 0,
         model: None,
         title: "Operator".into(),
         current_turn: None,
@@ -4147,4 +4148,459 @@ fn slash_thinking_opens_picker_validates_capabilities_and_writes_settings_across
         !after_quick_set.contains("Quick message · Ctrl-o"),
         "Quick message closes after valid `/thinking low`:\n{after_quick_set}"
     );
+}
+
+#[test]
+fn slash_menu_lists_and_completes_new_and_session_and_rejects_extra_args() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    d.key(KeyCode::Char('/'));
+    let menu = draw_text(&mut d, 120, 30);
+    for entry in ["/copy", "/thinking", "/new", "/session"] {
+        assert!(
+            menu.contains(entry),
+            "expected `{entry}` in slash menu:\n{menu}"
+        );
+    }
+
+    // Filter `/n` -> Tab completes `/new` with no trailing space and dismisses menu.
+    d.key(KeyCode::Char('n'));
+    let filtered_new = draw_text(&mut d, 120, 30);
+    assert!(filtered_new.contains("/new"), "{filtered_new}");
+    assert!(!filtered_new.contains("/copy"), "{filtered_new}");
+    d.key(KeyCode::Tab);
+    let completed_new = draw_text(&mut d, 120, 30);
+    assert!(completed_new.contains("> /new▏"), "{completed_new}");
+
+    // `/new extra` fails locally with draft preserved.
+    d.event_action(Event::Paste(" extra".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(d.drain_outbox().is_empty());
+    let new_bad_args = draw_text(&mut d, 120, 30);
+    assert!(new_bad_args.contains("> /new extra▏"), "{new_bad_args}");
+    assert!(
+        new_bad_args.to_lowercase().contains("no arguments"),
+        "{new_bad_args}"
+    );
+
+    // Filter `/s` -> Tab completes `/session` with no trailing space and dismisses menu.
+    d.ctrl('c');
+    d.event_action(Event::Paste("/s".into()));
+    let filtered_session = draw_text(&mut d, 120, 30);
+    assert!(filtered_session.contains("/session"), "{filtered_session}");
+    d.key(KeyCode::Tab);
+    let completed_session = draw_text(&mut d, 120, 30);
+    assert!(
+        completed_session.contains("> /session▏"),
+        "{completed_session}"
+    );
+
+    // `/session extra` fails locally with draft preserved.
+    d.event_action(Event::Paste(" extra".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(d.drain_outbox().is_empty());
+    let session_bad_args = draw_text(&mut d, 120, 30);
+    assert!(
+        session_bad_args.contains("> /session extra▏"),
+        "{session_bad_args}"
+    );
+    assert!(
+        session_bad_args.to_lowercase().contains("no arguments"),
+        "{session_bad_args}"
+    );
+}
+
+#[test]
+fn slash_new_resets_feed_epoch_and_copy_state_while_refusing_busy_or_leased_workers() {
+    // 1. Busy (`Running`) and leased (`!worker_stopped || worker_live`) conversations refuse `/new`.
+    let mut busy_dash = dashboard_fixture();
+    open_and_settle(&mut busy_dash, busy());
+    busy_dash.event_action(Event::Paste("/new".into()));
+    busy_dash.key(KeyCode::Enter);
+    assert!(
+        busy_dash.drain_outbox().is_empty(),
+        "running turn must refuse `/new` locally without sending Submit"
+    );
+    let busy_screen = draw_text(&mut busy_dash, 120, 30);
+    assert!(busy_screen.contains("> /new▏"), "{busy_screen}");
+    assert!(
+        busy_screen.to_lowercase().contains("running"),
+        "expected running refusal reason:\n{busy_screen}"
+    );
+
+    let mut leased_state = with_model(summary());
+    leased_state.run = SessionRunId(2);
+    leased_state.worker_stopped = false;
+    leased_state.worker_live = true;
+    leased_state.current_turn = Some(turn(2, OperatorTurnState::Complete));
+    let mut leased_dash = dashboard_fixture();
+    open_and_settle(&mut leased_dash, leased_state);
+    leased_dash.event_action(Event::Paste("/new".into()));
+    leased_dash.key(KeyCode::Enter);
+    assert!(leased_dash.drain_outbox().is_empty());
+    let leased_screen = draw_text(&mut leased_dash, 120, 30);
+    assert!(leased_screen.contains("> /new▏"), "{leased_screen}");
+    assert!(
+        leased_screen.to_lowercase().contains("lease")
+            || leased_screen.to_lowercase().contains("active"),
+        "expected lease refusal reason:\n{leased_screen}"
+    );
+
+    // 2. Idle conversation with prior messages: `/new` sends NewSession, handles Server errors cleanly,
+    //    and on Conversation(epoch 1) clears visible feed, resets model/reasoning, and clears `/copy`.
+    let mut d = dashboard_fixture();
+    let mut initial = with_model(summary());
+    initial.run = SessionRunId(2);
+    initial.current_turn = Some(turn(2, OperatorTurnState::Complete));
+    let out = opened(&mut d, initial.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            initial.clone(),
+            vec![
+                user(1, "epoch zero prompt", OperatorContext::default()),
+                delta(2, "Epoch zero reply markdown."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    let before_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        before_screen.contains("epoch zero prompt"),
+        "{before_screen}"
+    );
+
+    d.event_action(Event::Paste("/new".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let new_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(2),
+                })
+            )
+        })
+        .expect("expected OperatorRequest::NewSession");
+
+    // Simulate Server conflict error first -> draft preserved, error rendered.
+    d.handle_server_message(ServerMessage::Response {
+        request_id: new_req.request_id,
+        response: Response::Error {
+            code: ovrcr_protocol::ErrorCode::Conflict,
+            message:
+                "cannot start a new Operator session while a watched-session work lease is active"
+                    .into(),
+        },
+    });
+    let conflict_screen = draw_text(&mut d, 120, 30);
+    assert!(conflict_screen.contains("> /new▏"), "{conflict_screen}");
+    assert!(
+        conflict_screen.contains("watched-session work lease"),
+        "{conflict_screen}"
+    );
+
+    // Retry `/new` and succeed with epoch 1 summary.
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let new_req2 = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession { .. })
+            )
+        })
+        .expect("expected retry NewSession");
+    let mut epoch1 = summary();
+    epoch1.run = SessionRunId(2);
+    epoch1.session_epoch = 1;
+    let follow = respond(
+        &mut d,
+        new_req2.request_id,
+        OperatorResponse::Conversation(epoch1.clone()),
+    );
+    if let Some(read_msg) = follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+    {
+        respond(
+            &mut d,
+            read_msg.request_id,
+            history_of(epoch1, Vec::new(), None),
+        );
+    }
+
+    let after_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        !after_screen.contains("epoch zero prompt") && !after_screen.contains("Epoch zero reply"),
+        "visible feed must be cleared after `/new`:\n{after_screen}"
+    );
+    assert!(
+        after_screen.contains("> ▏"),
+        "draft must be cleared:\n{after_screen}"
+    );
+    assert!(
+        after_screen.to_lowercase().contains("epoch 1"),
+        "expected epoch 1 confirmation notice:\n{after_screen}"
+    );
+
+    // `/copy` after `/new` no longer sees epoch-0 assistant replies!
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    let copy_after_new = draw_text(&mut d, 120, 30);
+    assert!(
+        copy_after_new
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "{copy_after_new}"
+    );
+
+    // 3. Cold Quick message (`Ctrl-o`) `/new` opens singleton, sends NewSession, and closes Quick.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/new".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/new` sends Open first");
+    let next_msgs = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let quick_new = next_msgs
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession { .. })
+            )
+        })
+        .expect("Opened triggers NewSession");
+    let mut reset = summary();
+    reset.session_epoch = 1;
+    respond(
+        &mut cold,
+        quick_new.request_id,
+        OperatorResponse::Conversation(reset),
+    );
+    let quick_done = draw_text(&mut cold, 120, 30);
+    assert!(
+        !quick_done.contains("Quick message · Ctrl-o"),
+        "Quick message closes once `/new` succeeds:\n{quick_done}"
+    );
+    assert!(
+        quick_done.to_lowercase().contains("epoch 1"),
+        "Browse notice confirms new epoch:\n{quick_done}"
+    );
+}
+
+#[test]
+fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_enter_or_q() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    // Invoke `/session` in full Operator composer.
+    d.event_action(Event::Paste("/session".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let session_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo {
+                    conversation: OperatorConversationId(7),
+                })
+            )
+        })
+        .expect("expected OperatorRequest::SessionInfo");
+
+    let populated = ovrcr_protocol::OperatorSessionInfo {
+        conversation: OperatorConversationId(7),
+        session: SessionId(99),
+        run: SessionRunId(2),
+        session_epoch: 0,
+        pi_session_id: Some("operator-7".into()),
+        checkpoint_turn: Some(OperatorTurnId(2)),
+        configured_model: Some("anthropic/claude-sonnet-4-5".into()),
+        active_model: Some(OperatorModel {
+            provider: "openai".into(),
+            id: "gpt-6.1-sol".into(),
+        }),
+        configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::High,
+        reasoning: Some(ovrcr_protocol::OperatorReasoning {
+            requested: ovrcr_protocol::OperatorThinkingLevel::High,
+            level: ovrcr_protocol::OperatorThinkingLevel::Medium,
+            available: vec![
+                ovrcr_protocol::OperatorThinkingLevel::Low,
+                ovrcr_protocol::OperatorThinkingLevel::Medium,
+                ovrcr_protocol::OperatorThinkingLevel::High,
+            ],
+        }),
+        turns: 3,
+        completed_turns: 2,
+        user_messages: 3,
+        assistant_messages: 2,
+        tool_calls: 5,
+        tool_results: 4,
+        total_messages: 9,
+        tokens: ovrcr_protocol::OperatorTokenStats {
+            input: 1_200,
+            output: 350,
+            cache_read: 400,
+            cache_write: 50,
+            total: 2_000,
+        },
+        cost_usd_nanos: 12_500_000,
+        context_window: ovrcr_protocol::OperatorContextWindowUsage {
+            used_tokens: Some(2_000),
+            capacity_tokens: Some(200_000),
+        },
+    };
+    respond(
+        &mut d,
+        session_req.request_id,
+        OperatorResponse::SessionInfo(Box::new(populated.clone())),
+    );
+    let modal_screen = draw_text(&mut d, 140, 35);
+    for expected in [
+        "operator-7",
+        "openai/gpt-6.1-sol",
+        "anthropic/claude-sonnet-4-5",
+        "medium",
+        "1,200",
+        "350",
+        "400",
+        "50",
+        "2,000",
+        "$0.0125",
+        "200,000",
+        "1.0%",
+    ] {
+        assert!(
+            modal_screen.contains(expected),
+            "expected `{expected}` in SessionModal:\n{modal_screen}"
+        );
+    }
+
+    // Dismiss with `Esc`, `Enter`, and `q` — each closes only SessionModal while staying in Operator!
+    for dismiss in [KeyCode::Esc, KeyCode::Enter, KeyCode::Char('q')] {
+        if !draw_text(&mut d, 140, 35).contains("operator-7") {
+            d.event_action(Event::Paste("/session".into()));
+            d.key(KeyCode::Enter);
+            let req = d
+                .drain_outbox()
+                .into_iter()
+                .find(|m| {
+                    matches!(
+                        m.request,
+                        Request::Operator(OperatorRequest::SessionInfo { .. })
+                    )
+                })
+                .unwrap();
+            respond(
+                &mut d,
+                req.request_id,
+                OperatorResponse::SessionInfo(Box::new(populated.clone())),
+            );
+        }
+        assert_eq!(d.key(dismiss), DashboardAction::Redraw);
+        let closed = draw_text(&mut d, 140, 35);
+        assert!(
+            !closed.contains("$0.0125"),
+            "`{dismiss:?}` must dismiss SessionModal:\n{closed}"
+        );
+        assert!(
+            closed.contains("Operator · pi · openai/gpt-6.1-sol"),
+            "`{dismiss:?}` must remain inside full Operator:\n{closed}"
+        );
+        assert!(closed.contains("> ▏"), "{closed}");
+    }
+
+    // Cold Quick message (`Ctrl-o`) `/session` transitions into full Operator and opens SessionModal
+    // cleanly on an empty / post-`/new` epoch!
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/session".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/session` sends Open");
+    let mut empty_epoch = summary();
+    empty_epoch.session_epoch = 1;
+    let follow = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(empty_epoch.clone()),
+    );
+    let info_req = follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo { .. })
+            )
+        })
+        .expect("Opened triggers SessionInfo");
+    if let Some(read_req) = follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+    {
+        respond(
+            &mut cold,
+            read_req.request_id,
+            history_of(empty_epoch, Vec::new(), None),
+        );
+    }
+    let empty_info = ovrcr_protocol::OperatorSessionInfo {
+        conversation: OperatorConversationId(7),
+        session: SessionId(99),
+        run: SessionRunId(1),
+        session_epoch: 1,
+        pi_session_id: None,
+        checkpoint_turn: None,
+        configured_model: None,
+        active_model: None,
+        configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::Default,
+        reasoning: None,
+        turns: 0,
+        completed_turns: 0,
+        user_messages: 0,
+        assistant_messages: 0,
+        tool_calls: 0,
+        tool_results: 0,
+        total_messages: 0,
+        tokens: ovrcr_protocol::OperatorTokenStats::default(),
+        cost_usd_nanos: 0,
+        context_window: ovrcr_protocol::OperatorContextWindowUsage::default(),
+    };
+    respond(
+        &mut cold,
+        info_req.request_id,
+        OperatorResponse::SessionInfo(Box::new(empty_info)),
+    );
+    let empty_modal = draw_text(&mut cold, 140, 35);
+    assert!(
+        !empty_modal.contains("Quick message · Ctrl-o"),
+        "Quick message must close when transitioning to SessionModal:\n{empty_modal}"
+    );
+    for expected in ["none", "harness default", "$0.0000"] {
+        assert!(
+            empty_modal.to_lowercase().contains(expected),
+            "expected `{expected}` in empty SessionModal:\n{empty_modal}"
+        );
+    }
 }

@@ -42,7 +42,23 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     ensure_singleton_columns(connection)?;
     migrate_reasoning(connection)?;
     ensure_lease_column(connection)?;
+    migrate_session_epochs(connection)?;
     create_operator_indexes(connection)
+}
+
+pub(crate) fn migrate_session_epochs(connection: &Connection) -> Result<()> {
+    for table in ["operator_conversations", "operator_turns"] {
+        if has_table(connection, table)? && !has_column(connection, table, "session_epoch")? {
+            connection.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0;"
+            ))?;
+        }
+    }
+    if has_table(connection, "operator_conversations")? && has_table(connection, "operator_turns")?
+    {
+        create_operator_indexes(connection)?;
+    }
+    Ok(())
 }
 
 fn ensure_lease_column(connection: &Connection) -> Result<()> {
@@ -125,6 +141,12 @@ fn create_operator_indexes(connection: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS operator_history
          ON operator_messages(conversation,ordinal);",
     )?;
+    if has_column(connection, "operator_turns", "session_epoch")? {
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS operator_turn_epoch
+             ON operator_turns(conversation,session_epoch,id);",
+        )?;
+    }
     Ok(())
 }
 
@@ -242,7 +264,7 @@ fn read_turn(
     connection: &Connection,
     conversation: OperatorConversationId,
 ) -> Result<Option<OperatorTurn>> {
-    let row: Option<(u64,u64,u64,String,u64)> = connection.query_row("SELECT t.id,c.session,t.run,t.state,t.sequence FROM operator_turns t JOIN operator_conversations c ON c.id=t.conversation WHERE t.conversation=?1 ORDER BY t.id DESC LIMIT 1", [sql_integer(conversation.0)?], |r| Ok((read_integer(r,0)?,read_integer(r,1)?,read_integer(r,2)?,r.get(3)?,read_integer(r,4)?))).optional()?;
+    let row: Option<(u64,u64,u64,String,u64)> = connection.query_row("SELECT t.id,c.session,t.run,t.state,t.sequence FROM operator_turns t JOIN operator_conversations c ON c.id=t.conversation WHERE t.conversation=?1 AND t.session_epoch=c.session_epoch ORDER BY t.id DESC LIMIT 1", [sql_integer(conversation.0)?], |r| Ok((read_integer(r,0)?,read_integer(r,1)?,read_integer(r,2)?,r.get(3)?,read_integer(r,4)?))).optional()?;
     row.map(|(turn, session, run, state, sequence)| {
         Ok(OperatorTurn {
             identity: OperatorTurnIdentity {
@@ -289,7 +311,7 @@ impl SessionStore {
 
     pub(crate) fn operator_worker_leased(&self, id: OperatorConversationId) -> Result<bool> {
         Ok(self.connection.query_row(
-            "SELECT COALESCE((SELECT leased FROM operator_turns WHERE conversation=?1 ORDER BY id DESC LIMIT 1),0)",
+            "SELECT COALESCE((SELECT t.leased FROM operator_turns t JOIN operator_conversations c ON c.id=t.conversation WHERE t.conversation=?1 AND t.session_epoch=c.session_epoch ORDER BY t.id DESC LIMIT 1),0)",
             [sql_integer(id.0)?],
             |row| row.get(0),
         )?)
@@ -388,10 +410,17 @@ impl SessionStore {
         &self,
         id: OperatorConversationId,
     ) -> Result<OperatorConversationSummary> {
-        let (session, provider, model, title, singleton): (u64, String, String, String, i64) = self
+        let (session, provider, model, title, singleton, session_epoch): (
+            u64,
+            String,
+            String,
+            String,
+            i64,
+            u64,
+        ) = self
             .connection
             .query_row(
-                "SELECT session,provider,model,title,singleton FROM operator_conversations WHERE id=?1",
+                "SELECT session,provider,model,title,singleton,session_epoch FROM operator_conversations WHERE id=?1",
                 [sql_integer(id.0)?],
                 |r| {
                     Ok((
@@ -400,6 +429,7 @@ impl SessionStore {
                         r.get(2)?,
                         r.get(3)?,
                         r.get(4)?,
+                        read_integer(r, 5)?,
                     ))
                 },
             )
@@ -427,8 +457,8 @@ impl SessionStore {
             None
         };
         let last_reply_unix_ms: Option<i64> = self.connection.query_row(
-            "SELECT MAX(completed_unix_ms) FROM operator_turns WHERE conversation=?1",
-            [sql_integer(id.0)?],
+            "SELECT MAX(completed_unix_ms) FROM operator_turns WHERE conversation=?1 AND session_epoch=?2",
+            params![sql_integer(id.0)?, sql_integer(session_epoch)?],
             |row| row.get(0),
         )?;
         Ok(OperatorConversationSummary {
@@ -437,6 +467,7 @@ impl SessionStore {
             worker_live: false,
             id,
             session: SessionId(session),
+            session_epoch,
             model,
             title,
             current_turn,
@@ -486,10 +517,17 @@ impl SessionStore {
         .map_err(anyhow::Error::msg)?;
         self.require_current_operator(id)?;
         let conversation = self.operator_conversation(id)?;
-        let mut query = self.connection.prepare("SELECT ordinal,turn,content FROM operator_messages WHERE conversation=?1 AND ordinal>?2 ORDER BY ordinal LIMIT ?3")?;
+        let mut query = self.connection.prepare(
+            "SELECT m.ordinal,m.turn,m.content
+             FROM operator_messages m
+             JOIN operator_turns t ON t.id=m.turn
+             WHERE m.conversation=?1 AND t.session_epoch=?2 AND m.ordinal>?3
+             ORDER BY m.ordinal LIMIT ?4",
+        )?;
         let rows = query.query_map(
             params![
                 sql_integer(id.0)?,
+                sql_integer(conversation.session_epoch)?,
                 sql_integer(after)?,
                 u32::from(limit) + 1
             ],
@@ -610,12 +648,13 @@ impl SessionStore {
 
         let transaction = self.connection.transaction()?;
         transaction.execute(
-            "INSERT INTO operator_turns(conversation,run,state,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4)",
+            "INSERT INTO operator_turns(conversation,run,state,thinking_level,started_unix_ms,session_epoch) VALUES(?1,?2,'Running',?3,?4,?5)",
             params![
                 sql_integer(identity.conversation.0)?,
                 sql_integer(identity.run.0)?,
                 serde_json::to_string(&OperatorThinkingLevel::Default)?,
                 sql_integer(wall_clock_ms())?,
+                sql_integer(conversation.session_epoch)?,
             ],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
@@ -717,8 +756,8 @@ impl SessionStore {
             }
         }
         transaction.execute(
-            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms) VALUES(?1,?2,'Running',?3,?4,?5)",
-            params![sql_integer(id.0)?, sql_integer(run.0)?, settings.model, serde_json::to_string(&settings.thinking_level)?, sql_integer(started_unix_ms)?],
+            "INSERT INTO operator_turns(conversation,run,state,model_override,thinking_level,started_unix_ms,session_epoch) VALUES(?1,?2,'Running',?3,?4,?5,?6)",
+            params![sql_integer(id.0)?, sql_integer(run.0)?, settings.model, serde_json::to_string(&settings.thinking_level)?, sql_integer(started_unix_ms)?, sql_integer(conversation.session_epoch)?],
         )?;
         let turn = OperatorTurnId(transaction.last_insert_rowid().try_into()?);
         append_message(
@@ -1008,6 +1047,142 @@ impl SessionStore {
         }
         self.operator_worker_start(turn.identity).map(Some)
     }
+    pub(crate) fn reset_operator_session(
+        &mut self,
+        id: OperatorConversationId,
+        expected_run: SessionRunId,
+    ) -> Result<(OperatorConversationSummary, Vec<OperatorTurnId>)> {
+        OperatorRequest::NewSession {
+            conversation: id,
+            expected_run,
+        }
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+        self.require_current_operator(id)?;
+        let conversation = self.operator_conversation(id)?;
+        if conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|t| t.state == OperatorTurnState::Running)
+        {
+            bail!("cannot start a new Operator session while a turn is running");
+        }
+        let row = self
+            .records
+            .get(&conversation.session)
+            .context("retained operator session missing")?;
+        if row.run != expected_run {
+            bail!("operator session run changed; refresh and retry /new");
+        }
+        if !row.stopped && self.operator_worker_leased(id)? {
+            bail!(
+                "cannot start a new Operator session while a watched-session work lease is active"
+            );
+        }
+        if !row.stopped || !matches!(row.disposition, Disposition::Active | Disposition::Returned) {
+            bail!(
+                "cannot start a new Operator session while the Operator worker stop is unconfirmed"
+            );
+        }
+        let next_epoch = conversation
+            .session_epoch
+            .checked_add(1)
+            .context("operator session epoch exhausted")?;
+        let transaction = self.connection.transaction()?;
+        let mut superseded: Vec<OperatorTurnId> = {
+            let mut query = transaction.prepare(
+                "SELECT id FROM operator_turns WHERE conversation=?1 AND session_epoch=?2 ORDER BY id",
+            )?;
+            query
+                .query_map(
+                    params![sql_integer(id.0)?, sql_integer(conversation.session_epoch)?],
+                    |r| Ok(OperatorTurnId(read_integer(r, 0)?)),
+                )?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let checkpoint_turn: Option<i64> = transaction.query_row(
+            "SELECT pi_checkpoint_turn FROM operator_conversations WHERE id=?1 AND singleton=1",
+            [sql_integer(id.0)?],
+            |r| r.get(0),
+        )?;
+        if let Some(turn) = checkpoint_turn
+            && let Ok(turn) = u64::try_from(turn)
+            && turn > 0
+            && !superseded.contains(&OperatorTurnId(turn))
+        {
+            superseded.push(OperatorTurnId(turn));
+        }
+        let changed = transaction.execute(
+            "UPDATE operator_conversations
+             SET session_epoch=?1,pi_checkpoint_turn=NULL,reasoning=NULL,provider='',model=''
+             WHERE id=?2 AND singleton=1 AND session_epoch=?3",
+            params![
+                sql_integer(next_epoch)?,
+                sql_integer(id.0)?,
+                sql_integer(conversation.session_epoch)?,
+            ],
+        )?;
+        if changed != 1 {
+            bail!("operator session epoch changed concurrently");
+        }
+        transaction.commit()?;
+        Ok((self.operator_conversation(id)?, superseded))
+    }
+
+    pub(crate) fn operator_epoch_snapshot(
+        &self,
+        id: OperatorConversationId,
+    ) -> Result<OperatorEpochSnapshot> {
+        OperatorRequest::SessionInfo { conversation: id }
+            .validate()
+            .map_err(anyhow::Error::msg)?;
+        self.require_current_operator(id)?;
+        let summary = self.operator_conversation(id)?;
+        let checkpoint_turn: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT c.pi_checkpoint_turn
+             FROM operator_conversations c
+             LEFT JOIN operator_turns t ON t.id=c.pi_checkpoint_turn AND t.conversation=c.id
+             WHERE c.id=?1 AND c.singleton=1
+               AND (c.pi_checkpoint_turn IS NULL OR t.session_epoch=c.session_epoch)",
+                [sql_integer(id.0)?],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let checkpoint_turn = checkpoint_turn
+            .map(|turn| -> Result<OperatorTurnId> {
+                let turn: u64 = turn
+                    .try_into()
+                    .context("saved operator checkpoint turn is invalid")?;
+                if turn == 0 {
+                    bail!("saved operator checkpoint turn is invalid");
+                }
+                Ok(OperatorTurnId(turn))
+            })
+            .transpose()?;
+        let (turns, completed_turns): (u64, u64) = self.connection.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN state='Complete' THEN 1 ELSE 0 END), 0)
+             FROM operator_turns
+             WHERE conversation=?1 AND session_epoch=?2",
+            params![sql_integer(id.0)?, sql_integer(summary.session_epoch)?],
+            |r| Ok((read_integer(r, 0)?, read_integer(r, 1)?)),
+        )?;
+        Ok(OperatorEpochSnapshot {
+            summary,
+            checkpoint_turn,
+            turns,
+            completed_turns,
+        })
+    }
+}
+
+pub(crate) struct OperatorEpochSnapshot {
+    pub summary: OperatorConversationSummary,
+    pub checkpoint_turn: Option<OperatorTurnId>,
+    pub turns: u64,
+    pub completed_turns: u64,
 }
 #[cfg(test)]
 mod tests {
@@ -2924,5 +3099,235 @@ mod tests {
         assert!(store.read_operator_history(c.id, 0, 0).is_err());
         assert!(store.read_operator_history(c.id, 0, 101).is_err());
         assert!(store.current_operator_conversation().unwrap().is_some());
+    }
+
+    #[test]
+    fn schema_34_migration_preserves_epoch_zero_conversations_turns_batches_and_checkpoints() {
+        let root = tempfile::tempdir().unwrap();
+        let conversation_id;
+        let turn_id;
+        let expected_messages;
+        {
+            let mut store = SessionStore::open(root.path()).unwrap();
+            let c = open(&mut store);
+            conversation_id = c.id;
+            let turn = store
+                .submit_operator_turn(
+                    c.id,
+                    c.run,
+                    "epoch zero prompt",
+                    OperatorContext::default(),
+                    OperatorSettings {
+                        model: Some("openai/gpt-5.4".into()),
+                        thinking_level: OperatorThinkingLevel::High,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            turn_id = turn.identity.turn;
+            store
+                .apply_operator_batch(&OperatorEventBatch {
+                    identity: turn.identity,
+                    sequence: 1,
+                    events: vec![
+                        OperatorWorkerEvent::ModelSelected(OperatorModel {
+                            provider: "openai".into(),
+                            id: "gpt-5.4".into(),
+                        }),
+                        OperatorWorkerEvent::ReasoningSelected(OperatorReasoning {
+                            requested: OperatorThinkingLevel::High,
+                            level: OperatorThinkingLevel::High,
+                            available: vec![
+                                OperatorThinkingLevel::Low,
+                                OperatorThinkingLevel::High,
+                            ],
+                        }),
+                        OperatorWorkerEvent::AssistantDelta("epoch zero answer".into()),
+                        OperatorWorkerEvent::Completed { leased: false },
+                    ],
+                })
+                .unwrap();
+            store
+                .mark_stopped(turn.identity.session, turn.identity.run)
+                .unwrap();
+            expected_messages = store.read_operator_history(c.id, 0, 100).unwrap().messages;
+            store
+                .connection
+                .execute_batch(
+                    "DROP INDEX IF EXISTS operator_turn_epoch;
+                     ALTER TABLE operator_turns DROP COLUMN session_epoch;
+                     ALTER TABLE operator_conversations DROP COLUMN session_epoch;
+                     PRAGMA user_version=34;",
+                )
+                .unwrap();
+        }
+
+        let store = SessionStore::open(root.path()).unwrap();
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 35);
+        assert_eq!(version, crate::config::SCHEMA_VERSION);
+        let summary = store.operator_conversation(conversation_id).unwrap();
+        assert_eq!(summary.session_epoch, 0);
+        assert_eq!(
+            summary.model,
+            Some(OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+            })
+        );
+        assert!(summary.reasoning.is_some());
+        let checkpoint: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT pi_checkpoint_turn FROM operator_conversations WHERE id=?1",
+                [sql_integer(conversation_id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(checkpoint, Some(sql_integer(turn_id.0).unwrap()));
+        let history = store
+            .read_operator_history(conversation_id, 0, 100)
+            .unwrap();
+        assert_eq!(history.messages, expected_messages);
+    }
+
+    #[test]
+    fn reset_operator_session_increments_epoch_isolates_history_and_clears_checkpoint() {
+        let mut store = SessionStore::in_memory();
+        let c = open(&mut store);
+        assert_eq!(c.session_epoch, 0);
+        let turn0 = store
+            .submit_operator_turn(
+                c.id,
+                c.run,
+                "first epoch prompt",
+                OperatorContext::default(),
+                OperatorSettings {
+                    thinking_level: OperatorThinkingLevel::High,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: turn0.identity,
+                sequence: 1,
+                events: vec![
+                    OperatorWorkerEvent::ModelSelected(OperatorModel {
+                        provider: "openai".into(),
+                        id: "gpt-5.4".into(),
+                    }),
+                    OperatorWorkerEvent::ReasoningSelected(OperatorReasoning {
+                        requested: OperatorThinkingLevel::High,
+                        level: OperatorThinkingLevel::High,
+                        available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+                    }),
+                    OperatorWorkerEvent::AssistantDelta("first epoch reply".into()),
+                    OperatorWorkerEvent::Completed { leased: false },
+                ],
+            })
+            .unwrap();
+        store
+            .mark_stopped(turn0.identity.session, turn0.identity.run)
+            .unwrap();
+        let after_turn0 = store.operator_conversation(c.id).unwrap();
+        assert!(after_turn0.last_reply_unix_ms.is_some());
+
+        let (reset, superseded) = store.reset_operator_session(c.id, after_turn0.run).unwrap();
+        assert_eq!(reset.session_epoch, 1);
+        assert_eq!(reset.current_turn, None);
+        assert_eq!(reset.model, None);
+        assert_eq!(reset.reasoning, None);
+        assert_eq!(reset.current_turn_started_unix_ms, None);
+        assert_eq!(reset.last_reply_unix_ms, None);
+        assert_eq!(superseded, vec![turn0.identity.turn]);
+
+        let history_after_reset = store.read_operator_history(c.id, 0, 100).unwrap();
+        assert!(history_after_reset.messages.is_empty());
+        assert_eq!(history_after_reset.conversation.session_epoch, 1);
+
+        let preserved_turns: i64 = store
+            .connection
+            .query_row(
+                "SELECT count(*) FROM operator_turns WHERE conversation=?1 AND session_epoch=0",
+                [sql_integer(c.id.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let preserved_messages: i64 = store
+            .connection
+            .query_row(
+                "SELECT count(*) FROM operator_messages WHERE turn=?1",
+                [sql_integer(turn0.identity.turn.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preserved_turns, 1);
+        assert_eq!(preserved_messages, 2);
+
+        let turn1 = store
+            .submit_operator_turn(
+                c.id,
+                reset.run,
+                "second epoch prompt",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        let start1 = store.operator_worker_start(turn1.identity).unwrap();
+        assert_eq!(start1.checkpoint_turn, None);
+        let history_epoch1 = store.read_operator_history(c.id, 0, 100).unwrap();
+        assert_eq!(history_epoch1.messages.len(), 1);
+        assert_eq!(history_epoch1.messages[0].turn, turn1.identity.turn);
+    }
+
+    #[test]
+    fn reset_operator_session_refuses_running_turn_leased_worker_or_stale_run() {
+        let mut store = SessionStore::in_memory();
+        let c = open(&mut store);
+        assert!(
+            store
+                .reset_operator_session(c.id, SessionRunId(99))
+                .is_err(),
+            "mismatched expected_run must be rejected"
+        );
+
+        let turn = store
+            .submit_operator_turn(
+                c.id,
+                c.run,
+                "running prompt",
+                OperatorContext::default(),
+                OperatorSettings::default(),
+            )
+            .unwrap();
+        let running = store.operator_conversation(c.id).unwrap();
+        let err = store
+            .reset_operator_session(c.id, running.run)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("running"), "unexpected error: {err}");
+
+        store
+            .apply_operator_batch(&OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 1,
+                events: vec![OperatorWorkerEvent::Completed { leased: true }],
+            })
+            .unwrap();
+        let leased = store.operator_conversation(c.id).unwrap();
+        let err = store
+            .reset_operator_session(c.id, leased.run)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("lease"), "unexpected error: {err}");
+
+        // Once the warm worker retires with stop proof, /new is allowed again.
+        store.mark_stopped(c.session, leased.run).unwrap();
+        let (reset, _) = store.reset_operator_session(c.id, leased.run).unwrap();
+        assert_eq!(reset.session_epoch, 1);
     }
 }

@@ -203,6 +203,8 @@ pub struct OperatorConversationSummary {
     pub worker_live: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
+    /// Monotonic `/new` epoch on the singleton Operator conversation (`0` initially).
+    pub session_epoch: u64,
     /// The last pi model the worker selected; `None` before the first selection.
     pub model: Option<OperatorModel>,
     pub title: String,
@@ -212,6 +214,43 @@ pub struct OperatorConversationSummary {
     pub current_turn_started_unix_ms: Option<u64>,
     /// Latest completed reply time; legacy turns without a stored time are unknown.
     pub last_reply_unix_ms: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorTokenStats {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total: u64,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorContextWindowUsage {
+    pub used_tokens: Option<u64>,
+    pub capacity_tokens: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorSessionInfo {
+    pub conversation: OperatorConversationId,
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub session_epoch: u64,
+    pub pi_session_id: Option<String>,
+    pub checkpoint_turn: Option<OperatorTurnId>,
+    pub configured_model: Option<String>,
+    pub active_model: Option<OperatorModel>,
+    pub configured_thinking_level: OperatorThinkingLevel,
+    pub reasoning: Option<OperatorReasoning>,
+    pub turns: u64,
+    pub completed_turns: u64,
+    pub user_messages: u64,
+    pub assistant_messages: u64,
+    pub tool_calls: u64,
+    pub tool_results: u64,
+    pub total_messages: u64,
+    pub tokens: OperatorTokenStats,
+    /// Cumulative cost in nano-USD (`1_000_000_000 == $1.00`).
+    pub cost_usd_nanos: u64,
+    pub context_window: OperatorContextWindowUsage,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -388,6 +427,15 @@ pub enum OperatorRequest {
     Stop {
         identity: OperatorTurnIdentity,
     },
+    /// Atomically resets the singleton conversation onto a new session epoch when idle and unleased.
+    NewSession {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+    },
+    /// Reads current-epoch session metadata and promoted checkpoint stats without spawning pi.
+    SessionInfo {
+        conversation: OperatorConversationId,
+    },
 }
 impl OperatorRequest {
     pub fn validate(&self) -> Result<(), String> {
@@ -395,7 +443,11 @@ impl OperatorRequest {
             Self::Read { limit, .. } if *limit == 0 || *limit > MAX_OPERATOR_PAGE_MESSAGES => {
                 Err("invalid operator page limit".into())
             }
-            Self::Read { conversation, .. } if conversation.0 == 0 => {
+            Self::Read { conversation, .. }
+            | Self::NewSession { conversation, .. }
+            | Self::SessionInfo { conversation }
+                if conversation.0 == 0 =>
+            {
                 Err("zero conversation identity".into())
             }
             Self::Submit {
@@ -425,6 +477,8 @@ pub enum OperatorResponse {
     History(OperatorHistory),
     Submitted(OperatorTurn),
     Stopped(OperatorTurn),
+    Conversation(OperatorConversationSummary),
+    SessionInfo(Box<OperatorSessionInfo>),
 }
 /// Auth must be verified against the current owned worker by the Server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -682,5 +736,105 @@ mod tests {
         assert!(validate_operator_model("openai/id/with/slashes").is_ok());
         assert!(validate_operator_model(" ").is_err());
         assert!(validate_operator_model("openai").is_err());
+    }
+
+    #[test]
+    fn new_session_and_session_info_validate_and_round_trip_framed() {
+        assert!(
+            OperatorRequest::NewSession {
+                conversation: OperatorConversationId(0),
+                expected_run: SessionRunId(0),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperatorRequest::NewSession {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(0),
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            OperatorRequest::SessionInfo {
+                conversation: OperatorConversationId(0),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperatorRequest::SessionInfo {
+                conversation: OperatorConversationId(1),
+            }
+            .validate()
+            .is_ok()
+        );
+
+        let summary = OperatorConversationSummary {
+            run: SessionRunId(2),
+            worker_stopped: true,
+            worker_live: false,
+            id: OperatorConversationId(1),
+            session: SessionId(3),
+            session_epoch: 4,
+            model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+            }),
+            title: "Operator".into(),
+            current_turn: None,
+            reasoning: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
+        };
+        let info = OperatorSessionInfo {
+            conversation: OperatorConversationId(1),
+            session: SessionId(3),
+            run: SessionRunId(2),
+            session_epoch: 4,
+            pi_session_id: Some("operator-1".into()),
+            checkpoint_turn: Some(OperatorTurnId(9)),
+            configured_model: Some("openai/gpt-5.4".into()),
+            active_model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+            }),
+            configured_thinking_level: OperatorThinkingLevel::High,
+            reasoning: Some(OperatorReasoning {
+                requested: OperatorThinkingLevel::High,
+                level: OperatorThinkingLevel::High,
+                available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+            }),
+            turns: 2,
+            completed_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            total_messages: 5,
+            tokens: OperatorTokenStats {
+                input: 1200,
+                output: 300,
+                cache_read: 400,
+                cache_write: 100,
+                total: 2000,
+            },
+            cost_usd_nanos: 12_500_000,
+            context_window: OperatorContextWindowUsage {
+                used_tokens: Some(1800),
+                capacity_tokens: Some(200_000),
+            },
+        };
+        for response in [
+            crate::Response::Operator(OperatorResponse::Conversation(summary)),
+            crate::Response::Operator(OperatorResponse::SessionInfo(Box::new(info))),
+        ] {
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &response).unwrap();
+            let decoded: crate::Response =
+                crate::read_frame::<crate::Response>(&mut bytes.as_slice()).unwrap();
+            assert_eq!(response, decoded);
+        }
     }
 }

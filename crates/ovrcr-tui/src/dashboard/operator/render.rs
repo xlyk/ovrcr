@@ -843,6 +843,7 @@ impl Dashboard {
         }
         self.draw_operator_slash_menu(frame, &layout);
         self.draw_operator_reasoning_picker(frame);
+        self.draw_operator_session_modal(frame);
     }
 
     fn draw_operator_slash_menu(&self, frame: &mut Frame<'_>, layout: &OperatorLayout) {
@@ -1009,4 +1010,180 @@ impl Dashboard {
             area,
         );
     }
+
+    fn draw_operator_session_modal(&self, frame: &mut Frame<'_>) {
+        let Some(modal) = &self.operator.session_modal else {
+            return;
+        };
+        let outer = frame.area();
+        let width = outer.width.min(76);
+        let inner_width = width.saturating_sub(2);
+        let field = |label: &'static str, value: String| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!(" {label:<16}"), Style::default().fg(SUBTEXT())),
+                Span::styled(display_text(&value), Style::default().fg(TEXT())),
+            ])
+        };
+        let mut lines: Vec<Line<'static>> = match modal {
+            SessionModal::Loading => vec![
+                Line::raw(" Loading Operator session details…")
+                    .style(Style::default().fg(SUBTEXT())),
+            ],
+            SessionModal::Loaded(info) => {
+                let pi_session = info
+                    .pi_session_id
+                    .as_deref()
+                    .map_or_else(|| "none".to_owned(), ToOwned::to_owned);
+                let checkpoint = info
+                    .checkpoint_turn
+                    .map_or_else(|| "none".to_owned(), |turn| format!("turn #{}", turn.0));
+                let active_model = info.active_model.as_ref().map_or_else(
+                    || "none yet".to_owned(),
+                    |m| format!("{}/{}", m.provider, m.id),
+                );
+                let configured_model = info
+                    .configured_model
+                    .as_deref()
+                    .map_or_else(|| "harness default".to_owned(), ToOwned::to_owned);
+                let reasoning = match &info.reasoning {
+                    Some(r) => format!(
+                        "{} (configured: {})",
+                        r.level.as_str(),
+                        info.configured_thinking_level.as_str()
+                    ),
+                    None => format!(
+                        "— (configured: {})",
+                        info.configured_thinking_level.as_str()
+                    ),
+                };
+                let context_occupancy = match (
+                    info.context_window.used_tokens,
+                    info.context_window.capacity_tokens,
+                ) {
+                    (Some(used), Some(capacity)) if capacity > 0 => {
+                        let pct = (used as f64 * 100.0) / (capacity as f64);
+                        format!(
+                            "{} / {} tokens ({pct:.1}%)",
+                            format_count(used),
+                            format_count(capacity)
+                        )
+                    }
+                    (Some(used), _) => format!("{} tokens (capacity unknown)", format_count(used)),
+                    (None, Some(capacity)) if capacity > 0 => {
+                        format!("0 / {} tokens (0.0%)", format_count(capacity))
+                    }
+                    _ => "none yet".into(),
+                };
+                let rows = vec![
+                    field(
+                        "Identities",
+                        format!(
+                            "conversation #{} · session #{} · run {}",
+                            info.conversation.0, info.session.0, info.run.0
+                        ),
+                    ),
+                    field(
+                        "Epoch & Pi",
+                        format!(
+                            "epoch {} · pi {} · checkpoint {}",
+                            info.session_epoch, pi_session, checkpoint
+                        ),
+                    ),
+                    field("Active model", active_model),
+                    field("Configured", configured_model),
+                    field("Reasoning", reasoning),
+                    field(
+                        "Turns",
+                        format!(
+                            "{} total ({} completed)",
+                            format_count(info.turns),
+                            format_count(info.completed_turns)
+                        ),
+                    ),
+                    field(
+                        "Messages",
+                        format!(
+                            "{} total ({} user · {} assistant)",
+                            format_count(info.total_messages),
+                            format_count(info.user_messages),
+                            format_count(info.assistant_messages)
+                        ),
+                    ),
+                    field(
+                        "Tools",
+                        format!(
+                            "{} calls · {} results",
+                            format_count(info.tool_calls),
+                            format_count(info.tool_results)
+                        ),
+                    ),
+                    field(
+                        "Tokens",
+                        format!(
+                            "{} total (in {} · out {})",
+                            format_count(info.tokens.total),
+                            format_count(info.tokens.input),
+                            format_count(info.tokens.output)
+                        ),
+                    ),
+                    field(
+                        "Cache tokens",
+                        format!(
+                            "read {} · write {}",
+                            format_count(info.tokens.cache_read),
+                            format_count(info.tokens.cache_write)
+                        ),
+                    ),
+                    field("Cost", format_cost_usd_nanos(info.cost_usd_nanos)),
+                    field("Context window", context_occupancy),
+                ];
+                wrapped_lines(rows, inner_width)
+            }
+        };
+        lines.push(Line::default());
+        lines.push(Line::raw(" Esc / Enter / q close").style(Style::default().fg(MAUVE())));
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Operator session · /session ")
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
+    }
+}
+
+fn format_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (idx, ch) in digits.chars().enumerate() {
+        if idx > 0 && (digits.len() - idx).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn format_cost_usd_nanos(nanos: u64) -> String {
+    let whole = nanos / 1_000_000_000;
+    let frac = nanos % 1_000_000_000;
+    let frac9 = format!("{frac:09}");
+    let trimmed = frac9.trim_end_matches('0');
+    let decimals = if trimmed.len() < 4 {
+        &frac9[..4]
+    } else {
+        trimmed
+    };
+    format!("${}.{decimals}", format_count(whole))
 }

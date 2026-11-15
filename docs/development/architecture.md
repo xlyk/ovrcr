@@ -198,3 +198,11 @@ See the [runtime reference](operator.md) for watch admission and rollback.
 Schema version 34 adds the Antigravity conversation reference. The upgrade
 preserves existing reference bytes and fences older readers. Protocol 87 adds
 the managed provider and exact conversation reference to the wire format.
+
+Schema version 35 adds `session_epoch` (`INTEGER NOT NULL DEFAULT 0`) to
+`operator_conversations` and `operator_turns`, preserving existing history in
+epoch `0` while isolating visible history, active turn/lease checks and cold
+checkpoints per epoch. Protocol 88 adds `OperatorRequest::{NewSession,
+SessionInfo}` and `OperatorResponse::{Conversation, SessionInfo}` alongside
+`ovrcr_runtime::operator_session_file`'s bounded `O_NOFOLLOW` regular-file
+checkpoint reader.

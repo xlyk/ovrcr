@@ -314,7 +314,178 @@ impl ServerState {
                 self.operator_changed(conversation);
                 Ok(OperatorResponse::Submitted(turn))
             }
-            request => {
+            OperatorRequest::NewSession {
+                conversation,
+                expected_run,
+            } => {
+                let (published, superseded) = {
+                    let _mutation = self.mutation_lock.lock().unwrap();
+                    self.reject_if_stopping()?;
+                    #[cfg(test)]
+                    if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                        hook();
+                    }
+                    let current = {
+                        let retained = self.retained.lock();
+                        self.dashboard
+                            .with_owned(owner, |_| -> Result<_> {
+                                retained.require_current_operator(conversation)?;
+                                retained.operator_conversation(conversation)
+                            })
+                            .context("dashboard owner changed")??
+                    };
+                    let session = self.sessions.lock().unwrap().get(&current.session).cloned();
+                    let worker_live = session.is_some_and(|session| {
+                        session.run() == current.run
+                            && session.is_live()
+                            && session.summary().scope
+                                == (ovrcr_protocol::SessionScope::OperatorConversation {
+                                    conversation: current.id,
+                                })
+                    });
+                    if worker_live {
+                        bail!(
+                            "cannot start a new Operator session while an Operator worker or watched-session lease is active"
+                        );
+                    }
+                    let (summary, superseded) = {
+                        let mut retained = self.retained.lock();
+                        self.dashboard
+                            .with_owned(owner, |_| {
+                                retained.reset_operator_session(conversation, expected_run)
+                            })
+                            .context("dashboard owner changed")??
+                    };
+                    (self.publish_worker_live(summary)?, superseded)
+                };
+                crate::operator_session_file::remove_superseded_checkpoints(
+                    &self.registry_path,
+                    &superseded,
+                );
+                self.operator_changed(published.id);
+                Ok(OperatorResponse::Conversation(published))
+            }
+            OperatorRequest::SessionInfo { conversation } => {
+                self.reject_if_stopping()?;
+                #[cfg(test)]
+                if let Some(hook) = self.operator.before_retained.lock().unwrap().clone() {
+                    hook();
+                }
+                let settings = self
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .report
+                    .settings
+                    .operator
+                    .clone();
+                let snapshot = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| retained.operator_epoch_snapshot(conversation))
+                        .context("dashboard owner changed")??
+                };
+                let checkpoint = if let Some(turn) = snapshot.checkpoint_turn {
+                    Some(crate::operator_session_file::read_promoted_checkpoint(
+                        &self.registry_path,
+                        conversation,
+                        turn,
+                    )?)
+                } else {
+                    None
+                };
+                let active_model = snapshot
+                    .summary
+                    .model
+                    .clone()
+                    .or_else(|| checkpoint.as_ref().and_then(|c| c.active_model.clone()));
+                let configured_model = settings
+                    .model
+                    .as_deref()
+                    .and_then(|raw| OperatorModel::parse(raw).ok());
+                let capacity_tokens = [
+                    active_model.as_ref(),
+                    checkpoint.as_ref().and_then(|c| c.active_model.as_ref()),
+                    configured_model.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .find_map(|model| {
+                    crate::operator_session_file::lookup_model_context_window(
+                        &self.registry_path,
+                        model,
+                    )
+                })
+                .or_else(|| checkpoint.as_ref().and_then(|c| c.inline_context_window));
+                let verified = {
+                    let retained = self.retained.lock();
+                    self.dashboard
+                        .with_owned(owner, |_| retained.operator_epoch_snapshot(conversation))
+                        .context("dashboard owner changed")??
+                };
+                if verified.summary.session_epoch != snapshot.summary.session_epoch
+                    || verified.checkpoint_turn != snapshot.checkpoint_turn
+                {
+                    bail!("Operator session changed while reading checkpoint; retry /session.");
+                }
+                let (
+                    pi_session_id,
+                    user_messages,
+                    assistant_messages,
+                    tool_calls,
+                    tool_results,
+                    total_messages,
+                    tokens,
+                    cost_usd_nanos,
+                    used_tokens,
+                ) = if let Some(checkpoint) = checkpoint {
+                    (
+                        Some(checkpoint.pi_session_id),
+                        checkpoint.user_messages,
+                        checkpoint.assistant_messages,
+                        checkpoint.tool_calls,
+                        checkpoint.tool_results,
+                        checkpoint.total_messages,
+                        checkpoint.tokens,
+                        checkpoint.cost_usd_nanos,
+                        checkpoint.latest_context_tokens,
+                    )
+                } else {
+                    (None, 0, 0, 0, 0, 0, OperatorTokenStats::default(), 0, None)
+                };
+                Ok(OperatorResponse::SessionInfo(Box::new(
+                    OperatorSessionInfo {
+                        conversation: verified.summary.id,
+                        session: verified.summary.session,
+                        run: verified.summary.run,
+                        session_epoch: verified.summary.session_epoch,
+                        pi_session_id,
+                        checkpoint_turn: verified.checkpoint_turn,
+                        configured_model: settings.model,
+                        active_model,
+                        configured_thinking_level: settings.thinking_level,
+                        reasoning: verified.summary.reasoning,
+                        turns: verified.turns,
+                        completed_turns: verified.completed_turns,
+                        user_messages,
+                        assistant_messages,
+                        tool_calls,
+                        tool_results,
+                        total_messages,
+                        tokens,
+                        cost_usd_nanos,
+                        context_window: OperatorContextWindowUsage {
+                            used_tokens,
+                            capacity_tokens,
+                        },
+                    },
+                )))
+            }
+            OperatorRequest::Read {
+                conversation,
+                after,
+                limit,
+            } => {
                 let _mutation = self.mutation_lock.lock().unwrap();
                 self.reject_if_stopping()?;
                 #[cfg(test)]
@@ -324,15 +495,8 @@ impl ServerState {
                 let result = {
                     let retained = self.retained.lock();
                     self.dashboard
-                        .with_owned(owner, |_| -> Result<_> {
-                            match request {
-                                OperatorRequest::Read {
-                                    conversation,
-                                    after,
-                                    limit,
-                                } => retained.read_operator_history(conversation, after, limit),
-                                _ => unreachable!(),
-                            }
+                        .with_owned(owner, |_| {
+                            retained.read_operator_history(conversation, after, limit)
                         })
                         .context("dashboard owner changed")??
                 };

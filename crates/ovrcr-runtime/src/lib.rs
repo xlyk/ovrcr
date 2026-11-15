@@ -11,6 +11,7 @@ pub mod git;
 pub mod grok_recovery;
 pub mod hermes_recovery;
 pub(crate) mod omp_model_catalog;
+pub mod operator_session_file;
 pub(crate) mod pi_model_catalog;
 pub mod recovery;
 pub mod retained;

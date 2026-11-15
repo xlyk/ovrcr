@@ -5175,6 +5175,7 @@ fn operator_quick_notification_retarget_cancels_unsent_and_retains_submitted_con
                         reasoning: None,
                         id: ovrcr_protocol::OperatorConversationId(7),
                         session: SessionId(99),
+                        session_epoch: 0,
                         run: ovrcr_protocol::SessionRunId(0),
                         worker_stopped: true,
                         worker_live: false,

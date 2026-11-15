@@ -14,7 +14,7 @@ use crossterm::event::{
 use ovrcr_protocol::{
     ClientMessage, MAX_OPERATOR_TEXT_BYTES, OperatorContext, OperatorConversationId as Id,
     OperatorConversationSummary as Summary, OperatorHistory, OperatorMessage,
-    OperatorMessageContent, OperatorRequest, OperatorResponse,
+    OperatorMessageContent, OperatorRequest, OperatorResponse, OperatorSessionInfo,
     OperatorThinkingLevel as ThinkingLevel, OperatorToolStatus, OperatorTurnId,
     OperatorTurnIdentity, OperatorTurnState, OperatorWorkerEvent, Request, Response, SessionId,
     SessionRunId,
@@ -49,8 +49,14 @@ pub(super) struct Hub {
     quick_generation: u64,
     reasoning_picker: Option<ReasoningPicker>,
     pending_reasoning_picker: bool,
+    session_modal: Option<SessionModal>,
+    pending_session_info: bool,
     slash_selected: usize,
     slash_dismissed_for: Option<String>,
+}
+enum SessionModal {
+    Loading,
+    Loaded(Box<OperatorSessionInfo>),
 }
 struct ReasoningPicker {
     choices: Vec<ThinkingLevel>,
@@ -79,10 +85,11 @@ struct QuickSubmission {
     text: String,
     context: OperatorContext,
 }
-/// Why an Open was sent: the full view, or the first explicit Quick Send.
+/// Why an Open was sent: the full view, or the first explicit Quick Send / `/new`.
 enum OpenOrigin {
     Manual,
     Quick(QuickSubmission),
+    QuickNew { generation: u64 },
 }
 #[derive(Clone, Copy)]
 enum SubmitOrigin {
@@ -153,6 +160,25 @@ impl Chat {
                 .as_ref()
                 .is_none_or(|turn| turn.state != OperatorTurnState::Running)
     }
+    fn can_reset_session(&self) -> Result<(), &'static str> {
+        if self.submitting || self.stopping {
+            return Err("Cannot start a new Operator session while a turn or stop is in progress.");
+        }
+        if self
+            .summary
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+        {
+            return Err("Cannot start a new Operator session while a turn is running.");
+        }
+        if !self.summary.worker_stopped || self.summary.worker_live {
+            return Err(
+                "Cannot start a new Operator session while a watched-session lease or worker is active.",
+            );
+        }
+        Ok(())
+    }
     /// Enter and mouse share this toggle; the choice outlives the default.
     fn toggle_entry(&mut self, entry: render::TranscriptEntry) {
         self.expanded.insert(entry.ordinal, !entry.expanded);
@@ -178,6 +204,14 @@ enum Pending {
     },
     Stop {
         identity: OperatorTurnIdentity,
+    },
+    NewSession {
+        id: Id,
+        draft: String,
+        origin: SubmitOrigin,
+    },
+    SessionInfo {
+        id: Id,
     },
 }
 const BUSY_REASON: &str = "The Operator is busy or its worker stop is unconfirmed; draft retained.";
@@ -501,6 +535,10 @@ impl Dashboard {
                             slash::SlashCommandKind::Copy => self.operator_run_copy(args, true),
                             slash::SlashCommandKind::Thinking => {
                                 self.operator_run_thinking(args, true)
+                            }
+                            slash::SlashCommandKind::New => self.operator_run_new(args, true),
+                            slash::SlashCommandKind::Session => {
+                                self.operator_run_session(args, true)
                             }
                         };
                     }
@@ -863,11 +901,16 @@ impl Dashboard {
         self.operator.reasoning_picker.is_some()
     }
 
+    pub(super) fn operator_session_modal_open(&self) -> bool {
+        self.operator.session_modal.is_some()
+    }
+
     fn operator_slash_menu_specs(&self) -> Vec<&'static slash::SlashCommandSpec> {
         if !self.operator.visible
             || !self.operator.editing
             || self.operator.transcript_focus
             || self.operator.reasoning_picker.is_some()
+            || self.operator.session_modal.is_some()
         {
             return Vec::new();
         }
@@ -1035,6 +1078,158 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    fn operator_send_new_session(&mut self, origin: SubmitOrigin) {
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return;
+        };
+        let id = chat.summary.id;
+        let expected_run = chat.summary.run;
+        let draft = chat.draft.clone();
+        chat.error = None;
+        chat.notice = None;
+        if matches!(origin, SubmitOrigin::Composer) {
+            self.operator.slash_dismissed_for = Some(draft.clone());
+        }
+        self.operator_request(
+            Pending::NewSession { id, draft, origin },
+            OperatorRequest::NewSession {
+                conversation: id,
+                expected_run,
+            },
+        );
+    }
+
+    fn operator_run_new(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        if !args.is_empty() {
+            let error = "Usage: /new (takes no arguments).";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if self
+            .operator
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::NewSession { .. }))
+        {
+            let error = "A new Operator session reset is already in progress.";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if from_quick {
+            let Some(generation) = self.operator.quick.as_ref().map(|q| q.generation) else {
+                return DashboardAction::Redraw;
+            };
+            if let Some(chat) = self.operator.chat.as_ref() {
+                if let Err(reason) = chat.can_reset_session() {
+                    if let Some(quick) = &mut self.operator.quick {
+                        quick.error = Some(reason.into());
+                    }
+                    return DashboardAction::Redraw;
+                }
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.phase = QuickPhase::Submitting;
+                }
+                self.operator_send_new_session(SubmitOrigin::Quick { generation });
+            } else {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.phase = QuickPhase::Opening;
+                }
+                self.operator_open(OpenOrigin::QuickNew { generation });
+            }
+            return DashboardAction::Redraw;
+        }
+        let Some(chat) = self.operator.chat.as_mut() else {
+            return DashboardAction::Redraw;
+        };
+        if let Err(reason) = chat.can_reset_session() {
+            let dismissed = chat.draft.clone();
+            chat.notice = None;
+            chat.error = Some(reason.into());
+            self.operator.slash_dismissed_for = Some(dismissed);
+            return DashboardAction::Redraw;
+        }
+        self.operator_send_new_session(SubmitOrigin::Composer);
+        DashboardAction::Redraw
+    }
+
+    fn operator_open_session_info(&mut self) {
+        self.operator.pending_session_info = false;
+        let Some(id) = self.operator.chat.as_ref().map(|chat| chat.summary.id) else {
+            return;
+        };
+        self.operator.reasoning_picker = None;
+        self.operator.session_modal = Some(SessionModal::Loading);
+        if !self
+            .operator
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::SessionInfo { .. }))
+        {
+            self.operator_request(
+                Pending::SessionInfo { id },
+                OperatorRequest::SessionInfo { conversation: id },
+            );
+        }
+    }
+
+    fn operator_run_session(&mut self, args: &str, from_quick: bool) -> DashboardAction {
+        if !args.is_empty() {
+            let error = "Usage: /session (takes no arguments).";
+            if from_quick {
+                if let Some(quick) = &mut self.operator.quick {
+                    quick.error = Some(error.into());
+                }
+            } else if let Some(chat) = self.operator.chat.as_mut() {
+                chat.notice = None;
+                chat.error = Some(error.into());
+            }
+            return DashboardAction::Redraw;
+        }
+        if let Some(chat) = self.operator.chat.as_mut() {
+            chat.draft.clear();
+            chat.cursor = TextCursor::default();
+            chat.error = None;
+            chat.notice = None;
+        }
+        self.operator.slash_selected = 0;
+        self.operator.slash_dismissed_for = None;
+        if from_quick {
+            self.operator.quick = None;
+            self.operator.pending_session_info = true;
+            self.open_operator();
+            if self.operator.chat.is_some() {
+                self.operator_open_session_info();
+            }
+        } else {
+            self.operator_open_session_info();
+        }
+        DashboardAction::Redraw
+    }
+
+    fn operator_session_modal_key(&mut self, key: KeyEvent) -> DashboardAction {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter)
+            || (key.code == KeyCode::Char('q') && key.modifiers.is_empty())
+        {
+            self.operator.session_modal = None;
+            self.operator.pending_session_info = false;
+        }
+        DashboardAction::Redraw
+    }
+
     fn operator_open_reasoning(&mut self) {
         let choices = slash::allowed_thinking_levels(Some(
             &self
@@ -1092,6 +1287,9 @@ impl Dashboard {
         if self.operator.reasoning_picker.is_some() {
             return self.operator_reasoning_key(key);
         }
+        if self.operator.session_modal.is_some() {
+            return self.operator_session_modal_key(key);
+        }
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('t') {
             self.operator_open_reasoning();
             return DashboardAction::Redraw;
@@ -1141,6 +1339,8 @@ impl Dashboard {
                     return match slash_specs[selected].kind {
                         slash::SlashCommandKind::Copy => self.operator_run_copy("", false),
                         slash::SlashCommandKind::Thinking => self.operator_run_thinking("", false),
+                        slash::SlashCommandKind::New => self.operator_run_new("", false),
+                        slash::SlashCommandKind::Session => self.operator_run_session("", false),
                     };
                 }
                 _ => {}
@@ -1151,6 +1351,8 @@ impl Dashboard {
             self.operator.editing = false;
             self.operator.visible = false;
             self.operator.pending_reasoning_picker = false;
+            self.operator.pending_session_info = false;
+            self.operator.session_modal = None;
             self.retarget(super::state::PaneChange::Focus);
             // Ctrl-g is the navigation key: leaving Operator with it also
             // opens the label picker. Esc only leaves.
@@ -1302,6 +1504,8 @@ impl Dashboard {
                         slash::SlashCommandKind::Thinking => {
                             self.operator_run_thinking(args, false)
                         }
+                        slash::SlashCommandKind::New => self.operator_run_new(args, false),
+                        slash::SlashCommandKind::Session => self.operator_run_session(args, false),
                     };
                 }
                 self.operator_submit();
@@ -1386,6 +1590,13 @@ impl Dashboard {
             }
             return Some(DashboardAction::Redraw);
         }
+        if self.operator.session_modal.is_some() {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                self.operator.session_modal = None;
+                self.operator.pending_session_info = false;
+            }
+            return Some(DashboardAction::Redraw);
+        }
         if let Some(action) = self.operator_sidebar_mouse(mouse, area) {
             return Some(action);
         }
@@ -1457,16 +1668,28 @@ impl Dashboard {
                     chat.stopping = false;
                 }
             }
+            Pending::NewSession { .. } | Pending::SessionInfo { .. } => {}
         }
         if let Response::Error { message, .. } = response {
             if matches!(pending, Pending::Open { .. }) {
                 self.operator.pending_reasoning_picker = false;
+                self.operator.pending_session_info = false;
+            }
+            if matches!(pending, Pending::SessionInfo { .. }) {
+                self.operator.session_modal = None;
             }
             match &pending {
                 Pending::Open {
                     origin: OpenOrigin::Quick(submission),
                 } => self.operator_quick_failed(submission.generation, message),
-                Pending::Submit {
+                Pending::Open {
+                    origin: OpenOrigin::QuickNew { generation },
+                }
+                | Pending::Submit {
+                    origin: SubmitOrigin::Quick { generation },
+                    ..
+                }
+                | Pending::NewSession {
                     origin: SubmitOrigin::Quick { generation },
                     ..
                 } => self.operator_quick_failed(*generation, message),
@@ -1474,10 +1697,15 @@ impl Dashboard {
             }
             let chat_error = matches!(
                 pending,
-                Pending::Read { .. } | Pending::Submit { .. } | Pending::Stop { .. }
+                Pending::Read { .. }
+                    | Pending::Submit { .. }
+                    | Pending::Stop { .. }
+                    | Pending::NewSession { .. }
+                    | Pending::SessionInfo { .. }
             );
             if chat_error {
                 if let Some(chat) = self.operator.chat.as_mut() {
+                    chat.notice = None;
                     chat.error = Some(display_text(message));
                 }
             } else {
@@ -1498,15 +1726,21 @@ impl Dashboard {
             }
             (Pending::Open { origin }, Response::Operator(OperatorResponse::Opened(summary))) => {
                 let context = match &origin {
-                    OpenOrigin::Manual => self.operator.context.clone(),
+                    OpenOrigin::Manual | OpenOrigin::QuickNew { .. } => {
+                        self.operator.context.clone()
+                    }
                     OpenOrigin::Quick(submission) => submission.context.clone(),
                 };
                 if !self.operator_attach(summary.clone(), context) {
                     self.operator.pending_reasoning_picker = false;
+                    self.operator.pending_session_info = false;
                     match origin {
                         OpenOrigin::Manual => self.operator.error = Some(UNAVAILABLE_REASON.into()),
                         OpenOrigin::Quick(submission) => {
                             self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON)
+                        }
+                        OpenOrigin::QuickNew { generation } => {
+                            self.operator_quick_failed(generation, UNAVAILABLE_REASON)
                         }
                     }
                     return true;
@@ -1519,7 +1753,31 @@ impl Dashboard {
                                 self.operator_open_reasoning();
                             }
                         }
+                        if self.operator.pending_session_info {
+                            self.operator.pending_session_info = false;
+                            if self.operator.visible {
+                                self.operator_open_session_info();
+                            }
+                        }
                         self.operator_read();
+                    }
+                    OpenOrigin::QuickNew { generation } => {
+                        let Some(chat) = self.operator.chat.as_ref() else {
+                            return true;
+                        };
+                        if let Err(reason) = chat.can_reset_session() {
+                            self.operator_quick_failed(*generation, reason);
+                            return true;
+                        }
+                        if let Some(quick) = &mut self.operator.quick
+                            && quick.generation == *generation
+                        {
+                            quick.seeded = true;
+                            quick.phase = QuickPhase::Submitting;
+                        }
+                        self.operator_send_new_session(SubmitOrigin::Quick {
+                            generation: *generation,
+                        });
                     }
                     OpenOrigin::Quick(submission) => {
                         let Some(chat) = self.operator.chat.as_mut() else {
@@ -1641,12 +1899,71 @@ impl Dashboard {
                 // The response retires authority; only a refreshed summary certifies process stop.
                 self.operator_read();
             }
+            (
+                Pending::NewSession { id, draft, origin },
+                Response::Operator(OperatorResponse::Conversation(summary)),
+            ) if summary.id == id => {
+                let context = self.operator.chat.as_ref().map_or_else(
+                    || self.operator.context.clone(),
+                    |chat| chat.context.clone(),
+                );
+                if !self.operator_attach(summary.clone(), context) {
+                    if let SubmitOrigin::Quick { generation } = origin {
+                        self.operator_quick_failed(generation, UNAVAILABLE_REASON);
+                    } else {
+                        self.operator.error = Some(UNAVAILABLE_REASON.into());
+                    }
+                    return true;
+                }
+                let confirmation = format!(
+                    "Started new Operator session (epoch {}).",
+                    summary.session_epoch
+                );
+                if let Some(chat) = self.operator.chat.as_mut() {
+                    if matches!(origin, SubmitOrigin::Composer | SubmitOrigin::Quick { .. })
+                        && (chat.draft == draft || matches!(origin, SubmitOrigin::Quick { .. }))
+                    {
+                        chat.draft.clear();
+                        chat.cursor = TextCursor::default();
+                    }
+                    chat.error = None;
+                    chat.notice = Some(confirmation.clone());
+                }
+                self.operator.slash_selected = 0;
+                self.operator.slash_dismissed_for = None;
+                if let SubmitOrigin::Quick { generation } = origin
+                    && self
+                        .operator
+                        .quick
+                        .as_ref()
+                        .is_some_and(|quick| quick.generation == generation)
+                {
+                    self.operator.quick = None;
+                    self.desktop.notice = Some(confirmation);
+                }
+                self.operator_read();
+            }
+            (
+                Pending::SessionInfo { id },
+                Response::Operator(OperatorResponse::SessionInfo(info)),
+            ) if info.conversation == id => {
+                if self.operator.session_modal.is_some() {
+                    self.operator.session_modal = Some(SessionModal::Loaded(info.clone()));
+                }
+            }
             (pending, _) => {
                 match pending {
                     Pending::Open {
                         origin: OpenOrigin::Quick(submission),
                     } => self.operator_quick_failed(submission.generation, UNAVAILABLE_REASON),
-                    Pending::Submit {
+                    Pending::Open {
+                        origin: OpenOrigin::QuickNew { generation },
+                    }
+                    | Pending::Submit {
+                        origin: SubmitOrigin::Quick { generation },
+                        ..
+                    }
+                    | Pending::NewSession {
                         origin: SubmitOrigin::Quick { generation },
                         ..
                     } => self.operator_quick_failed(generation, UNAVAILABLE_REASON),
@@ -1700,8 +2017,33 @@ impl Dashboard {
         if chat.summary.id != summary.id || chat.summary.session != summary.session {
             return false;
         }
+        if summary.session_epoch < chat.summary.session_epoch {
+            return false;
+        }
         if summary.run.0 < chat.summary.run.0 {
             return false;
+        }
+        if summary.session_epoch > chat.summary.session_epoch {
+            chat.messages.clear();
+            chat.ordinal = 0;
+            chat.confirmed_tail = Some(0);
+            chat.reading = false;
+            chat.dirty = true;
+            chat.submitting = false;
+            chat.stopping = false;
+            chat.scroll = 0;
+            chat.anchor = None;
+            chat.expanded.clear();
+            chat.entry_focus = None;
+            chat.follow = true;
+            chat.unread = None;
+            chat.reviewed = None;
+            *chat.rows.borrow_mut() = None;
+            self.operator.reasoning_picker = None;
+            self.operator.session_modal = None;
+            chat.summary = summary;
+            self.operator_quick_adopt_draft();
+            return true;
         }
         if chat.summary.current_turn.is_some() && summary.current_turn.is_none() {
             return false;
@@ -1738,6 +2080,7 @@ impl Dashboard {
         };
         if history.conversation.id != id
             || chat.summary.id != id
+            || history.conversation.session_epoch != chat.summary.session_epoch
             || chat.ordinal != after
             || history.conversation.session != chat.summary.session
         {
@@ -1796,6 +2139,7 @@ impl Dashboard {
             || self.operator.transcript_focus
             || self.operator_slash_menu_open()
             || self.operator_reasoning_picker_open()
+            || self.operator_session_modal_open()
         {
             return;
         }
@@ -1895,6 +2239,7 @@ mod tests {
             worker_live: false,
             id: Id(1),
             session: SessionId(11),
+            session_epoch: 0,
             model: None,
             title: "Operator".into(),
             current_turn: None,

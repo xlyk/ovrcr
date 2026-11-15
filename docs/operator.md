@@ -281,8 +281,17 @@ availability is checked against the profile's own catalog; there is no fallback 
 another model. A missing model is fixed with `ovrcr operator setup`, not by editing
 an identifier you guessed.
 
-pi compacts the conversation automatically when its context fills, so the
-conversation keeps working without a Reset or New action. After each successful
+pi compacts the conversation automatically when its context fills. When you want
+to start fresh explicitly, run `/new` in the full composer or Quick message once
+no turn is running and no `watch_sessions` warm-worker lease is active: `/new`
+advances the conversation's session epoch, clears the visible feed and active
+checkpoint so the next turn starts cold with empty model context, and preserves
+prior-epoch journal rows in SQLite. Run `/session` to open a read-only modal
+(`Esc`, `Enter` or `q` closes) showing conversation/session/run identities, the
+current session epoch, native pi session id, active and configured model and
+reasoning, turn/message/tool counts, token usage, cumulative cost and
+context-window occupancy without starting a worker or spending tokens. After each
+successful
 turn, OVRCR keeps that turn's completed pi session as the context checkpoint for
 the next turn. A failed, interrupted or uncertain turn keeps its partial journal
 and attempt files as evidence but never becomes the checkpoint: the next explicit

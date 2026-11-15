@@ -2728,6 +2728,7 @@ mod wire_snapshot {
             worker_live: false,
             id: identity.conversation,
             session: identity.session,
+            session_epoch: 1,
             model: Some(OperatorModel {
                 provider: "openai".into(),
                 id: "model".into(),
@@ -2736,6 +2737,44 @@ mod wire_snapshot {
             current_turn: Some(turn.clone()),
             current_turn_started_unix_ms: Some(1),
             last_reply_unix_ms: Some(2),
+        };
+        let session_info = OperatorSessionInfo {
+            conversation: identity.conversation,
+            session: identity.session,
+            run: identity.run,
+            session_epoch: 1,
+            pi_session_id: Some("operator-1".into()),
+            checkpoint_turn: Some(identity.turn),
+            configured_model: Some("openai/model".into()),
+            active_model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "model".into(),
+            }),
+            configured_thinking_level: OperatorThinkingLevel::High,
+            reasoning: Some(OperatorReasoning {
+                requested: OperatorThinkingLevel::High,
+                level: OperatorThinkingLevel::High,
+                available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+            }),
+            turns: 2,
+            completed_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            total_messages: 5,
+            tokens: OperatorTokenStats {
+                input: 100,
+                output: 50,
+                cache_read: 25,
+                cache_write: 10,
+                total: 185,
+            },
+            cost_usd_nanos: 1_500_000,
+            context_window: OperatorContextWindowUsage {
+                used_tokens: Some(185),
+                capacity_tokens: Some(200_000),
+            },
         };
         let auth = crate::SupervisorAuth {
             session: identity.session,
@@ -2767,6 +2806,19 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
+            (
+                "NewSession",
+                OperatorRequest::NewSession {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                },
+            ),
+            (
+                "SessionInfo",
+                OperatorRequest::SessionInfo {
+                    conversation: identity.conversation,
+                },
+            ),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2901,6 +2953,14 @@ mod wire_snapshot {
                     state: OperatorTurnState::Interrupted,
                     ..turn
                 }),
+            ),
+            (
+                "Conversation",
+                OperatorResponse::Conversation(summary.clone()),
+            ),
+            (
+                "SessionInfo",
+                OperatorResponse::SessionInfo(Box::new(session_info)),
             ),
         ] {
             all.push((
@@ -4082,13 +4142,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0457017301630168016c0104",
+            "2a0458017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0457017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0458017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4138,18 +4198,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04570000"),
+        ("Response::NotificationNavigation", "0d04580000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0457017301630168016c0104",
+            "0e01016e0458017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010457017301630168016c0164",
+            "0f0107080901016901010458017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004570107080901016901010457017301630168016c0164",
+            "1004580107080901016901010458017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4189,7 +4249,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0457017301630168016c0104",
+            "08016e0458017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4660,6 +4720,8 @@ mod wire_snapshot {
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
+        ("Request::Operator::NewSession", "39050104"),
+        ("Request::Operator::SessionInfo", "390601"),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -4727,18 +4789,26 @@ mod wire_snapshot {
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
-            "190001040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "19000104000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::Opened",
-            "1901040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "190104000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::History",
-            "1902040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
+        (
+            "Response::Operator::Conversation",
+            "190504000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+        ),
+        (
+            "Response::Operator::SessionInfo",
+            "190601030401010a6f70657261746f722d310102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c05010505020305020202020101056432190ab9fc60e3160001b901fc400d0300",
+        ),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",

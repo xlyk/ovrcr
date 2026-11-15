@@ -25,6 +25,7 @@ fn summary() -> OperatorConversationSummary {
         worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
+        session_epoch: 0,
         model: None,
         title: "Operator".into(),
         current_turn: None,

@@ -323,6 +323,26 @@ async function runTool(step, execute) {
   emitStart();
   const call = { id: step.id, name: step.name, input: step.input ?? {} };
   emitEnd(step.text ?? undefined, "toolUse", [call]);
+  if (scenario.record_tool_history && sessionFile) {
+    const extra = {};
+    if (currentModel?.provider && currentModel?.id) {
+      extra.provider = currentModel.provider;
+      extra.model = currentModel.id;
+    }
+    appendEntry(sessionFile, {
+      type: "message",
+      id: `tc-${call.id}`,
+      parentId: null,
+      timestamp: isoNow(),
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: call.id, name: call.name, arguments: call.input }],
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+        ...extra,
+      },
+    });
+  }
   writeRecord({
     type: "tool_execution_start",
     toolCallId: call.id,
@@ -357,12 +377,29 @@ async function runTool(step, execute) {
     status: step.status ?? "succeeded",
   });
   record({ event: "result_ack", id: call.id, confirmed: result?.confirmed === true, cancelled: result?.cancelled === true });
+  const isError = (step.status ?? "succeeded") !== "succeeded";
+  if (scenario.record_tool_history && sessionFile) {
+    appendEntry(sessionFile, {
+      type: "message",
+      id: `tr-${call.id}`,
+      parentId: null,
+      timestamp: isoNow(),
+      message: {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: [{ type: "text", text: step.output ?? "" }],
+        isError,
+        timestamp: Date.now(),
+      },
+    });
+  }
   writeRecord({
     type: "tool_execution_end",
     toolCallId: call.id,
     toolName: call.name,
     result: { content: [{ type: "text", text: step.output ?? "" }] },
-    isError: (step.status ?? "succeeded") !== "succeeded",
+    isError,
   });
   return result?.confirmed === true;
 }
@@ -573,6 +610,8 @@ async function runSteps(promptIndex) {
         if (!(await waitForFile(step.path))) return;
         break;
       case "settle":
+        appendAssistantHistory(finalText, "stop");
+        finalText = undefined;
         promptRunning = false;
         writeRecord({ type: "agent_settled" });
         break;
@@ -623,9 +662,10 @@ async function runSteps(promptIndex) {
         emitStart();
         emitDelta(step.answer);
         emitEnd(step.answer, "stop");
+        appendAssistantHistory(step.answer, "stop");
         promptRunning = false;
         writeRecord({ type: "agent_settled" });
-        finalText = step.answer;
+        finalText = undefined;
         break;
       }
       case "exit":
@@ -657,12 +697,26 @@ function appendPromptHistory(message) {
 
 function appendAssistantHistory(text, stop) {
   if (!sessionFile || text === undefined) return;
+  const extra = {};
+  if (scenario.assistant_usage) {
+    if (currentModel?.provider && currentModel?.id) {
+      extra.provider = currentModel.provider;
+      extra.model = currentModel.id;
+    }
+    extra.usage = scenario.assistant_usage;
+  }
   appendEntry(sessionFile, {
     type: "message",
     id: `a${Date.now()}`,
     parentId: null,
     timestamp: isoNow(),
-    message: { role: "assistant", content: [{ type: "text", text }], stopReason: stop ?? "stop", timestamp: Date.now() },
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: stop ?? "stop",
+      timestamp: Date.now(),
+      ...extra,
+    },
   });
 }
 

@@ -1281,7 +1281,14 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
 #[test]
 fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained() {
     let mut inverted = Vec::new();
-    for operation in ["current", "open", "read", "submit"] {
+    for operation in [
+        "current",
+        "open",
+        "read",
+        "submit",
+        "new_session",
+        "session_info",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let (peer, stream) = UnixStream::pair().unwrap();
         let owner = Arc::new(());
@@ -1307,6 +1314,11 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
                 text: "keep draft".into(),
                 context: OperatorContext::default(),
             },
+            "new_session" => OperatorRequest::NewSession {
+                conversation: c.id,
+                expected_run: c.run,
+            },
+            "session_info" => OperatorRequest::SessionInfo { conversation: c.id },
             _ => unreachable!(),
         };
         let (arrived_tx, arrived_rx) = mpsc::channel();
@@ -1557,4 +1569,250 @@ fn operator_legacy_conversation_is_hidden_refuses_work_and_keeps_recovery() {
     assert!(fresh.worker_stopped);
     assert!(fresh.current_turn.is_none());
     assert_eq!(live.current().unwrap().id, fresh.id);
+}
+
+#[test]
+fn new_session_fences_busy_and_leased_workers_and_deletes_prior_checkpoints_outside_locks() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Stale expected_run refuses cleanly.
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: SessionRunId(99),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    // Running turn refuses cleanly.
+    let turn = live.submit(&c);
+    let _auth = live.ready(&c);
+    match live.request(Request::Operator(OperatorRequest::NewSession {
+        conversation: c.id,
+        expected_run: turn.identity.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("running") || message.contains("live") || message.contains("active"),
+            "unexpected busy message: {message}"
+        ),
+        other => panic!("expected Conflict while running, got {other:?}"),
+    }
+
+    // Complete turn with an active warm-worker watch lease (`complete-leased`) and
+    // seed a promoted checkpoint on disk.
+    live.command(&c, "complete-leased");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    let leased_summary = live.current().unwrap();
+    assert_eq!(
+        leased_summary.current_turn.as_ref().map(|t| t.state),
+        Some(OperatorTurnState::Complete)
+    );
+    assert!(!leased_summary.worker_stopped);
+    let checkpoint_dir =
+        crate::operator_session_file::checkpoint_dir(&live.state.registry_path, turn.identity.turn);
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::set_permissions(&checkpoint_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let checkpoint_file = checkpoint_dir.join("session.jsonl");
+    let workdir = live.state.registry_path.join("operator-workdir");
+    let header = serde_json::json!({
+        "type": "session",
+        "version": 3,
+        "id": format!("operator-{}", c.id.0),
+        "cwd": workdir.to_str().unwrap(),
+    });
+    fs::write(&checkpoint_file, format!("{header}\n")).unwrap();
+    fs::set_permissions(&checkpoint_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    // /new must refuse while the warm-worker watch lease / live worker is active!
+    match live.request(Request::Operator(OperatorRequest::NewSession {
+        conversation: c.id,
+        expected_run: leased_summary.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("live") || message.contains("retiring"),
+            "unexpected lease/busy message: {message}"
+        ),
+        other => panic!("expected Conflict while leased, got {other:?}"),
+    }
+    assert!(
+        checkpoint_file.exists(),
+        "refused /new must not delete checkpoint"
+    );
+
+    // Retire the leased worker -> once idle and unleased, /new succeeds, increments
+    // session_epoch, and removes the prior-epoch checkpoint outside locks!
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let completed = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Conversation(reset)) =
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: completed.run,
+        }))
+    else {
+        panic!("expected Conversation response from NewSession");
+    };
+    assert_eq!(reset.session_epoch, 1);
+    assert_eq!(reset.current_turn, None);
+    assert!(
+        !checkpoint_file.exists(),
+        "superseded checkpoint must be deleted"
+    );
+    assert!(live.history(&reset).messages.is_empty());
+}
+
+#[test]
+fn session_info_reads_empty_populated_and_reset_epochs_with_zero_spawns() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Empty epoch before any turn: zero-spawn, clean zeroed stats.
+    let Response::Operator(OperatorResponse::SessionInfo(empty)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo on empty epoch");
+    };
+    assert_eq!(empty.conversation, c.id);
+    assert_eq!(empty.session, c.session);
+    assert_eq!(empty.session_epoch, 0);
+    assert_eq!(empty.pi_session_id, None);
+    assert_eq!(empty.checkpoint_turn, None);
+    assert_eq!(empty.turns, 0);
+    assert_eq!(empty.completed_turns, 0);
+    assert_eq!(empty.total_messages, 0);
+    assert_eq!(empty.tokens.total, 0);
+    assert_eq!(empty.cost_usd_nanos, 0);
+    assert_eq!(empty.context_window.used_tokens, None);
+
+    // Complete one turn, retire worker cleanly, and seed a promoted checkpoint + models.json.
+    let turn = live.submit(&c);
+    let _auth = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let workdir = live.state.registry_path.join("operator-workdir");
+    let pi_dir = live.state.registry_path.join("operator-pi");
+    fs::create_dir_all(&pi_dir).unwrap();
+    fs::set_permissions(&pi_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let models_file = pi_dir.join("models.json");
+    fs::write(
+        &models_file,
+        serde_json::to_string(&serde_json::json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "do-not-leak",
+                    "models": [{ "id": "offline", "contextWindow": 128_000 }]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&models_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let checkpoint_dir =
+        crate::operator_session_file::checkpoint_dir(&live.state.registry_path, turn.identity.turn);
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::set_permissions(&checkpoint_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let checkpoint_file = checkpoint_dir.join("session.jsonl");
+    let session_body = [
+        serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": format!("operator-{}", c.id.0),
+            "cwd": workdir.to_str().unwrap(),
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": { "role": "user", "content": [{ "type": "text", "text": "hi" }] }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "provider": "fixture",
+                "model": "offline",
+                "stopReason": "stop",
+                "content": [{ "type": "text", "text": "hello" }],
+                "usage": {
+                    "input": 1000,
+                    "output": 250,
+                    "cacheRead": 500,
+                    "cacheWrite": 50,
+                    "totalTokens": 1800,
+                    "cost": { "total": 0.0042 }
+                }
+            }
+        }),
+    ]
+    .iter()
+    .map(|v| format!("{}\n", serde_json::to_string(v).unwrap()))
+    .collect::<String>();
+    fs::write(&checkpoint_file, session_body).unwrap();
+    fs::set_permissions(&checkpoint_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let Response::Operator(OperatorResponse::SessionInfo(populated)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo on populated epoch");
+    };
+    assert_eq!(populated.pi_session_id.as_deref(), Some("operator-1"));
+    assert_eq!(populated.checkpoint_turn, Some(turn.identity.turn));
+    assert_eq!(populated.turns, 1);
+    assert_eq!(populated.completed_turns, 1);
+    assert_eq!(populated.user_messages, 1);
+    assert_eq!(populated.assistant_messages, 1);
+    assert_eq!(populated.total_messages, 2);
+    assert_eq!(populated.tokens.total, 1800);
+    assert_eq!(populated.cost_usd_nanos, 4_200_000);
+    assert_eq!(populated.context_window.used_tokens, Some(1800));
+    assert_eq!(populated.context_window.capacity_tokens, Some(128_000));
+
+    // Reset with /new -> SessionInfo immediately reflects clean epoch 1!
+    let settled = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Conversation(_)) =
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: settled.run,
+        }))
+    else {
+        panic!("expected Conversation from NewSession");
+    };
+    let Response::Operator(OperatorResponse::SessionInfo(after_reset)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after /new");
+    };
+    assert_eq!(after_reset.session_epoch, 1);
+    assert_eq!(after_reset.pi_session_id, None);
+    assert_eq!(after_reset.checkpoint_turn, None);
+    assert_eq!(after_reset.turns, 0);
+    assert_eq!(after_reset.completed_turns, 0);
+    assert_eq!(after_reset.total_messages, 0);
+    assert_eq!(after_reset.tokens.total, 0);
+    assert_eq!(after_reset.cost_usd_nanos, 0);
+    assert_eq!(after_reset.context_window.used_tokens, None);
 }

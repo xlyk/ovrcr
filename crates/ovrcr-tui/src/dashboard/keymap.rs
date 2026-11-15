@@ -556,6 +556,16 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 ],
             }];
         }
+        if dashboard.operator_session_modal_open() {
+            return vec![KeyGroup {
+                title: "Operator session".into(),
+                keys: vec![
+                    native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    native("Enter", "Close", Enter, KeyModifiers::NONE),
+                    native("q", "Close", Char('q'), KeyModifiers::NONE),
+                ],
+            }];
+        }
         if dashboard.operator_slash_menu_open() {
             return vec![KeyGroup {
                 title: "Operator commands".into(),

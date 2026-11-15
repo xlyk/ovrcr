@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-pub(crate) const SCHEMA_VERSION: i64 = 34;
+pub(crate) const SCHEMA_VERSION: i64 = 35;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -473,6 +473,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
         // Older readers cannot decode a retained Antigravity conversation reference.
         transaction.pragma_update(None, "user_version", 34)?;
     }
+    if schema_identity(&transaction)?.1 < 35 {
+        crate::retained::operator::migrate_session_epochs(&transaction)?;
+        transaction.pragma_update(None, "user_version", 35)?;
+    }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
@@ -534,6 +538,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 31
                 | 32
                 | 33
+                | 34
                 | SCHEMA_VERSION
         )
     {
@@ -953,7 +958,7 @@ mod tests {
         );
         assert_eq!(schema_version(&database_path(home)), 33);
         let db = open_writable_registry(home).unwrap();
-        assert_eq!(schema_identity(&db).unwrap().1, 34);
+        assert_eq!(schema_identity(&db).unwrap().1, SCHEMA_VERSION);
         let saved: String = db
             .query_row(
                 "SELECT reference FROM agent_conversations WHERE session=42",

@@ -366,6 +366,8 @@ prompts; unknown single-segment `/commands` fail locally with the draft intact.
 Typing a single-segment `/prefix` in the full composer opens a live `/` menu
 above the top rule (`Up`/`Down` select, `Tab` complete, `Enter` run, `Esc`
 close menu only); Quick message stays compact, running `/copy` (OSC 52 raw
-Markdown of the latest visible assistant reply, bounded at 64 KiB) and
-`/thinking <level>` directly and opening full Operator's reasoning picker on
-bare `/thinking`.
+Markdown of the latest visible assistant reply, bounded at 64 KiB),
+`/thinking <level>` and `/new` (idle/unleased session-epoch reset) directly,
+and transitioning into full Operator on bare `/thinking` (reasoning picker) or
+`/session` (dismissible read-only session inspection modal: `Esc`, `Enter` or
+`q` closes).
