@@ -156,8 +156,14 @@ preflight does not prove the model that a later native process will apply. Pi
 has a related native fuzzy and custom-model fallback after OVRCR's catalog
 check; see the Dashboard guide for the exact limitation.
 
-All native Dashboard model queries and launch-time revalidation share one
-Server-owned process slot. Pi and OMP catalog children use nonblocking pipes
+All native Dashboard model queries, dedicated-profile `OperatorRequest::Models`
+discovery, and launch-time revalidation share one Server-owned process slot.
+`OperatorRequest::Models` runs off the Dashboard reader on a tracked Operator
+control worker under `CatalogProcessOwner`, invoking `[executable, "operator",
+"models", "--json"]` with `OVRCR_HOME` pinned to the Server instance directory,
+`OVRCR_CONFIG`/`OVRCR_SOCKET` and private `OVRCR_*` authority variables stripped,
+bounded stdout/stderr, redacted errors, and process-group reaping on timeout or
+Server shutdown. Pi and OMP catalog children use nonblocking pipes
 with adapter-specific byte limits; their single owner keeps the exact child and
 bounded capture state if process-group ownership becomes uncertain. Further
 catalog launches are refused until a later bounded cleanup attempt resolves

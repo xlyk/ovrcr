@@ -36,7 +36,7 @@ List the models the dedicated profile can currently discover:
 
 ```sh
 ovrcr operator models
-ovrcr --json operator models
+ovrcr operator models --json
 ```
 
 Text output is `provider/id<TAB>name`; JSON is
@@ -265,12 +265,24 @@ never silently follows the Dashboard selection.
 
 ## Model, compaction and checkpoints
 
-Change the model in Settings, or in the instance's `dashboard.toml`:
+Change the model with `/model` in Operator or Quick message (`Ctrl-o`), in Settings,
+or in the instance's `dashboard.toml`:
 
 ```toml
 [operator]
 model = "provider/model"
 ```
+
+In the Operator composer or Quick message:
+
+- `/model` queries the dedicated `operator-pi` profile catalog and opens a
+  searchable picker with `Harness default` first, followed by discovered
+  `provider/id` models, marking the active `operator.model` setting;
+- `/model default` resets `operator.model` to `Harness default` immediately;
+- `/model <provider/id>` switches `operator.model` immediately on an exact match in
+  the dedicated profile catalog, while any partial `/model <query>` opens the
+  picker pre-filtered by `<query>` (transitioning from Quick message into full
+  Operator when needed).
 
 The value is one exact `provider/model` identifier; the model id may contain
 further slashes. Leave it unset to use the dedicated Pi profile's default captured

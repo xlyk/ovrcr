@@ -2767,6 +2767,7 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
+            ("Models", OperatorRequest::Models),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2901,6 +2902,21 @@ mod wire_snapshot {
                     state: OperatorTurnState::Interrupted,
                     ..turn
                 }),
+            ),
+            (
+                "Models",
+                OperatorResponse::Models(vec![
+                    OperatorModelCatalogEntry {
+                        provider: "openai".into(),
+                        id: "model".into(),
+                        name: Some("Model".into()),
+                    },
+                    OperatorModelCatalogEntry {
+                        provider: "vendor".into(),
+                        id: "sub/id".into(),
+                        name: None,
+                    },
+                ]),
             ),
         ] {
             all.push((
@@ -4082,13 +4098,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0457017301630168016c0104",
+            "2a0458017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0457017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0458017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4138,18 +4154,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04570000"),
+        ("Response::NotificationNavigation", "0d04580000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0457017301630168016c0104",
+            "0e01016e0458017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010457017301630168016c0164",
+            "0f0107080901016901010458017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004570107080901016901010457017301630168016c0164",
+            "1004580107080901016901010458017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4189,7 +4205,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0457017301630168016c0104",
+            "08016e0458017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4660,6 +4676,7 @@ mod wire_snapshot {
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
+        ("Request::Operator::Models", "3905"),
         (
             "Request::OperatorExchange::AssistantDelta",
             "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
@@ -4739,6 +4756,10 @@ mod wire_snapshot {
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
+        (
+            "Response::Operator::Models",
+            "190502066f70656e6169056d6f64656c01054d6f64656c0676656e646f72067375622f696400",
+        ),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",

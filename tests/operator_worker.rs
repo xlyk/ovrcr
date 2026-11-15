@@ -295,6 +295,47 @@ fn models_lists_the_dedicated_profiles_catalog_without_launching_a_server() {
         log.iter().filter(|line| line["event"] == "start").count() >= 2,
         "each listing launches its own Pi catalog process: {log:#?}"
     );
+
+    // Trailing `operator models --json` uses the dedicated `operator-pi` profile,
+    // ignores any ambient `HOME/.pi` scenario, and redacts native stderr on failure.
+    let ambient_home = live.root.path().join("ambient-home");
+    let mut ambient_scenario = Scenario::new();
+    ambient_scenario.models(vec![("ambient", "wrong", "Ambient Wrong")]);
+    ambient_scenario.install_at(&ambient_home.join(".pi").join("fake-pi-scenario.json"));
+
+    let trailing_json = live
+        .command()
+        .args(["operator", "models", "--json"])
+        .env("HOME", &ambient_home)
+        .env("OVRCR_PI_EXECUTABLE", &fake.wrapper)
+        .output()
+        .unwrap();
+    assert!(
+        trailing_json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&trailing_json.stderr)
+    );
+    let trailing_decoded: Value = serde_json::from_slice(&trailing_json.stdout).unwrap();
+    assert_eq!(trailing_decoded, decoded);
+
+    let mut failing = Scenario::new();
+    failing.startup("exit");
+    failing.startup_stderr("sk-secret-native-stderr-token\n");
+    fake.script(&failing);
+    let failed_json = live
+        .command()
+        .args(["operator", "models", "--json"])
+        .env("OVRCR_PI_EXECUTABLE", &fake.wrapper)
+        .output()
+        .unwrap();
+    assert!(!failed_json.status.success());
+    let stdout = String::from_utf8_lossy(&failed_json.stdout);
+    let stderr = String::from_utf8_lossy(&failed_json.stderr);
+    assert!(
+        !stdout.contains("sk-secret-native-stderr-token")
+            && !stderr.contains("sk-secret-native-stderr-token"),
+        "native stderr must stay redacted: stdout={stdout:?} stderr={stderr:?}"
+    );
 }
 
 fn assert_nonzero(count: usize, what: &str) {

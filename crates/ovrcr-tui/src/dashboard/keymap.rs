@@ -546,6 +546,17 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
+        if dashboard.operator_model_picker_open() {
+            return vec![KeyGroup {
+                title: "Operator model".into(),
+                keys: vec![
+                    native("↑/↓", "Select model", KeyCode::Down, KeyModifiers::NONE),
+                    native("Enter", "Pick", Enter, KeyModifiers::NONE),
+                    native("Ctrl-c", "Clear filter", Char('c'), KeyModifiers::CONTROL),
+                    native("Esc", "Close", Esc, KeyModifiers::NONE),
+                ],
+            }];
+        }
         if dashboard.operator_reasoning_picker_open() {
             return vec![KeyGroup {
                 title: "Operator reasoning".into(),
