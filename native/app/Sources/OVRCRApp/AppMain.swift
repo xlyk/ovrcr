@@ -82,6 +82,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         return true
     }
 
+    // The Bridge activates this app for a notification click. Activation carries
+    // no reopen event, so a closed or minimized Dashboard would stay out of sight.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard !terminationRequested, let window, !window.isVisible || window.isMiniaturized else { return }
+        showTerminalWindow()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminationRequested = true
         guard dashboardStarted, let terminalView,

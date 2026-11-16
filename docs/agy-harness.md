@@ -23,7 +23,9 @@ OVRCR leaves raw configured launch commands under the user's control.
 Choose **Connect agent status** to review the changes to your Antigravity profile.
 The Stop hook goes in `~/.gemini/config/hooks.json`. The foreground status renderer
 goes in `~/.gemini/antigravity-cli/settings.json`. Setup preserves existing hook
-groups and passes native status input through to an existing renderer.
+groups and passes native status input through to an existing renderer. Antigravity
+saves an empty, disabled `statusLine` with its other settings; setup replaces that
+placeholder and enables it. A disabled status line with your own command stays disabled.
 
 ```sh
 ovrcr agent setup agy --print

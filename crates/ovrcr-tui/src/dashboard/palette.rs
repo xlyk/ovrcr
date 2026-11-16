@@ -407,11 +407,20 @@ fn palette_geometry_for(outer: Rect, palette: Option<&Palette>) -> (Rect, Rect, 
     );
     let inner = Block::bordered().inner(area);
     let button_height = inner.height.min(1);
+    // A refused confirmation's reason ends with the way out (for example where
+    // to acknowledge an archived session); its short body yields rows to it.
+    let refused_confirmation = palette.is_some_and(|palette| {
+        palette.error.is_some() && matches!(palette.page, Page::Confirm { .. })
+    });
     let footer = inner
         .height
         .saturating_sub(button_height)
-        .min(footer_limit)
-        .min(inner.height / 3);
+        .min(if refused_confirmation {
+            8
+        } else {
+            footer_limit
+        })
+        .min(inner.height / if refused_confirmation { 2 } else { 3 });
     let body = Rect::new(
         inner.x,
         inner.y,
@@ -15752,6 +15761,45 @@ mod form_tests {
             "sessions block removal of workspace consigint / feature/status-check: stopped sessions may still have processes running: verify spinner, #99 (archived); once they have stopped, choose \"Acknowledge stopped\" for each (archived ones are under Archived sessions in : commands)"
         );
         assert!(!reason.contains("--force") && !reason.contains("ovrcr terminal"));
+    }
+
+    /// The Dashboard cannot see archived blockers before asking, so the Server's
+    /// refusal is the only place that says where to acknowledge them.
+    #[test]
+    fn refused_removal_shows_where_to_acknowledge_archived_sessions() {
+        let mut d = dashboard();
+        let reason = d.plain_reason(
+            &format!(
+                "sessions block removal of workspace consigint/{ID}: unacknowledged stopped: #99 (archived); run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force"
+            ),
+            None,
+        );
+        d.palette = Some(Palette {
+            page: Page::Confirm {
+                request: None,
+                target: "Remove workspace consigint / feature/status-check.".into(),
+            },
+            error: Some(format!(
+                "Couldn't remove consigint / feature/status-check: {reason}"
+            )),
+            ..Palette::new()
+        });
+        // At the palette's full width each row holds only its own wrapped text.
+        let buffer = render_creation_form(&d, 82, 30);
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .filter(|symbol| *symbol != "│")
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("under Archived sessions in : commands)"),
+            "{text}"
+        );
+        assert!(text.contains("Esc cancel") && text.contains("[Confirm] [Cancel]"));
     }
 
     /// A stopped session awaiting acknowledgement would refuse the removal
