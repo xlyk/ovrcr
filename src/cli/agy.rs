@@ -134,9 +134,7 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?;
     anyhow::ensure!(
-        status
-            .get("type")
-            .is_none_or(|value| value.as_str() == Some("command")),
+        status.get("type").is_none_or(statusline_type),
         "statusLine type must be command"
     );
     anyhow::ensure!(
@@ -162,6 +160,7 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
     let existing_command = status
         .get("command")
         .and_then(Value::as_str)
+        .filter(|command| !command.is_empty())
         .map(str::to_owned);
     let renderer = match existing_command.as_deref() {
         Some(command) if is_owned_statusline(command) => owned_statusline_renderer(command)?,
@@ -174,10 +173,23 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
         "command".into(),
         json!(statusline_command(executable, renderer.as_deref())),
     );
-    if status.get("stack_with_default").is_none() && !had_command {
-        status.insert("stack_with_default".into(), json!(true));
+    if !had_command {
+        if status.get("stack_with_default").is_none() {
+            status.insert("stack_with_default".into(), json!(true));
+        }
+        // With no renderer of the user's there is nothing to keep disabled; a
+        // disabled reporter would look connected and never report.
+        if status.get("enabled") == Some(&json!(false)) {
+            status.insert("enabled".into(), json!(true));
+        }
     }
     Ok(document)
+}
+
+/// Antigravity saves a zero-valued `statusLine` (`"type": ""`, `"command": ""`,
+/// `"enabled": false`) with its other settings. An empty type is unset, not invalid.
+fn statusline_type(value: &Value) -> bool {
+    matches!(value.as_str(), Some("command" | ""))
 }
 
 fn hook_command(executable: &str) -> String {
@@ -352,9 +364,7 @@ fn statusline_status(
         *malformed = true;
         return false;
     }
-    let valid = status
-        .get("type")
-        .is_none_or(|value| value.as_str() == Some("command"))
+    let valid = status.get("type").is_none_or(statusline_type)
         && status.get("enabled").is_none_or(Value::is_boolean)
         && status
             .get("stack_with_default")
@@ -755,6 +765,41 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("my-renderer")
+        );
+    }
+
+    #[test]
+    fn native_zero_valued_statusline_is_unset_rather_than_invalid() {
+        // Written by Antigravity 1.5.9 itself when it saves other settings.
+        let native = r#"{"model":"m","statusLine":{"type":"","command":"","enabled":false}}"#;
+        let (mut issues, mut malformed) = (Vec::new(), false);
+        assert!(!statusline_status(
+            &serde_json::from_str(native).unwrap(),
+            "/opt/ovrcr",
+            &mut issues,
+            &mut malformed
+        ));
+        assert!(!malformed, "doctor must ask for setup: {issues:?}");
+
+        let composed = compose_settings(native, "/opt/ovrcr").unwrap();
+        assert_eq!(composed["model"], "m");
+        let status = &composed["statusLine"];
+        assert_eq!(status["type"], "command");
+        assert_eq!(status["enabled"], true);
+        assert_eq!(status["stack_with_default"], true);
+        assert_eq!(
+            owned_statusline_renderer(status["command"].as_str().unwrap()).unwrap(),
+            None,
+            "an empty command is not a renderer to wrap"
+        );
+        let (mut issues, mut malformed) = (Vec::new(), false);
+        assert!(
+            statusline_status(&composed, "/opt/ovrcr", &mut issues, &mut malformed),
+            "{issues:?}"
+        );
+        assert_eq!(
+            compose_settings(&serde_json::to_string(&composed).unwrap(), "/opt/ovrcr").unwrap(),
+            composed
         );
     }
 
