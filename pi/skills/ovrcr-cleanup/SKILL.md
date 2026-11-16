@@ -1,9 +1,9 @@
 ---
 name: ovrcr-cleanup
-description: Preview stale-session candidates and unused Workspaces with exact proposed effects and blockers. Use for cleanup, housekeeping, old sessions, or reclaiming unused checkouts; this version proposes changes only.
+description: Propose cleanup of stale sessions and unused Workspaces, then archive only approved stopped records. Use for housekeeping, old sessions, or reclaiming unused checkouts.
 ---
 
-# Preview OVRCR cleanup
+# Review and approve OVRCR cleanup
 
 ## Installation and boundary
 
@@ -11,12 +11,13 @@ Bundled with the matching OVRCR binary for Operator on macOS and Linux. Use the
 inherited `"$OVRCR_EXECUTABLE" --version`, instance configuration and socket;
 no source checkout or personal skill installation is required.
 
-This procedure is proposal-only. General cleanup and approval of a previous
-proposal change nothing in this version: report **Cleanup execution unavailable**.
-Never substitute generic close, kill, remove, ownership acknowledgement, Git
-cleanup, or task cleanup for guarded approved execution. A separate direct user
-instruction to close a named session belongs to `ovrcr-session-care`, not an
-inferred approval of this sweep. Skill selection grants no authority.
+General cleanup is proposal-first: inspect, return exact proposed effects and
+wait for approval. Only **archive stopped record** can execute in this version.
+Live-Agent stop-and-archive and Workspace removal remain **Cleanup execution
+unavailable**. Never substitute generic close, kill, remove, ownership
+acknowledgement, Git cleanup or task cleanup for guarded execution. A separate
+direct instruction to close a named session belongs to `ovrcr-session-care`.
+Skill selection grants no authority.
 
 ## 1. Establish scope and observations
 
@@ -42,6 +43,12 @@ session stays protected whether control is Controller, Human or Uncertain.
 Missing control, watch or task evidence is not proof of unowned work. Active
 runs (Queued, Preparing, Running, Cancelling), interrupted ownership and unresolved
 cleanup remain blockers; completed task status alone does not certify ownership.
+A Git run with retained `workspace` still owns that Workspace even when terminal.
+A valid terminal Git run with `workspace: null` never acquired or has released
+ownership: its historical `directory` alone must not protect a replacement there.
+Nonterminal Git runs and retained Scratch directories remain protected. Malformed
+or unavailable task evidence is uncertain, not clearance; other session guards
+still apply after task ownership is released.
 
 Identify sessions by numeric `id` and `run`, Workspaces by Project, `id` and exact
 registered `path`; the session's `workspace` is only a display branch label.
@@ -115,7 +122,7 @@ propose **remove Workspace checkout**, separately from any session action. Expla
 unmerged and unpublished commits (or the evidence gap) even though branches stay.
 An archive proposal never approves checkout removal.
 
-## 4. Return the proposal, then stop
+## 4. Return the proposal and wait
 
 Each row names Project, Workspace id/path, session id/run where relevant,
 observed phase/activity/Reporter and attention state, Last activity and age,
@@ -130,7 +137,40 @@ record deletion are outside a general sweep. Closing a cloud attachment is not
 remote cancellation or proof that charges stopped.
 
 Approval can name only selected listed identities and effects, never replacement
-runs or future resources with reused names. In this proposal-only version even
-that approval reports Cleanup execution unavailable; it performs no action and
-starts no periodic check. On failed or partial inspection, retain uncertain
-resources, identify the missing observations, and stop without replaying changes.
+runs or future resources with reused names. Start no periodic check. On failed or
+partial inspection, retain uncertain resources and identify missing observations.
+
+## 5. Execute selected stopped-record approvals
+
+Match approval to the original proposal's numeric session id, run and **archive
+stopped record** effect. If approval is ambiguous, ask which listed actions; do
+not refresh the run number into broader permission. Leave unapproved candidates
+unchanged. Refresh inventory, watches (including queued reports), assignments and
+task evidence. Changed runs, live processes, Unread, Input requests, Busy,
+uncertain ownership and protected work stay unchanged; report their blockers.
+
+For each still-eligible approved record, use only:
+
+```sh
+"$OVRCR_EXECUTABLE" --json terminal archive-stopped SESSION_ID --expected-run APPROVED_RUN
+```
+
+The Server checks the exact run, stopped ownership, attention, assignments, task
+Workspace ownership and current watch protection in action admission. It never
+stops a live process or acknowledges uncertainty. A refusal is not permission to
+fall back to close, change the run or remove a watch. Missing watch protection
+is an explicit uncertainty blocker, not proof that the session is unwatched.
+
+Read active and archived inventory after each result. Archive advances the run
+by one and preserves session id, original cwd, Project/Workspace context and
+Conversation reference. Verify the original id appears archived with that next
+run and is absent from the active list; leave provider history and checkout files
+untouched. Do not confuse closing a cloud attachment with remote cancellation.
+
+Report **verified completed**, **changed/skipped**, **refused**, and **uncertain**
+actions separately. A timeout, disconnect or lost response may follow a committed
+archive. Reconcile the original id/run against both inventories before deciding
+what happened; never blindly replay, refresh approval to a newer run, or claim a
+lost response proves no change. If disposition cannot be established, retain the
+original approval and evidence and report uncertainty. Permanent record deletion,
+branch deletion and Workspace removal are not effects of archive approval.

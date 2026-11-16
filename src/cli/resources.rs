@@ -359,6 +359,12 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                 json_output,
             )
         }
+        TerminalCommand::ArchiveStopped { id, expected_run } => control_terminal(
+            id,
+            Some(expected_run),
+            ovrcr::protocol::SessionControlAction::ArchiveStopped,
+            json_output,
+        ),
         TerminalCommand::Kill { id, expected_run } => control_terminal(
             id,
             expected_run,
@@ -387,8 +393,8 @@ pub(super) fn control_terminal(
             SessionControlAction::Pause => Request::PauseSession { session },
             SessionControlAction::Resume => Request::ResumeSession { session },
             SessionControlAction::Stop => Request::KillSession { session },
-            SessionControlAction::Reopen => {
-                unreachable!("legacy reopen has its own reconciliation path")
+            SessionControlAction::Reopen | SessionControlAction::ArchiveStopped => {
+                unreachable!("exact action requires a caller-captured run")
             }
         },
     };

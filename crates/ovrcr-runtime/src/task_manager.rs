@@ -150,6 +150,53 @@ impl TaskManager {
                     || workspace == format!("task-{}-run-{}", run.task_id.0, run.id.0))
         }))
     }
+    /// Archive admission holds admission -> Server mutation -> task store.
+    /// Unlike ordinary history inspection, damaged ownership evidence is an error.
+    pub(crate) fn protects_stopped_session(
+        &self,
+        project: &str,
+        workspace: &str,
+        cwd: &Path,
+    ) -> Result<bool> {
+        let store = self.store.lock().unwrap().clone();
+        for snapshot in store.runs {
+            let path = run_dir(&self.directory, snapshot.id);
+            let run = match fs::metadata(path.join("run.json")) {
+                Ok(_) => read_run(&path)?,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && snapshot.directory.is_none()
+                        && snapshot.workspace.is_none() =>
+                {
+                    snapshot.clone()
+                }
+                Err(error) => return Err(error).context("task ownership evidence is unavailable"),
+            };
+            if run.id != snapshot.id || run.task_id != snapshot.task_id || run.spec != snapshot.spec
+            {
+                bail!("task ownership evidence changed identity");
+            }
+            let directory_matches = run.directory.as_deref() == Some(cwd);
+            let protected = match &run.spec.target {
+                TaskTarget::Scratch => directory_matches,
+                TaskTarget::Git { project: owner, .. } => {
+                    // None on a terminal Git run is consumed/never-acquired ownership,
+                    // not permission to reclaim a replacement at its historical path.
+                    (run.workspace.is_some() || !run.status.is_terminal())
+                        && (directory_matches
+                            || (owner == project
+                                && (run.workspace.as_deref() == Some(workspace)
+                                    || workspace
+                                        == format!("task-{}-run-{}", run.task_id.0, run.id.0))))
+                }
+            };
+            if protected {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn release_workspace_ownership(
         &self,
         project: &str,
@@ -789,6 +836,231 @@ mod tests {
             .unwrap();
         (root, manager, server, id)
     }
+    #[test]
+    fn archive_stopped_respects_retained_task_ownership_not_historical_paths() {
+        use ovrcr_protocol::{SessionControlAction, SessionKind, SessionScope};
+        for (status, owned, matching, allowed) in [
+            (RunStatus::Queued, false, true, false),
+            (RunStatus::Preparing, false, true, false),
+            (RunStatus::Succeeded, true, true, false),
+            (RunStatus::Interrupted, true, true, false),
+            (RunStatus::CleanupFailed, true, true, false),
+            (RunStatus::Succeeded, false, true, true),
+            (RunStatus::Failed, false, true, true),
+            (RunStatus::CleanupFailed, true, false, true),
+        ] {
+            let (root, manager, server, _) = fixture();
+            let cwd = root.path().join("work");
+            fs::create_dir(&cwd).unwrap();
+            manager
+                .change(|store| {
+                    let run = &mut store.runs[0];
+                    run.spec.target = TaskTarget::Git {
+                        project: "fixture".into(),
+                        remote: "origin".into(),
+                        branch: "main".into(),
+                    };
+                    run.status = status.clone();
+                    run.workspace = owned.then(|| "task-1-run-1".into());
+                    run.directory = Some(if matching {
+                        cwd.clone()
+                    } else {
+                        root.path().join("unrelated")
+                    });
+                    Ok(())
+                })
+                .unwrap();
+            let task_run = manager.store.lock().unwrap().runs[0].clone();
+            write_run(&run_dir(&manager.directory, task_run.id), &task_run).unwrap();
+            let row = server
+                .retained
+                .lock()
+                .create(crate::retained::SessionMetadata {
+                    scope: SessionScope::Workspace,
+                    project: "fixture".into(),
+                    workspace: "other".into(),
+                    name: "archive-proof".into(),
+                    label: "shell".into(),
+                    cwd,
+                    kind: SessionKind::Terminal,
+                    pinned_title: None,
+                    application_title: None,
+                })
+                .unwrap();
+            let row = if allowed {
+                let uncertain = server.retained.lock().begin_run(row.id, row.run).unwrap();
+                assert!(
+                    server
+                        .control_session(
+                            uncertain.id,
+                            uncertain.run,
+                            SessionControlAction::ArchiveStopped,
+                            Duration::ZERO
+                        )
+                        .is_err(),
+                    "task clearance cannot acknowledge independent session uncertainty"
+                );
+                server
+                    .retained
+                    .lock()
+                    .mark_stopped(uncertain.id, uncertain.run)
+                    .unwrap();
+                uncertain
+            } else {
+                row
+            };
+            let result = server.control_session(
+                row.id,
+                row.run,
+                SessionControlAction::ArchiveStopped,
+                Duration::ZERO,
+            );
+            assert_eq!(
+                result.is_ok(),
+                allowed,
+                "{status:?} owned={owned} matching={matching}: {result:?}"
+            );
+            assert_eq!(server.session_summary(row.id).unwrap().archived, allowed);
+        }
+    }
+
+    #[test]
+    fn archive_stopped_task_evidence_refuses_missing_corrupt_and_replaced_records() {
+        let (root, manager, _server, id) = fixture();
+        let cwd = root.path().join("scratch");
+        manager
+            .change(|store| {
+                store.runs[0].directory = Some(cwd.clone());
+                store.runs[0].status = RunStatus::Succeeded;
+                Ok(())
+            })
+            .unwrap();
+        let path = run_dir(&manager.directory, id);
+        assert!(
+            manager
+                .protects_stopped_session("fixture", "work", &cwd)
+                .is_err()
+        );
+        let run = manager.store.lock().unwrap().runs[0].clone();
+        write_run(&path, &run).unwrap();
+        assert!(
+            manager
+                .protects_stopped_session("fixture", "work", &cwd)
+                .unwrap(),
+            "Scratch retains its recorded directory reference"
+        );
+        assert!(
+            !manager
+                .protects_stopped_session("fixture", "work", root.path())
+                .unwrap()
+        );
+        fs::write(path.join("run.json"), "{broken").unwrap();
+        assert!(
+            manager
+                .protects_stopped_session("fixture", "work", &cwd)
+                .is_err()
+        );
+        let mut changed = run;
+        changed.id = RunId(id.0 + 1);
+        write_run(&path, &changed).unwrap();
+        assert!(
+            manager
+                .protects_stopped_session("fixture", "work", &cwd)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn archive_stopped_serializes_with_task_admission() {
+        use ovrcr_protocol::{SessionControlAction, SessionKind, SessionScope};
+        for launch_first in [true, false] {
+            let (root, manager, server, _) = fixture();
+            manager
+                .change(|store| {
+                    store.runs[0].spec.target = TaskTarget::Git {
+                        project: "fixture".into(),
+                        remote: "origin".into(),
+                        branch: "main".into(),
+                    };
+                    Ok(())
+                })
+                .unwrap();
+            let row = server
+                .retained
+                .lock()
+                .create(crate::retained::SessionMetadata {
+                    scope: SessionScope::Workspace,
+                    project: "fixture".into(),
+                    workspace: "task-1-run-1".into(),
+                    name: "archive-proof".into(),
+                    label: "shell".into(),
+                    cwd: root.path().into(),
+                    kind: SessionKind::Terminal,
+                    pinned_title: None,
+                    application_title: None,
+                })
+                .unwrap();
+            let (hook, admitted, release) = gate();
+            *manager.after_admit.lock().unwrap() = Some(hook);
+            let (hook, executing, finish) = gate();
+            *manager.before_execute.lock().unwrap() = Some(hook);
+            let mut mutation = (!launch_first).then(|| server.mutation_lock.lock().unwrap());
+            let tick = || {
+                let manager = manager.clone();
+                let server = server.clone();
+                thread::spawn(move || manager.tick(&server).unwrap())
+            };
+            let mut ticking = launch_first.then(tick);
+            if launch_first {
+                admitted.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+            let (tx, rx) = mpsc::channel();
+            let archiving = {
+                let server = server.clone();
+                thread::spawn(move || {
+                    tx.send(server.control_session(
+                        row.id,
+                        row.run,
+                        SessionControlAction::ArchiveStopped,
+                        Duration::ZERO,
+                    ))
+                    .unwrap()
+                })
+            };
+            if !launch_first {
+                let until = Instant::now() + Duration::from_secs(2);
+                while manager.admission.try_lock().is_ok() {
+                    assert!(
+                        Instant::now() < until,
+                        "archive must acquire admission before mutation"
+                    );
+                    thread::yield_now();
+                }
+                ticking = Some(tick());
+            }
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            if launch_first {
+                release.send(()).unwrap();
+            } else {
+                drop(mutation.take());
+            }
+            assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap().is_err());
+            if !launch_first {
+                admitted.recv_timeout(Duration::from_secs(2)).unwrap();
+                release.send(()).unwrap();
+            }
+            executing.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(!server.session_summary(row.id).unwrap().archived);
+            finish.send(()).unwrap();
+            ticking.unwrap().join().unwrap();
+            archiving.join().unwrap();
+            manager.stop().unwrap();
+        }
+    }
+
     #[test]
     fn corrupt_run_file_does_not_block_open() {
         let (root, manager, server, id) = fixture();

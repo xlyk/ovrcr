@@ -667,6 +667,8 @@ pub enum SessionControlAction {
     Stop,
     /// Terminal shell or certified Agent conversation only; never a native picker.
     Reopen,
+    /// Archive only an unprotected, ownership-resolved stopped record; never stop it.
+    ArchiveStopped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1579,6 +1581,14 @@ mod wire_snapshot {
                     session: SessionId(1),
                     expected_run: SessionRunId(4),
                     action: SessionControlAction::Reopen,
+                },
+            ),
+            (
+                "ControlSessionArchiveStopped",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::ArchiveStopped,
                 },
             ),
         ]
@@ -3062,6 +3072,19 @@ mod wire_snapshot {
             ),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
             ("Stop", OperatorWorkerCommand::Stop { identity }),
+            (
+                "SetWatches",
+                OperatorWorkerCommand::SetWatches {
+                    identity: run_identity,
+                    update: OperatorWatchUpdate {
+                        revision: 1,
+                        targets: vec![OperatorWatchTarget {
+                            session: SessionId(2),
+                            run: SessionRunId(4),
+                        }],
+                    },
+                },
+            ),
         ] {
             all.push((
                 format!("Request::OperatorWorker::{name}"),
@@ -3280,6 +3303,15 @@ mod wire_snapshot {
             encode(&Response::OperatorWorker(OperatorWorkerResult::Retired {
                 identity,
             })),
+        ));
+        all.push((
+            "Response::OperatorWorker::WatchesSet".into(),
+            encode(&Response::OperatorWorker(
+                OperatorWorkerResult::WatchesSet {
+                    identity: run_identity,
+                    revision: 1,
+                },
+            )),
         ));
         all.push((
             "ServerEvent::OperatorChanged".into(),
@@ -4422,13 +4454,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a045a017301630168016c0104",
+            "2a045b017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f045a017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f045b017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4454,6 +4486,7 @@ mod wire_snapshot {
         ("Request::ControlSessionResume", "43010401"),
         ("Request::ControlSessionStop", "43010402"),
         ("Request::ControlSessionReopen", "43010403"),
+        ("Request::ControlSessionArchiveStopped", "43010404"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -4482,18 +4515,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d045a0000"),
+        ("Response::NotificationNavigation", "0d045b0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e045a017301630168016c0104",
+            "0e01016e045b017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101045a017301630168016c0164",
+            "0f010708090101690101045b017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10045a010708090101690101045a017301630168016c0164",
+            "10045b010708090101690101045b017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4533,7 +4566,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e045a017301630168016c0104",
+            "08016e045b017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -5101,6 +5134,10 @@ mod wire_snapshot {
             "Request::OperatorWorker::Stop",
             "3b0307070707070707070707070707070707070707070707070707070707070707070401020304",
         ),
+        (
+            "Request::OperatorWorker::SetWatches",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070601030401010204",
+        ),
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
@@ -5164,6 +5201,7 @@ mod wire_snapshot {
         ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),
+        ("Response::OperatorWorker::WatchesSet", "1b0501030401"),
         ("ServerEvent::OperatorChanged", "0c01"),
         ("SessionScope::Workspace", "00"),
         ("SessionScope::OperatorConversation", "0101"),

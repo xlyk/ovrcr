@@ -14,6 +14,7 @@ const OPERATOR_MODEL_UNAVAILABLE_MSG: &str = "Operator model catalog is unavaila
 pub(super) struct OperatorRuntime {
     pub(super) executable: PathBuf,
     controls: Mutex<Controls>,
+    watches: Mutex<Option<(OperatorRunIdentity, OperatorWatchUpdate)>>,
     #[cfg(test)]
     pub(super) before_stop: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
@@ -73,6 +74,7 @@ impl Default for OperatorRuntime {
         Self {
             executable: std::env::current_exe().unwrap_or_default(),
             controls: Mutex::default(),
+            watches: Mutex::default(),
             #[cfg(test)]
             before_stop: Mutex::default(),
             #[cfg(test)]
@@ -1062,12 +1064,106 @@ impl ServerState {
         Ok(receipt)
     }
 
+    /// Caller holds mutation_lock, shared with acknowledged watch updates.
+    pub(super) fn reject_watched_archive(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        let retained = self.retained.lock();
+        let Some(current) = retained.current_operator_conversation()? else {
+            return Ok(());
+        };
+        let record = retained
+            .get(current.session)
+            .context("Operator record unavailable")?;
+        if !record.requires_ack(retained.boot_id()) {
+            return Ok(());
+        }
+        let watches = self.operator.watches.lock().unwrap();
+        let Some((_, update)) = watches.as_ref().filter(|(identity, _)| {
+            identity.conversation == current.id
+                && identity.session == current.session
+                && identity.run == current.run
+        }) else {
+            return Err(lifecycle_error(
+                ErrorCode::OwnershipUncertain,
+                "Operator watch state unavailable; preserve the stopped record",
+            ));
+        };
+        if update
+            .targets
+            .iter()
+            .any(|target| target.session == id && target.run == run)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run is protected by an Operator watch or queued report",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn operator_worker(
         &self,
         request: OperatorWorkerRequest,
         owner: Option<&Arc<()>>,
     ) -> Result<OperatorWorkerResult> {
         match request.command {
+            OperatorWorkerCommand::SetWatches { identity, update } => {
+                update.validate().map_err(anyhow::Error::msg)?;
+                let _mutation = self.mutation_lock.lock().unwrap();
+                self.reject_if_stopping()?;
+                let session = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&identity.session)
+                    .cloned()
+                    .context("operator worker unavailable")?;
+                let retained = self.retained.lock();
+                retained.require_current_operator(identity.conversation)?;
+                let current = retained.operator_conversation(identity.conversation)?;
+                if current.run != identity.run
+                    || current.session != identity.session
+                    || current.worker_stopped
+                {
+                    bail!("stale Operator watch owner");
+                }
+                session.with_operator_run_authority(&request.auth, owner, identity, || {
+                    let mut watches = self.operator.watches.lock().unwrap();
+                    let previous = watches
+                        .as_ref()
+                        .filter(|(owner, _)| *owner == identity)
+                        .map(|(_, update)| update);
+                    if previous == Some(&update) {
+                        return Ok(()); // Reconcile the original update after a lost acknowledgement.
+                    }
+                    if update.revision
+                        != previous
+                            .map_or(Some(1), |old| old.revision.checked_add(1))
+                            .context("watch revision exhausted")?
+                    {
+                        bail!("Operator watch revision changed; reconcile the original update");
+                    }
+                    for target in &update.targets {
+                        if previous.is_some_and(|old| old.targets.contains(target)) {
+                            continue;
+                        }
+                        let record = retained
+                            .get(target.session)
+                            .context("watched session unavailable")?;
+                        if record.run != target.run
+                            || record.disposition == crate::retained::Disposition::Archived
+                            || record.metadata.scope != ovrcr_protocol::SessionScope::Workspace
+                        {
+                            bail!("watched session changed before admission");
+                        }
+                    }
+                    *watches = Some((identity, update.clone()));
+                    Ok(())
+                })?;
+                Ok(OperatorWorkerResult::WatchesSet {
+                    identity,
+                    revision: update.revision,
+                })
+            }
             OperatorWorkerCommand::Start { identity } => {
                 let session = self
                     .sessions

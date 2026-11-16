@@ -43,6 +43,7 @@ const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was 
 /// The trusted extension's startup contract and watch-lease status keys.
 const CONTRACT_KEY: &str = "ovrcr_operator_contract";
 const WATCHES_KEY: &str = "ovrcr_operator_watches";
+const WATCH_PROTECTION_TITLE: &str = "OVRCR Operator watch protection";
 const TOOLS: [&str; 5] = ["read", "bash", "edit", "write", "watch_sessions"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
@@ -1101,6 +1102,11 @@ impl Connection {
                 self.read_watch_status(state, &event)?;
             }
             Some("extension_ui_request")
+                if event["method"] == "confirm" && event["title"] == WATCH_PROTECTION_TITLE =>
+            {
+                self.protect_watches(journal, &event)?;
+            }
+            Some("extension_ui_request")
                 if !matches!(
                     event["method"].as_str(),
                     Some("confirm" | "select" | "input" | "editor")
@@ -1243,6 +1249,11 @@ impl Connection {
                 }
                 Some("extension_ui_request") if event["method"] == "setStatus" => Ok(None),
                 Some("extension_ui_request")
+                    if event["method"] == "confirm" && event["title"] == WATCH_PROTECTION_TITLE =>
+                {
+                    self.protect_watches(journal, &event).map(|()| None)
+                }
+                Some("extension_ui_request")
                     if event["method"] == "confirm" && event["title"] == WAKEUP_ADMISSION_TITLE =>
                 {
                     self.begin_async_wakeup(journal, state, &event)
@@ -1264,6 +1275,35 @@ impl Connection {
                 _ => Ok(None),
             },
         }
+    }
+
+    fn protect_watches(
+        &mut self,
+        journal: &mut Journal<'_>,
+        event: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let dialog = event["id"]
+            .as_str()
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let update: ovrcr_protocol::OperatorWatchUpdate = event["message"]
+            .as_str()
+            .and_then(|message| serde_json::from_str(message).ok())
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let identity = OperatorRunIdentity {
+            conversation: journal.identity.conversation,
+            session: journal.identity.session,
+            run: journal.identity.run,
+        };
+        let result = journal.reporter.operator_set_watches(
+            identity,
+            update,
+            Instant::now() + REPORT_DEADLINE,
+        );
+        self.send(
+            &json!({"type": "extension_ui_response", "id": dialog, "confirmed": result.is_ok()}),
+        )
+        .map_err(|_| Failure::ReportFailed)?;
+        result.map_err(|_| Failure::ReportFailed)
     }
 
     fn begin_async_wakeup(
@@ -1577,6 +1617,7 @@ impl Connection {
         }
         if method == "confirm" {
             match event["title"].as_str() {
+                Some(WATCH_PROTECTION_TITLE) => return self.protect_watches(journal, event),
                 Some(WAKEUP_ADMISSION_TITLE) => {
                     // A stale or concurrent pre-send dialog can surface while a
                     // real turn already owns the Pi session. Refuse it safely;

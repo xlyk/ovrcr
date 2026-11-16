@@ -311,6 +311,22 @@ shell; Agent reopen requires certified exact recovery and refuses missing or
 invalid references without native-picker fallback. A successful process launch
 is not attachment proof; inspect `recovery.attached` and the conversation identity.
 
+`terminal archive-stopped ID --expected-run RUN` requires the running Server and
+an explicit approved run. It archives only an ownership-resolved stopped record:
+no process termination, ownership acknowledgement or Workspace removal. At admission
+it refuses live/reopened/archived targets, Operator scope, protected attention,
+assignments, task-owned Workspaces and exact active watches/queued reports.
+Retained Git task ownership (`workspace` still set) and Scratch directory references
+remain protected after completion. A valid terminal Git run with released or
+never-acquired ownership (`workspace: null`) does not reclaim a historical path;
+other session guards still apply. Malformed/unavailable task evidence refuses.
+Missing
+Operator watch state is an uncertainty refusal, not an empty watch list. Unlike
+`terminal close`, it can never stop a live session. Success returns `{"ok":true}`;
+verify the id in `terminal list --archived` with run `RUN+1`. A lost reply requires
+reconciling active and archived inventory for that original id/run, not replaying
+against refreshed identities. Records, context, branches and provider history stay.
+
 CLI inventory remains passive. The Dashboard's first visible display can recover
 an eligible interrupted Agent after a verified reboot; it never acknowledges
 uncertain ownership. Failed automatic attempts require explicit `terminal reopen`

@@ -41,6 +41,7 @@ const WAKEUP_ADMISSION_TITLE = "OVRCR Operator async wakeup admission";
 const TREE_CONTROL_TITLE = "ovrcr_operator_tree_control";
 const TREE_RESULT_KEY = "ovrcr_operator_tree_result";
 const WATCHES_KEY = "ovrcr_operator_watches";
+const WATCH_PROTECTION_TITLE = "OVRCR Operator watch protection";
 const WATCH_STATE = Symbol.for("ovrcr.operator.watchState");
 const MAX_WATCHES = 50;
 const MAX_REPORTS = 50;
@@ -78,6 +79,39 @@ function unreadTurn(session) {
 
 function activeCount(state) {
   return state.watched.size + state.pendingReports.length;
+}
+
+function protectedTargets(state) {
+  return [
+    ...[...state.watched.values()].map(w => ({ session: w.session_id, run: w.baseline.run })),
+    ...state.pendingReports.filter(r => r.protected !== false)
+      .map(r => ({ session: r.session_id, run: r.watched_run })),
+  ].sort((a, b) => a.session - b.session);
+}
+
+function watchMutation(state, operation) {
+  const result = state.mutations.then(async () => {
+    if (state.protectionFailed) throw new Error("Operator watch protection unresolved");
+    return operation();
+  });
+  state.mutations = result.catch(() => {});
+  return result;
+}
+
+async function protectWatches(state, targets = protectedTargets(state)) {
+  const update = { revision: state.protectionRevision + 1, targets };
+  try {
+    if (!await state.ctx.ui.confirm(WATCH_PROTECTION_TITLE, JSON.stringify(update))) {
+      throw new Error("Operator watch protection refused");
+    }
+    state.protectionRevision = update.revision;
+  } catch (error) {
+    // A lost acknowledgement may already protect the proposed targets on the Server.
+    // Keep the original intent and fence further mutations until this worker stops.
+    state.protectionFailed = true;
+    state.ctx.abort?.();
+    throw error;
+  }
 }
 
 function publishWatchStatus(state) {
@@ -194,6 +228,9 @@ function watchState(pi) {
   if (!state) {
     state = {
       watched: new Map(),
+      mutations: Promise.resolve(),
+      protectionRevision: 0,
+      protectionFailed: false,
       pendingReports: [],
       timer: null,
       inFlight: false,
@@ -254,7 +291,7 @@ function validateTarget(input, sessions) {
     throw new Error("invalid watch entry");
   }
   const target = sessions.find((session) => session?.id === sessionId);
-  if (!target || target.scope !== "Workspace" ||
+  if (!target || target.archived === true || target.scope !== "Workspace" ||
     !validName(target.kind?.agent) ||
     !validCounter(target.run) ||
     !validName(target.project) ||
@@ -315,6 +352,7 @@ function settledReport(watch, session, reason) {
     project: watch.project,
     label: watch.label,
     run: session?.run ?? watch.baseline.run,
+    watched_run: watch.baseline.run,
     phase: session?.phase ?? "missing",
     activity: session?.activity ?? "unknown",
     reason,
@@ -358,6 +396,10 @@ async function watchSessions(state, rawInput, ctx) {
       pending_reports: state.pendingReports,
     });
   }
+  return watchMutation(state, () => changeWatches(state, input));
+}
+
+async function changeWatches(state, input) {
   if (input.action === "remove") {
     const ids = input.all ? null : new Set(input.session_ids);
     const before = activeCount(state);
@@ -375,6 +417,7 @@ async function watchSessions(state, rawInput, ctx) {
       }
     }
     stopWatchTimerIfEmpty(state);
+    await protectWatches(state);
     if (before !== activeCount(state)) publishWatchStatus(state);
     return watchResult({ active: activeCount(state), removed: before - activeCount(state) });
   }
@@ -395,14 +438,21 @@ async function watchSessions(state, rawInput, ctx) {
   if (activeCount(state) + additions.length > MAX_WATCHES) {
     throw new Error("at most " + MAX_WATCHES + " sessions and queued reports can be watched");
   }
+  // A positively observed replacement is an old-run catch-up report, not a new
+  // watch on that replacement. Same-run additions still require locked admission.
+  await protectWatches(state, [...protectedTargets(state), ...additions
+    .filter(entry => entry.target.run === entry.baseline.run)
+    .map(entry => ({ session: entry.session_id, run: entry.baseline.run }))
+  ].sort((a, b) => a.session - b.session));
   for (const entry of additions) {
     const { target, ...watch } = entry;
-    const reason = settledReason(target, watch.baseline);
+    const changedRun = target.run !== watch.baseline.run;
+    const reason = changedRun ? "run_changed" : settledReason(target, watch.baseline);
     if (reason) {
       if (state.pendingReports.length >= MAX_REPORTS) {
         throw new Error("too many queued watch reports");
       }
-      state.pendingReports.push(settledReport(watch, target, reason));
+      state.pendingReports.push({ ...settledReport(watch, target, reason), protected: !changedRun });
     } else {
       state.watched.set(entry.session_id, watch);
     }
@@ -654,20 +704,22 @@ export default function ovrcrOperatorExtension(pi) {
 
   pi.on("session_start", (_event, ctx) => {
     watches.ctx = ctx;
-    watches.suspended = false;
-    // Synchronous contract notification: the worker requires this exact status
-    // key and payload before it sends a prompt, and falls back to stock bash
-    // (detached) otherwise.
-    ctx.ui.setStatus(
-      "ovrcr_operator_contract",
-      JSON.stringify({
-        version: 1,
-        sessionId: ctx.sessionManager.getSessionId(),
-        tools: pi.getActiveTools(),
-      }),
-    );
-    publishWatchStatus(watches);
-    ensureWatchTimer(watches);
+    // Pi attaches RPC stdin after session_start returns. Do not await a dialog
+    // inside that hook; publish readiness only after the Server acknowledges it.
+    void watchMutation(watches, async () => {
+      await protectWatches(watches);
+      watches.suspended = false;
+      ctx.ui.setStatus(
+        "ovrcr_operator_contract",
+        JSON.stringify({
+          version: 1,
+          sessionId: ctx.sessionManager.getSessionId(),
+          tools: pi.getActiveTools(),
+        }),
+      );
+      publishWatchStatus(watches);
+      ensureWatchTimer(watches);
+    }).catch(() => {}); // Failure stays fenced; the worker never receives readiness.
   });
 
   pi.on("agent_settled", (_event, ctx) => {
@@ -675,16 +727,17 @@ export default function ovrcrOperatorExtension(pi) {
     void flushPendingReports(watches);
   });
 
-  pi.on("agent_start", () => {
+  pi.on("agent_start", () => watchMutation(watches, async () => {
     const batch = watches.dispatchBatch;
     if (batch) {
       const consumed = new Set(batch);
       watches.pendingReports = watches.pendingReports.filter((report) => !consumed.has(report));
       finishDispatch(watches, batch);
+      await protectWatches(watches);
       publishWatchStatus(watches);
     }
     stopWatchTimerIfEmpty(watches);
-  });
+  }));
 
   pi.on("session_shutdown", (event) => {
     watches.suspended = true;

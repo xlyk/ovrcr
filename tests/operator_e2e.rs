@@ -5136,13 +5136,30 @@ mod installed_pi {
             if user == "CLEANUP_TASK_HOLD" {
                 return Plan::text("Task remains active during preview").holding();
             }
-            if user
-                .split("User request:\n")
-                .last()
-                .is_some_and(|request| request.starts_with("Preview cleanup"))
-            {
+            if user.split("User request:\n").last().is_some_and(|request| {
+                request.starts_with("Preview cleanup")
+                    || request.starts_with("Approve cleanup archive ")
+                    || request.starts_with("Catchup cleanup ")
+            }) {
                 let mut counters = counters.lock().unwrap();
-                let step = counters.entry("cleanup-preview".into()).or_default();
+                let key = if user
+                    .split("User request:\n")
+                    .last()
+                    .unwrap()
+                    .starts_with("Approve cleanup archive ")
+                {
+                    "cleanup-archive"
+                } else if user
+                    .split("User request:\n")
+                    .last()
+                    .unwrap()
+                    .starts_with("Catchup cleanup ")
+                {
+                    "cleanup-catchup"
+                } else {
+                    "cleanup-preview"
+                };
+                let step = counters.entry(key.into()).or_default();
                 let plan = cleanup::plan(body, *step);
                 *step += 1;
                 return plan;

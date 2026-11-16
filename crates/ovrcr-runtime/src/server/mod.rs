@@ -834,6 +834,70 @@ impl ServerState {
         self.archive_session_locked(id, expected_run)
     }
 
+    /// Cleanup approval is not permission to stop a process or acknowledge ownership.
+    fn archive_stopped_session(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        // Match shutdown's admission -> mutation order; scheduler admission cannot
+        // cross the ownership read/commit. Completion never waits on these locks.
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.scope != ovrcr_protocol::SessionScope::Workspace
+            || summary.run != run
+            || summary.archived
+            || summary.phase.is_live()
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "approved stopped session changed; refresh the proposal",
+            ));
+        }
+        if summary
+            .recovery
+            .as_ref()
+            .is_none_or(|recovery| recovery.requires_ack)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::OwnershipUncertain,
+                "stopped ownership is unresolved; cleanup cannot acknowledge it",
+            ));
+        }
+        if summary.unread.is_some()
+            || matches!(
+                summary.activity,
+                ovrcr_protocol::AgentActivity::Busy | ovrcr_protocol::AgentActivity::WaitingInput
+            )
+            || summary
+                .agent
+                .as_ref()
+                .is_some_and(|agent| !agent.input_requests.is_empty())
+            || self.retained.lock().assigned_record(id)?.is_some()
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session has protected results or assigned work",
+            ));
+        }
+        let metadata = self.retained.lock().get(id).unwrap().metadata.clone();
+        if let Some(tasks) = &self.tasks
+            && tasks.protects_stopped_session(
+                &metadata.project,
+                &metadata.workspace,
+                &metadata.cwd,
+            )?
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "active or retained task ownership protects the session Workspace",
+            ));
+        }
+        self.reject_watched_archive(id, run)?;
+        self.archive_session_locked(id, run)
+    }
+
     fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
         self.reject_archive_lifecycle(id)?;
         self.retained.lock().set_archived(id, run, true)?;
@@ -1649,6 +1713,10 @@ impl ServerState {
     ) -> Result<Option<SessionSummary>> {
         use ovrcr_protocol::SessionControlAction;
         match action {
+            SessionControlAction::ArchiveStopped => {
+                self.archive_stopped_session(id, expected_run)?;
+                Ok(None)
+            }
             SessionControlAction::Pause | SessionControlAction::Resume => {
                 self.set_session_paused_if_run(
                     id,
