@@ -313,6 +313,7 @@ class InstallerTests(unittest.TestCase):
         resources.mkdir(mode=0o700)
         self.write_wrapper(macos / "OVRCRBridge", "bridge", revision)
         self.write_wrapper(macos / "ovrcr", "cli", revision)
+        shutil.copyfile(REPO / "native/AppIcon.icns", resources / "AppIcon.icns")
         shutil.copyfile(REPO / "native/bridge/entitlements.plist",
                         resources / "OVRCRBridge.entitlements")
         sounds = REPO / "research/notification-bridge/sounds"
@@ -323,7 +324,8 @@ class InstallerTests(unittest.TestCase):
         shutil.copyfile(sounds / "LICENSE", resources / "NotificationSounds-LICENSE")
         info = {
             "CFBundleIdentifier": self.bundle_id, "CFBundleExecutable": "OVRCRBridge",
-            "CFBundleDisplayName": self.display_name, "CFBundleName": "Installer fixture " + revision,
+            "CFBundleDisplayName": self.display_name, "CFBundleIconFile": "AppIcon",
+            "CFBundleName": "Installer fixture " + revision,
             "CFBundlePackageType": "APPL", "CFBundleVersion": f"{self.schema}.{self.wire}",
             "LSUIElement": True, "OVRCRBridgeSchema": self.schema, "OVRCRServerWire": self.wire,
             "OVRCRCallbackSHA256": hashlib.sha256((macos / "ovrcr").read_bytes()).hexdigest(),
@@ -783,6 +785,11 @@ class InstallerTests(unittest.TestCase):
     def test_local_refuses_changed_sound_before_staging(self):
         self.prepare_local()
         (self.source / "Contents/Resources/ovrcr-tap-v1.wav").write_bytes(b"changed sound")
+        self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
+
+    def test_local_refuses_changed_icon_before_staging(self):
+        self.prepare_local()
+        (self.source / "Contents/Resources/AppIcon.icns").write_bytes(b"changed icon")
         self.assert_refused_before_staging(self.local_command(), returncode=1, message="AssertionError")
 
 

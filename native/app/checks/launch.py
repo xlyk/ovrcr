@@ -22,6 +22,7 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-app-", dir="/private/tmp") as tmp
     # Decline optional setup without changing any real Mac or provider settings.
     invalid_profile = home / "no-provider-profile"
     invalid_profile.touch()
+    (home / ".gemini").touch()
     env = dict(HOME=tmp, OVRCR_HOME=str(state), OVRCR_SOCKET=str(socket), PATH="/usr/bin:/bin",
                SHELL="/bin/sh", LANG="en_US.UTF-8", NO_COLOR="1", OVRCR_BRIDGE_LOCAL_DEVELOPMENT="1",
                CLAUDE_CONFIG_DIR=str(invalid_profile), CODEX_HOME=str(invalid_profile))

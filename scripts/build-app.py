@@ -72,11 +72,13 @@ def main():
         shutil.copy2(products / "OVRCRApp", bin_dir / "OVRCRApp")
         shutil.copy2(cli, bin_dir / "ovrcr")
         shutil.copytree(payload, contents / "lib" / ("ovrcr-local-development" if local_bridge else "ovrcr"))
+        shutil.copy2(ROOT / "native/AppIcon.icns", resources / "AppIcon.icns")
         for license_path in [ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md", package / "SwiftTerm-LICENSE"]:
             shutil.copy2(license_path, resources)
         with (contents / "Info.plist").open("wb") as info:
-            plistlib.dump(dict(CFBundleExecutable="OVRCRApp", CFBundleIdentifier=BUNDLE_ID,
-                               CFBundleName="OVRCR", CFBundlePackageType="APPL", CFBundleVersion="1",
+            plistlib.dump(dict(CFBundleExecutable="OVRCRApp", CFBundleIconFile="AppIcon",
+                               CFBundleIdentifier=BUNDLE_ID, CFBundleName="OVRCR",
+                               CFBundlePackageType="APPL", CFBundleVersion="1",
                                CFBundleShortVersionString="0.1.0", LSMinimumSystemVersion="13.0",
                                NSHighResolutionCapable=True), info)
         subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)

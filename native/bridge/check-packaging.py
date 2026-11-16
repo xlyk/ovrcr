@@ -44,17 +44,29 @@ def validate(bundle, expected=True, *identity, local=local_development):
 validate(source)
 with tempfile.TemporaryDirectory(prefix="ovrcr-bridge-packaging-") as temporary:
     root = Path(temporary)
-    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing", "entitlements_symlink", "entitlements_legacy", "entitlements_legacy_duplicate", "entitlements_legacy_symlink"]:
+    for case in ["schema", "wire", "schema_bool", "wire_float", "display", "executable", "icon_field", "icon_missing_key", "icon_hash", "icon_missing", "icon_symlink", "license", "hash", "missing", "symlink", "extra", "callback_hash", "callback_missing", "callback_symlink", "callback_extra", "purpose", "entitlements", "entitlements_missing", "entitlements_symlink", "entitlements_legacy", "entitlements_legacy_duplicate", "entitlements_legacy_symlink"]:
         bundle = root / f"{case}.app"
         shutil.copytree(source, bundle)
         info_path = bundle / "Contents/Info.plist"
         info = plistlib.loads(info_path.read_bytes())
         resources = bundle / "Contents/Resources"
-        if case in ("schema", "wire", "display", "executable"):
+        if case in ("schema", "wire", "display", "executable", "icon_field"):
             field = {"schema": "OVRCRBridgeSchema", "wire": "OVRCRServerWire",
-                     "display": "CFBundleDisplayName", "executable": "CFBundleExecutable"}[case]
+                     "display": "CFBundleDisplayName", "executable": "CFBundleExecutable",
+                     "icon_field": "CFBundleIconFile"}[case]
             info[field] = info[field] + 1 if isinstance(info[field], int) else "unexpected"
             info_path.write_bytes(plistlib.dumps(info))
+        elif case == "icon_missing_key":
+            info.pop("CFBundleIconFile", None)
+            info_path.write_bytes(plistlib.dumps(info))
+        elif case == "icon_hash":
+            (resources / "AppIcon.icns").write_bytes(b"changed")
+        elif case == "icon_missing":
+            (resources / "AppIcon.icns").unlink()
+        elif case == "icon_symlink":
+            icon = resources / "AppIcon.icns"
+            icon.unlink()
+            icon.symlink_to(source / "Contents/Resources/AppIcon.icns")
         elif case in ("schema_bool", "wire_float"):
             info["OVRCRBridgeSchema" if case == "schema_bool" else "OVRCRServerWire"] = True if case == "schema_bool" else float(info["OVRCRServerWire"])
             info_path.write_bytes(plistlib.dumps(info))

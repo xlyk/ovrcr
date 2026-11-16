@@ -120,6 +120,7 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundleName</key><string>$bundle_name</string>
 <key>CFBundleDisplayName</key><string>$display_name</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>$schema.$wire</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -133,6 +134,7 @@ cat > "$bundle/Contents/Info.plist" <<EOF
 $profile_marker
 </dict></plist>
 EOF
+cp "$repo_dir/native/AppIcon.icns" "$bundle/Contents/Resources/AppIcon.icns"
 cp "$repo_dir/native/bridge/entitlements.plist" "$bundle/Contents/Resources/OVRCRBridge.entitlements"
 for tone in tap chime rise; do
     cp "$repo_dir/research/notification-bridge/sounds/ovrcr-$tone-v1.wav" "$bundle/Contents/Resources/"
