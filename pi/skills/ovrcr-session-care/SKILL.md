@@ -54,8 +54,9 @@ and shared CLI guide, keeping the current instance configuration and socket.
      together with the returned `identity` as `--identity` JSON; stop on a changed
      conversation refusal.
    - Pi / Oh My Pi: `"$OVRCR_EXECUTABLE" --json terminal read ID --max-lines 40`
-     or `"$OVRCR_EXECUTABLE" --json terminal screen ID`. These are bounded current
-     terminal observations, not a complete saved conversation.
+     or `"$OVRCR_EXECUTABLE" terminal screen ID --rows 20 --cols 120`. Prefer text
+     for screen inspection; styled-cell JSON can exceed the tool's output limit.
+     These are bounded terminal observations, not a complete saved conversation.
    - Other or unknown providers: use the bounded terminal read if available;
      do not claim transcript or recovery support not exposed by OVRCR.
 

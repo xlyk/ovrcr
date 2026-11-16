@@ -5748,11 +5748,23 @@ PY"#
             }
             _ => {
                 let inventory = marked_tool_json(body, "CARE_INVENTORY=");
-                let row = &inventory["session"];
                 let refreshed = marked_tool_json(body, "CARE_REFRESH=");
+                let row = &refreshed["session"];
+                // The native GUI helper can inspect real reporting sessions,
+                // whose metric age advances even without a state change.
+                for key in ["id", "run", "project", "cwd"] {
+                    assert_eq!(
+                        inventory["session"][key], row[key],
+                        "diagnosis target changed"
+                    );
+                }
                 assert_eq!(
-                    row, &refreshed["session"],
-                    "fixture run/attention must stay stable"
+                    inventory["session"]["agent"]["binding"],
+                    row["agent"]["binding"]
+                );
+                assert_eq!(
+                    inventory["session"]["recovery"]["conversation"],
+                    row["recovery"]["conversation"]
                 );
                 let content = marked_tool_json(body, "CARE_CONTENT=");
                 let unavailable = row["reporting_unavailable"] == true || row["agent"].is_null();
