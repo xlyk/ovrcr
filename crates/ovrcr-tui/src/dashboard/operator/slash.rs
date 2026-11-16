@@ -7,6 +7,7 @@ pub(super) enum SlashCommandKind {
     Copy,
     Thinking,
     Model,
+    Skills,
     New,
     Session,
     Compact,
@@ -71,6 +72,13 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         usage: "/tree",
         description: "Inspect or switch Operator conversation branch",
         takes_args: false,
+    },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Skills,
+        name: "skills",
+        usage: "/skills [request]",
+        description: "Browse shipped skills; prepare without sending",
+        takes_args: true,
     },
 ];
 

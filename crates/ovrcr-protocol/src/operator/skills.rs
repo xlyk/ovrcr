@@ -49,6 +49,17 @@ pub struct OperatorSkillSelection {
 }
 
 impl BundledSkill {
+    /// The owned single-line frontmatter is shared by delivery and discovery.
+    pub fn description(&self) -> Option<&'static str> {
+        let prefix = format!("---\nname: {}\ndescription: ", self.name);
+        let (description, body) = self.document.strip_prefix(&prefix)?.split_once("\n---\n")?;
+        (!description.trim().is_empty()
+            && description.len() <= 1024
+            && !description.contains('\n')
+            && !body.trim().is_empty())
+        .then_some(description)
+    }
+
     pub fn selection(&self) -> OperatorSkillSelection {
         OperatorSkillSelection {
             name: self.name.into(),
@@ -81,6 +92,42 @@ mod tests {
         OperatorContext, OperatorConversationId, OperatorMessageContent, OperatorRequest,
         SessionRunId,
     };
+
+    #[test]
+    fn shipped_discovery_uses_the_validated_document_purpose() {
+        let status = OperatorSkillSelection::named("ovrcr-status")
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert!(
+            status
+                .description()
+                .unwrap()
+                .starts_with("Summarize OVRCR inventory, attention items")
+        );
+        for skill in BUNDLED_SKILLS {
+            assert!(
+                skill.description().is_some(),
+                "{} has no discoverable purpose",
+                skill.name
+            );
+            assert_eq!(skill.selection().resolve().unwrap().name, skill.name);
+        }
+        for document in [
+            "---\nname: other\ndescription: valid\n---\nbody",
+            "---\nname: invalid\ndescription: \n---\nbody",
+            "---\nname: invalid\ndescription: line\nextra\n---\nbody",
+            "---\nname: invalid\ndescription: valid\n---\n",
+        ] {
+            let invalid = BundledSkill {
+                name: "invalid",
+                revision: 1,
+                document,
+                assets: &[],
+            };
+            assert!(invalid.description().is_none());
+        }
+    }
 
     #[test]
     fn explicit_selection_is_exact_and_legacy_messages_remain_ordinary() {

@@ -335,7 +335,7 @@ diagnostics-gated paths). Ignored entry points are product evidence only when
 their owning parent or native run explicitly selects and checks them.
 
 The compiled e2e suite also covers same-run leased chat and model/default
-changes, all seven Operator slash commands (`/copy`, `/thinking`, `/model`,
+changes, the existing Operator slash commands (`/copy`, `/thinking`, `/model`,
 `/new`, `/session`, `/compact`, `/tree` including `"Summarize branch?"` custom
 prompts, user-prompt rewind composer restore and `Stop` rollback),
 `CatalogProcessOwner` dedicated-profile model discovery, atomic
@@ -428,6 +428,25 @@ Pi's admitted Bash tool. Assertions check actual CLI/Git/session results; these
 cases do not prove an unconstrained model's judgment or native keyboard use.
 The explicit-selection case also drives full/Quick `/skill:ovrcr-workspaces`
 inspection, checking instruction order and unchanged inventory.
+
+Searchable skill catalog and staged Send (installed Pi):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_skills_picker -- --ignored --nocapture
+```
+
+This case drives full and cold Quick-to-full browsing through Dashboard input,
+checks shipped identities and purpose search, cancellation and preparation with
+zero provider requests, then inspects the exact selected instructions and captured
+session/Workspace in the real model request. Unknown/stale selection refusals
+start no extra model work. The real Workspace Agent's input file and inventory
+stay unchanged. Public TUI `skills_picker_*` regressions additionally cover
+partial slash-menu completion, mouse selection/dismissal, narrow/tiny layouts,
+busy/stop-unconfirmed drafts and a changed underlying Quick target. Catalog unit
+tests verify the shared validated purpose; existing Pi materialization tests cover
+the delivery caller. Native keyboard/mouse proof uses the helper below separately.
 
 Read-only session diagnosis (installed Pi, actual inventory/transcript/screen reads):
 

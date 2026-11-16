@@ -390,3 +390,13 @@ completed branch summaries). `ModelPicker` queries the dedicated profile via
 entries, marks the active `Settings` snapshot selection, filters live
 case-insensitively by `provider/id` or display name, and writes the chosen model
 exclusively through `SetSetting` on `operator.model`.
+
+`/skills [request]` opens a local `SkillPicker` over the shared compiled
+`operator::skills::BUNDLED_SKILLS` catalog. Delivery and discovery use the same
+validated document description; no directory or native Pi command discovery
+runs. Search matches names or purposes case-insensitively. Enter or a row click
+stages the supported `/skill:<name>` spelling; only the subsequent Send uses the
+existing typed submission path. Esc and outside clicks leave the draft unchanged.
+Quick-to-full transition restores the Quick text and captured context after Open,
+including when the singleton has not loaded yet. Picker draw and mouse hits share
+one bounded row geometry; modal events never reach Workspace input.

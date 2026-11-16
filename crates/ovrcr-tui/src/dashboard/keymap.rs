@@ -552,6 +552,15 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         if let Some(overlay) = dashboard.operator_overlay_keymap() {
             use super::operator::OperatorOverlayKeymap;
             return match overlay {
+                OperatorOverlayKeymap::SkillPicker => vec![KeyGroup {
+                    title: "Operator skills".into(),
+                    keys: vec![
+                        native("↑/↓", "Select", KeyCode::Down, KeyModifiers::NONE),
+                        native("Enter", "Prepare", Enter, KeyModifiers::NONE),
+                        native("Ctrl-c", "Clear", Char('c'), KeyModifiers::CONTROL),
+                        native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    ],
+                }],
                 OperatorOverlayKeymap::ModelPicker => vec![KeyGroup {
                     title: "Operator model".into(),
                     keys: vec![
@@ -1392,7 +1401,9 @@ pub(super) fn operator_overlay_footer_lines(
     use unicode_width::UnicodeWidthStr;
 
     let typing_prefix = match dashboard.operator_overlay_keymap() {
-        Some(OperatorOverlayKeymap::ModelPicker) => Some("Type filter"),
+        Some(OperatorOverlayKeymap::ModelPicker | OperatorOverlayKeymap::SkillPicker) => {
+            Some("Type filter")
+        }
         Some(OperatorOverlayKeymap::TreeBrowse) => Some("Type search"),
         Some(OperatorOverlayKeymap::TreeCustomInstructions) => Some("Type instructions"),
         _ => None,
