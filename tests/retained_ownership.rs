@@ -7,7 +7,7 @@ use ovrcr::session::{AgentActivity, SessionId};
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{Duration, Instant};
 
 fn cli(live: &Live, args: &[&str]) -> Output {
@@ -302,7 +302,7 @@ fn independent_os_boot_id() -> Option<String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("sysctl")
+        let output = std::process::Command::new("sysctl")
             .args(["-n", "kern.bootsessionuuid"])
             .output()
             .ok()?;
