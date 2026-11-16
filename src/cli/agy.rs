@@ -70,35 +70,18 @@ fn is_owned_statusline(command: &str) -> bool {
     command.starts_with(STATUS_MARKER)
 }
 
-/// Decode only the single-quoted shell word emitted by `agent_setup::quote`.
-/// This keeps setup able to retarget its own command without interpreting a
-/// user's arbitrary shell expression.
-fn quoted_word(input: &str) -> Option<(String, &str)> {
-    let input = input.strip_prefix('\'')?;
-    let mut word = String::new();
-    let mut index = 0;
-    while index < input.len() {
-        let rest = &input[index..];
-        if rest.starts_with("'\"'\"'") {
-            word.push('\'');
-            index += 5;
-            continue;
-        }
-        if rest.starts_with('\'') {
-            return Some((word, &input[index + 1..]));
-        }
-        let character = rest.chars().next()?;
-        word.push(character);
-        index += character.len_utf8();
-    }
-    None
+/// One shell word and the rest of the command, read the way `__retarget-hooks`
+/// reads it, so setup, doctor and the retargeter agree on OVRCR's own commands.
+fn shell_word(input: &str) -> Option<(String, &str)> {
+    let (end, word) = super::agent_setup::read_word(input, 0)?;
+    (end > 0).then(|| (word, &input[end..]))
 }
 
 pub(super) fn owned_statusline_renderer(command: &str) -> anyhow::Result<Option<String>> {
     let command = command
         .strip_prefix(STATUS_MARKER)
         .ok_or_else(|| anyhow::anyhow!("managed statusLine marker is invalid"))?;
-    let (_, suffix) = quoted_word(command)
+    let (_, suffix) = shell_word(command)
         .ok_or_else(|| anyhow::anyhow!("managed statusLine executable is invalid"))?;
     let suffix = suffix
         .strip_prefix(" report agy-statusline --stdin-json")
@@ -109,11 +92,17 @@ pub(super) fn owned_statusline_renderer(command: &str) -> anyhow::Result<Option<
     let suffix = suffix
         .strip_prefix(" --render-command ")
         .ok_or_else(|| anyhow::anyhow!("managed statusLine renderer is invalid"))?;
-    let (renderer, rest) = quoted_word(suffix)
+    let (renderer, rest) = shell_word(suffix)
         .ok_or_else(|| anyhow::anyhow!("managed statusLine renderer is invalid"))?;
     anyhow::ensure!(
         rest.is_empty(),
         "managed statusLine has extra shell arguments"
+    );
+    // Carry a renderer over only in the exact form setup wrote. Any other quoting
+    // is the user's own shell expression, which setup does not reinterpret.
+    anyhow::ensure!(
+        super::agent_setup::quote(&renderer) == suffix,
+        "managed statusLine renderer is invalid"
     );
     Ok(Some(renderer))
 }
@@ -133,30 +122,7 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
     let status = status
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("statusLine must be an object"))?;
-    anyhow::ensure!(
-        status.get("type").is_none_or(statusline_type),
-        "statusLine type must be command"
-    );
-    anyhow::ensure!(
-        status.get("command").is_none_or(Value::is_string),
-        "statusLine command must be a string"
-    );
-    anyhow::ensure!(
-        status.get("enabled").is_none_or(Value::is_boolean),
-        "statusLine enabled must be a boolean"
-    );
-    anyhow::ensure!(
-        status
-            .get("stack_with_default")
-            .is_none_or(Value::is_boolean),
-        "statusLine stack_with_default must be a boolean"
-    );
-    anyhow::ensure!(
-        status
-            .get("padding")
-            .is_none_or(|value| { value.as_i64().is_some() || value.as_u64().is_some() }),
-        "statusLine padding must be an integer"
-    );
+    statusline_shape(status)?;
     let existing_command = status
         .get("command")
         .and_then(Value::as_str)
@@ -184,10 +150,37 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
     Ok(document)
 }
 
-/// Antigravity saves a zero-valued `statusLine` (`"type": ""`, `"command": ""`,
-/// `"enabled": false`) with its other settings. An empty type is unset, not invalid.
-fn statusline_type(value: &Value) -> bool {
-    matches!(value.as_str(), Some("command" | ""))
+/// The native `statusLine` fields setup and doctor both rely on. Antigravity
+/// saves a zero-valued one (`"type": ""`, `"command": ""`, `"enabled": false`)
+/// with its other settings, so an empty type is unset, not invalid.
+fn statusline_shape(status: &serde_json::Map<String, Value>) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        status
+            .get("type")
+            .is_none_or(|value| matches!(value.as_str(), Some("command" | ""))),
+        "statusLine type must be command"
+    );
+    anyhow::ensure!(
+        status.get("command").is_none_or(Value::is_string),
+        "statusLine command must be a string"
+    );
+    anyhow::ensure!(
+        status.get("enabled").is_none_or(Value::is_boolean),
+        "statusLine enabled must be a boolean"
+    );
+    anyhow::ensure!(
+        status
+            .get("stack_with_default")
+            .is_none_or(Value::is_boolean),
+        "statusLine stack_with_default must be a boolean"
+    );
+    anyhow::ensure!(
+        status
+            .get("padding")
+            .is_none_or(|value| value.as_i64().is_some() || value.as_u64().is_some()),
+        "statusLine padding must be an integer"
+    );
+    Ok(())
 }
 
 fn hook_command(executable: &str) -> String {
@@ -204,7 +197,7 @@ fn owned_hook_command(command: &str, executable: &str) -> bool {
     let Some(command) = command.strip_suffix(" report agy --stdin") else {
         return false;
     };
-    let Some((token, rest)) = quoted_word(command) else {
+    let Some((token, rest)) = shell_word(command) else {
         return false;
     };
     rest.is_empty()
@@ -360,21 +353,10 @@ fn statusline_status(
         issues.push("statusline_reporter_missing".into());
         return false;
     };
-    if !status.is_object() {
-        issues.push("statusline_invalid".into());
-        *malformed = true;
-        return false;
-    }
-    let valid = status.get("type").is_none_or(statusline_type)
-        && status.get("enabled").is_none_or(Value::is_boolean)
-        && status
-            .get("stack_with_default")
-            .is_none_or(Value::is_boolean)
-        && status
-            .get("padding")
-            .is_none_or(|value| value.as_i64().is_some() || value.as_u64().is_some())
-        && status.get("command").is_none_or(Value::is_string);
-    if !valid {
+    if status
+        .as_object()
+        .is_none_or(|status| statusline_shape(status).is_err())
+    {
         issues.push("statusline_invalid".into());
         *malformed = true;
         return false;
@@ -771,41 +753,6 @@ mod tests {
     }
 
     #[test]
-    fn native_zero_valued_statusline_is_unset_rather_than_invalid() {
-        // Written by Antigravity 1.5.9 itself when it saves other settings.
-        let native = r#"{"model":"m","statusLine":{"type":"","command":"","enabled":false}}"#;
-        let (mut issues, mut malformed) = (Vec::new(), false);
-        assert!(!statusline_status(
-            &serde_json::from_str(native).unwrap(),
-            "/opt/ovrcr",
-            &mut issues,
-            &mut malformed
-        ));
-        assert!(!malformed, "doctor must ask for setup: {issues:?}");
-
-        let composed = compose_settings(native, "/opt/ovrcr").unwrap();
-        assert_eq!(composed["model"], "m");
-        let status = &composed["statusLine"];
-        assert_eq!(status["type"], "command");
-        assert_eq!(status["enabled"], true);
-        assert_eq!(status["stack_with_default"], true);
-        assert_eq!(
-            owned_statusline_renderer(status["command"].as_str().unwrap()).unwrap(),
-            None,
-            "an empty command is not a renderer to wrap"
-        );
-        let (mut issues, mut malformed) = (Vec::new(), false);
-        assert!(
-            statusline_status(&composed, "/opt/ovrcr", &mut issues, &mut malformed),
-            "{issues:?}"
-        );
-        assert_eq!(
-            compose_settings(&serde_json::to_string(&composed).unwrap(), "/opt/ovrcr").unwrap(),
-            composed
-        );
-    }
-
-    #[test]
     fn native_empty_statusline_is_treated_as_unconfigured_and_enabled_on_setup() {
         for raw in [
             r#"{"statusLine":{"type":"","command":"","enabled":false},"verbosity":"low"}"#,
@@ -832,6 +779,11 @@ mod tests {
             let command = composed["statusLine"]["command"].as_str().unwrap();
             assert!(is_owned_statusline(command));
             assert_eq!(owned_statusline_renderer(command).unwrap(), None);
+            assert_eq!(
+                compose_settings(&serde_json::to_string(&composed).unwrap(), "/opt/ovrcr").unwrap(),
+                composed,
+                "repeating setup changes nothing"
+            );
 
             let hooks_doc = compose_hooks("{}", "/opt/ovrcr").unwrap();
             std::fs::write(&settings, serde_json::to_vec(&composed).unwrap()).unwrap();
@@ -895,6 +847,52 @@ mod tests {
         assert_eq!(status, "unverified");
         assert!(issues.contains(&"statusline_invalid".into()));
         assert!(!configured);
+    }
+
+    /// `__retarget-hooks` accepts any shell quoting of the executable. Setup and
+    /// doctor must agree with it, or a hand-edited reporter gets a second handler.
+    #[test]
+    fn setup_and_doctor_recognise_reporters_however_the_executable_is_quoted() {
+        for executable in ["/old/ovrcr", "\"/old dir/ovrcr\"", "'/old/ovrcr'"] {
+            let hooks = json!({HOOK_NAME: {"Stop": [{
+                "type": "command",
+                "command": format!("exec {executable} report agy --stdin")
+            }]}});
+            let (mut issues, mut malformed) = (Vec::new(), false);
+            assert!(
+                stop_hook_status(&hooks, "/opt/ovrcr", &mut issues, &mut malformed),
+                "{executable}: {issues:?}"
+            );
+            let composed = compose_hooks(&hooks.to_string(), "/opt/ovrcr").unwrap();
+            let handlers = composed[HOOK_NAME]["Stop"].as_array().unwrap();
+            assert_eq!(handlers.len(), 1, "{executable}: no second handler");
+            assert_eq!(handlers[0]["command"], hook_command("/opt/ovrcr"));
+
+            let settings = json!({"statusLine": {
+                "type": "command",
+                "command": format!(
+                    "{STATUS_MARKER}{executable} report agy-statusline --stdin-json --render-command 'mine'"
+                )
+            }});
+            let composed = compose_settings(&settings.to_string(), "/opt/ovrcr").unwrap();
+            assert_eq!(
+                composed["statusLine"]["command"],
+                statusline_command("/opt/ovrcr", Some("mine")),
+                "{executable}"
+            );
+        }
+    }
+
+    /// A renderer is carried over only in the exact form setup wrote. Any other
+    /// quoting is the user's own shell expression and is not reinterpreted.
+    #[test]
+    fn a_renderer_setup_did_not_write_is_refused_rather_than_requoted() {
+        for renderer in ["\"my $HOME/renderer\"", "mine", "'a' 'b'", "'a'b", ""] {
+            let command = format!(
+                "{STATUS_MARKER}'/opt/ovrcr' report agy-statusline --stdin-json --render-command {renderer}"
+            );
+            assert!(owned_statusline_renderer(&command).is_err(), "{renderer:?}");
+        }
     }
 
     #[test]

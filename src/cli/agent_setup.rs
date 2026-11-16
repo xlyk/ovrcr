@@ -121,7 +121,8 @@ fn preceding_word(prefix: &str) -> Option<(usize, usize, String)> {
     None
 }
 
-fn read_word(text: &str, start: usize) -> Option<(usize, String)> {
+/// One shell word starting at `start`: its end and its unquoted text.
+pub(super) fn read_word(text: &str, start: usize) -> Option<(usize, String)> {
     let bytes = text.as_bytes();
     let mut index = start;
     let mut token = String::new();
