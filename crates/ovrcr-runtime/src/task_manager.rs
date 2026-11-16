@@ -1273,6 +1273,39 @@ mod tests {
             )
             .unwrap();
         assert!(!run_dir(&manager.directory, id).join("run.json").exists());
+        let approved = server
+            .preview_workspace_removal("fixture", "task-1-run-1")
+            .unwrap();
+        // Strict removal takes task admission before Server mutation and retains it
+        // through the final ownership check, just like stopped-record archiving.
+        let mutation = server.mutation_lock.lock().unwrap();
+        let removing = {
+            let server = server.clone();
+            let approved = approved.clone();
+            thread::spawn(move || server.remove_approved_workspace(&approved))
+        };
+        let until = Instant::now() + Duration::from_secs(2);
+        while manager.admission.try_lock().is_ok() {
+            assert!(
+                Instant::now() < until,
+                "removal must acquire task admission before mutation"
+            );
+            thread::yield_now();
+        }
+        manager
+            .change(|store| {
+                let run = &mut store.runs[0];
+                run.spec.target = TaskTarget::Git {
+                    project: "fixture".into(),
+                    remote: "origin".into(),
+                    branch: "main".into(),
+                };
+                run.status = RunStatus::Preparing;
+                Ok(())
+            })
+            .unwrap();
+        drop(mutation);
+        assert!(removing.join().unwrap().is_err());
         for status in [
             RunStatus::Preparing,
             RunStatus::Running,
@@ -1296,6 +1329,7 @@ mod tests {
                     .is_err(),
                 "removed an admitted task's intended worktree"
             );
+            assert!(server.remove_approved_workspace(&approved).is_err());
             assert!(workspaces.join("task-1-run-1").is_dir());
             assert!(
                 server
@@ -1312,9 +1346,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        server
-            .remove_workspace("fixture", "task-1-run-1", false)
-            .unwrap();
+        server.remove_approved_workspace(&approved).unwrap();
         assert!(!workspaces.join("task-1-run-1").exists());
     }
 }

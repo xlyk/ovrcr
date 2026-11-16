@@ -4539,7 +4539,8 @@ impl Dashboard {
                 | Response::NotificationNavigationConfirmed(_)
                 | Response::ITermFocusPrepared(_)
                 | Response::BridgeOwner(_)
-                | Response::ScreenWindow(_) => {}
+                | Response::ScreenWindow(_)
+                | Response::WorkspaceRemoval(_) => {}
                 Response::InitialPromptIntent(id) => {
                     self.initial_prompt_intent_id = Some(id);
                 }

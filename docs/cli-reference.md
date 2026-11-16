@@ -198,6 +198,32 @@ The Dashboard Events popup is not part of this command.
 
 ## Workspace removal
 
+Proposal-first cleanup uses a separate guarded pair (both require the running
+Server):
+
+```sh
+ovrcr --json workspace removal-preview --project example --path /absolute/worktree
+# After separate approval of that exact removal, pass its ORIGINAL JSON:
+ovrcr --json workspace remove-approved --expected "$APPROVED_OBSERVATION_JSON"
+```
+
+`removal-preview` always returns JSON and changes nothing. It binds Project repo,
+Workspace root, id/path/Git generation, current branch/HEAD and archived session
+runs. Root, dirty or occupied checkouts, uncertain ownership (including archived
+rows), task/assignment/watch protection and recorded provider history inside the
+checkout refuse. Active-list records require separate archive approval first.
+`remove-approved` revalidates under the same task/lifecycle admission through
+commit. Changed state, replacements and newly occupied paths refuse. It has no
+force or WIP-saving path, even when `save_uncommitted_work` is enabled. It never
+archives sessions, acknowledges ownership, pushes, or deletes branches/records.
+The caller must separately explain unmerged/unpublished work before approval.
+
+On timeout or PartialFailure, reconcile the original Workspace id, path, Git
+registration and archived records. Files may be gone while registration remains;
+no rollback is claimed. A missing original checkout refuses strict replay rather
+than pruning recovery evidence. Neither command substitutes a refreshed proposal
+for the original approval.
+
 `workspace remove` is explicit confirmation to remove the clean worktree and
 archive its stopped session records. Running, paused, and ownership-uncertain
 sessions block removal, including uncertain archived records. Dirty-worktree,

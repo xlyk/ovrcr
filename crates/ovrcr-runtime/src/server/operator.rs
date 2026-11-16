@@ -1066,6 +1066,15 @@ impl ServerState {
 
     /// Caller holds mutation_lock, shared with acknowledged watch updates.
     pub(super) fn reject_watched_archive(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        self.reject_watched_session(id, Some(run))
+    }
+
+    /// Checkout removal also protects queued reports about an archived row's prior run.
+    pub(super) fn reject_watched_session(
+        &self,
+        id: SessionId,
+        run: Option<SessionRunId>,
+    ) -> Result<()> {
         let retained = self.retained.lock();
         let Some(current) = retained.current_operator_conversation()? else {
             return Ok(());
@@ -1090,7 +1099,7 @@ impl ServerState {
         if update
             .targets
             .iter()
-            .any(|target| target.session == id && target.run == run)
+            .any(|target| target.session == id && run.is_none_or(|run| target.run == run))
         {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,

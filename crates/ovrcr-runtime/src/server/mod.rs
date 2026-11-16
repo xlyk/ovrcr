@@ -2919,7 +2919,7 @@ impl ServerState {
     pub fn remove_workspace(&self, project: &str, name: &str, force: bool) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.remove_workspace_locked(project, name, None, force)
+        self.remove_workspace_locked(project, name, None, force, false)
     }
 
     pub(crate) fn remove_task_workspace(
@@ -2961,16 +2961,19 @@ impl ServerState {
             .unwrap()
             .workspace(project, name)
             .context("retained worktree is not registered; inspect it before cleanup")?;
-        self.remove_workspace_locked(project, name, Some((&run, run_dir)), false)
+        self.remove_workspace_locked(project, name, Some((&run, run_dir)), false, false)
     }
 
-    fn remove_workspace_locked(
+    fn validate_workspace_removal(
         &self,
         project: &str,
         name: &str,
-        cleanup: Option<(&crate::tasks::Run, &Path)>,
-        mut force: bool,
-    ) -> Result<()> {
+        force: bool,
+    ) -> Result<(
+        crate::config::ProjectRecord,
+        crate::config::WorkspaceRecord,
+        Vec<SessionSummary>,
+    )> {
         let (project_record, workspace, repository_roots) = {
             let registry = self.registry.lock().unwrap();
             (
@@ -3127,13 +3130,133 @@ impl ServerState {
                 ),
             ));
         }
+        Ok((project_record, workspace, uncertain))
+    }
+
+    pub fn preview_workspace_removal(
+        &self,
+        project: &str,
+        workspace: &str,
+    ) -> Result<ovrcr_protocol::WorkspaceRemovalObservation> {
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.workspace_removal_observation(project, workspace)
+    }
+
+    pub fn remove_approved_workspace(
+        &self,
+        expected: &ovrcr_protocol::WorkspaceRemovalObservation,
+    ) -> Result<()> {
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let current =
+            self.workspace_removal_observation(&expected.project, &expected.workspace.id)?;
+        if current != *expected {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "approved Workspace state changed; reconcile the original proposal",
+            ));
+        }
+        self.remove_workspace_locked(&expected.project, &expected.workspace.id, None, false, true)
+    }
+
+    // Caller holds task admission -> mutation through observation and removal commit.
+    fn workspace_removal_observation(
+        &self,
+        project: &str,
+        name: &str,
+    ) -> Result<ovrcr_protocol::WorkspaceRemovalObservation> {
+        self.reject_if_stopping()?;
+        let (project_record, mut workspace, _) =
+            self.validate_workspace_removal(project, name, false)?;
+        if let Some(tasks) = &self.tasks
+            && tasks.protects_stopped_session(project, &workspace.id, &workspace.path)?
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "active or retained task ownership protects the Workspace",
+            ));
+        }
+        let mut archived_sessions = Vec::new();
+        for summary in self.session_summaries().into_iter().filter(|row| {
+            (row.project == project && row.workspace == workspace.id)
+                || same_path(&row.cwd, &workspace.path)
+        }) {
+            if !summary.archived {
+                return Err(lifecycle_error(
+                    ErrorCode::SessionsRemain,
+                    "Workspace has active-list records; separate archive approval is required",
+                ));
+            }
+            if summary.phase.is_live()
+                || summary
+                    .recovery
+                    .as_ref()
+                    .is_none_or(|recovery| recovery.requires_ack)
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::OwnershipUncertain,
+                    "archived Workspace ownership is unresolved",
+                ));
+            }
+            if summary.unread.is_some()
+                || matches!(
+                    summary.activity,
+                    ovrcr_protocol::AgentActivity::Busy
+                        | ovrcr_protocol::AgentActivity::WaitingInput
+                )
+                || summary
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| !agent.input_requests.is_empty())
+                || self.retained.lock().assigned_record(summary.id)?.is_some()
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "Workspace has protected session results or assignments",
+                ));
+            }
+            self.reject_watched_session(summary.id, None)?;
+            archived_sessions.push((summary.id, summary.run));
+        }
+        archived_sessions.sort_by_key(|(id, _)| id.0);
+        let inspection = git::inspect_worktree(&project_record, &workspace)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+        if inspection.dirty {
+            return Err(lifecycle_error(
+                ErrorCode::DirtyWorktree,
+                "cleanup requires a clean worktree; WIP saving is not authorized",
+            ));
+        }
+        workspace.branch = inspection.branch;
+        let head = git::resolve_commit(&inspection.canonical_path, "HEAD")?;
+        Ok(ovrcr_protocol::WorkspaceRemovalObservation {
+            project: project.to_owned(),
+            repo: project_record.repo,
+            workspace_root: project_record.workspace_root,
+            workspace,
+            head,
+            archived_sessions,
+        })
+    }
+
+    fn remove_workspace_locked(
+        &self,
+        project: &str,
+        name: &str,
+        cleanup: Option<(&crate::tasks::Run, &Path)>,
+        mut force: bool,
+        approved: bool,
+    ) -> Result<()> {
+        let (project_record, workspace, uncertain) =
+            self.validate_workspace_removal(project, name, force)?;
         // A directory deleted outside OVRCR has nothing left to protect;
         // removal then prunes Git's stale registration (see git.rs).
         let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
         if directory_present {
             let inspection = git::inspect_worktree(&project_record, &workspace)
                 .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
-            if inspection.dirty && self.save_uncommitted_work() {
+            if inspection.dirty && !approved && self.save_uncommitted_work() {
                 git::publish_wip(&inspection.canonical_path, &inspection.branch)
                     .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
                 force = true;
@@ -3156,7 +3279,7 @@ impl ServerState {
             let mut cleaned = run.clone();
             cleaned.workspace = None;
             crate::tasks::write_run(run_dir, &cleaned)?;
-        } else if let Some(tasks) = &self.tasks {
+        } else if !approved && let Some(tasks) = &self.tasks {
             // Ordinary workspace removal also consumes any historical run's ownership.
             tasks.release_workspace_ownership(project, &workspace)?;
         }

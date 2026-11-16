@@ -5133,6 +5133,17 @@ mod installed_pi {
                 };
             }
             let user = operator_provider::last_user_text(body);
+            if user
+                .split("User request:\n")
+                .last()
+                .is_some_and(|request| request.starts_with("Workspace cleanup "))
+            {
+                let mut counters = counters.lock().unwrap();
+                let step = counters.entry("workspace-cleanup".into()).or_default();
+                let plan = cleanup::workspace_plan(body, *step);
+                *step += 1;
+                return plan;
+            }
             if user == "CLEANUP_TASK_HOLD" {
                 return Plan::text("Task remains active during preview").holding();
             }

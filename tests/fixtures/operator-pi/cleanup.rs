@@ -12,6 +12,271 @@ fn retains_task_ownership(run: &Value) -> bool {
         ))
 }
 
+pub(super) fn workspace_plan(body: &Value, step: usize) -> Plan {
+    let user = operator_provider::last_user_text(body);
+    let request = user.split("User request:\n").last().unwrap();
+    let action: Value =
+        serde_json::from_str(request.strip_prefix("Workspace cleanup ").unwrap()).unwrap();
+    if step.is_multiple_of(2) {
+        assert!(
+            user.contains("workspace remove-approved"),
+            "explicit selection must deliver guarded Workspace procedure"
+        );
+        let argument = action.to_string().replace('\'', "'\"'\"'");
+        Plan::tool(
+            "workspace-cleanup",
+            "bash",
+            json!({"command": format!("python3 - '{argument}' <<'PY'\n{}\nPY", include_str!("workspace-removal.py"))}),
+        )
+    } else {
+        let result = marked_tool_json(body, "WORKSPACE_CLEANUP=");
+        let mut report = String::from("Workspace cleanup scope: listed exact paths only.\n\n");
+        for item in result["results"].as_array().unwrap() {
+            if action["mode"] == "preview" {
+                report.push_str(&format!("Proposal {}: separately approve remove Workspace checkout. unmerged: {}; unpublished: {}; blocker: {}\n\n", item["target"]["path"], item["unmerged"], item["unpublished"], item["stderr"]));
+            } else {
+                let absent = !result["workspaces"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|workspace| {
+                        workspace["project"] == item["expected"]["project"]
+                            && workspace["id"] == item["expected"]["workspace"]["id"]
+                    });
+                let outcome = if item["exit"] == 0 && item["path_exists"] == false && absent {
+                    "verified completed"
+                } else {
+                    "refused; reconcile original action without replay"
+                };
+                report.push_str(&format!(
+                    "{}: {outcome}.\n\n",
+                    item["expected"]["workspace"]["id"]
+                ));
+            }
+        }
+        report.push_str(if action["mode"] == "preview" {
+            "No resources changed. Await separate Workspace approval."
+        } else {
+            "Branches and archived original context preserved; unapproved Workspaces unchanged."
+        });
+        Plan::text(&report)
+    }
+}
+
+#[test]
+#[ignore = "requires installed Pi; separate Workspace approval through real native tools and Git"]
+fn installed_pi_operator_cleanup_remove_workspace_partial_approval() {
+    use ovrcr::protocol::{BranchRequest, CreateSessionRequest, SessionKind};
+    let pi = pi_executable();
+    let mut live = live::Live::idle().bounded();
+    let relocated = live.root.path().join("installed/ovrcr");
+    std::fs::create_dir(relocated.parent().unwrap()).unwrap();
+    std::fs::copy(&live.executable, &relocated).unwrap();
+    live.executable = relocated;
+    // Qualify this exact copied image before application readiness, not cold OS admission.
+    let started = Instant::now();
+    let mut admission = live.command().arg("--version").spawn().unwrap();
+    let status = loop {
+        if let Some(status) = admission.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(30) {
+            admission.kill().unwrap();
+            admission.wait().unwrap();
+            panic!("relocated image admission timed out");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    eprintln!(
+        "WORKSPACE_REMOVAL_IMAGE_ADMISSION path={} elapsed_ms={} status={status}",
+        live.executable.display(),
+        started.elapsed().as_millis()
+    );
+    assert!(status.success());
+    let provider = Provider::start(scenario_handler(
+        live.repo.clone(),
+        live.root.path().join("marker"),
+        live.root.path().join("background"),
+    ));
+    provider.seed_profile(&live.config);
+    live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+    live.ready("workspace-cleanup-control");
+    status_cli(
+        &live,
+        &["settings", "set", "automatic_local_terminals", "off"],
+    );
+    for name in ["selected", "unapproved", "changed"] {
+        assert_eq!(
+            live.request(Request::CreateWorkspace {
+                project: "fixture".into(),
+                id: name.into(),
+                branch: BranchRequest::New {
+                    branch: name.into(),
+                    base: "main".into()
+                }
+            }),
+            Response::Ok
+        );
+    }
+    let selected = live.workspace_path("selected");
+    live::git(
+        &selected,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "unpublished-work",
+        ],
+    );
+    let Response::CreatedSession(row) =
+        live.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "selected".into(),
+            name: "retained-context".into(),
+            label: None,
+            kind: SessionKind::Terminal,
+            argv: vec!["/bin/sh".into()],
+        }))
+    else {
+        panic!("retained fixture session")
+    };
+    live.own_group(row.pid.unwrap() as i32);
+    status_cli(&live, &["terminal", "kill", &row.id.0.to_string()]);
+    status_cli(
+        &live,
+        &[
+            "terminal",
+            "archive-stopped",
+            &row.id.0.to_string(),
+            "--expected-run",
+            &row.run.0.to_string(),
+        ],
+    );
+    let archived_before = status_cli(&live, &["terminal", "list", "--archived"]);
+    let branches = live::git(&live.repo, &["show-ref"]);
+    let before = status_cli(&live, &["workspace", "list"]);
+    let targets = ["selected", "unapproved", "changed"]
+        .map(|name| json!({"project":"fixture","path":live.workspace_path(name)}));
+    let mut driver = DashboardDriver::connect(&live);
+    driver.open();
+    driver.submit(&format!(
+        "/skill:ovrcr-cleanup Workspace cleanup {}",
+        json!({"mode":"preview","targets":targets})
+    ));
+    let conversation = driver.conversation().id;
+    wait_terminal(&mut driver, conversation, &provider, &live);
+    let proposal = marked_tool_json(
+        &provider.requests().last().unwrap().body,
+        "WORKSPACE_CLEANUP=",
+    );
+    assert!(
+        proposal["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["exit"] == 0)
+    );
+    assert!(
+        proposal["results"][0]["unmerged"]
+            .as_str()
+            .unwrap()
+            .contains("unpublished-work")
+    );
+    assert!(
+        proposal["results"][0]["unpublished"]
+            .as_str()
+            .unwrap()
+            .contains("unpublished-work")
+    );
+    // Completion is journaled before worker stop; wait for the existing readiness
+    // boundary before the next Quick submission and capture the actual rendered view.
+    wait_stopped(&mut driver, conversation);
+    let preview_screen = driver.screen();
+    eprintln!(
+        "WORKSPACE_PREVIEW_SCREEN={preview_screen}\nWORKSPACE_PREVIEW_HISTORY={:#?}\nWORKSPACE_PREVIEW_RESULT={proposal}",
+        driver.history(conversation)
+    );
+    assert!(preview_screen.contains("No resources changed"));
+    assert_eq!(status_cli(&live, &["workspace", "list"]), before);
+    assert_eq!(
+        status_cli(&live, &["terminal", "list", "--archived"]),
+        archived_before
+    );
+    assert_eq!(live::git(&live.repo, &["show-ref"]), branches);
+    let dirty = live.workspace_path("changed").join("keep.txt");
+    std::fs::write(&dirty, "new uncommitted work").unwrap();
+    status_cli(&live, &["settings", "set", "save_uncommitted_work", "true"]);
+    driver.reopen();
+    driver.quick(&format!("/skill:ovrcr-cleanup Workspace cleanup {}", json!({"mode":"remove","targets":[proposal["results"][0]["expected"],proposal["results"][2]["expected"]]})));
+    wait_terminal(&mut driver, conversation, &provider, &live);
+    let effects = marked_tool_json(
+        &provider.requests().last().unwrap().body,
+        "WORKSPACE_CLEANUP=",
+    );
+    assert_eq!(effects["results"][0]["exit"], 0);
+    assert_ne!(effects["results"][1]["exit"], 0);
+    assert!(
+        effects["results"][1]["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("DirtyWorktree")
+    );
+    assert!(!selected.exists());
+    assert!(live.workspace_path("unapproved").is_dir());
+    assert_eq!(
+        std::fs::read_to_string(dirty).unwrap(),
+        "new uncommitted work"
+    );
+    assert_eq!(live::git(&live.repo, &["show-ref"]), branches);
+    let after = status_cli(&live, &["terminal", "list", "--archived"]);
+    let original = archived_before
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == row.id.0)
+        .unwrap();
+    let retained = after
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == row.id.0)
+        .unwrap();
+    for field in ["id", "run", "cwd", "project", "title", "recovery"] {
+        assert_eq!(retained[field], original[field], "{field}");
+    }
+    let inventory = status_cli(&live, &["workspace", "list"]);
+    assert!(
+        inventory
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|workspace| workspace["id"] != "selected")
+    );
+    wait_stopped(&mut driver, conversation);
+    let removal_screen = driver.screen();
+    eprintln!(
+        "WORKSPACE_REMOVAL_SCREEN={removal_screen}\nWORKSPACE_REMOVAL_HISTORY={:#?}\nWORKSPACE_REMOVAL_RESULT={effects}",
+        driver.history(conversation)
+    );
+    assert!(removal_screen.contains("verified completed"));
+    assert!(removal_screen.contains("refused"));
+    assert_eq!(provider.requests().len(), 4);
+    status_cli(
+        &live,
+        &["settings", "set", "save_uncommitted_work", "false"],
+    );
+    drop(driver);
+    status_cli(&live, &["shutdown", "--kill"]);
+    live.join();
+    eprintln!(
+        "INSTALLED_PI_WORKSPACE_REMOVAL_PASS proposed=3 approved=2 removed=1 refused=1 unapproved=1 branches=preserved archived_context=preserved"
+    );
+}
+
 pub(super) fn plan(body: &Value, step: usize) -> Plan {
     let user = operator_provider::last_user_text(body);
     let request = user.split("User request:\n").last().unwrap();
@@ -329,7 +594,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                 text.push_str(&format!("Workspace {} Project {} path {} HEAD {}: {}; blockers={}; unmerged={}; unpublished={}.\n", w["id"], w["project"], w["path"], w["git"]["head"]["text"],
                     if blockers.is_empty() { "propose separately approved remove Workspace checkout" } else if blockers == ["provider-history location unverified"] { "separately approved remove Workspace checkout blocked pending history verification; preserve" } else { "preserve" }, blockers.join(", "), w["git"]["unmerged"]["text"], w["git"]["unpublished"]["text"]));
             }
-            text.push_str("No resources changed. Await approval of selected stopped-record archives. Live stop/Workspace removal: Cleanup execution unavailable. Branches, Retained records and provider history preserved. Operator excluded. Approval never implies Project/branch/record deletion or remote cancellation.");
+            text.push_str("No resources changed. Await approval of selected stopped-record archives. Live stop: Cleanup execution unavailable. Workspace removal requires a separate verified proposal and approval. Branches, Retained records and provider history preserved. Operator excluded. Approval never implies Project/branch/record deletion or remote cancellation.");
             Plan::text(&text)
         }
     }
