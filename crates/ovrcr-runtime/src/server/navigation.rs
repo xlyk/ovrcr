@@ -305,7 +305,10 @@ impl ServerState {
                     return None;
                 }
                 let mut target = slot.bridge_identity.clone()?;
-                target.iterm_focus = enabled;
+                // Exact focus needs the iTerm session hosting this Dashboard. The
+                // native app and other terminals have none, so the preference is
+                // off for them: a click goes straight to parent-app activation.
+                target.iterm_focus = enabled && target.iterm_session_id.is_some();
                 target.owner = Some(Box::new(ovrcr_protocol::BridgeOwnerTicket {
                     schema: BRIDGE_SCHEMA_VERSION,
                     server_wire: PROTOCOL_VERSION,
@@ -614,6 +617,48 @@ mod tests {
                 ticket.run
             );
         }
+    }
+
+    /// The native app's Dashboard reports no iTerm session, so a saved opt-in
+    /// must not send its clicks through exact-session selection.
+    #[test]
+    fn exact_iterm_focus_is_off_for_a_dashboard_outside_iterm() {
+        let (state, ticket) = fixture();
+        state.settings.lock().unwrap().report.settings.iterm_focus = true;
+        let (owner, sink, _peer, received, navigation) = pending(&state, ticket);
+        state.dashboard.with_owned(&owner, |slot| {
+            slot.bridge_identity = Some(BridgeActivationTarget {
+                dashboard_pid: 7,
+                dashboard_start_seconds: 8,
+                dashboard_start_microseconds: 9,
+                iterm_session_id: None,
+                iterm_focus: false,
+                owner: None,
+            });
+        });
+        assert_eq!(
+            state.confirm_notification_navigation(&owner, &navigation, 19),
+            Response::Ok
+        );
+        confirmation(&sink).unwrap();
+        assert_eq!(
+            state.notification_navigation_applied(&owner, &navigation),
+            Response::Ok
+        );
+        let target = received.try_recv().unwrap().activation.unwrap();
+        assert!(!target.iterm_focus, "a click activates the parent app");
+        let Response::BridgeOwner(result) = state.bridge_owner(ovrcr_protocol::BridgeOwnerCall {
+            owner: *target.owner.unwrap(),
+            outcome: None,
+        }) else {
+            panic!("owner response missing");
+        };
+        assert!(!result.target.unwrap().iterm_focus);
+        assert_eq!(
+            state.prepare_iterm_focus(&owner),
+            Response::ITermFocusPrepared(None),
+            "explicit setup still reports that it is unavailable here"
+        );
     }
 
     #[test]

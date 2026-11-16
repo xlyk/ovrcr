@@ -1730,6 +1730,10 @@ banner's former Dashboard. Every ordinary Apple Event forbids consent prompts.
 Changing the active Dashboard or turning the preference off invalidates an
 in-flight exact-selection attempt.
 
+The preference applies only to a Dashboard running in iTerm. The native OVRCR app
+and other terminals have no iTerm session, so the saved preference is off for
+them: a click activates the Dashboard's own app and shows no iTerm notice.
+
 Denied, missing, revoked or unsupported integration preserves notification
 permission and Dashboard navigation. It falls back to activating the current
 Dashboard's parent app; with several terminal windows this cannot select the
