@@ -210,3 +210,10 @@ SessionInfo, Compact, Tree, NavigateTree}`,
 and `OperatorWorkerSubmission::{Prompt, Compact, BranchSummary}` alongside
 `ovrcr_runtime::operator_session_file`'s bounded `O_NOFOLLOW` regular-file
 checkpoint and tree reader.
+
+Schema version 36 protects explicit Operator skill identities in existing User
+journal messages; legacy messages deserialize with no selection and retain their
+original bytes. Protocol 89 carries the optional selection through Submit and
+worker Prompt. The immutable compiled catalog is shared in
+`ovrcr_protocol::operator::skills`; materialization and worker lifetime remain
+with their existing owners. See [Operator runtime](operator.md#explicit-skill-compatibility).

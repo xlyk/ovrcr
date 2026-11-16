@@ -2811,9 +2811,23 @@ mod wire_snapshot {
             (
                 "Submit",
                 OperatorRequest::Submit {
+                    skill: None,
                     conversation: identity.conversation,
                     expected_run: SessionRunId(0),
                     text: "hello".into(),
+                    context: context.clone(),
+                },
+            ),
+            (
+                "SubmitSkill",
+                OperatorRequest::Submit {
+                    skill: Some(crate::OperatorSkillSelection {
+                        name: "ovrcr-status".into(),
+                        revision: 1,
+                    }),
+                    conversation: identity.conversation,
+                    expected_run: SessionRunId(0),
+                    text: String::new(),
                     context: context.clone(),
                 },
             ),
@@ -3025,6 +3039,7 @@ mod wire_snapshot {
                         ordinal: 1,
                         turn: identity.turn,
                         content: OperatorMessageContent::User {
+                            skill: None,
                             text: "hello".into(),
                             context: context.clone(),
                         },
@@ -3124,6 +3139,7 @@ mod wire_snapshot {
                     identity,
                     model: Some("openai/model".into()),
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "hello".into(),
                         context: context.clone(),
                         async_wakeup: false,
@@ -3172,6 +3188,7 @@ mod wire_snapshot {
                     identity,
                     model: None,
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "warm".into(),
                         context: context.clone(),
                         async_wakeup: false,
@@ -3195,6 +3212,7 @@ mod wire_snapshot {
                     identity,
                     model: None,
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "watch report".into(),
                         context: context.clone(),
                         async_wakeup: true,
@@ -4357,13 +4375,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0458017301630168016c0104",
+            "2a0459017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0458017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f0459017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4413,18 +4431,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04580000"),
+        ("Response::NotificationNavigation", "0d04590000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0458017301630168016c0104",
+            "0e01016e0459017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010458017301630168016c0164",
+            "0f0107080901016901010459017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004580107080901016901010458017301630168016c0164",
+            "1004590107080901016901010459017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4464,7 +4482,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0458017301630168016c0104",
+            "08016e0459017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4932,7 +4950,11 @@ mod wire_snapshot {
         ("Request::Operator::Read", "390201010a"),
         (
             "Request::Operator::Submit",
-            "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
+            "39030001000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
+        ),
+        (
+            "Request::Operator::SubmitSkill",
+            "3903010c6f767263722d7374617475730101000001017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
         ("Request::Operator::Models", "3905"),
@@ -5039,7 +5061,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::History",
-            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f01010203040000000101010201010200000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
@@ -5070,7 +5092,7 @@ mod wire_snapshot {
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
+            "1b0001020304010c6f70656e61692f6d6f64656c00000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
         ),
         (
             "Response::OperatorWorker::StartCompact",
@@ -5082,12 +5104,12 @@ mod wire_snapshot {
         ),
         (
             "Response::OperatorWorker::StartTurn",
-            "1b0101010203040000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
+            "1b010101020304000000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
         ),
         ("Response::OperatorWorker::StartTurnNone", "1b0100"),
         (
             "Response::OperatorWorker::BeginAsyncTurn",
-            "1b04010102030400000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
+            "1b0401010203040000000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
         ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),

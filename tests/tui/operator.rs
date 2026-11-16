@@ -29,6 +29,42 @@ fn summary() -> OperatorConversationSummary {
     }
 }
 
+#[test]
+fn explicit_skill_send_keeps_the_captured_target_in_both_entry_points() {
+    for quick in [false, true] {
+        let mut dashboard = dashboard_fixture();
+        let hierarchy = fixture_hierarchy();
+        let target = captured_context(&hierarchy, SessionId(1));
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_focus(SessionId(1));
+        open_and_settle(&mut dashboard, summary());
+        if quick {
+            dashboard.ctrl('o');
+        }
+        dashboard.event_action(Event::Paste(
+            "/skill:ovrcr-status inspect captured target".into(),
+        ));
+        dashboard.key(KeyCode::Enter);
+        // A later pane selection cannot rewrite the already accepted Send's outbox payload.
+        dashboard.install_focus(SessionId(3));
+        let out = dashboard.drain_outbox();
+        assert_eq!(
+            operator_requests(&out),
+            [&OperatorRequest::Submit {
+                conversation: OperatorConversationId(7),
+                expected_run: SessionRunId(1),
+                text: "inspect captured target".into(),
+                context: target,
+                skill: Some(ovrcr_protocol::OperatorSkillSelection::named("ovrcr-status").unwrap()),
+            }]
+        );
+        assert!(!out.iter().any(|message| matches!(
+            message.request,
+            Request::Input { .. } | Request::AssignedHumanInput { .. }
+        )));
+    }
+}
+
 fn with_model(mut value: OperatorConversationSummary) -> OperatorConversationSummary {
     value.model = Some(OperatorModel {
         provider: "openai".into(),
@@ -143,6 +179,7 @@ fn user(ordinal: u64, text: &str, context: OperatorContext) -> OperatorMessage {
     message(
         ordinal,
         OperatorMessageContent::User {
+            skill: None,
             text: text.into(),
             context,
         },
@@ -577,6 +614,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
                 2,
                 1,
                 OperatorMessageContent::User {
+                    skill: None,
                     text: "inspect the tree".into(),
                     context: context.clone(),
                 },
@@ -1392,6 +1430,7 @@ fn submission_freezes_context_and_only_acceptance_clears_that_draft() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "hello\n界".into(),
@@ -1565,6 +1604,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "to the selected target".into(),
@@ -1609,6 +1649,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "full composer request".into(),
@@ -1649,6 +1690,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "to the selected target".into(),
@@ -1699,6 +1741,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(2),
             text: "quick over the full view".into(),
@@ -2004,6 +2047,7 @@ fn quick_creates_nothing_when_cancelled_and_shares_the_one_draft() {
             matches!(
                 &message.request,
                 Request::Operator(OperatorRequest::Submit {
+                    skill: None,
                     conversation: OperatorConversationId(7),
                     expected_run: SessionRunId(1),
                     text,
@@ -3153,6 +3197,7 @@ fn request_journal() -> Vec<OperatorMessage> {
             2,
             1,
             OperatorMessageContent::User {
+                skill: None,
                 text: "set it up".into(),
                 context: OperatorContext::default(),
             },
@@ -3345,6 +3390,7 @@ fn older_requests_collapse_when_a_new_one_starts_and_narrow_rows_stay_clipped() 
         3,
         10,
         OperatorMessageContent::User {
+            skill: None,
             text: "and a second request with a long sentence that cannot fit a narrow pane".into(),
             context: OperatorContext::default(),
         },
@@ -3417,6 +3463,7 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
                     2,
                     1,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "long task".into(),
                         context: context.clone(),
                     },
@@ -3525,6 +3572,7 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
                 3,
                 8,
                 OperatorMessageContent::User {
+                    skill: None,
                     text: "next task".into(),
                     context,
                 },
@@ -3834,6 +3882,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 1,
                     turn: OperatorTurnId(1),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "first".into(),
                         context: OperatorContext::default(),
                     },
@@ -3858,6 +3907,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 4,
                     turn: OperatorTurnId(2),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "second".into(),
                         context: OperatorContext::default(),
                     },
@@ -3882,6 +3932,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 7,
                     turn: OperatorTurnId(3),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "third interrupted".into(),
                         context: OperatorContext::default(),
                     },
@@ -5310,6 +5361,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                     3,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "check beta latency".into(),
                         context: OperatorContext::default(),
                     },
@@ -5567,6 +5619,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                     2,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "restart alpha worker".into(),
                         context: OperatorContext::default(),
                     },
@@ -5818,6 +5871,7 @@ fn tree_summarize_branch_modal_supports_esc_back_navigation_custom_prompt_compos
                     3,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "check beta latency".into(),
                         context: OperatorContext::default(),
                     },
@@ -6269,6 +6323,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     1,
                     1,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "completed question".into(),
                         context: OperatorContext::default(),
                     },
@@ -6293,6 +6348,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     2,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "failed question".into(),
                         context: OperatorContext::default(),
                     },
@@ -6313,6 +6369,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     3,
                     7,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "interrupted question".into(),
                         context: OperatorContext::default(),
                     },

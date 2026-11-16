@@ -1725,6 +1725,7 @@ fn stale_run_submits_and_terminal_lifecycle_routes_are_refused() {
 
     // A stale observed run cannot submit again.
     let response = client.exchange(Request::Operator(OperatorRequest::Submit {
+        skill: None,
         conversation: opened.id,
         expected_run: opened.run,
         text: "stale".into(),
@@ -3944,8 +3945,8 @@ mod installed_pi {
     use operator_provider::{Chunk, Plan, Provider};
     use ovrcr::protocol::{
         self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorMessageContent,
-        OperatorToolStatus, OperatorTurnState, OperatorWorkerEvent, Request, Response,
-        ServerMessage, SessionPhase, TerminalSize,
+        OperatorRequest, OperatorToolStatus, OperatorTurnState, OperatorWorkerEvent, Request,
+        Response, ServerMessage, SessionPhase, TerminalSize,
     };
     use ovrcr::tui::{Dashboard, Settings};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
@@ -6653,6 +6654,16 @@ PY"#
     #[test]
     #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
     fn installed_pi_operator_status_invalid_bundle_prevents_prompting() {
+        check_invalid_bundle(false);
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill_invalid_bundle() {
+        check_invalid_bundle(true);
+    }
+
+    fn check_invalid_bundle(explicit: bool) {
         let pi = pi_executable();
         for invalid in [
             "document-directory",
@@ -6660,60 +6671,106 @@ PY"#
             "writable-directory",
             "blocked-reference-parent",
         ] {
-            let live = live::Live::idle().bounded();
-            let provider = Provider::start(Box::new(|_, _| Plan::text("UNEXPECTED_MODEL_WORK")));
-            provider.seed_profile(&live.config);
-            let directory = live.config.join("operator-pi/ovrcr-status");
-            std::fs::create_dir(&directory).unwrap();
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
-            match invalid {
-                "document-directory" => std::fs::create_dir(directory.join("SKILL.md")).unwrap(),
-                "reference-symlink" => {
-                    let outside = live.root.path().join("outside");
-                    std::fs::create_dir(&outside).unwrap();
-                    std::fs::write(outside.join("inventory.md"), "must survive").unwrap();
-                    std::os::unix::fs::symlink(&outside, directory.join("references")).unwrap();
+            for quick in [false, true] {
+                let live = live::Live::idle().bounded();
+                let provider =
+                    Provider::start(Box::new(|_, _| Plan::text("UNEXPECTED_MODEL_WORK")));
+                provider.seed_profile(&live.config);
+                let directory = live.config.join("operator-pi/ovrcr-status");
+                std::fs::create_dir(&directory).unwrap();
+                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                    .unwrap();
+                match invalid {
+                    "document-directory" => {
+                        std::fs::create_dir(directory.join("SKILL.md")).unwrap()
+                    }
+                    "reference-symlink" => {
+                        let outside = live.root.path().join("outside");
+                        std::fs::create_dir(&outside).unwrap();
+                        std::fs::write(outside.join("inventory.md"), "must survive").unwrap();
+                        std::os::unix::fs::symlink(&outside, directory.join("references")).unwrap();
+                    }
+                    "writable-directory" => {
+                        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o777))
+                            .unwrap()
+                    }
+                    "blocked-reference-parent" => {
+                        std::fs::write(directory.join("references"), "not a directory").unwrap()
+                    }
+                    _ => unreachable!(),
                 }
-                "writable-directory" => {
-                    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o777))
-                        .unwrap()
+                live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+                let mut driver = DashboardDriver::connect(&live);
+                let request = if explicit {
+                    format!("/skill:ovrcr-status {STATUS_REQUEST}")
+                } else {
+                    STATUS_REQUEST.into()
+                };
+                if quick {
+                    driver.quick(&request);
+                } else {
+                    driver.open();
+                    driver.submit(&request);
                 }
-                "blocked-reference-parent" => {
-                    std::fs::write(directory.join("references"), "not a directory").unwrap()
+                let opened = driver.conversation();
+                let failed = driver.wait_history(opened.id, |history| {
+                    history
+                        .conversation
+                        .current_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn.state == OperatorTurnState::Error)
+                });
+                wait_stopped(&mut driver, opened.id);
+                assert!(
+                    provider.requests().is_empty(),
+                    "{invalid}: no model request may precede complete asset delivery"
+                );
+                assert!(tool_outputs_with_status(&failed).is_empty());
+                let screen = driver.screen();
+                let error = if invalid == "document-directory" {
+                    "Pi Operator integration is unavailable; no prompt was sent."
+                } else {
+                    "Operator Pi context is unavailable; saved data was preserved."
+                };
+                assert!(screen.contains(error), "{screen}");
+                assert!(
+                    screen.contains(STATUS_REQUEST),
+                    "the failed request remains recoverable in the journal: {screen}"
+                );
+                if invalid == "reference-symlink" {
+                    assert_eq!(
+                        std::fs::read_to_string(live.root.path().join("outside/inventory.md"))
+                            .unwrap(),
+                        "must survive"
+                    );
                 }
-                _ => unreachable!(),
-            }
-            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
-            let mut driver = DashboardDriver::connect(&live);
-            driver.open();
-            driver.submit(STATUS_REQUEST);
-            let opened = driver.conversation();
-            let failed = driver.wait_history(opened.id, |history| {
-                history
-                    .conversation
-                    .current_turn
-                    .as_ref()
-                    .is_some_and(|turn| turn.state == OperatorTurnState::Error)
-            });
-            wait_stopped(&mut driver, opened.id);
-            assert!(
-                provider.requests().is_empty(),
-                "{invalid}: no model request may precede complete asset delivery"
-            );
-            assert!(tool_outputs_with_status(&failed).is_empty());
-            if invalid == "reference-symlink" {
-                assert_eq!(
-                    std::fs::read_to_string(live.root.path().join("outside/inventory.md")).unwrap(),
-                    "must survive"
+                eprintln!(
+                    "INSTALLED_PI_INVALID_BUNDLE_PASS case={invalid} provider_requests=0 quick={quick} explicit={explicit}"
                 );
             }
-            eprintln!("INSTALLED_PI_INVALID_BUNDLE_PASS case={invalid} provider_requests=0");
         }
     }
 
     #[test]
     #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
     fn installed_pi_operator_status_overview() {
+        check_status_overview(false);
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill_lifetime() {
+        check_status_overview(true);
+    }
+
+    fn check_status_overview(explicit: bool) {
+        let selected = |request: &str| {
+            if explicit {
+                format!("/skill:ovrcr-status {request}")
+            } else {
+                request.to_owned()
+            }
+        };
         let pi = pi_executable();
         for quick in [false, true] {
             let live = live::Live::idle().bounded();
@@ -6804,10 +6861,10 @@ PY"#
             let mut driver = DashboardDriver::connect(&live);
             driver.select_fixture_workspace();
             if quick {
-                driver.quick(STATUS_REQUEST);
+                driver.quick(&selected(STATUS_REQUEST));
             } else {
                 driver.open();
-                driver.submit(STATUS_REQUEST);
+                driver.submit(&selected(STATUS_REQUEST));
             }
             let opened = driver.conversation();
             let history = wait_terminal(&mut driver, opened.id, &provider, &live);
@@ -6825,6 +6882,16 @@ PY"#
                 assert!(answer.contains(expected), "missing {expected}: {answer}");
             }
             let first = &provider.requests()[0].body;
+            if explicit {
+                assert!(
+                    operator_provider::last_user_text(first)
+                        .contains(include_str!("../pi/skills/ovrcr-status/SKILL.md"))
+                );
+                assert!(matches!(
+                    history.messages[0].content,
+                    OperatorMessageContent::User { skill: Some(_), .. }
+                ));
+            }
             assert_normal_first_prompt("status", first, STATUS_REQUEST);
             assert!(
                 operator_provider::last_user_text(first).contains("\"workspace\":\"status-work\""),
@@ -6864,8 +6931,14 @@ PY"#
                 (STATUS_SESSION_REQUEST, "Scope: session status-ready"),
             ] {
                 let previous = driver.conversation().current_turn.unwrap().identity.turn.0;
-                let narrowed =
-                    submit_next(&mut driver, opened.id, request, previous, &provider, &live);
+                let narrowed = submit_next(
+                    &mut driver,
+                    opened.id,
+                    &selected(request),
+                    previous,
+                    &provider,
+                    &live,
+                );
                 wait_stopped(&mut driver, opened.id);
                 let turn = narrowed
                     .conversation
@@ -6902,13 +6975,16 @@ PY"#
             let watched = wait_terminal(&mut driver, opened.id, &provider, &live);
             assert!(watched.conversation.worker_live);
             let warm_run = watched.conversation.run;
+            if explicit {
+                assert_explicit_selection_refused(&mut driver, &provider);
+            }
             let document = live.config.join("operator-pi/ovrcr-status/SKILL.md");
             let inode = std::fs::metadata(&document).unwrap().ino();
             let previous = watched.conversation.current_turn.unwrap().identity.turn.0;
             let warm = submit_next(
                 &mut driver,
                 opened.id,
-                STATUS_REQUEST,
+                &selected(STATUS_REQUEST),
                 previous,
                 &provider,
                 &live,
@@ -6930,7 +7006,7 @@ PY"#
             let after_compact = submit_next(
                 &mut driver,
                 opened.id,
-                STATUS_REQUEST,
+                &selected(STATUS_REQUEST),
                 previous,
                 &provider,
                 &live,
@@ -6954,7 +7030,7 @@ PY"#
             submit_next(
                 &mut driver,
                 opened.id,
-                STATUS_REQUEST,
+                &selected(STATUS_REQUEST),
                 previous,
                 &provider,
                 &live,
@@ -6979,6 +7055,20 @@ PY"#
                 .iter()
                 .filter(|request| !operator_provider::is_compaction_request(&request.body))
             {
+                if explicit {
+                    let user = operator_provider::last_user_text(&request.body);
+                    if user.contains("Selected Operator skill: ovrcr-status") {
+                        assert!(user.contains(include_str!("../pi/skills/ovrcr-status/SKILL.md")));
+                        assert!(
+                            user.find("Captured OVRCR context").unwrap()
+                                < user.find("Selected Operator skill:").unwrap()
+                        );
+                        assert!(
+                            user.find("Selected Operator skill:").unwrap()
+                                < user.find("User request:").unwrap()
+                        );
+                    }
+                }
                 assert_skill_only_in_system(
                     "status lifetime",
                     &request.body,
@@ -7007,6 +7097,136 @@ PY"#
             eprintln!(
                 "INSTALLED_PI_STATUS_PASS quick={quick} requests={} sessions=5 scope_cases=4 compacted=true",
                 provider.requests().len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(Box::new(|body, _| {
+                let user = operator_provider::last_user_text(body);
+                if user.contains("Selected Operator skill: ovrcr-coordinator")
+                    && user.ends_with("User request:\n")
+                {
+                    Plan::text("Which tasks and Workspaces should I coordinate?")
+                } else {
+                    Plan::text("EXPLICIT_SKILL_DONE")
+                }
+            }));
+            provider.seed_profile(&live.config);
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            if quick {
+                driver.quick("/skill:missing UNSENT_REQUEST");
+            } else {
+                driver.open();
+                driver.submit("/skill:missing UNSENT_REQUEST");
+            }
+            assert!(provider.requests().is_empty());
+            let screen = driver.screen();
+            assert!(
+                screen.contains("unavailable Operator skill") && screen.contains("UNSENT_REQUEST"),
+                "{screen}"
+            );
+            driver.dashboard.ctrl('c');
+            driver.submit("/reload UNSENT_NATIVE_COMMAND");
+            assert!(provider.requests().is_empty());
+            assert!(driver.screen().contains("Unknown slash command"));
+            driver.dashboard.ctrl('c');
+            driver.submit("/skill:ovrcr-status EXPLICIT_REQUEST");
+            let opened = driver.conversation();
+            let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert!(delta_text(&history).contains("EXPLICIT_SKILL_DONE"));
+            wait_stopped(&mut driver, opened.id);
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 1);
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-status/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"), "{user}");
+            let instructions = user
+                .find(document)
+                .expect("full selected document before model work");
+            let request = user.find("User request:\nEXPLICIT_REQUEST").unwrap();
+            assert!(
+                instructions < request,
+                "instructions precede distinct request"
+            );
+            assert!(
+                user.contains(
+                    &live
+                        .config
+                        .join("operator-pi/ovrcr-status/SKILL.md")
+                        .display()
+                        .to_string()
+                )
+            );
+            assert!(!operator_harness::history_text(&history).contains(document));
+            assert_explicit_selection_refused(&mut driver, &provider);
+            // A fresh Dashboard reconnects to the completed checkpoint. A bare
+            // invocation supplies instructions, but no invented task or authority.
+            drop(driver);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.open();
+            driver.submit("/skill:ovrcr-coordinator");
+            let bare = wait_terminal(&mut driver, opened.id, &provider, &live);
+            wait_stopped(&mut driver, opened.id);
+            assert!(delta_text(&bare).contains("Which tasks and Workspaces"));
+            assert!(driver.screen().contains("/skill:ovrcr-coordinator"));
+            let requests = provider.requests();
+            let user = operator_provider::last_user_text(&requests.last().unwrap().body);
+            assert!(user.contains(include_str!("../pi/skills/ovrcr-coordinator/SKILL.md")));
+            assert!(
+                user.ends_with("User request:\n"),
+                "bare selection invents no user task"
+            );
+            assert_eq!(
+                operator_provider::non_system_text(&requests.last().unwrap().body)
+                    .matches(document)
+                    .count(),
+                1,
+                "resume preserves the original instruction message without replay"
+            );
+            for text in ["/etc/hosts", " /new", "ordinary /skill:missing data"] {
+                driver.submit(text);
+                wait_terminal(&mut driver, opened.id, &provider, &live);
+                wait_stopped(&mut driver, opened.id);
+                let requests = provider.requests();
+                let user = operator_provider::last_user_text(&requests.last().unwrap().body);
+                assert!(user.starts_with("Captured OVRCR context"));
+                assert!(user.ends_with(&format!("User request:\n{text}")), "{user}");
+                assert!(!user.contains("Selected Operator skill:"));
+            }
+        }
+    }
+
+    fn assert_explicit_selection_refused(driver: &mut DashboardDriver, provider: &Provider) {
+        let before = driver.conversation();
+        let count = provider.requests().len();
+        for (name, revision) in [
+            ("ovrcr-status", 0),
+            ("ovrcr-status", 999),
+            ("not-shipped", 1),
+        ] {
+            let response = driver.exchange(Request::Operator(OperatorRequest::Submit {
+                conversation: before.id,
+                expected_run: before.run,
+                text: "DO_NOT_RUN".into(),
+                context: Default::default(),
+                skill: Some(ovrcr::protocol::OperatorSkillSelection {
+                    name: name.into(),
+                    revision,
+                }),
+            }));
+            assert!(matches!(response, Response::Error { .. }), "{response:?}");
+            assert_eq!(driver.conversation().current_turn, before.current_turn);
+            assert_eq!(
+                provider.requests().len(),
+                count,
+                "refusal before model work"
             );
         }
     }

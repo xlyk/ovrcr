@@ -2106,6 +2106,7 @@ mod operator_loop_tests {
                 .filter(|m| matches!(
                     m.request,
                     Request::Operator(OperatorRequest::Submit {
+                        skill: None,
                         conversation: OperatorConversationId(1),
                         expected_run: SessionRunId(1),
                         ref text,

@@ -324,6 +324,7 @@ fn run_turn(
             text,
             context,
             async_wakeup: true,
+            ..
         } => {
             let _ = (text, context);
             // `sendUserMessage` already started this exact Pi turn after the Server
@@ -334,6 +335,7 @@ fn run_turn(
             text,
             context,
             async_wakeup: false,
+            skill,
         } => {
             let (model, context_window) =
                 resolve_model(connection, journal, state, turn.model.as_deref())?;
@@ -346,7 +348,7 @@ fn run_turn(
                 return Err(Failure::Terminated);
             }
             journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-            let prompt = prompt_text(text, context)?;
+            let prompt = prompt_text(text, context, skill.as_ref(), &paths.profile)?;
             state.prompted = true;
             let response = connection.request(
                 journal,
@@ -2386,12 +2388,30 @@ fn clean_stream_end(error: &pi::PiError) -> bool {
 fn prompt_text(
     text: &str,
     context: &ovrcr_protocol::OperatorContext,
+    selection: Option<&ovrcr_protocol::OperatorSkillSelection>,
+    profile: &Path,
 ) -> std::result::Result<String, Failure> {
     let context = serde_json::to_string(context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
-    // The captured context is always ahead of the user text so input such as `/new`
-    // cannot become a native pi command.
+    // Never forward native commands. The binary's fixed bundle, not mutable disk
+    // contents or arbitrary request text, supplies explicit instructions.
+    let instructions = if let Some(selection) = selection {
+        let skill = selection.resolve().map_err(|_| {
+            Failure::Failed(
+                "Selected Operator skill is unavailable or incompatible; no prompt was sent.",
+            )
+        })?;
+        format!(
+            "Selected Operator skill: {} (revision {})\nReference location: {}\nResolve supporting paths relative to this document's directory. Follow its normal workflow; ask for missing required information. Selection grants no additional tools or authority.\n\n{}\n\n",
+            skill.name,
+            skill.revision,
+            profile.join(skill.name).join("SKILL.md").display(),
+            skill.document
+        )
+    } else {
+        String::new()
+    };
     Ok(format!(
-        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{text}"
+        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\n{instructions}User request:\n{text}"
     ))
 }
 
@@ -3749,7 +3769,13 @@ mod tests {
 
     #[test]
     fn prompt_text_always_keeps_the_context_ahead_of_user_text() {
-        let prompt = prompt_text("/new", &ovrcr_protocol::OperatorContext::default()).unwrap();
+        let prompt = prompt_text(
+            "/new",
+            &ovrcr_protocol::OperatorContext::default(),
+            None,
+            Path::new("/private/profile"),
+        )
+        .unwrap();
         assert!(prompt.starts_with("Captured OVRCR context"));
         assert!(prompt.ends_with("User request:\n/new"));
     }

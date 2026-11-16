@@ -393,6 +393,21 @@ any provider request. Personal, Project and unregistered skill sentinels stay
 undiscovered. These controlled-provider tests prove composition and resource
 effects, not an unconstrained model's choice of procedure or native keyboard use.
 
+Explicit named invocation (installed Pi, actual provider request bodies):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_explicit_skill -- --ignored --nocapture
+```
+
+The three cases cover full/Quick input and visible refusals, context/instruction/
+request order, both shipped selections, bare invocation, cold checkpoint resume,
+reconnect, warm leased turns and compaction, exact revision refusal without model
+work, invalid required assets and recoverable requests, and ordinary slash-like
+text. They reuse the status inventory/watch fixture and local provider. Native
+keyboard/visible-outcome evidence remains separate from this Dashboard driver.
+
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 

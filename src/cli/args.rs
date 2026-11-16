@@ -59,6 +59,8 @@ pub(super) enum SettingsCommand {
 #[derive(Subcommand)]
 pub(super) enum Command {
     /// Set up the dedicated Pi account Operator uses, or list its models.
+    /// In full Operator or Quick message, send /skill:<name> [request] to invoke
+    /// a shipped procedure explicitly (for example /skill:ovrcr-status).
     Operator {
         #[command(subcommand)]
         command: OperatorCommand,
