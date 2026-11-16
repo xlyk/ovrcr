@@ -80,6 +80,7 @@ pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --tools read,bash,edit,write,watch_sessions
    --skill <operator-pi>/ovrcr-status/SKILL.md
    --skill <operator-pi>/ovrcr-coordinator/SKILL.md
+   --skill <operator-pi>/ovrcr-workspaces/SKILL.md
    --skill <operator-pi>/ovrcr-session-care/SKILL.md
    --session-dir <operator-pi>/runs/<run-id>
    --session-id operator-<conversation-id>
@@ -91,8 +92,9 @@ One `--append-system-prompt` argument carries the fixed Operator policy followed
 by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`.
 The CLI guide is available before the first model request in full chat and Quick
 message without a repository checkout. The immutable catalog in
-`ovrcr_protocol::operator::skills::BUNDLED_SKILLS` owns the status, coordinator
-and read-only session-care documents and all required supporting assets.
+`ovrcr_protocol::operator::skills::BUNDLED_SKILLS` owns the status, coordinator,
+Workspace provisioning and read-only session-care documents and all required
+supporting assets.
 Each is compiled into the matching binary, validated and atomically materialized
 before Pi launches; invalid frontmatter, unavailable assets or unsafe paths fail
 before prompting. Owned documents use `name` then a single-line `description`
@@ -108,11 +110,14 @@ defaults to all registered Projects in that instance, honors narrower requests
 and resolves inspected identities from current inventory.
 
 Sources live under `pi/skills/<registered-skill>/`. `ovrcr-status` includes
-`references/inventory.md`; the coordinator remains a separate unchanged procedure,
-not the managed-Pi orchestrator package. `ovrcr-session-care` diagnoses only the
-requested session using current inventory, Reporter health and provider-supported
-reads; it preserves attention and ownership state and reports recovery blockers
-without performing control/recovery. Each cold worker launch refreshes the
+`references/inventory.md`; `ovrcr-workspaces` contains its complete provisioning
+procedure in `SKILL.md`. It uses existing guarded CLI registration, Git Workspace
+and managed launch routes without a new lifecycle owner. The coordinator remains
+a separate unchanged procedure, not the managed-Pi orchestrator package.
+`ovrcr-session-care` diagnoses only the requested session using current inventory,
+Reporter health and provider-supported reads; it preserves attention and ownership
+state and reports recovery blockers without performing control/recovery.
+Each cold worker launch refreshes the
 complete bundle with mode 0600 files in private directories. Existing symlinked,
 foreign-owned or writable asset paths are refused. Warm turns, session switching
 and compaction do not rematerialize assets or reload metadata; new instructions
