@@ -845,6 +845,7 @@ impl Dashboard {
         self.draw_operator_slash_menu(frame, &layout);
         self.draw_operator_reasoning_picker(frame);
         self.draw_operator_model_picker(frame);
+        self.draw_operator_skills(frame);
         self.draw_operator_session_modal(frame);
         self.draw_operator_tree_modal(frame);
     }
