@@ -499,6 +499,7 @@ fn operator_worker_fixture() {
                 sequence,
                 events,
             },
+            leased: None,
         })
     };
     assert!(matches!(
@@ -845,7 +846,8 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
                 identity: stale,
                 sequence: 2,
                 events: vec![OperatorWorkerEvent::AssistantDelta("stale".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -871,7 +873,8 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
                 identity: turn.identity,
                 sequence: 2,
                 events: vec![OperatorWorkerEvent::AssistantDelta("late".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -930,7 +933,8 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth: auth.clone(),
-            batch: batch.clone()
+            batch: batch.clone(),
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -941,7 +945,8 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth: auth.clone(),
-            batch: batch.clone()
+            batch: batch.clone(),
+            leased: None,
         })),
         Response::OperatorExchange(OperatorExchangeResult {
             duplicate: false,
@@ -949,7 +954,11 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
         })
     ));
     assert!(matches!(
-        live.control(Request::OperatorExchange(OperatorExchange { auth, batch })),
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth,
+            batch,
+            leased: None,
+        })),
         Response::OperatorExchange(OperatorExchangeResult {
             duplicate: true,
             ..
@@ -1160,7 +1169,8 @@ fn operator_slow_dashboard_does_not_block_stop_or_terminal_input() {
                     identity: turn.identity,
                     sequence,
                     events: vec![OperatorWorkerEvent::AssistantDelta("stream".into())]
-                }
+                },
+                leased: None,
             })),
             Response::OperatorExchange(_)
         ));
@@ -1315,7 +1325,8 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
                 identity: first.identity,
                 sequence: 3,
                 events: vec![OperatorWorkerEvent::AssistantDelta("old run".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -2773,4 +2784,58 @@ fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error()
         OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
             if summary == "Summary of abandoned branch."
     )));
+}
+
+#[test]
+fn operator_leased_failure_batch_publishes_error_and_live_worker_atomically() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+
+    // Non-terminal batches must not claim a failure lease.
+    assert!(matches!(
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth: auth.clone(),
+            batch: OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 2,
+                events: vec![OperatorWorkerEvent::AssistantDelta("partial".into())],
+            },
+            leased: Some(true),
+        })),
+        Response::Error { .. }
+    ));
+
+    // A leased failure commits Error + leased=true in one atomic exchange, with
+    // zero intermediate state where Error is visible with worker_live=false.
+    assert!(matches!(
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth: auth.clone(),
+            batch: OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 2,
+                events: vec![OperatorWorkerEvent::Failed("request failed".into())],
+            },
+            leased: Some(true),
+        })),
+        Response::OperatorExchange(OperatorExchangeResult {
+            duplicate: false,
+            ..
+        })
+    ));
+
+    let failed_history = live.history(&c);
+    assert_eq!(
+        failed_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| t.state),
+        Some(OperatorTurnState::Error)
+    );
+    assert!(
+        failed_history.conversation.worker_live,
+        "leased failure batch must preserve worker_live immediately without a second RPC"
+    );
 }

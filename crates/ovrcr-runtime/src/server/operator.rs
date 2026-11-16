@@ -1031,7 +1031,13 @@ impl ServerState {
         exchange: OperatorExchange,
         owner: Option<&Arc<()>>,
     ) -> Result<OperatorExchangeResult> {
+        exchange.validate().map_err(anyhow::Error::msg)?;
         let identity = exchange.batch.identity;
+        let terminal = exchange
+            .batch
+            .events
+            .last()
+            .is_some_and(OperatorWorkerEvent::is_terminal);
         let session = self
             .sessions
             .lock()
@@ -1041,8 +1047,11 @@ impl ServerState {
             .context("operator worker unavailable")?;
         let mut retained = self.retained.lock();
         let receipt = session.with_operator_authority(&exchange.auth, owner, identity, || {
-            retained.apply_operator_batch(&exchange.batch)
+            retained.apply_operator_batch_with_lease(&exchange.batch, exchange.leased)
         })?;
+        if terminal {
+            session.clear_operator_abort(identity);
+        }
         drop(retained);
         if !receipt.duplicate {
             self.operator_changed(identity.conversation);

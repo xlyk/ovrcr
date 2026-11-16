@@ -1080,11 +1080,29 @@ impl SessionStore {
         &mut self,
         batch: &OperatorEventBatch,
     ) -> Result<OperatorExchangeResult> {
+        self.apply_operator_batch_with_lease(batch, None)
+    }
+
+    pub(crate) fn apply_operator_batch_with_lease(
+        &mut self,
+        batch: &OperatorEventBatch,
+        failed_leased: Option<bool>,
+    ) -> Result<OperatorExchangeResult> {
         use sha2::{Digest, Sha256};
         batch.validate().map_err(anyhow::Error::msg)?;
+        if failed_leased.is_some()
+            && !matches!(batch.events.last(), Some(OperatorWorkerEvent::Failed(_)))
+        {
+            bail!("operator batch lease requires a terminal failure");
+        }
         self.require_current_operator(batch.identity.conversation)?;
         let turn = self.validate_operator_identity(batch.identity)?;
-        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(batch)?));
+        let mut hasher = Sha256::new();
+        hasher.update(serde_json::to_vec(batch)?);
+        if let Some(flag) = failed_leased {
+            hasher.update([u8::from(flag)]);
+        }
+        let digest = format!("{:x}", hasher.finalize());
         let prior: Option<String> = self
             .connection
             .query_row(
@@ -1158,7 +1176,10 @@ impl SessionStore {
                     leaf_entry_id = leaf_id.clone();
                     continue;
                 }
-                OperatorWorkerEvent::Failed(_) => state = "Error",
+                OperatorWorkerEvent::Failed(_) => {
+                    state = "Error";
+                    leased = failed_leased;
+                }
                 _ => {}
             }
             append_message(

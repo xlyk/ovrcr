@@ -734,6 +734,23 @@ pub enum OperatorResponse {
 pub struct OperatorExchange {
     pub auth: SupervisorAuth,
     pub batch: OperatorEventBatch,
+    /// Optional lease retention recorded atomically when `batch` ends in `Failed`.
+    #[serde(default)]
+    pub leased: Option<bool>,
+}
+impl OperatorExchange {
+    pub fn validate(&self) -> Result<(), String> {
+        self.batch.validate()?;
+        if self.leased.is_some()
+            && !matches!(
+                self.batch.events.last(),
+                Some(OperatorWorkerEvent::Failed(_))
+            )
+        {
+            return Err("operator batch lease requires a terminal failure".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorExchangeResult {

@@ -267,20 +267,12 @@ fn attempt(
             Err(Failure::ToolTimedOut) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
                 journal.flush()?;
-                journal.commit(OperatorWorkerEvent::Failed(REQUEST_FAILED.to_owned()))?;
-                journal
-                    .reporter
-                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
-                    .map_err(|_| Failure::ReportFailed)?;
+                journal.commit_leased_failure(REQUEST_FAILED.to_owned())?;
             }
             Err(Failure::Failed(message)) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
                 journal.flush()?;
-                journal.commit(OperatorWorkerEvent::Failed(message.to_owned()))?;
-                journal
-                    .reporter
-                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
-                    .map_err(|_| Failure::ReportFailed)?;
+                journal.commit_leased_failure(message.to_owned())?;
             }
             Err(failure) => return Err(failure),
         }
@@ -752,9 +744,21 @@ impl<'a> Journal<'a> {
         self.commit_events(vec![event])
     }
 
+    fn commit_leased_failure(&mut self, message: String) -> std::result::Result<(), Failure> {
+        self.commit_events_with_lease(vec![OperatorWorkerEvent::Failed(message)], Some(true))
+    }
+
     fn commit_events(
         &mut self,
         events: Vec<OperatorWorkerEvent>,
+    ) -> std::result::Result<(), Failure> {
+        self.commit_events_with_lease(events, None)
+    }
+
+    fn commit_events_with_lease(
+        &mut self,
+        events: Vec<OperatorWorkerEvent>,
+        leased: Option<bool>,
     ) -> std::result::Result<(), Failure> {
         if self.poisoned {
             return Err(Failure::ReportFailed);
@@ -764,10 +768,11 @@ impl<'a> Journal<'a> {
             sequence: self.sequence,
             events,
         };
-        match self
-            .reporter
-            .operator_batch(batch, Instant::now() + REPORT_DEADLINE)
-        {
+        match self.reporter.operator_batch_with_lease(
+            batch,
+            leased,
+            Instant::now() + REPORT_DEADLINE,
+        ) {
             Ok(()) => {
                 self.sequence += 1;
                 Ok(())
