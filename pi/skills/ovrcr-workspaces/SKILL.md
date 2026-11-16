@@ -18,9 +18,9 @@ instance environment. Check `"$OVRCR_EXECUTABLE" --version`; consult its subcomm
 1. Establish what was requested: inspection, registration, a new or existing
    branch, and a Terminal, managed Agent, or no explicit launch. Use captured
    identities only for the captured target; a named request must resolve against
-   current inventory. If the Project, repository path, branch base, or launch
-   choice is missing, ask for that information. Selecting this procedure grants
-   no extra permission.
+   current inventory. Ask for information needed for that action if missing;
+   inspection needs no branch base or launch choice. No launch request means no
+   explicit launch. Selecting this procedure grants no extra permission.
 2. Read `project list --json`, then `project get NAME --json` and
    `workspace list --project NAME --json` for the intended registration.
    Compare canonical repository paths, not just Project names. For an
