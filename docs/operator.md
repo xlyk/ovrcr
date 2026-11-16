@@ -150,7 +150,7 @@ Status starts with inventory metadata. It reads session content only when the
 requested inspection needs it, preserves Unread and Input requests, and does not
 acknowledge ownership, create or control resources, or start periodic checks.
 
-## Diagnose a session
+## Diagnose, control or recover a session
 
 Ask “Why does session 12 appear stuck?” in full Operator or Quick message.
 `ovrcr-session-care` resolves the current Project, Workspace and session run,
@@ -161,9 +161,19 @@ truncated content remains a gap, not proof of completion.
 
 Diagnosis reports what is known, unknown and the next supported action. It
 leaves processes, Unread, Input requests and ownership acknowledgements unchanged.
-Uncertain prior-process ownership requires human verification. This procedure is
-read-only: suggested control or conversation recovery is not performed, and it
-never substitutes a new conversation or replays an old prompt.
+Uncertain prior-process ownership requires human verification. Diagnosis alone
+is read-only; suggested actions are not performed.
+
+Explicit requests such as “Pause session 12”, “Stop session 12”, or “Resume the
+retained conversation for session 12” use the verified session/run and Server
+admission fences. Process resume and Conversation resume are different actions.
+A precise close request stops owned processes and archives the record without a
+redundant generic confirmation; it does not delete history or remove a Workspace.
+Terminal reopen starts a fresh shell. Agent recovery uses only its certified
+retained reference, never a picker, new conversation or replayed prompt. Failed
+recovery preserves the record and evidence; awaiting native attachment remains
+visible rather than being called successful recovery. Changed runs and uncertain
+ownership are refused, not automatically acknowledged or retried on replacements.
 
 ## Coordinate Workspace sessions
 

@@ -126,12 +126,19 @@ Done when the reply is visible, or when you stop because the screen is a menu, t
 A new workspace and its `local` shell stay up. Close a terminal, remove a workspace, or shut the server down only when the user asked. Live sessions and a dirty worktree block `workspace remove`. The root workspace cannot be removed.
 
 ```sh
-"$OVRCR_EXECUTABLE" terminal close ID
+"$OVRCR_EXECUTABLE" terminal close ID --expected-run RUN
 "$OVRCR_EXECUTABLE" workspace remove --project NAME --branch BRANCH
 ```
 
+For requested session control, capture `run` from `terminal list --json` and pass
+`--expected-run RUN` to `pause`, `resume`, `kill`, `terminal close` or
+`terminal reopen`. A changed run is refused at Server admission. Fenced Agent
+reopen requires certified recovery, never a picker or ownership acknowledgement;
+Terminal reopen starts a fresh shell. Confirm `recovery.attached` before claiming
+Conversation resume. Built-in Operator uses `ovrcr-session-care` for the procedure.
+
 ## When a command fails
 
-- `OVRCR server is not running`: project and workspace reads can continue offline. Kill, close, remove, send, and keystroke need the server. `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`, `project add`, `workspace create`, and the dashboard start one.
+- `OVRCR server is not running`: project and workspace reads can continue offline. Kill, close, remove, send, and keystroke need the server. `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`, `project add`, `workspace create`, and the dashboard start one. Fenced `terminal reopen --expected-run` instead requires the existing Server.
 - `protocol version mismatch`: the binary and the running server differ. Report the versions. Restart the server only when the user asked. `"$OVRCR_EXECUTABLE" shutdown --kill` stops their live sessions.
 - `agent admission unavailable`: relaunch through `agent run` without print mode or flags outside the eligible set. The interactive composer is the session to keep.

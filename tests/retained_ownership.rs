@@ -11,11 +11,9 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 fn cli(live: &Live, args: &[&str]) -> Output {
-    Command::new(&live.executable)
+    live.command()
         .args(args)
-        .env("OVRCR_HOME", &live.config)
-        .env("OVRCR_SOCKET", &live.socket)
-        .env("SHELL", "/bin/sh")
+        .env("OVRCR_SERVER_EXECUTABLE", &live.executable)
         .output()
         .unwrap()
 }
@@ -495,10 +493,31 @@ fn stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run() {
         ),
         "stale close must conflict: {stale:?}"
     );
+    for action in [
+        ovrcr::protocol::SessionControlAction::Pause,
+        ovrcr::protocol::SessionControlAction::Resume,
+        ovrcr::protocol::SessionControlAction::Stop,
+        ovrcr::protocol::SessionControlAction::Reopen,
+    ] {
+        assert!(
+            matches!(
+                live.request(Request::ControlSession {
+                    session,
+                    expected_run: SessionRunId(old_run),
+                    action,
+                }),
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "stale {action:?} must conflict at Server admission"
+        );
+    }
     let current = row(&live, id);
     assert_eq!(current["run"], old_run + 1);
     assert_eq!(current["phase"], "running");
-    assert!(pid_exists(pid), "stale close stopped run N+1");
+    assert!(pid_exists(pid), "stale control stopped run N+1");
     assert_eq!(
         live.request(Request::AgentReport(AgentReport {
             session,
@@ -523,6 +542,99 @@ fn stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run() {
         "current-run close left the shell group alive"
     );
     live.forget_group(pgid);
+}
+
+#[test]
+fn caller_bound_control_refuses_replacement_runs() {
+    let live = Live::binary();
+    live.ready("feature/caller-bound-control");
+    let created = create_terminal(&live, "exact-control", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    let run = created["run"].as_u64().unwrap();
+    let run_arg = run.to_string();
+    json(&live, &["pause", &id_arg, "--expected-run", &run_arg]);
+    assert_eq!(row(&live, id)["phase"], "paused");
+    json(&live, &["resume", &id_arg, "--expected-run", &run_arg]);
+    assert_eq!(row(&live, id)["phase"], "running");
+    json(&live, &["kill", &id_arg, "--expected-run", &run_arg]);
+    let stopped = wait_phase(&live, id, "exited");
+    assert_requires_ack(&stopped, false);
+    let reopened = json(
+        &live,
+        &["terminal", "reopen", &id_arg, "--expected-run", &run_arg],
+    );
+    track_groups(&live);
+    assert_eq!(reopened["run"], run + 1);
+    let pid = reopened["pid"].as_u64().unwrap() as libc::pid_t;
+    for args in [
+        vec!["pause", &id_arg, "--expected-run", &run_arg],
+        vec!["resume", &id_arg, "--expected-run", &run_arg],
+        vec!["kill", &id_arg, "--expected-run", &run_arg],
+        vec!["terminal", "kill", &id_arg, "--expected-run", &run_arg],
+        vec!["terminal", "reopen", &id_arg, "--expected-run", &run_arg],
+        vec!["terminal", "close", &id_arg, "--expected-run", &run_arg],
+    ] {
+        assert_eq!(json_error(&live, &args)["error"]["code"], "Conflict");
+        assert_eq!(row(&live, id)["phase"], "running");
+        assert_eq!(row(&live, id)["run"], run + 1);
+        assert!(
+            pid_exists(pid),
+            "stale request stopped replacement: {args:?}"
+        );
+    }
+    json(
+        &live,
+        &[
+            "terminal",
+            "close",
+            &id_arg,
+            "--expected-run",
+            &(run + 1).to_string(),
+        ],
+    );
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == id)
+    );
+}
+
+#[test]
+fn exact_reopen_without_conversation_refuses_picker_and_preserves_record() {
+    let live = Live::binary();
+    live.ready("feature/exact-recovery");
+    let Response::CreatedSession(created) = live.request(Request::CreateSession(
+        ovrcr::protocol::CreateSessionRequest {
+            project: live::PROJECT.into(),
+            workspace: live::WORKSPACE.into(),
+            name: "missing-reference".into(),
+            label: None,
+            kind: ovrcr::protocol::SessionKind::Agent { name: "pi".into() },
+            argv: vec!["/bin/sh".into()],
+        },
+    )) else {
+        panic!("create Agent")
+    };
+    track_groups(&live);
+    let id = created.id.0.to_string();
+    let run = created.run.0.to_string();
+    json(&live, &["kill", &id, "--expected-run", &run]);
+    let error = json_error(&live, &["terminal", "reopen", &id, "--expected-run", &run]);
+    assert_eq!(error["error"]["code"], "InvalidRequest");
+    let current = row(&live, created.id.0);
+    assert_eq!(current["run"], created.run.0);
+    assert_ne!(current["phase"], "running");
+    assert_eq!(current["archived"], false);
+    assert!(
+        current["recovery"]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("certified conversation")
+    );
+    assert_requires_ack(&current, false);
 }
 
 #[test]
@@ -553,6 +665,15 @@ fn ordinary_natural_exit_requires_ack_and_accepts_acknowledgement() {
     let id_arg = id.to_string();
     assert_ownership_uncertain(&json_error(&live, &["terminal", "reopen", &id_arg]));
     assert_eq!(row(&live, id)["run"], old_run);
+    let run_arg = old_run.to_string();
+    for args in [
+        vec!["terminal", "reopen", &id_arg, "--expected-run", &run_arg],
+        vec!["kill", &id_arg, "--expected-run", &run_arg],
+    ] {
+        assert_ownership_uncertain(&json_error(&live, &args));
+        assert_requires_ack(&row(&live, id), true);
+        assert_eq!(row(&live, id)["run"], old_run);
+    }
 
     json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
     let acknowledged = row(&live, id);

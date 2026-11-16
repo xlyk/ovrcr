@@ -154,9 +154,13 @@ fn agent_resume_command(
             }
             Err(error) => Err(error),
         },
-        None => Ok((
+        None if fallback => Ok((
             crate::recovery::terminal_command(&crate::recovery::picker_argv(name)?)?,
             false,
+        )),
+        None => Err(lifecycle_error(
+            ErrorCode::InvalidRequest,
+            "certified conversation reference is unavailable; no process started",
         )),
     }
 }
@@ -1013,10 +1017,25 @@ impl ServerState {
     }
 
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
+        self.set_session_paused_if_run(id, paused, None)
+    }
+
+    fn set_session_paused_if_run(
+        &self,
+        id: SessionId,
+        paused: bool,
+        expected_run: Option<SessionRunId>,
+    ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.reject_archive_lifecycle(id)?;
         let session = self.session_for_terminal_control(id)?;
+        if expected_run.is_some_and(|run| session.run() != run) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
+            ));
+        }
         let control = session.set_paused(paused).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, control, refresh)
@@ -1620,6 +1639,46 @@ impl ServerState {
         Ok(())
     }
 
+    /// Exact caller-bound actions share the ordinary lifecycle owners and guards.
+    pub fn control_session(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        action: ovrcr_protocol::SessionControlAction,
+        grace: Duration,
+    ) -> Result<Option<SessionSummary>> {
+        use ovrcr_protocol::SessionControlAction;
+        match action {
+            SessionControlAction::Pause | SessionControlAction::Resume => {
+                self.set_session_paused_if_run(
+                    id,
+                    action == SessionControlAction::Pause,
+                    Some(expected_run),
+                )?;
+                Ok(None)
+            }
+            SessionControlAction::Stop => {
+                self.kill_session_if_run(id, Some(expected_run), grace)?;
+                Ok(None)
+            }
+            SessionControlAction::Reopen => {
+                let _mutation = self.mutation_lock.lock().unwrap();
+                let summary = self
+                    .session_summary(id)
+                    .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+                // Legacy reopen reconciles N+1; an explicit request for N must not.
+                if summary.run != expected_run {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "session run changed; refresh inventory",
+                    ));
+                }
+                self.reopen_session_locked(id, expected_run, false, false)
+                    .map(Some)
+            }
+        }
+    }
+
     pub fn reopen_session(
         &self,
         id: SessionId,
@@ -1900,7 +1959,16 @@ impl ServerState {
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let target = self.control_target(id, None)?;
+        self.kill_session_if_run(id, None, grace)
+    }
+
+    fn kill_session_if_run(
+        &self,
+        id: SessionId,
+        expected_run: Option<SessionRunId>,
+        grace: Duration,
+    ) -> Result<()> {
+        let target = self.control_target(id, expected_run)?;
         let termination = match &target.session {
             Some(session) => session.terminate(grace),
             None => Err(anyhow::Error::new(AlreadyExited)),

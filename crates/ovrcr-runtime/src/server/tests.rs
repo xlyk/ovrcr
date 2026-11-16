@@ -9769,6 +9769,9 @@ fn agent_reopen_uses_the_native_picker_only_where_one_exists() {
             config_dir: root.path().to_path_buf(),
             options: vec![],
         });
+    // Caller-bound recovery never substitutes a picker, even without a reference.
+    assert!(agent_resume_command(SessionId(7), "claude", Some(&claude), false).is_err());
+    assert!(agent_resume_command(SessionId(7), "pi", None, false).is_err());
     // A broken exact reference falls back to the provider's own picker.
     assert_eq!(
         agent_resume_command(SessionId(7), "claude", Some(&claude), true).unwrap(),

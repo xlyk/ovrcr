@@ -145,11 +145,26 @@ pub(super) enum Command {
         follow: bool,
     },
     /// Stop a session's process group and keep its final screen.
-    Kill { id: u64 },
+    Kill {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Pause a running Workspace session with SIGSTOP; Operator conversations are not terminal targets.
-    Pause { id: u64 },
+    Pause {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Resume a paused Workspace session with SIGCONT; Operator conversations are not terminal targets.
-    Resume { id: u64 },
+    Resume {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Inspect or remove a session record.
     Session {
         #[command(subcommand)]
@@ -340,6 +355,9 @@ pub(super) enum TerminalCommand {
         id: u64,
         #[arg(long)]
         ack_stopped: bool,
+        /// Require this exact run and certified Agent recovery; never open a native picker or acknowledge ownership.
+        #[arg(long, conflicts_with = "ack_stopped")]
+        expected_run: Option<u64>,
     },
     /// Confirm old processes stopped without launching a session. Required after unverified or natural exits.
     AcknowledgeStopped {
@@ -402,6 +420,9 @@ pub(super) enum TerminalCommand {
     /// Stop currently owned work and archive the session record.
     Close {
         id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
     },
     /// Return an archived record to the active list without launching.
     Unarchive {
@@ -409,6 +430,9 @@ pub(super) enum TerminalCommand {
     },
     Kill {
         id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
     },
     Remove {
         id: u64,
@@ -705,6 +729,7 @@ mod launch_cli_tests {
             vec!["ovrcr", "terminal", "rename", "7", "--automatic"],
             vec!["ovrcr", "terminal", "reopen", "7"],
             vec!["ovrcr", "terminal", "reopen", "7", "--ack-stopped"],
+            vec!["ovrcr", "terminal", "reopen", "7", "--expected-run", "3"],
             vec!["ovrcr", "terminal", "acknowledge-stopped", "7"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
@@ -718,5 +743,24 @@ mod launch_cli_tests {
                 .is_err()
         );
         assert!(Cli::try_parse_from(["ovrcr", "terminal", "relaunch", "7"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "terminal",
+                "reopen",
+                "7",
+                "--expected-run",
+                "3",
+                "--ack-stopped"
+            ])
+            .is_err()
+        );
+        for command in ["pause", "resume", "kill"] {
+            assert!(Cli::try_parse_from(["ovrcr", command, "7"]).is_ok());
+            assert!(Cli::try_parse_from(["ovrcr", command, "7", "--expected-run", "3"]).is_ok());
+            assert!(
+                Cli::try_parse_from(["ovrcr", command, "7", "--expected-run", "invalid"]).is_err()
+            );
+        }
     }
 }

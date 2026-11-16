@@ -26,7 +26,7 @@ use ovrcr::config::{Registry, RegistryPath, load_registry};
 use ovrcr::protocol::client;
 use ovrcr::protocol::{ErrorCode, Request, Response};
 use ovrcr::server::{ServerPaths, run_server};
-use ovrcr::session::{SessionId, SessionSummary};
+use ovrcr::session::SessionSummary;
 use ovrcr::tui::run_dashboard;
 use serde_json::json;
 use std::os::unix::net::UnixStream;
@@ -164,22 +164,22 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::Workspace { command } => run_workspace(command, json_output),
         Command::Terminal { command } => run_terminal(command, json_output),
         Command::New(args) => create_terminal(args, json_output),
-        Command::Kill { id } => mutate_without_start(
-            Request::KillSession {
-                session: SessionId(id),
-            },
+        Command::Kill { id, expected_run } => resources::control_terminal(
+            id,
+            expected_run,
+            ovrcr::protocol::SessionControlAction::Stop,
             json_output,
         ),
-        Command::Pause { id } => mutate_without_start(
-            Request::PauseSession {
-                session: SessionId(id),
-            },
+        Command::Pause { id, expected_run } => resources::control_terminal(
+            id,
+            expected_run,
+            ovrcr::protocol::SessionControlAction::Pause,
             json_output,
         ),
-        Command::Resume { id } => mutate_without_start(
-            Request::ResumeSession {
-                session: SessionId(id),
-            },
+        Command::Resume { id, expected_run } => resources::control_terminal(
+            id,
+            expected_run,
+            ovrcr::protocol::SessionControlAction::Resume,
             json_output,
         ),
         Command::Session {
@@ -431,9 +431,13 @@ fn unexpected_response(response: Response) -> RuntimeError {
 /// legitimately wait out a termination grace period, so they get longer.
 fn request_timeout(request: &Request) -> Duration {
     let default = match request {
-        Request::KillSession { .. } | Request::CloseTerminal { .. } | Request::Shutdown { .. } => {
-            Duration::from_secs(60)
+        Request::KillSession { .. }
+        | Request::CloseTerminal { .. }
+        | Request::ControlSession {
+            action: ovrcr::protocol::SessionControlAction::Stop,
+            ..
         }
+        | Request::Shutdown { .. } => Duration::from_secs(60),
         _ => Duration::from_secs(30),
     };
     // Test seam so a wedged-server test does not wait half a minute.
