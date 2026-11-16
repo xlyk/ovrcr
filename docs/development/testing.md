@@ -500,6 +500,34 @@ checks both admission orderings, unrelated targets, projection uncertainty,
 exact-update replay, stale updates, persistence refusal and retired authority.
 The extension probe checks lost-ack mutation fencing and preserved warm watch state.
 
+Separately approved Workspace removal (installed Pi, relocated binary, real Git):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_cleanup_remove_workspace_partial_approval -- --ignored --nocapture
+cargo test -p ovrcr --test retained_sessions approved_workspace_removal
+cargo test -p ovrcr-runtime --lib workspace_removal
+```
+
+The owning cleanup fixture proposes three exact paths through full Operator,
+changes no resources, then approves only two through Quick: one checkout is
+removed and the newly dirty one refuses even with WIP saving enabled. The third
+stays unapproved. Actual CLI inventory, files, branches and archived original
+context are asserted independently of rendered results. The new relocated-image
+case admits its exact copied executable once with a bounded `--version` before
+Server startup and records the timing. This proves admitted-image relocation and
+application behavior, not cold-copy OS startup. Existing startup deadlines remain.
+
+Public retained-session regressions cover separate archive approval, changed
+branch/HEAD, new occupancy, registered id/path reuse and unregistered Git
+replacement, ignored provider history, uncertain archived ownership, Root, Git
+refusal, deferred registry-commit failure and strict refusal to replay a missing
+checkout. Runtime tests cover task admission ordering and pending watches of
+archived previous runs through the production removal owner with real Git.
+Protocol tests pin new request/response encodings and required observation fields.
+Native full/Quick keyboard and visible results remain a separate gate.
+
 Exact-run session control and native recovery (installed Pi):
 
 ```sh

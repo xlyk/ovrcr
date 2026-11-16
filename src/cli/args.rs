@@ -313,6 +313,17 @@ pub(super) enum WorkspaceCommand {
         #[command(flatten)]
         target: WorkspaceSelect,
     },
+    /// Inspect exact clean, unused non-Root state for a separate removal proposal; changes nothing.
+    RemovalPreview {
+        #[command(flatten)]
+        target: WorkspaceSelect,
+    },
+    /// Remove only the separately approved preview state. Never force, save WIP, or archive sessions.
+    RemoveApproved {
+        /// Original JSON from removal-preview, not refreshed after approval.
+        #[arg(long, value_parser = parse_workspace_removal)]
+        expected: ovrcr::protocol::WorkspaceRemovalObservation,
+    },
     /// Remove a worktree and archive stopped sessions. --force discards changes and acknowledges uncertain stopped rows; live sessions still block.
     #[command(visible_alias = "delete")]
     Remove {
@@ -322,6 +333,13 @@ pub(super) enum WorkspaceCommand {
         #[arg(long)]
         force: bool,
     },
+}
+
+fn parse_workspace_removal(
+    value: &str,
+) -> Result<ovrcr::protocol::WorkspaceRemovalObservation, String> {
+    serde_json::from_str(value)
+        .map_err(|error| format!("invalid Workspace removal observation: {error}"))
 }
 
 #[derive(Subcommand)]

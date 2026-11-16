@@ -222,10 +222,18 @@ retain their context and provider history. Reports separate verified completion,
 changed/skipped, refused and uncertain effects; lost replies are reconciled against
 inventory, never blindly retried with a new run.
 
-Live-Agent stop-and-archive and Workspace removal still report **Cleanup execution
-unavailable**. Archive approval cannot stop processes, acknowledge ownership,
-delete records or remove checkout files. No periodic check is started. A precise,
-separate request to close a named session retains session care's existing controls.
+Separately approve listed clean, unused non-Root Workspaces to remove just those
+checkouts. Every associated session must already be archived through its own
+approval. The proposal binds repository, Workspace id/path/Git generation,
+branch/HEAD and archived runs; changed state refuses at Server admission. Dirty
+files refuse even with automatic WIP saving on: cleanup never saves, pushes or
+forces removal. Branches and archived original context stay. Git/registry partial
+failures preserve recovery records and report actual state rather than rollback.
+
+Live-Agent stop-and-archive still reports **Cleanup execution unavailable**.
+Archive approval cannot stop processes, acknowledge ownership, delete records or
+remove checkout files. No periodic check is started. A precise, separate request
+to close a named session retains session care's existing controls.
 
 ## Coordinate Workspace sessions
 

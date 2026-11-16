@@ -514,6 +514,29 @@ Workspace identities, blockers and **Cleanup execution unavailable**. Add
 Keep read/tool receipts and final provider requests with the native evidence;
 headless classifications alone do not prove keyboard or visible outcomes.
 
+For separately approved Workspace removal, the same helper accepts these exact
+full/Quick inputs (replace the JSON placeholders with task-owned identities):
+
+```text
+/skill:ovrcr-cleanup Workspace cleanup {"mode":"preview","targets":[{"project":"PROJECT","path":"PATH"}]}
+/skill:ovrcr-cleanup Workspace cleanup {"mode":"remove","targets":[ORIGINAL_OBSERVATION_JSON]}
+```
+
+Prepare three clean non-Root checkouts in the private instance; archive any
+associated records through separate explicit approval first. Include an unmerged,
+unpublished commit and retain its branch ref. Send the preview from full Operator
+and capture the scoped proposal, read receipt and no-change outcome. Copy each
+original observation from the `WORKSPACE_CLEANUP` tool result; preserve it unchanged.
+Make one checkout dirty, enable `save_uncommitted_work` only in the private fixture,
+and approve that checkout plus one still-clean checkout through Quick, leaving
+the third unapproved. Capture `verified completed` and `refused` with screenshots
+and AX, then independently verify inventory, absent selected files, unchanged
+unapproved/dirty files, branch refs and archived original cwd/run/history. Restore
+the fixture's WIP setting before teardown. The helper's preview uses `main` only
+as its fixture base; production guidance requires the observed repository policy.
+These helper plans do not seed Workspaces or infer approval from an archive request.
+Retain request/tool JSON and original failed attempts alongside native receipts.
+
 For Workspace provisioning, use `OVRCR_OPERATOR_GUI_WORKSPACES=1` with the
 same private HOME ownership marker required by the coordinator helper. This seeds
 only the private Operator and Workspace Pi profiles; it creates no sessions.

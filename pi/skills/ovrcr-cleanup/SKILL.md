@@ -1,6 +1,6 @@
 ---
 name: ovrcr-cleanup
-description: Propose cleanup of stale sessions and unused Workspaces, then archive only approved stopped records. Use for housekeeping, old sessions, or reclaiming unused checkouts.
+description: Propose cleanup of stale sessions and unused Workspaces, then execute separately approved stopped-record archives and clean checkout removals. Use for housekeeping, old sessions, or reclaiming unused checkouts.
 ---
 
 # Review and approve OVRCR cleanup
@@ -12,9 +12,9 @@ inherited `"$OVRCR_EXECUTABLE" --version`, instance configuration and socket;
 no source checkout or personal skill installation is required.
 
 General cleanup is proposal-first: inspect, return exact proposed effects and
-wait for approval. Only **archive stopped record** can execute in this version.
-Live-Agent stop-and-archive and Workspace removal remain **Cleanup execution
-unavailable**. Never substitute generic close, kill, remove, ownership
+wait for approval. **Archive stopped record** and separately approved **remove
+Workspace checkout** can execute. Live-Agent stop-and-archive remains **Cleanup
+execution unavailable**. Never substitute generic close, kill, remove, ownership
 acknowledgement, Git cleanup or task cleanup for guarded execution. A separate
 direct instruction to close a named session belongs to `ovrcr-session-care`.
 Skill selection grants no authority.
@@ -109,13 +109,26 @@ task runs, unresolved ownership including archived rows, and provider-history
 dependencies block removal. Check retained conversation evidence even when Git
 is clean: ignored provider history is still valuable. Inventory may identify a
 conversation without exposing its history location; report **provider-history
-location unverified** and preserve the checkout until that dependency is resolved.
-A reference can point outside its session's original cwd: inspect references
-across the instance, including archived rows outside a narrowed action scope.
-If a reference's location cannot be verified, do not infer that another unused
-checkout is independent of it. Do not read private provider profiles or modify
-the registry to fill the gap.
+location unverified** until the Server's read-only check below verifies retained
+references across the instance, including archived rows outside the action scope.
+A reference can point outside its session's original cwd. Do not read private
+provider profiles or modify the registry to fill gaps. Unregistered or otherwise
+uncertain history evidence still blocks removal even after a successful check.
 Git/identity/read failures also block a safe-removal inference.
+
+All associated records must already be archived. Stopped active-list records need
+separate archive proposals and approvals first; removal cannot archive them.
+For each otherwise eligible exact path, obtain the original approval state:
+
+```sh
+"$OVRCR_EXECUTABLE" --json workspace removal-preview --project PROJECT --path PATH
+```
+
+This read-only command returns JSON binding Project repository, Workspace id,
+path, Git generation, branch, HEAD and archived session runs. It checks Root,
+cleanliness, occupancy, task/watch/assignment ownership and retained provider
+history without changing anything. Record the entire JSON with the proposal.
+A refusal leaves the candidate protected; do not substitute ordinary remove.
 
 For a clean, unused non-Root Workspace with resolved ownership/history evidence,
 propose **remove Workspace checkout**, separately from any session action. Explain
@@ -174,3 +187,30 @@ what happened; never blindly replay, refresh approval to a newer run, or claim a
 lost response proves no change. If disposition cannot be established, retain the
 original approval and evidence and report uncertainty. Permanent record deletion,
 branch deletion and Workspace removal are not effects of archive approval.
+
+## 6. Execute separately approved Workspace removals
+
+Match approval to the listed **remove Workspace checkout** action and its original
+JSON. An archive-only approval or broad approval of session cleanup never includes
+checkout removal. Honor partial approval; leave other candidates unchanged.
+
+```sh
+"$OVRCR_EXECUTABLE" --json workspace remove-approved --expected "$APPROVED_OBSERVATION_JSON"
+```
+
+Pass the original JSON unchanged, not a fresh preview substituted after approval.
+The Server revalidates under task and lifecycle admission, rejects changed state,
+and uses non-forced Git removal. Dirty files refuse even when automatic WIP saving
+is on: no WIP commit, push, force, acknowledgement or session archive is authorized.
+No fallback to `workspace remove`, task cleanup or direct Git deletion is allowed.
+
+After each result, read Workspace and archived inventories and inspect the original
+path, Git worktree list and branch ref. Done means the approved id is absent, its
+checkout is gone, and branches and archived original context remain. Report
+refused and uncertain actions separately. A Git refusal leaves files and records;
+PartialFailure can mean Git removed files but registry commit failed. Preserve
+records and recovery evidence, report actual state, and reconcile the original
+id/path/generation without replay or a replacement approval. A lost response does
+not prove rollback. Missing or replacement checkouts require reconciliation, not
+blind retry. Project unregistration and permanent branch/record deletion remain
+separate explicit requests.

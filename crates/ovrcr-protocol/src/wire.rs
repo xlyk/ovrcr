@@ -658,6 +658,25 @@ pub enum Request {
         expected_run: SessionRunId,
         action: SessionControlAction,
     },
+    /// Read-only eligibility and exact state for a separate Workspace-removal approval.
+    PreviewWorkspaceRemoval {
+        project: String,
+        workspace: String,
+    },
+    /// Never force, save WIP, acknowledge ownership or archive active-list records.
+    RemoveApprovedWorkspace(Box<WorkspaceRemovalObservation>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRemovalObservation {
+    pub project: String,
+    pub repo: PathBuf,
+    pub workspace_root: PathBuf,
+    pub workspace: crate::WorkspaceRecord,
+    pub head: String,
+    /// All associated records are already archived; run changes invalidate approval.
+    pub archived_sessions: Vec<(SessionId, SessionRunId)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -771,6 +790,7 @@ pub enum Response {
     InitialPromptIntent(InitialPromptIntentId),
     InitialPromptIntents(Vec<InitialPromptIntentSnapshot>),
     ScreenWindow(Box<ScreenWindow>),
+    WorkspaceRemoval(Box<WorkspaceRemovalObservation>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1130,6 +1150,57 @@ mod wire_snapshot {
             name: "custom".into(),
         };
         assert!(request.validate().is_err());
+    }
+
+    fn workspace_removal() -> WorkspaceRemovalObservation {
+        WorkspaceRemovalObservation {
+            project: "p".into(),
+            repo: "/r".into(),
+            workspace_root: "/w".into(),
+            workspace: crate::WorkspaceRecord {
+                id: "w".into(),
+                path: "/w/a".into(),
+                branch: "b".into(),
+                git_identity: Some("g".into()),
+                setup_pending: false,
+            },
+            head: "h".into(),
+            archived_sessions: vec![(SessionId(1), SessionRunId(4))],
+        }
+    }
+
+    #[test]
+    fn workspace_removal_observation_round_trips_and_requires_original_state() {
+        let expected = workspace_removal();
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            serde_json::from_value::<WorkspaceRemovalObservation>(json.clone()).unwrap(),
+            expected
+        );
+        for key in [
+            "project",
+            "repo",
+            "workspace_root",
+            "workspace",
+            "head",
+            "archived_sessions",
+        ] {
+            let mut missing = json.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(
+                serde_json::from_value::<WorkspaceRemovalObservation>(missing).is_err(),
+                "{key}"
+            );
+        }
+        let mut forced = json;
+        forced["force"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<WorkspaceRemovalObservation>(forced).is_err());
+        let request = Request::RemoveApprovedWorkspace(Box::new(expected));
+        let bytes = bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+        let (decoded, used): (Request, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, request);
+        assert_eq!(used, bytes.len());
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -1591,11 +1662,26 @@ mod wire_snapshot {
                     action: SessionControlAction::ArchiveStopped,
                 },
             ),
+            (
+                "PreviewWorkspaceRemoval",
+                Request::PreviewWorkspaceRemoval {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                },
+            ),
+            (
+                "RemoveApprovedWorkspace",
+                Request::RemoveApprovedWorkspace(Box::new(workspace_removal())),
+            ),
         ]
     }
 
     fn responses() -> Vec<(&'static str, Response)> {
         vec![
+            (
+                "WorkspaceRemoval",
+                Response::WorkspaceRemoval(Box::new(workspace_removal())),
+            ),
             ("Ok", Response::Ok),
             (
                 "Hierarchy",
@@ -4454,13 +4540,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a045b017301630168016c0104",
+            "2a045c017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f045b017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f045c017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4487,9 +4573,18 @@ mod wire_snapshot {
         ("Request::ControlSessionStop", "43010402"),
         ("Request::ControlSessionReopen", "43010403"),
         ("Request::ControlSessionArchiveStopped", "43010404"),
+        ("Request::PreviewWorkspaceRemoval", "4401700177"),
+        (
+            "Request::RemoveApprovedWorkspace",
+            "450170022f72022f770177042f772f610162010167000168010104",
+        ),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
+        ),
+        (
+            "Response::WorkspaceRemoval",
+            "200170022f72022f770177042f772f610162010167000168010104",
         ),
         ("Response::Ok", "00"),
         ("Response::Hierarchy", "01000000"),
@@ -4515,18 +4610,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d045b0000"),
+        ("Response::NotificationNavigation", "0d045c0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e045b017301630168016c0104",
+            "0e01016e045c017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f010708090101690101045b017301630168016c0164",
+            "0f010708090101690101045c017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "10045b010708090101690101045b017301630168016c0164",
+            "10045c010708090101690101045c017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4566,7 +4661,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e045b017301630168016c0104",
+            "08016e045c017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

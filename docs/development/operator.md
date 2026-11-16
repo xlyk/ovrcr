@@ -122,12 +122,23 @@ preconditions. Exact Agent reopen forbids picker fallback and ownership
 acknowledgement, and reports native attachment separately from process creation.
 `ovrcr-cleanup` is proposal-first: it uses inventory, existing watch/task metadata
 and read-only Git observations and defaults to instance-wide 24-hour stale review.
-Only selected approved stopped-record archives execute, through caller-bound
-`ControlSession::ArchiveStopped`; live stop-and-archive and Workspace removal
-remain unavailable. No generic close fallback is permitted. `terminal list --json` exposes the
-existing content-free `assignment_control` view when available; its absence is
-not proof that work is unowned. Inventory does not expose provider-history paths,
-so an unverifiable location remains a Workspace-removal blocker.
+Selected approved stopped-record archives execute through caller-bound
+`ControlSession::ArchiveStopped`. Separately approved checkout removal uses
+`PreviewWorkspaceRemoval` / `RemoveApprovedWorkspace` (protocol 92), with no new
+store: the observation binds repository, Workspace generation/path/branch/HEAD
+and archived session runs. Task admission precedes the Server mutation lock and
+is held through Git/registry commit. Every associated row must already be archived;
+attention, assignment, task, uncertain ownership and current or queued watch
+protection still block. Read-only preview and removal share the existing Root,
+Git identity and retained provider-history checks. Strict removal bypasses WIP
+publication, force and task-ownership release; ordinary removal is unchanged.
+Missing checkouts refuse strict replay, preserving partial-failure evidence.
+Live stop-and-archive remains unavailable; no generic close/remove fallback is
+permitted. `terminal list --json` exposes the existing content-free
+`assignment_control` view when available; its absence is not proof that work is
+unowned. Inventory does not expose provider-history paths; the read-only Server
+preview checks retained references, while other unverifiable history remains a
+Workspace-removal blocker.
 Each cold worker launch refreshes the
 complete bundle with mode 0600 files in private directories. Existing symlinked,
 foreign-owned or writable asset paths are refused. Warm turns, session switching

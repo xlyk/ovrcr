@@ -108,6 +108,21 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
                 print_workspace,
             )
         }
+        WorkspaceCommand::RemovalPreview { target } => {
+            let (registry, _) = inspect()?;
+            let workspace = select_workspace(&registry, &target)?;
+            match request_without_start(Request::PreviewWorkspaceRemoval {
+                project: target.project,
+                workspace: workspace.id.clone(),
+            })? {
+                Response::WorkspaceRemoval(observation) => print_json(&json!(observation)),
+                response => Err(unexpected_response(response)),
+            }
+        }
+        WorkspaceCommand::RemoveApproved { expected } => mutate_without_start(
+            Request::RemoveApprovedWorkspace(Box::new(expected)),
+            json_output,
+        ),
         WorkspaceCommand::Remove { target, force } => {
             let (registry, _) = inspect()?;
             let workspace = select_workspace(&registry, &target)?;

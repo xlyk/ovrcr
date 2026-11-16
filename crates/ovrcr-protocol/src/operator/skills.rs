@@ -40,7 +40,7 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         assets: &[],
     },
     BundledSkill {
-        revision: 2,
+        revision: 3,
         name: "ovrcr-cleanup",
         document: include_str!("../../../../pi/skills/ovrcr-cleanup/SKILL.md"),
         assets: &[],

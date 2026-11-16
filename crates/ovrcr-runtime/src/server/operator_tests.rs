@@ -840,6 +840,140 @@ fn stopped_archive_and_watch_admission_share_exact_run_protection() {
 }
 
 #[test]
+fn approved_workspace_removal_protects_pending_watches_of_archived_previous_runs() {
+    let mut live = LiveOperator::new();
+    let repo = live.root.path().join("repo");
+    let workspaces = live.root.path().join("workspaces");
+    fs::create_dir(&repo).unwrap();
+    fs::create_dir(&workspaces).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let repo = repo.canonicalize().unwrap();
+    let workspaces = workspaces.canonicalize().unwrap();
+    live.state
+        .registry
+        .lock()
+        .unwrap()
+        .add_project(ProjectRecord {
+            name: "fixture".into(),
+            repo: repo.clone(),
+            workspace_root: workspaces.clone(),
+            workspaces: vec![WorkspaceRecord {
+                id: "root".into(),
+                path: repo.clone(),
+                branch: "main".into(),
+                git_identity: Some(crate::git::capture_worktree_identity(&repo).unwrap()),
+                setup_pending: false,
+            }],
+        })
+        .unwrap();
+    live.state
+        .create_task_workspace(
+            "fixture".into(),
+            "work".into(),
+            "feature".into(),
+            "main".into(),
+        )
+        .unwrap();
+    let row = live
+        .state
+        .retained
+        .lock()
+        .create(SessionMetadata {
+            scope: SessionScope::Workspace,
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: "watched".into(),
+            label: "shell".into(),
+            cwd: workspaces.join("work"),
+            kind: SessionKind::Terminal,
+            pinned_title: None,
+            application_title: None,
+        })
+        .unwrap();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+    let update = |revision, targets| {
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity: OperatorRunIdentity {
+                    conversation: c.id,
+                    session: c.session,
+                    run: turn.identity.run,
+                },
+                update: OperatorWatchUpdate { revision, targets },
+            },
+        }))
+    };
+    assert!(matches!(
+        update(
+            1,
+            vec![OperatorWatchTarget {
+                session: row.id,
+                run: row.run
+            }]
+        ),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    // Precise direct close remains legal; queued reports still protect the old run.
+    live.state
+        .close_terminal(row.id, row.run, Duration::ZERO)
+        .unwrap();
+    assert!(live.state.session_summary(row.id).unwrap().archived);
+    assert!(
+        live.state
+            .preview_workspace_removal("fixture", "work")
+            .unwrap_err()
+            .to_string()
+            .contains("watch")
+    );
+    assert!(workspaces.join("work").is_dir());
+    assert!(matches!(
+        update(2, vec![]),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    let approved = live
+        .state
+        .preview_workspace_removal("fixture", "work")
+        .unwrap();
+    live.state.remove_approved_workspace(&approved).unwrap();
+    assert!(!workspaces.join("work").exists());
+    assert!(live.state.session_summary(row.id).unwrap().archived);
+    assert!(
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["rev-parse", "--verify", "feature"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn operator_worker_completes_and_retires_with_stop_proof() {
     let mut live = LiveOperator::new();
     let c = live.open();
