@@ -61,6 +61,11 @@ const BUNDLED_SKILLS: &[BundledSkill] = &[
         document: include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md"),
         assets: &[],
     },
+    BundledSkill {
+        name: "ovrcr-workspaces",
+        document: include_str!("../../pi/skills/ovrcr-workspaces/SKILL.md"),
+        assets: &[],
+    },
 ];
 
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
@@ -1079,6 +1084,12 @@ mod tests {
                     .join("ovrcr-coordinator/SKILL.md")
                     .to_str()
                     .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-workspaces/SKILL.md")
+                    .to_str()
+                    .unwrap(),
                 "--no-prompt-templates",
                 "--no-themes",
                 "--no-context-files",
@@ -1123,7 +1134,12 @@ mod tests {
             fs::read_to_string(&reference).unwrap(),
             include_str!("../../pi/skills/ovrcr-status/references/inventory.md")
         );
-        for asset in [&status, &reference] {
+        let workspaces = paths.profile.join("ovrcr-workspaces/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&workspaces).unwrap(),
+            include_str!("../../pi/skills/ovrcr-workspaces/SKILL.md")
+        );
+        for asset in [&status, &reference, &workspaces] {
             let metadata = fs::symlink_metadata(asset).unwrap();
             assert!(metadata.is_file());
             assert_eq!(metadata.mode() & 0o777, 0o600);

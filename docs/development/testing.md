@@ -393,6 +393,25 @@ any provider request. Personal, Project and unregistered skill sentinels stay
 undiscovered. These controlled-provider tests prove composition and resource
 effects, not an unconstrained model's choice of procedure or native keyboard use.
 
+Workspace provisioning (installed Pi, relocated matching CLI, real Git and PTYs):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_workspaces -- --ignored --nocapture
+```
+
+The production Dashboard driver loads the complete bundled procedure and drives
+inspection without registration, explicit-base creation, Workspace/Terminal reuse,
+and all three automatic-local-terminal policies. A managed installed Pi session
+must return a real provider response through its PTY with an Unread observation;
+process creation and successful input alone do not pass. Separate real-checkout
+cases exercise ambiguous branches, detached targeting, off-default Root launch
+refusal, and an unanswered permission screen in a shell carrying a Pi label.
+The controlled provider executes `tests/fixtures/operator-pi/workspaces.py` through
+Pi's admitted Bash tool. Assertions check actual CLI/Git/session results; these
+cases do not prove an unconstrained model's judgment or native keyboard use.
+
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 
