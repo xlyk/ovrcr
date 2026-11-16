@@ -151,7 +151,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                 }
                 let effect = if age.is_none() {
                     "unknown age; preserve"
-                } else if age.unwrap() < hours * 3_600_000 {
+                } else if age.is_some_and(|age| age < hours * 3_600_000) {
                     "below threshold; preserve"
                 } else if !blockers.is_empty() {
                     "protected; preserve"
@@ -420,6 +420,20 @@ fn installed_pi_operator_cleanup_preview_preserves_resources() {
         );
         protected.push((id, reason));
     }
+    let Response::CreatedSession(missing) =
+        live.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: "missing-reporter".into(),
+            label: None,
+            kind: SessionKind::Agent { name: "pi".into() },
+            argv: vec!["/bin/sh".into()],
+        }))
+    else {
+        panic!("unreported Agent fixture")
+    };
+    live.own_group(missing.pid.unwrap() as i32);
+    protected.push((missing.id, "reporting unavailable"));
     let (idle, idle_owner) = status_agent(&live, "care-omp");
     owners.push(idle_owner);
     // The native task runner remains held in a real Git Workspace throughout preview.
