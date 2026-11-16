@@ -46,10 +46,12 @@ fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
     let bin = live.root.path().join("fake-native-bin");
     std::fs::create_dir(&bin).unwrap();
     let executable = bin.join("claude");
+    // Both prompted and blank launches are interactive; stay live until the
+    // Server stops this owned session instead of racing teardown with exit(0).
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\ncase \"$1\" in auth|--version|--output-format) exit 0 ;; esac\nprintf '%s\\n' '{FAKE_LAUNCH_MARKER}' >> \"${CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${CAPTURE_ENV}\"; done\nif [ \"$OVRCR_TEST_FAKE_CLAUDE_INTERACTIVE\" = \"1\" ]; then IFS= read -r input || exit 0; printf 'INPUT:%s\\n' \"$input\" >> \"${CAPTURE_ENV}\"; fi\nexit 0\n"
+            "#!/bin/sh\ncase \"$1\" in auth|--version|--output-format) exit 0 ;; esac\nprintf '%s\\n' '{FAKE_LAUNCH_MARKER}' >> \"${CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${CAPTURE_ENV}\"; done\nwhile IFS= read -r input; do if [ \"$OVRCR_TEST_FAKE_CLAUDE_INTERACTIVE\" = \"1\" ]; then printf 'INPUT:%s\\n' \"$input\" >> \"${CAPTURE_ENV}\"; fi; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -1577,21 +1579,26 @@ fn blank_prompt_uses_the_same_deduplicated_interactive_intent() {
     };
     assert_eq!(duplicate, vec![accepted]);
 
-    let input = "T392_INTERACTIVE_INPUT_5ddf28a2";
-    assert_eq!(
-        live.request(Request::SendTerminal {
-            session,
-            text: input.into(),
-            submit: true,
-        }),
-        Response::Ok
-    );
-    let output = wait_for_capture(&capture, &format!("INPUT:{input}"));
-    assert_eq!(
-        fake_launch_count(&output),
-        1,
-        "duplicate Start did not spawn twice"
-    );
+    // A blank launch stays interactive after its first input, until explicit stop.
+    for input in [
+        "T392_INTERACTIVE_INPUT_5ddf28a2",
+        "T392_SECOND_INTERACTIVE_INPUT_64da127b",
+    ] {
+        assert_eq!(
+            live.request(Request::SendTerminal {
+                session,
+                text: input.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        let output = wait_for_capture(&capture, &format!("INPUT:{input}"));
+        assert_eq!(
+            fake_launch_count(&output),
+            1,
+            "duplicate Start did not spawn twice"
+        );
+    }
     let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
         panic!("expected retained session inventory")
     };

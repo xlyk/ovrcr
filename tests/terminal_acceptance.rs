@@ -2102,7 +2102,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     click_pane_header(&mut dashboard, "waiting")?;
     // A single header click focuses its pane and enters Terminal mode. Leave
     // that mode before the resize keys so they reach the Dashboard dispatcher.
-    dashboard.send(b"\x07\x1b")?;
+    dashboard.send(b"\x07\x1b[27u")?;
     dashboard.wait_until(browse_screen, wait_deadline())?;
     dashboard.send(b">>")?;
     wait_focused_ready(&mut dashboard, "waiting")?;
@@ -2164,7 +2164,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
     // Browse z zooms the focused pane and sends the new full terminal geometry
     // through the real Server view handshake to the child PTY.
     dashboard.send(b"\x07")?;
-    dashboard.send(b"\x1b")?;
+    dashboard.send(b"\x1b[27u")?;
     dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.send(b"z")?;
     dashboard.wait_until(
@@ -2185,7 +2185,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         ratatui::layout::Rect::new(40, 3, 80, 36),
         "THIRD_SIZE_ACK_36 80",
     )?;
-    dashboard.send(b"\x07\x1b")?;
+    dashboard.send(b"\x07\x1b[27u")?;
     dashboard.wait_until(|screen| screen.contains("BROWSE"), wait_deadline())?;
 
     // Tab keeps zoom active while moving to another pane. The Panes popup can
@@ -2222,13 +2222,16 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
 
     // The mouse has now delivered a double-click natively in the compiled
     // Dashboard path. Verify header zoom and restoration against the real PTY.
-    dashboard.send(b"\x07\x1b")?;
     dashboard.wait_until(browse_screen, wait_deadline())?;
     let (header_column, header_row) = pane_header_point(&dashboard, "waiting")?;
     let header_down = format!("\x1b[<0;{};{}M", header_column + 1, header_row + 1);
     let header_up = format!("\x1b[<0;{};{}m", header_column + 1, header_row + 1);
+    // A bare Escape followed by SGR mouse input can be parsed as Esc+Esc,
+    // leaving '[' as the Copy binding. CSI-u is self-delimiting. One write
+    // pins that coalescing boundary instead of relying on scheduler timing.
     dashboard.send(
         [
+            b"\x07\x1b[27u".as_slice(),
             header_down.as_bytes(),
             header_up.as_bytes(),
             header_down.as_bytes(),
@@ -2257,7 +2260,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         36,
         80,
     )?;
-    dashboard.send(b"\x07\x1b")?;
+    dashboard.send(b"\x07\x1b[27u")?;
     dashboard.wait_until(browse_screen, wait_deadline())?;
     dashboard.send(
         [
@@ -2270,7 +2273,7 @@ fn nested_four_pane_terminal_acceptance_preserves_sessions_and_pty_sizes() -> Re
         .as_slice(),
     )?;
     dashboard.wait_until(restored, wait_deadline())?;
-    dashboard.send(b"\x07\x1b")?;
+    dashboard.send(b"\x07\x1b[27u")?;
     dashboard.wait_until(browse_screen, wait_deadline())?;
 
     // Directional focus and swap use the same path in the real Dashboard. The
