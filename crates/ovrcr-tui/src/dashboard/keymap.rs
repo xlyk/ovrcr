@@ -237,6 +237,9 @@ impl KeyBinding {
             return false;
         }
         if let Action::OperatorKey(code, modifiers) = self.action {
+            if self.key == "↑/↓" && code == KeyCode::Down && modifiers.is_empty() {
+                return matches!(key.code, KeyCode::Up | KeyCode::Down) && key.modifiers.is_empty();
+            }
             return key.code == code && key.modifiers == modifiers;
         }
         if self.action == Action::SidebarJump {
@@ -546,13 +549,77 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 Action::OperatorKey(code, modifiers),
             )
         };
-        if dashboard.operator_reasoning_picker_open() {
+        if let Some(overlay) = dashboard.operator_overlay_keymap() {
+            use super::operator::OperatorOverlayKeymap;
+            return match overlay {
+                OperatorOverlayKeymap::ModelPicker => vec![KeyGroup {
+                    title: "Operator model".into(),
+                    keys: vec![
+                        native("↑/↓", "Select", KeyCode::Down, KeyModifiers::NONE),
+                        native("Enter", "Pick", Enter, KeyModifiers::NONE),
+                        native("Ctrl-c", "Clear", Char('c'), KeyModifiers::CONTROL),
+                        native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    ],
+                }],
+                OperatorOverlayKeymap::ReasoningPicker => vec![KeyGroup {
+                    title: "Operator reasoning".into(),
+                    keys: vec![
+                        native("↑/↓", "Select", KeyCode::Down, KeyModifiers::NONE),
+                        native("Enter", "Pick", Enter, KeyModifiers::NONE),
+                        native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    ],
+                }],
+                OperatorOverlayKeymap::SessionModal => vec![KeyGroup {
+                    title: "Operator session".into(),
+                    keys: vec![
+                        native("Esc", "Close", Esc, KeyModifiers::NONE),
+                        native("Enter", "Close", Enter, KeyModifiers::NONE),
+                        native("q", "Close", Char('q'), KeyModifiers::NONE),
+                    ],
+                }],
+                OperatorOverlayKeymap::TreeLoading => vec![KeyGroup {
+                    title: "Operator tree".into(),
+                    keys: vec![native("Esc", "Close", Esc, KeyModifiers::NONE)],
+                }],
+                OperatorOverlayKeymap::TreeBrowse => vec![KeyGroup {
+                    title: "Operator tree".into(),
+                    keys: vec![
+                        native("↑/↓", "Select", KeyCode::Down, KeyModifiers::NONE),
+                        native("Enter", "Switch", Enter, KeyModifiers::NONE),
+                        native("Tab", "Filter mode", Tab, KeyModifiers::NONE),
+                        native("Ctrl-f", "Filter mode", Char('f'), KeyModifiers::CONTROL),
+                        native("Ctrl-u", "User-only", Char('u'), KeyModifiers::CONTROL),
+                        native("Ctrl-c", "Clear", Char('c'), KeyModifiers::CONTROL),
+                        native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    ],
+                }],
+                OperatorOverlayKeymap::TreeConfirmSummarize => vec![KeyGroup {
+                    title: "Summarize branch".into(),
+                    keys: vec![
+                        native("↑/↓", "Select", KeyCode::Down, KeyModifiers::NONE),
+                        native("Enter", "Confirm", Enter, KeyModifiers::NONE),
+                        native("Esc", "Back", Esc, KeyModifiers::NONE),
+                    ],
+                }],
+                OperatorOverlayKeymap::TreeCustomInstructions => vec![KeyGroup {
+                    title: "Summarize branch".into(),
+                    keys: vec![
+                        native("Enter", "Summarize", Enter, KeyModifiers::NONE),
+                        native("Ctrl-c", "Clear", Char('c'), KeyModifiers::CONTROL),
+                        native("Esc", "Back", Esc, KeyModifiers::NONE),
+                    ],
+                }],
+            };
+        }
+        if dashboard.operator_slash_menu_open() {
             return vec![KeyGroup {
-                title: "Operator reasoning".into(),
+                title: "Operator commands".into(),
                 keys: vec![
-                    native("↑/↓", "Select level", KeyCode::Down, KeyModifiers::NONE),
-                    native("Enter", "Pick", Enter, KeyModifiers::NONE),
-                    native("Esc", "Close", Esc, KeyModifiers::NONE),
+                    native("↑/↓", "Select command", KeyCode::Down, KeyModifiers::NONE),
+                    native("Tab", "Complete", Tab, KeyModifiers::NONE),
+                    native("Enter", "Run", Enter, KeyModifiers::NONE),
+                    native("Esc", "Dismiss", Esc, KeyModifiers::NONE),
+                    native("Ctrl-g", "Browse", Char('g'), KeyModifiers::CONTROL),
                 ],
             }];
         }
@@ -1315,6 +1382,57 @@ fn mode_keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         groups
     };
     groups
+}
+
+pub(super) fn operator_overlay_footer_lines(
+    dashboard: &Dashboard,
+    max_width: usize,
+) -> Vec<String> {
+    use super::operator::OperatorOverlayKeymap;
+    use unicode_width::UnicodeWidthStr;
+
+    let typing_prefix = match dashboard.operator_overlay_keymap() {
+        Some(OperatorOverlayKeymap::ModelPicker) => Some("Type filter"),
+        Some(OperatorOverlayKeymap::TreeBrowse) => Some("Type search"),
+        Some(OperatorOverlayKeymap::TreeCustomInstructions) => Some("Type instructions"),
+        _ => None,
+    };
+    let groups = keymap(dashboard);
+    let mut coalesced: Vec<(Vec<&'static str>, &'static str)> = Vec::new();
+    for binding in groups
+        .first()
+        .into_iter()
+        .flat_map(|group| &group.keys)
+        .filter(|b| b.enabled())
+    {
+        if let Some((keys, prev_name)) = coalesced.last_mut()
+            && *prev_name == binding.name
+        {
+            keys.push(binding.key);
+        } else {
+            coalesced.push((vec![binding.key], binding.name));
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(prefix) = typing_prefix {
+        parts.push(prefix.to_owned());
+    }
+    for (keys, name) in coalesced {
+        parts.push(format!("{} {}", keys.join("/"), name.to_ascii_lowercase()));
+    }
+    let limit = max_width.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    for part in parts {
+        if let Some(last) = lines.last_mut()
+            && last.width() + 3 + part.width() <= limit
+        {
+            last.push_str(" · ");
+            last.push_str(&part);
+        } else {
+            lines.push(part);
+        }
+    }
+    lines
 }
 
 #[cfg(test)]

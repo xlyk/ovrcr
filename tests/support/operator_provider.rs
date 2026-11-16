@@ -33,6 +33,8 @@ use std::{
 pub const PROVIDER: &str = "fixture";
 pub const MODEL: &str = "operator-fixture";
 pub const MODEL_ID: &str = "fixture/operator-fixture";
+pub const FAST_MODEL: &str = "operator-fixture-fast";
+pub const FAST_MODEL_ID: &str = "fixture/operator-fixture-fast";
 pub const API_KEY: &str = "fixture-synthetic-key";
 const CONTEXT_WINDOW: u64 = 200_000;
 
@@ -226,17 +228,28 @@ impl Provider {
                     "baseUrl": format!("{}/v1", self.base),
                     "api": "openai-completions",
                     "apiKey": API_KEY,
-                    "models": [{
-                        "id": MODEL,
-                        "name": "Fixture Operator",
-                        // Keep delta.reasoning_content visible through pi's
-                        // openai-completions thinking deltas.
-                        "reasoning": true,
-                        "input": ["text"],
-                        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-                        "contextWindow": context_window,
-                        "maxTokens": 1024
-                    }]
+                    "models": [
+                        {
+                            "id": MODEL,
+                            "name": "Fixture Operator",
+                            // Keep delta.reasoning_content visible through pi's
+                            // openai-completions thinking deltas.
+                            "reasoning": true,
+                            "input": ["text"],
+                            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                            "contextWindow": context_window,
+                            "maxTokens": 1024
+                        },
+                        {
+                            "id": FAST_MODEL,
+                            "name": "Fixture Operator Fast",
+                            "reasoning": true,
+                            "input": ["text"],
+                            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                            "contextWindow": context_window,
+                            "maxTokens": 1024
+                        }
+                    ]
                 }
             }
         });
@@ -500,8 +513,21 @@ pub fn content_text(content: &Value) -> String {
     }
 }
 
+/// Whether the request is Pi's `/tree` branch-summarization call.
+pub fn is_branch_summary_request(body: &Value) -> bool {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    messages.iter().any(|message| {
+        content_text(&message["content"])
+            .to_lowercase()
+            .contains("summary of this conversation branch")
+    })
+}
+
 /// Whether the request is Pi's compaction summarization call.
 pub fn is_compaction_request(body: &Value) -> bool {
+    if is_branch_summary_request(body) {
+        return false;
+    }
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     messages.iter().any(|message| {
         let text = content_text(&message["content"]).to_lowercase();
@@ -597,5 +623,15 @@ mod tests {
             ]
         });
         assert!(is_compaction_request(&compaction));
+        assert!(!is_branch_summary_request(&compaction));
+
+        let branch_summary = json!({
+            "messages": [
+                {"role": "system", "content": "You are a context summarization assistant."},
+                {"role": "user", "content": "<conversation>\n...\n</conversation>\n\nCreate a structured summary of this conversation branch for context when returning later."}
+            ]
+        });
+        assert!(is_branch_summary_request(&branch_summary));
+        assert!(!is_compaction_request(&branch_summary));
     }
 }

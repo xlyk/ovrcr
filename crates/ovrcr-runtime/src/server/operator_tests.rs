@@ -445,7 +445,40 @@ fn operator_worker_fixture() {
     assert_eq!(identity.conversation, run_identity.conversation);
     assert_eq!(identity.session, run_identity.session);
     assert_eq!(identity.run, run_identity.run);
-    assert_eq!(start.text, "fixture prompt");
+    let initial_events = match &start.submission {
+        OperatorWorkerSubmission::Prompt { text, .. } => {
+            assert!(!text.is_empty());
+            vec![
+                OperatorWorkerEvent::AssistantDelta("partial".into()),
+                OperatorWorkerEvent::ModelSelected {
+                    provider: "fixture".into(),
+                    id: "offline".into(),
+                    context_window: Some(128_000),
+                },
+            ]
+        }
+        OperatorWorkerSubmission::Compact { .. } => {
+            assert!(
+                start.checkpoint_turn.is_some(),
+                "compact must always resume a checkpoint"
+            );
+            vec![OperatorWorkerEvent::CompactionStarted]
+        }
+        OperatorWorkerSubmission::BranchSummary {
+            target_entry_id, ..
+        } => {
+            assert!(!target_entry_id.is_empty());
+            assert!(
+                start.checkpoint_turn.is_some(),
+                "branch summary must always resume a checkpoint"
+            );
+            vec![OperatorWorkerEvent::ModelSelected {
+                provider: "fixture".into(),
+                id: "offline".into(),
+                context_window: Some(128_000),
+            }]
+        }
+    };
     assert!(
         start.model.is_none(),
         "no operator.model setting was configured"
@@ -466,22 +499,11 @@ fn operator_worker_fixture() {
                 sequence,
                 events,
             },
+            leased: None,
         })
     };
     assert!(matches!(
-        worker_exchange(
-            &mut stream,
-            batch(
-                1,
-                vec![
-                    OperatorWorkerEvent::AssistantDelta("partial".into()),
-                    OperatorWorkerEvent::ModelSelected(OperatorModel {
-                        provider: "fixture".into(),
-                        id: "offline".into(),
-                    }),
-                ]
-            )
-        ),
+        worker_exchange(&mut stream, batch(1, initial_events)),
         Response::OperatorExchange(_)
     ));
     let abort_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -500,8 +522,12 @@ fn operator_worker_fixture() {
     fs::rename(ready.with_extension("tmp"), &ready).unwrap();
     let complete = root.join(format!("complete-{}", identity.conversation.0));
     let complete_leased = root.join(format!("complete-leased-{}", identity.conversation.0));
+    let fail = root.join(format!("fail-{}", identity.conversation.0));
     wait_until(|| {
-        complete.exists() || complete_leased.exists() || abort_requested.load(Ordering::Acquire)
+        complete.exists()
+            || complete_leased.exists()
+            || fail.exists()
+            || abort_requested.load(Ordering::Acquire)
     });
     if abort_requested.load(Ordering::Acquire) {
         // Model the native worker's soft-stop handshake: acknowledge its exact
@@ -530,12 +556,60 @@ fn operator_worker_fixture() {
         );
         return;
     }
-    let leased = complete_leased.exists();
-    assert!(matches!(
-        worker_exchange(
+    if fail.exists() {
+        assert!(matches!(
+            worker_exchange(
+                &mut stream,
+                batch(
+                    2,
+                    vec![OperatorWorkerEvent::Failed(
+                        "Operator request failed; inspect the retained session before retrying"
+                            .into()
+                    )],
+                )
+            ),
+            Response::OperatorExchange(_)
+        ));
+        fs::write(
+            root.join(format!("acked-{}", identity.conversation.0)),
+            b"ack",
+        )
+        .unwrap();
+        wait_until(|| {
+            root.join(format!("retire-{}", identity.conversation.0))
+                .exists()
+        });
+        let _ = worker_exchange(
             &mut stream,
-            batch(2, vec![OperatorWorkerEvent::Completed { leased }])
-        ),
+            Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::Retire { identity },
+            }),
+        );
+        loop {
+            thread::park_timeout(Duration::from_secs(1));
+        }
+    }
+    let leased = complete_leased.exists();
+    let final_events = match &start.submission {
+        OperatorWorkerSubmission::BranchSummary { .. } => vec![
+            OperatorWorkerEvent::BranchSummary {
+                summary: "Summary of abandoned branch.".into(),
+            },
+            OperatorWorkerEvent::Completed {
+                leased,
+                pi_first_entry_id: Some("bs1".into()),
+                pi_leaf_entry_id: Some("bs1".into()),
+            },
+        ],
+        _ => vec![OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id: None,
+            pi_leaf_entry_id: None,
+        }],
+    };
+    assert!(matches!(
+        worker_exchange(&mut stream, batch(2, final_events)),
         Response::OperatorExchange(_)
     ));
     fs::write(
@@ -772,7 +846,8 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
                 identity: stale,
                 sequence: 2,
                 events: vec![OperatorWorkerEvent::AssistantDelta("stale".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -798,7 +873,8 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
                 identity: turn.identity,
                 sequence: 2,
                 events: vec![OperatorWorkerEvent::AssistantDelta("late".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -857,7 +933,8 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth: auth.clone(),
-            batch: batch.clone()
+            batch: batch.clone(),
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -868,7 +945,8 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
     assert!(matches!(
         live.control(Request::OperatorExchange(OperatorExchange {
             auth: auth.clone(),
-            batch: batch.clone()
+            batch: batch.clone(),
+            leased: None,
         })),
         Response::OperatorExchange(OperatorExchangeResult {
             duplicate: false,
@@ -876,7 +954,11 @@ fn operator_journal_failure_is_not_acknowledged_or_published() {
         })
     ));
     assert!(matches!(
-        live.control(Request::OperatorExchange(OperatorExchange { auth, batch })),
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth,
+            batch,
+            leased: None,
+        })),
         Response::OperatorExchange(OperatorExchangeResult {
             duplicate: true,
             ..
@@ -1087,7 +1169,8 @@ fn operator_slow_dashboard_does_not_block_stop_or_terminal_input() {
                     identity: turn.identity,
                     sequence,
                     events: vec![OperatorWorkerEvent::AssistantDelta("stream".into())]
-                }
+                },
+                leased: None,
             })),
             Response::OperatorExchange(_)
         ));
@@ -1242,7 +1325,8 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
                 identity: first.identity,
                 sequence: 3,
                 events: vec![OperatorWorkerEvent::AssistantDelta("old run".into())]
-            }
+            },
+            leased: None,
         })),
         Response::Error { .. }
     ));
@@ -1281,7 +1365,14 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
 #[test]
 fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained() {
     let mut inverted = Vec::new();
-    for operation in ["current", "open", "read", "submit"] {
+    for operation in [
+        "current",
+        "open",
+        "read",
+        "submit",
+        "new_session",
+        "session_info",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let (peer, stream) = UnixStream::pair().unwrap();
         let owner = Arc::new(());
@@ -1307,6 +1398,11 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
                 text: "keep draft".into(),
                 context: OperatorContext::default(),
             },
+            "new_session" => OperatorRequest::NewSession {
+                conversation: c.id,
+                expected_run: c.run,
+            },
+            "session_info" => OperatorRequest::SessionInfo { conversation: c.id },
             _ => unreachable!(),
         };
         let (arrived_tx, arrived_rx) = mpsc::channel();
@@ -1557,4 +1653,1189 @@ fn operator_legacy_conversation_is_hidden_refuses_work_and_keeps_recovery() {
     assert!(fresh.worker_stopped);
     assert!(fresh.current_turn.is_none());
     assert_eq!(live.current().unwrap().id, fresh.id);
+}
+
+#[test]
+fn new_session_fences_busy_and_leased_workers_and_deletes_prior_checkpoints_outside_locks() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Stale expected_run refuses cleanly.
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: SessionRunId(99),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    // Running turn refuses cleanly.
+    let turn = live.submit(&c);
+    let _auth = live.ready(&c);
+    match live.request(Request::Operator(OperatorRequest::NewSession {
+        conversation: c.id,
+        expected_run: turn.identity.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("running") || message.contains("live") || message.contains("active"),
+            "unexpected busy message: {message}"
+        ),
+        other => panic!("expected Conflict while running, got {other:?}"),
+    }
+
+    // Complete turn with an active warm-worker watch lease (`complete-leased`) and
+    // seed a promoted checkpoint on disk.
+    live.command(&c, "complete-leased");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    let leased_summary = live.current().unwrap();
+    assert_eq!(
+        leased_summary.current_turn.as_ref().map(|t| t.state),
+        Some(OperatorTurnState::Complete)
+    );
+    assert!(!leased_summary.worker_stopped);
+    let checkpoint_dir =
+        crate::operator_session_file::checkpoint_dir(&live.state.registry_path, turn.identity.turn);
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::set_permissions(&checkpoint_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let checkpoint_file = checkpoint_dir.join("session.jsonl");
+    let workdir = live.state.registry_path.join("operator-workdir");
+    let header = serde_json::json!({
+        "type": "session",
+        "version": 3,
+        "id": format!("operator-{}", c.id.0),
+        "cwd": workdir.to_str().unwrap(),
+    });
+    fs::write(&checkpoint_file, format!("{header}\n")).unwrap();
+    fs::set_permissions(&checkpoint_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    // /new must refuse while the warm-worker watch lease / live worker is active!
+    match live.request(Request::Operator(OperatorRequest::NewSession {
+        conversation: c.id,
+        expected_run: leased_summary.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("live") || message.contains("retiring"),
+            "unexpected lease/busy message: {message}"
+        ),
+        other => panic!("expected Conflict while leased, got {other:?}"),
+    }
+    assert!(
+        checkpoint_file.exists(),
+        "refused /new must not delete checkpoint"
+    );
+
+    // Retire the leased worker -> once idle and unleased, /new succeeds, increments
+    // session_epoch, and removes the prior-epoch checkpoint outside locks!
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let completed = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Conversation(reset)) =
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: completed.run,
+        }))
+    else {
+        panic!("expected Conversation response from NewSession");
+    };
+    assert_eq!(reset.session_epoch, 1);
+    assert_eq!(reset.current_turn, None);
+    assert!(
+        !checkpoint_file.exists(),
+        "superseded checkpoint must be deleted"
+    );
+    assert!(live.history(&reset).messages.is_empty());
+}
+
+#[test]
+fn session_info_reads_empty_populated_and_reset_epochs_with_zero_spawns() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Empty epoch before any turn: zero-spawn, clean zeroed stats.
+    let Response::Operator(OperatorResponse::SessionInfo(empty)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo on empty epoch");
+    };
+    assert_eq!(empty.conversation, c.id);
+    assert_eq!(empty.session, c.session);
+    assert_eq!(empty.session_epoch, 0);
+    assert_eq!(empty.pi_session_id, None);
+    assert_eq!(empty.checkpoint_turn, None);
+    assert_eq!(empty.turns, 0);
+    assert_eq!(empty.completed_turns, 0);
+    assert_eq!(empty.total_messages, 0);
+    assert_eq!(empty.tokens.total, 0);
+    assert_eq!(empty.cost_usd_nanos, 0);
+    assert_eq!(empty.context_window.used_tokens, None);
+
+    // Complete one turn, retire worker cleanly, and seed a promoted checkpoint + models.json.
+    let turn = live.submit(&c);
+    let _auth = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let workdir = live.state.registry_path.join("operator-workdir");
+    let pi_dir = live.state.registry_path.join("operator-pi");
+    fs::create_dir_all(&pi_dir).unwrap();
+    fs::set_permissions(&pi_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let models_file = pi_dir.join("models.json");
+    fs::write(
+        &models_file,
+        serde_json::to_string(&serde_json::json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "do-not-leak",
+                    "models": [{ "id": "offline", "contextWindow": 128_000 }]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&models_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let checkpoint_dir =
+        crate::operator_session_file::checkpoint_dir(&live.state.registry_path, turn.identity.turn);
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::set_permissions(&checkpoint_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let checkpoint_file = checkpoint_dir.join("session.jsonl");
+    let session_body = [
+        serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": format!("operator-{}", c.id.0),
+            "cwd": workdir.to_str().unwrap(),
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": { "role": "user", "content": [{ "type": "text", "text": "hi" }] }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "provider": "fixture",
+                "model": "offline",
+                "stopReason": "stop",
+                "content": [{ "type": "text", "text": "hello" }],
+                "usage": {
+                    "input": 1000,
+                    "output": 250,
+                    "cacheRead": 500,
+                    "cacheWrite": 50,
+                    "totalTokens": 1800,
+                    "cost": { "total": 0.0042 }
+                }
+            }
+        }),
+    ]
+    .iter()
+    .map(|v| format!("{}\n", serde_json::to_string(v).unwrap()))
+    .collect::<String>();
+    fs::write(&checkpoint_file, session_body).unwrap();
+    fs::set_permissions(&checkpoint_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let Response::Operator(OperatorResponse::SessionInfo(populated)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo on populated epoch");
+    };
+    assert_eq!(populated.pi_session_id.as_deref(), Some("operator-1"));
+    assert_eq!(populated.checkpoint_turn, Some(turn.identity.turn));
+    assert_eq!(populated.turns, 1);
+    assert_eq!(populated.completed_turns, 1);
+    assert_eq!(populated.user_messages, 1);
+    assert_eq!(populated.assistant_messages, 1);
+    assert_eq!(populated.total_messages, 2);
+    assert_eq!(populated.tokens.total, 1800);
+    assert_eq!(populated.cost_usd_nanos, 4_200_000);
+    assert_eq!(populated.context_window.used_tokens, Some(1800));
+    assert_eq!(populated.context_window.capacity_tokens, Some(128_000));
+
+    // Reset with /new -> SessionInfo immediately reflects clean epoch 1!
+    let settled = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Conversation(_)) =
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: settled.run,
+        }))
+    else {
+        panic!("expected Conversation from NewSession");
+    };
+    let Response::Operator(OperatorResponse::SessionInfo(after_reset)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after /new");
+    };
+    assert_eq!(after_reset.session_epoch, 1);
+    assert_eq!(after_reset.pi_session_id, None);
+    assert_eq!(after_reset.checkpoint_turn, None);
+    assert_eq!(after_reset.turns, 0);
+    assert_eq!(after_reset.completed_turns, 0);
+    assert_eq!(after_reset.total_messages, 0);
+    assert_eq!(after_reset.tokens.total, 0);
+    assert_eq!(after_reset.cost_usd_nanos, 0);
+    assert_eq!(after_reset.context_window.used_tokens, None);
+}
+
+#[test]
+fn operator_models_runs_off_dashboard_reader_with_isolated_home_and_serial_owner() {
+    let mut live = LiveOperator::new();
+    assert!(matches!(
+        live.control(Request::Operator(OperatorRequest::Models)),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+
+    let started = live.root.path().join("models-started");
+    let release = live.root.path().join("models-release");
+    let receipt = live.root.path().join("models-env");
+    let script = live.root.path().join("ovrcr");
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+printf '%s\n' "$1 $2 $3" > '{receipt}'
+printf 'home=%s\n' "${{OVRCR_HOME:-}}" >> '{receipt}'
+printf 'config=%s\n' "${{OVRCR_CONFIG:-}}" >> '{receipt}'
+printf 'socket=%s\n' "${{OVRCR_SOCKET:-}}" >> '{receipt}'
+printf 'agent_token=%s\n' "${{OVRCR_AGENT_TOKEN:-}}" >> '{receipt}'
+printf 'delegation_token=%s\n' "${{OVRCR_DELEGATION_TOKEN:-}}" >> '{receipt}'
+: > '{started}'
+while [ ! -f '{release}' ]; do
+  sleep 0.01
+done
+printf 'No Pi model selected; run ovrcr operator setup.\n' >&2
+printf '{{"models":[{{"provider":"openai","id":"gpt-5.4","name":"GPT-5.4"}},{{"provider":"vendor","id":"sub/id","name":"sub/id"}}]}}'
+"#,
+            receipt = receipt.display(),
+            started = started.display(),
+            release = release.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Send Models without waiting yet so we can prove the Dashboard reader stays live.
+    live.next_request += 1;
+    let models_req_id = live.next_request;
+    write_frame(
+        live.dashboard.as_mut().unwrap(),
+        &ClientMessage {
+            request_id: models_req_id,
+            request: Request::Operator(OperatorRequest::Models),
+        },
+    )
+    .unwrap();
+    wait_until(|| started.exists());
+
+    // While the catalog subprocess is blocked on `release`, the Dashboard reader
+    // still services `Current` immediately, and a second concurrent `Models`
+    // request is refused cleanly instead of spawning a second catalog process.
+    assert!(live.current().is_none());
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Models)),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    fs::write(&release, b"go").unwrap();
+    let models_response = loop {
+        match read_frame::<ServerMessage>(live.dashboard.as_mut().unwrap()).unwrap() {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } if request_id == models_req_id => break response,
+            _ => {}
+        }
+    };
+    assert_eq!(
+        models_response,
+        Response::Operator(OperatorResponse::Models(vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+                name: Some("GPT-5.4".into()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "vendor".into(),
+                id: "sub/id".into(),
+                name: None,
+            },
+        ]))
+    );
+    assert!(
+        live.current().is_none(),
+        "listing models must not open or create an Operator conversation"
+    );
+
+    let recorded = fs::read_to_string(&receipt).unwrap();
+    assert!(recorded.contains("operator models --json\n"), "{recorded}");
+    assert!(
+        recorded.contains(&format!("home={}\n", live.root.path().display())),
+        "{recorded}"
+    );
+    assert!(recorded.contains("config=\n"), "{recorded}");
+    assert!(recorded.contains("socket=\n"), "{recorded}");
+    assert!(recorded.contains("agent_token=\n"), "{recorded}");
+    assert!(recorded.contains("delegation_token=\n"), "{recorded}");
+}
+
+#[test]
+fn operator_models_redacts_failures_and_reaps_timed_out_process_group() {
+    let mut live = LiveOperator::new();
+    let script = live.root.path().join("ovrcr");
+
+    // 1. Non-zero exit with secret material on stdout/stderr is redacted.
+    fs::write(
+        &script,
+        r#"#!/bin/sh
+printf 'Bearer sk-secret-stderr-123\n' >&2
+printf 'sk-secret-stdout-456\n'
+exit 1
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let Response::Error { code, message } =
+        live.request(Request::Operator(OperatorRequest::Models))
+    else {
+        panic!("expected redacted error")
+    };
+    assert_eq!(code, ErrorCode::Internal);
+    assert!(
+        !message.contains("sk-secret-stderr-123") && !message.contains("sk-secret-stdout-456"),
+        "native output leaked in error: {message:?}"
+    );
+
+    // 2. Timeout reaps the entire process group including background descendants.
+    *live.state.operator.models_deadline.lock().unwrap() = Some(Duration::from_millis(120));
+    let descendant_pid_file = live.root.path().join("descendant.pid");
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+sleep 60 &
+printf '%s\n' "$!" > '{}'
+wait
+"#,
+            descendant_pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let Response::Error { message, .. } = live.request(Request::Operator(OperatorRequest::Models))
+    else {
+        panic!("expected timeout error")
+    };
+    assert!(
+        message.contains("timed out"),
+        "unexpected timeout message: {message:?}"
+    );
+    let pid: libc::pid_t = fs::read_to_string(&descendant_pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    wait_until(|| unsafe { libc::kill(pid, 0) != 0 });
+}
+
+#[test]
+fn operator_compact_refuses_empty_or_busy_and_dispatches_cold_and_warm_submissions() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // Non-dashboard client cannot invoke Compact.
+    assert!(matches!(
+        live.control(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: c.run,
+            instructions: None,
+        })),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+
+    // Before the first completed turn, Compact is refused cleanly without starting a worker.
+    let Response::Error { code, message } =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: c.run,
+            instructions: None,
+        }))
+    else {
+        panic!("expected refusal before first completed turn")
+    };
+    assert_eq!(code, ErrorCode::Conflict);
+    assert!(
+        message.contains("before the first completed turn"),
+        "{message}"
+    );
+    assert!(live.history(&c).messages.is_empty());
+
+    // Start turn 1 and verify Compact refuses while turn 1 is Running.
+    let turn1 = live.submit(&c);
+    let _auth1 = live.ready(&c);
+    let Response::Error {
+        code: busy_code,
+        message: busy_msg,
+    } = live.request(Request::Operator(OperatorRequest::Compact {
+        conversation: c.id,
+        expected_run: turn1.identity.run,
+        instructions: None,
+    }))
+    else {
+        panic!("expected busy refusal while turn 1 is running")
+    };
+    assert_eq!(busy_code, ErrorCode::Conflict);
+    assert!(busy_msg.contains("busy"), "{busy_msg}");
+
+    // Complete turn 1 with a warm lease (`complete-leased`), then submit warm Compact.
+    live.command(&c, "complete-leased");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    let leased_summary = live.current().unwrap();
+    let Response::Operator(OperatorResponse::Submitted(warm_compact)) =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: leased_summary.run,
+            instructions: Some("keep open branch names".into()),
+        }))
+    else {
+        panic!("expected warm Compact submission")
+    };
+    assert_eq!(warm_compact.identity.run, leased_summary.run);
+    let warm_history = live.history(&c);
+    assert_eq!(
+        warm_history.messages.last().map(|m| &m.content),
+        Some(&OperatorMessageContent::Compaction {
+            instructions: Some("keep open branch names".into()),
+        })
+    );
+
+    // Interrupt and retire the warm worker, then verify cold Compact spawns a new run.
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: warm_compact.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    let stopped_summary = live.current().unwrap();
+    let _ = fs::remove_file(live.root.path().join(format!("ready-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("acked-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("complete-leased-{}", c.id.0)));
+    let Response::Operator(OperatorResponse::Submitted(cold_compact)) =
+        live.request(Request::Operator(OperatorRequest::Compact {
+            conversation: c.id,
+            expected_run: stopped_summary.run,
+            instructions: None,
+        }))
+    else {
+        panic!("expected cold Compact submission")
+    };
+    assert_eq!(cold_compact.identity.run.0, stopped_summary.run.0 + 1);
+    let _cold_auth = live.ready(&c);
+    let cold_history = live.history(&c);
+    assert!(cold_history.messages.iter().any(|m| {
+        m.turn == cold_compact.identity.turn
+            && m.content == OperatorMessageContent::Compaction { instructions: None }
+    }));
+    assert!(cold_history.messages.iter().any(|m| {
+        m.turn == cold_compact.identity.turn
+            && m.content == OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+    }));
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: cold_compact.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+
+    // After /new resets onto epoch 1, Compact is refused again until a turn completes in epoch 1.
+    let before_new = live.current().unwrap();
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NewSession {
+            conversation: c.id,
+            expected_run: before_new.run,
+        })),
+        Response::Operator(OperatorResponse::Conversation(_))
+    ));
+    let after_new = live.current().unwrap();
+    let Response::Error {
+        code: post_new_code,
+        message: post_new_msg,
+    } = live.request(Request::Operator(OperatorRequest::Compact {
+        conversation: c.id,
+        expected_run: after_new.run,
+        instructions: None,
+    }))
+    else {
+        panic!("expected refusal after /new")
+    };
+    assert_eq!(post_new_code, ErrorCode::Conflict);
+    assert!(
+        post_new_msg.contains("before the first completed turn"),
+        "{post_new_msg}"
+    );
+}
+
+#[test]
+fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prompts() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+
+    // 1. Empty epoch: Tree returns default empty tree; NavigateTree refuses cleanly.
+    let Response::Operator(OperatorResponse::Tree(empty_tree)) =
+        live.request(Request::Operator(OperatorRequest::Tree {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected empty Tree on fresh epoch");
+    };
+    assert_eq!(empty_tree.pi_session_id, None);
+    assert!(empty_tree.entries.is_empty());
+
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: c.run,
+            target_entry_id: "u1".into(),
+            summarize: None,
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    // 2. Complete Turn 1 with a leased watch first so we can verify leased refusal + read-only Tree.
+    let ctx1 = OperatorContext {
+        project: Some("ovrcr".into()),
+        workspace: Some("root-ws".into()),
+        cwd: Some(live.root.path().to_path_buf()),
+        ..OperatorContext::default()
+    };
+    let Response::Operator(OperatorResponse::Submitted(t1)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: c.run,
+            text: "first prompt".into(),
+            context: ctx1.clone(),
+        }))
+    else {
+        panic!("submit t1");
+    };
+    let _auth1 = live.ready(&c);
+    live.command(&c, "complete-leased");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+
+    // Seed promoted checkpoint for t1 (`u1 -> a1`).
+    let registry_path = live.state.registry_path.clone();
+    let workdir = registry_path.join("operator-workdir");
+    fs::create_dir_all(&workdir).unwrap();
+    fs::set_permissions(&workdir, fs::Permissions::from_mode(0o700)).unwrap();
+    let write_checkpoint = |turn: OperatorTurnId, entries: &[serde_json::Value]| {
+        let dir = crate::operator_session_file::checkpoint_dir(&registry_path, turn);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let file = dir.join("session.jsonl");
+        let mut body = format!(
+            "{}\n",
+            serde_json::to_string(&serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": format!("operator-{}", c.id.0),
+                "cwd": workdir.to_str().unwrap(),
+            }))
+            .unwrap()
+        );
+        for entry in entries {
+            body.push_str(&serde_json::to_string(entry).unwrap());
+            body.push('\n');
+        }
+        fs::write(&file, body).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let t1_entries = vec![
+        serde_json::json!({
+            "type": "message",
+            "id": "u1",
+            "parentId": null,
+            "message": { "role": "user", "content": "wrapped first prompt" }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "a1",
+            "parentId": "u1",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "hello" }] }
+        }),
+    ];
+    write_checkpoint(t1.identity.turn, &t1_entries);
+
+    // Read-only Tree succeeds while leased worker is live, and unwraps `u1` from SQLite!
+    let Response::Operator(OperatorResponse::Tree(leased_tree)) =
+        live.request(Request::Operator(OperatorRequest::Tree {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected Tree while leased");
+    };
+    assert_eq!(leased_tree.current_leaf_id.as_deref(), Some("a1"));
+    assert_eq!(leased_tree.entries.len(), 2);
+    assert_eq!(leased_tree.entries[0].preview, "first prompt");
+
+    // NavigateTree MUST refuse while leased worker is live!
+    let leased_summary = live.current().unwrap();
+    let Response::Error {
+        code: leased_code,
+        message: leased_msg,
+    } = live.request(Request::Operator(OperatorRequest::NavigateTree {
+        conversation: c.id,
+        expected_run: leased_summary.run,
+        target_entry_id: "u1".into(),
+        summarize: None,
+    }))
+    else {
+        panic!("expected leased NavigateTree refusal");
+    };
+    assert_eq!(leased_code, ErrorCode::Conflict);
+    assert!(leased_msg.contains("active"), "{leased_msg}");
+
+    // Retire worker cleanly.
+    let _ = fs::remove_file(live.root.path().join(format!("complete-leased-{}", c.id.0)));
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+
+    // 3. Submit Turn 2 (Branch A) and verify Tree works while Turn 2 is Running, while NavigateTree refuses.
+    let _ = fs::remove_file(live.root.path().join(format!("acked-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("retire-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("complete-{}", c.id.0)));
+    let _ = fs::remove_file(live.root.path().join(format!("ready-{}", c.id.0)));
+    let after_t1 = live.current().unwrap();
+    let ctx2a = OperatorContext {
+        project: Some("ovrcr".into()),
+        workspace: Some("branch-a".into()),
+        cwd: Some(live.root.path().to_path_buf()),
+        ..OperatorContext::default()
+    };
+    let Response::Operator(OperatorResponse::Submitted(t2)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: after_t1.run,
+            text: "branch A prompt".into(),
+            context: ctx2a.clone(),
+        }))
+    else {
+        panic!("submit t2");
+    };
+    let _auth2 = live.ready(&c);
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Tree {
+            conversation: c.id
+        })),
+        Response::Operator(OperatorResponse::Tree(_))
+    ));
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: t2.identity.run,
+            target_entry_id: "a1".into(),
+            summarize: None,
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+
+    let mut t2_entries = t1_entries.clone();
+    t2_entries.push(serde_json::json!({
+        "type": "message",
+        "id": "u2a",
+        "parentId": "a1",
+        "message": { "role": "user", "content": "wrapped branch A prompt" }
+    }));
+    t2_entries.push(serde_json::json!({
+        "type": "message",
+        "id": "a2a",
+        "parentId": "u2a",
+        "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "hello A" }] }
+    }));
+    write_checkpoint(t2.identity.turn, &t2_entries);
+
+    // Record entry IDs on t1 & t2 in SQLite so multi-branch correlation matches worker Completed.
+    {
+        let retained = live.state.retained.lock();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u1', pi_leaf_entry_id='a1' WHERE id=?1",
+                [t1.identity.turn.0 as i64],
+            )
+            .unwrap();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u2a', pi_leaf_entry_id='a2a' WHERE id=?1",
+                [t2.identity.turn.0 as i64],
+            )
+            .unwrap();
+    }
+
+    // 4. Selecting the already-active assistant leaf `a2a` is a clean noop.
+    let idle = live.current().unwrap();
+    let Response::Operator(OperatorResponse::TreeNavigated(noop_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "a2a".into(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected noop TreeNavigated");
+    };
+    assert!(noop_nav.noop);
+    assert_eq!(noop_nav.submitted, None);
+    assert_eq!(noop_nav.current_leaf_id.as_deref(), Some("a2a"));
+    assert_eq!(noop_nav.editor_text, None);
+
+    // 5. Selecting user entry `u2a` rewinds active branch to `a1` (`t1`) and restores unwrapped prompt + context!
+    let Response::Operator(OperatorResponse::TreeNavigated(rewind_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "u2a".into(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected user rewind TreeNavigated");
+    };
+    assert!(!rewind_nav.noop);
+    assert_eq!(rewind_nav.submitted, None);
+    assert_eq!(rewind_nav.current_leaf_id.as_deref(), Some("a1"));
+    assert_eq!(rewind_nav.editor_text.as_deref(), Some("branch A prompt"));
+    assert_eq!(rewind_nav.restored_context, Some(ctx2a));
+    assert_eq!(live.history(&c).messages.len(), 2);
+
+    // SessionInfo reflects active branch (1 turn, 2 messages) vs epoch (2 turns, 4 messages)!
+    let Response::Operator(OperatorResponse::SessionInfo(rewound_info)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after rewind");
+    };
+    assert_eq!(rewound_info.active_tip_turn, Some(t1.identity.turn));
+    assert_eq!(rewound_info.branch_turns, 1);
+    assert_eq!(rewound_info.completed_turns, 2);
+    assert_eq!(rewound_info.total_messages, 2);
+    assert_eq!(rewound_info.epoch_total_messages, 4);
+
+    // Switch back forward to `a2a` -> Branch A feed (4 messages) is restored!
+    let Response::Operator(OperatorResponse::TreeNavigated(forward_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "a2a".into(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected forward TreeNavigated");
+    };
+    assert!(!forward_nav.noop);
+    assert_eq!(forward_nav.submitted, None);
+    assert_eq!(forward_nav.current_leaf_id.as_deref(), Some("a2a"));
+    assert_eq!(forward_nav.editor_text, None);
+    assert_eq!(live.history(&c).messages.len(), 4);
+}
+
+#[test]
+fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error() {
+    use ovrcr_protocol::operator::OperatorBranchSummaryRequest;
+
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let registry_path = live.state.registry_path.clone();
+    let workdir = registry_path.join("operator-workdir");
+    fs::create_dir_all(&workdir).unwrap();
+    fs::set_permissions(&workdir, fs::Permissions::from_mode(0o700)).unwrap();
+    let write_checkpoint = |turn: OperatorTurnId, entries: &[serde_json::Value]| {
+        let dir = crate::operator_session_file::checkpoint_dir(&registry_path, turn);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let file = dir.join("session.jsonl");
+        let mut body = format!(
+            "{}\n",
+            serde_json::to_string(&serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": format!("operator-{}", c.id.0),
+                "cwd": workdir.to_str().unwrap(),
+            }))
+            .unwrap()
+        );
+        for entry in entries {
+            body.push_str(&serde_json::to_string(entry).unwrap());
+            body.push('\n');
+        }
+        fs::write(&file, body).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let root_path = live.root.path().to_path_buf();
+    let cleanup_worker_flags = |id: u64| {
+        for prefix in [
+            "acked",
+            "retire",
+            "complete",
+            "complete-leased",
+            "fail",
+            "ready",
+        ] {
+            let _ = fs::remove_file(root_path.join(format!("{prefix}-{id}")));
+        }
+    };
+
+    // Turn 1 (`u1 -> a1`) and Turn 2 (`u2a -> a2a`).
+    let Response::Operator(OperatorResponse::Submitted(t1)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: c.run,
+            text: "root prompt".into(),
+            context: OperatorContext::default(),
+        }))
+    else {
+        panic!("submit t1");
+    };
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let after_t1 = live.current().unwrap();
+    let ctx2a = OperatorContext {
+        project: Some("ovrcr".into()),
+        workspace: Some("branch-a".into()),
+        cwd: Some(live.root.path().to_path_buf()),
+        ..OperatorContext::default()
+    };
+    let Response::Operator(OperatorResponse::Submitted(t2)) =
+        live.request(Request::Operator(OperatorRequest::Submit {
+            conversation: c.id,
+            expected_run: after_t1.run,
+            text: "branch A prompt".into(),
+            context: ctx2a.clone(),
+        }))
+    else {
+        panic!("submit t2");
+    };
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let entries = vec![
+        serde_json::json!({
+            "type": "message",
+            "id": "u1",
+            "parentId": null,
+            "message": { "role": "user", "content": "wrapped root prompt" }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "a1",
+            "parentId": "u1",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "root answer" }] }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "u2a",
+            "parentId": "a1",
+            "message": { "role": "user", "content": "wrapped branch A prompt" }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "a2a",
+            "parentId": "u2a",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "branch A answer" }] }
+        }),
+    ];
+    write_checkpoint(t2.identity.turn, &entries);
+    {
+        let retained = live.state.retained.lock();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u1', pi_leaf_entry_id='a1' WHERE id=?1",
+                [t1.identity.turn.0 as i64],
+            )
+            .unwrap();
+        retained
+            .connection
+            .execute(
+                "UPDATE operator_turns SET pi_first_entry_id='u2a', pi_leaf_entry_id='a2a' WHERE id=?1",
+                [t2.identity.turn.0 as i64],
+            )
+            .unwrap();
+    }
+
+    // 1. Summarizing the already-active leaf `a2a` refuses cleanly (zero abandoned entries).
+    let idle = live.current().unwrap();
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "a2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    // 2. Summarize while rewinding `u2a`, then Stop mid-summarization -> preserves `t2` active tip & checkpoint!
+    let Response::Operator(OperatorResponse::TreeNavigated(stop_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: idle.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("preserve findings".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated with submitted turn");
+    };
+    let stop_turn = stop_nav
+        .submitted
+        .expect("expected submitted BranchSummary turn");
+    assert_eq!(stop_nav.editor_text.as_deref(), Some("branch A prompt"));
+    assert_eq!(stop_nav.restored_context, Some(ctx2a.clone()));
+    let _ = live.ready(&c);
+
+    // While running, live history includes `t1`, `t2`, and the running BranchSummary opener.
+    let running_history = live.history(&c);
+    assert!(running_history.messages.iter().any(|m| matches!(
+        &m.content,
+        OperatorMessageContent::BranchSummary {
+            target_entry_id,
+            instructions: Some(inst),
+        } if target_entry_id == "u2a" && inst == "preserve findings"
+    )));
+
+    assert!(matches!(
+        live.request(Request::Operator(OperatorRequest::Stop {
+            identity: stop_turn.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let Response::Operator(OperatorResponse::SessionInfo(after_stop_info)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after Stop");
+    };
+    assert_eq!(after_stop_info.checkpoint_turn, Some(t2.identity.turn));
+    assert_eq!(after_stop_info.active_tip_turn, Some(t2.identity.turn));
+
+    // 3. Summarize while rewinding `u2a`, then Fail -> preserves `t2` active tip & checkpoint!
+    let after_stop = live.current().unwrap();
+    let Response::Operator(OperatorResponse::TreeNavigated(fail_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: after_stop.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        }))
+    else {
+        panic!("expected TreeNavigated for failing BranchSummary");
+    };
+    assert!(fail_nav.submitted.is_some());
+    let _ = live.ready(&c);
+    live.command(&c, "fail");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let Response::Operator(OperatorResponse::SessionInfo(after_fail_info)) =
+        live.request(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: c.id,
+        }))
+    else {
+        panic!("expected SessionInfo after Fail");
+    };
+    assert_eq!(after_fail_info.checkpoint_turn, Some(t2.identity.turn));
+    assert_eq!(after_fail_info.active_tip_turn, Some(t2.identity.turn));
+
+    // 4. Summarize while rewinding `u2a`, then Complete -> advances `active_tip_turn` to the
+    // BranchSummary turn parented at `t1` (`u1 -> a1`), hiding `t2` (`u2a -> a2a`) from active feed!
+    let after_fail = live.current().unwrap();
+    let Response::Operator(OperatorResponse::TreeNavigated(ok_nav)) =
+        live.request(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: c.id,
+            expected_run: after_fail.run,
+            target_entry_id: "u2a".into(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on root cause".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated for completing BranchSummary");
+    };
+    let ok_turn = ok_nav.submitted.expect("expected submitted turn");
+    let _ = live.ready(&c);
+    live.command(&c, "complete");
+    wait_until(|| live.root.path().join(format!("acked-{}", c.id.0)).exists());
+    live.command(&c, "retire");
+    wait_until(|| {
+        live.current()
+            .is_some_and(|summary| summary.worker_stopped && !summary.worker_live)
+    });
+    cleanup_worker_flags(c.id.0);
+
+    let mut summary_entries = entries.clone();
+    summary_entries.push(serde_json::json!({
+        "type": "branch_summary",
+        "id": "bs1",
+        "parentId": "a1",
+        "fromId": "a2a",
+        "summary": "Summary of abandoned branch."
+    }));
+    write_checkpoint(ok_turn.identity.turn, &summary_entries);
+
+    let completed_history = live.history(&c);
+    let turns_in_feed: Vec<OperatorTurnId> =
+        completed_history.messages.iter().map(|m| m.turn).collect();
+    assert!(turns_in_feed.contains(&t1.identity.turn));
+    assert!(!turns_in_feed.contains(&t2.identity.turn));
+    assert!(turns_in_feed.contains(&ok_turn.identity.turn));
+    assert!(completed_history.messages.iter().any(|m| matches!(
+        &m.content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+            if summary == "Summary of abandoned branch."
+    )));
+}
+
+#[test]
+fn operator_leased_failure_batch_publishes_error_and_live_worker_atomically() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+
+    // Non-terminal batches must not claim a failure lease.
+    assert!(matches!(
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth: auth.clone(),
+            batch: OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 2,
+                events: vec![OperatorWorkerEvent::AssistantDelta("partial".into())],
+            },
+            leased: Some(true),
+        })),
+        Response::Error { .. }
+    ));
+
+    // A leased failure commits Error + leased=true in one atomic exchange, with
+    // zero intermediate state where Error is visible with worker_live=false.
+    assert!(matches!(
+        live.control(Request::OperatorExchange(OperatorExchange {
+            auth: auth.clone(),
+            batch: OperatorEventBatch {
+                identity: turn.identity,
+                sequence: 2,
+                events: vec![OperatorWorkerEvent::Failed("request failed".into())],
+            },
+            leased: Some(true),
+        })),
+        Response::OperatorExchange(OperatorExchangeResult {
+            duplicate: false,
+            ..
+        })
+    ));
+
+    let failed_history = live.history(&c);
+    assert_eq!(
+        failed_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| t.state),
+        Some(OperatorTurnState::Error)
+    );
+    assert!(
+        failed_history.conversation.worker_live,
+        "leased failure batch must preserve worker_live immediately without a second RPC"
+    );
 }

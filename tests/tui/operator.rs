@@ -20,6 +20,7 @@ fn summary() -> OperatorConversationSummary {
         worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
+        session_epoch: 0,
         model: None,
         title: "Operator".into(),
         current_turn: None,
@@ -158,7 +159,11 @@ fn delta(ordinal: u64, text: &str) -> OperatorMessage {
 fn completed(ordinal: u64) -> OperatorMessage {
     message(
         ordinal,
-        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+        OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+            leased: false,
+            pi_first_entry_id: None,
+            pi_leaf_entry_id: None,
+        }),
     )
 }
 
@@ -718,7 +723,11 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
         vec![turn_message(
             2,
             6,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         )],
     );
     let _ = reviewed_screen(&mut dashboard, 120, 40);
@@ -811,7 +820,11 @@ fn dock_draws_unread_until_the_loaded_tail_is_reviewed() {
             turn_message(
                 2,
                 2,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+                OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: None,
+                    pi_leaf_entry_id: None,
+                }),
             ),
         ],
     );
@@ -861,7 +874,11 @@ fn unread_outranks_a_retained_draft_in_the_operator_section() {
         vec![turn_message(
             2,
             1,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         )],
     );
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
@@ -1188,11 +1205,12 @@ fn header_names_pi_and_only_a_really_selected_model() {
                 user(1, "Review this.", OperatorContext::default()),
                 message(
                     2,
-                    OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::model_selected(
                         OperatorModel {
                             provider: "openai".into(),
                             id: "gpt-6.1-sol".into(),
                         },
+                        None,
                     )),
                 ),
                 delta(3, "Inspecting."),
@@ -3170,7 +3188,11 @@ fn request_finish() -> Vec<OperatorMessage> {
         turn_message(
             2,
             9,
-            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { leased: false }),
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            }),
         ),
     ]
 }
@@ -3512,4 +3534,2930 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
     let screen = draw_text(&mut dashboard, 120, 40);
     assert!(!screen.contains("Compacting context…"), "{screen}");
     assert!(screen.contains("Responding"), "{screen}");
+}
+
+#[test]
+fn unknown_single_segment_slash_commands_fail_locally_while_paths_and_leading_spaces_submit() {
+    // 1. Cold Quick message rejects unknown single-segment /commands before even sending Open.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    assert!(cold.drain_outbox().is_empty());
+    cold.event_action(Event::Paste("/compcat".into()));
+    cold.key(KeyCode::Enter);
+    assert!(
+        cold.drain_outbox().is_empty(),
+        "mistyped /command must never open or send to the model"
+    );
+    let quick_screen = draw_text(&mut cold, 120, 30);
+    assert!(
+        quick_screen.contains("Quick message · Ctrl-o"),
+        "{quick_screen}"
+    );
+    assert!(quick_screen.contains("/compcat"), "{quick_screen}");
+    assert!(
+        quick_screen.to_lowercase().contains("unknown") && quick_screen.contains("/copy"),
+        "expected inline unknown-command error in Quick message: {quick_screen}"
+    );
+
+    // Bare `/` in Quick message also fails locally while preserving `/`.
+    cold.ctrl('c');
+    cold.event_action(Event::Paste("/".into()));
+    cold.key(KeyCode::Enter);
+    assert!(cold.drain_outbox().is_empty());
+    let bare_screen = draw_text(&mut cold, 120, 30);
+    assert!(
+        bare_screen.contains("Quick message · Ctrl-o"),
+        "{bare_screen}"
+    );
+    assert!(
+        bare_screen.to_lowercase().contains("unknown"),
+        "{bare_screen}"
+    );
+
+    // 2. Full Operator rejects unknown single-segment /commands locally with draft preserved.
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, summary());
+    dashboard.event_action(Event::Paste("/compcat focus".into()));
+    dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "unknown single-segment /command must not enqueue Submit"
+    );
+    let screen = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        screen.contains("/compcat focus"),
+        "composer draft must be preserved: {screen}"
+    );
+    assert!(
+        screen.to_lowercase().contains("unknown") && screen.contains("/thinking"),
+        "expected local error notice in Operator: {screen}"
+    );
+
+    // 3. Leading whitespace (` /copy`) passes through as an ordinary user prompt.
+    dashboard.ctrl('c');
+    dashboard.event_action(Event::Paste(" /copy".into()));
+    dashboard.key(KeyCode::Enter);
+    let out = dashboard.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. }) if text == " /copy"
+        )),
+        "leading-space draft must submit as normal prompt: {out:?}"
+    );
+
+    // 4. Multi-segment Unix paths (`/etc/hosts ...` and `/Users/alice/repo`) submit as normal prompts.
+    let mut path_dashboard = dashboard_fixture();
+    open_and_settle(&mut path_dashboard, summary());
+    path_dashboard.event_action(Event::Paste("/etc/hosts is missing an entry".into()));
+    path_dashboard.key(KeyCode::Enter);
+    let out = path_dashboard.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. })
+                if text == "/etc/hosts is missing an entry"
+        )),
+        "multi-segment path in composer must submit as normal prompt: {out:?}"
+    );
+
+    let mut quick_path = dashboard_fixture();
+    open_and_settle(&mut quick_path, summary());
+    quick_path.key(KeyCode::Esc);
+    quick_path.drain_outbox();
+    quick_path.ctrl('o');
+    quick_path.event_action(Event::Paste("/Users/alice/repo".into()));
+    quick_path.key(KeyCode::Enter);
+    let out = quick_path.drain_outbox();
+    assert!(
+        out.iter().any(|msg| matches!(
+            &msg.request,
+            Request::Operator(OperatorRequest::Submit { text, .. })
+                if text == "/Users/alice/repo"
+        )),
+        "multi-segment path in Quick message must submit as normal prompt: {out:?}"
+    );
+}
+
+#[test]
+fn composer_slash_menu_filters_completes_and_dismisses_while_quick_stays_compact() {
+    let mut dashboard = dashboard_fixture();
+    open_and_settle(&mut dashboard, with_model(summary()));
+
+    // Typing `/` opens the slash menu above the composer rule showing `/copy` and `/thinking`.
+    dashboard.key(KeyCode::Char('/'));
+    let rows = rendered_rows(&dashboard, 120, 30);
+    let screen = rows.join("\n");
+    assert!(
+        screen.contains("Copy latest assistant reply Markdown"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Choose or set reasoning effort level"),
+        "{screen}"
+    );
+    let menu_row = rows
+        .iter()
+        .position(|r| r.contains("Copy latest assistant reply Markdown"))
+        .expect("slash menu row present");
+    let rule_row = rows
+        .iter()
+        .rposition(|r| r.contains("────────"))
+        .expect("composer rule present");
+    // There are two rules (top_rule and bottom_rule); both are below the popup.
+    let top_rule_row = rows[..rule_row]
+        .iter()
+        .rposition(|r| r.contains("────────"))
+        .expect("top composer rule present");
+    assert!(
+        menu_row < top_rule_row,
+        "slash popup ({menu_row}) must appear above composer top rule ({top_rule_row}):\n{screen}"
+    );
+
+    // Case-insensitive live filtering: `/CO` matches `/copy` and hides `/thinking`.
+    dashboard.key(KeyCode::Char('C'));
+    dashboard.key(KeyCode::Char('O'));
+    let filtered = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        filtered.contains("Copy latest assistant reply Markdown"),
+        "{filtered}"
+    );
+    assert!(
+        !filtered.contains("Choose or set reasoning effort level"),
+        "{filtered}"
+    );
+
+    // Backspacing back to `/` restores both entries; Down + Tab completes `/thinking ` with space.
+    dashboard.key(KeyCode::Backspace);
+    dashboard.key(KeyCode::Backspace);
+    let restored = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        restored.contains("Choose or set reasoning effort level"),
+        "{restored}"
+    );
+    dashboard.key(KeyCode::Down);
+    dashboard.key(KeyCode::Tab);
+    let after_thinking_tab = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !after_thinking_tab.contains("Choose or set reasoning effort level"),
+        "menu closes after Tab completion with trailing space:\n{after_thinking_tab}"
+    );
+    assert!(
+        after_thinking_tab.contains("> /thinking ▏"),
+        "expected `/thinking ` with trailing space before caret:\n{after_thinking_tab}"
+    );
+
+    // Zero-arg `/copy` completes via Tab without trailing space and dismisses the menu.
+    dashboard.ctrl('c');
+    dashboard.key(KeyCode::Char('/'));
+    dashboard.key(KeyCode::Up);
+    dashboard.key(KeyCode::Tab);
+    let after_copy_tab = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !after_copy_tab.contains("Copy latest assistant reply Markdown"),
+        "menu closes after Tab completion:\n{after_copy_tab}"
+    );
+    assert!(
+        after_copy_tab.contains("> /copy▏"),
+        "expected `/copy` with no trailing space:\n{after_copy_tab}"
+    );
+
+    // Esc dismisses only the `/` menu while keeping draft and staying in Operator;
+    // a second Esc leaves Operator for Browse.
+    dashboard.ctrl('c');
+    dashboard.event_action(Event::Paste("/t".into()));
+    let open_menu = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        open_menu.contains("Choose or set reasoning effort level"),
+        "{open_menu}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    let dismissed = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !dismissed.contains("Choose or set reasoning effort level"),
+        "Esc must dismiss the `/` menu:\n{dismissed}"
+    );
+    assert!(
+        dismissed.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "first Esc must stay inside Operator:\n{dismissed}"
+    );
+    assert!(
+        dismissed.contains("> /t▏"),
+        "draft must be retained on menu dismissal:\n{dismissed}"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
+
+    // Quick message (`Ctrl-o`) never renders the `/` popup while typing.
+    dashboard.drain_outbox();
+    dashboard.ctrl('o');
+    dashboard.ctrl('c');
+    dashboard.key(KeyCode::Char('/'));
+    let quick_slash = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        quick_slash.contains("Quick message · Ctrl-o"),
+        "{quick_slash}"
+    );
+    assert!(
+        !quick_slash.contains("Copy latest assistant reply Markdown")
+            && !quick_slash.contains("Choose or set reasoning effort level"),
+        "Quick message must never render the `/` popup:\n{quick_slash}"
+    );
+    dashboard.key(KeyCode::Char('c'));
+    dashboard.key(KeyCode::Char('o'));
+    let quick_co = draw_text(&mut dashboard, 120, 30);
+    assert!(
+        !quick_co.contains("Copy latest assistant reply Markdown"),
+        "Quick message must stay compact while typing `/co`:\n{quick_co}"
+    );
+}
+
+#[test]
+fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() {
+    // 1. Empty conversation: `/copy` reports a clear notice in both composer and Quick message.
+    let mut empty = dashboard_fixture();
+    open_and_settle(&mut empty, summary());
+    empty.event_action(Event::Paste("/copy".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(empty.drain_outbox().is_empty());
+    let empty_screen = draw_text(&mut empty, 120, 30);
+    assert!(
+        empty_screen
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "expected empty-reply notice in Operator:\n{empty_screen}"
+    );
+
+    empty.key(KeyCode::Esc);
+    empty.drain_outbox();
+    empty.ctrl('o');
+    empty.event_action(Event::Paste("/copy".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(empty.drain_outbox().is_empty());
+    let empty_quick = draw_text(&mut empty, 120, 30);
+    assert!(
+        empty_quick.contains("Quick message · Ctrl-o"),
+        "{empty_quick}"
+    );
+    assert!(
+        empty_quick
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "expected empty-reply notice in Quick message:\n{empty_quick}"
+    );
+
+    // 2. Unexpected arguments (`/copy extra`) fail locally preserving draft.
+    empty.ctrl('c');
+    empty.event_action(Event::Paste("/copy extra".into()));
+    assert_eq!(empty.key(KeyCode::Enter), DashboardAction::Redraw);
+    let bad_args = draw_text(&mut empty, 120, 30);
+    assert!(bad_args.contains("/copy extra"), "{bad_args}");
+    assert!(
+        bad_args.to_lowercase().contains("no arguments"),
+        "{bad_args}"
+    );
+
+    // 3. Latest visible assistant reply raw Markdown (even when a later turn has no reply yet).
+    let raw_md = "# Deployment Plan\n\n```sh\novrcr list\n```\n\n- **step 1**";
+    let mut d = dashboard_fixture();
+    let mut done = with_model(summary());
+    done.run = SessionRunId(3);
+    done.current_turn = Some(turn(3, OperatorTurnState::Interrupted));
+    let out = opened(&mut d, done.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            done,
+            vec![
+                OperatorMessage {
+                    ordinal: 1,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::User {
+                        text: "first".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 2,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "# Old Reply\n\nShould not be copied.".into(),
+                    )),
+                },
+                OperatorMessage {
+                    ordinal: 3,
+                    turn: OperatorTurnId(1),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
+                    }),
+                },
+                OperatorMessage {
+                    ordinal: 4,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::User {
+                        text: "second".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 5,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        raw_md.into(),
+                    )),
+                },
+                OperatorMessage {
+                    ordinal: 6,
+                    turn: OperatorTurnId(2),
+                    content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
+                    }),
+                },
+                OperatorMessage {
+                    ordinal: 7,
+                    turn: OperatorTurnId(3),
+                    content: OperatorMessageContent::User {
+                        text: "third interrupted".into(),
+                        context: OperatorContext::default(),
+                    },
+                },
+                OperatorMessage {
+                    ordinal: 8,
+                    turn: OperatorTurnId(3),
+                    content: OperatorMessageContent::Interrupted,
+                },
+            ],
+            None,
+        ),
+    );
+
+    // Run `/copy` directly from the `/` menu via Enter (`/` highlights `/copy` first).
+    d.key(KeyCode::Char('/'));
+    let action = d.key(KeyCode::Enter);
+    assert_eq!(action, DashboardAction::CopyText(raw_md.into()));
+    assert!(d.drain_outbox().is_empty());
+    let mut osc52 = Vec::new();
+    ovrcr::tui::write_clipboard(&mut osc52, raw_md).unwrap();
+    let osc52_str = String::from_utf8(osc52).unwrap();
+    assert!(
+        osc52_str.starts_with("\x1b]52;c;"),
+        "expected OSC 52 clipboard sequence: {osc52_str:?}"
+    );
+    let copied_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        copied_screen.to_lowercase().contains("copied"),
+        "expected copy confirmation in Operator:\n{copied_screen}"
+    );
+    assert!(
+        copied_screen.contains("> ▏"),
+        "composer draft must be cleared after `/copy`:\n{copied_screen}"
+    );
+
+    // Quick message (`Ctrl-o`) also executes `/copy` in place, closes Quick, and returns CopyText.
+    d.key(KeyCode::Esc);
+    d.drain_outbox();
+    d.ctrl('o');
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_md.into())
+    );
+    assert!(d.drain_outbox().is_empty());
+    let browse_after_quick_copy = draw_text(&mut d, 120, 30);
+    assert!(
+        !browse_after_quick_copy.contains("Quick message · Ctrl-o"),
+        "Quick message closes on successful `/copy`:\n{browse_after_quick_copy}"
+    );
+    assert!(
+        browse_after_quick_copy.to_lowercase().contains("copied"),
+        "expected copy confirmation in Browse footer:\n{browse_after_quick_copy}"
+    );
+
+    // 4. Exact 64 KiB (65,536 bytes) succeeds; 65,537 bytes fails with a clear >64 KiB notice.
+    let exact_max = "m".repeat(65_536);
+    let mut max_ok = dashboard_fixture();
+    let out = opened(&mut max_ok, summary());
+    let read = read_request(&out);
+    respond(
+        &mut max_ok,
+        read.request_id,
+        history_of(
+            summary(),
+            vec![
+                user(1, "big", OperatorContext::default()),
+                delta(2, &exact_max),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    max_ok.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        max_ok.key(KeyCode::Enter),
+        DashboardAction::CopyText(exact_max)
+    );
+
+    let too_big = "m".repeat(65_537);
+    let mut oversized = dashboard_fixture();
+    let out = opened(&mut oversized, summary());
+    let read = read_request(&out);
+    respond(
+        &mut oversized,
+        read.request_id,
+        history_of(
+            summary(),
+            vec![
+                user(1, "too big", OperatorContext::default()),
+                delta(2, &too_big),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    oversized.event_action(Event::Paste("/copy".into()));
+    assert_eq!(oversized.key(KeyCode::Enter), DashboardAction::Redraw);
+    let over_screen = draw_text(&mut oversized, 120, 30);
+    assert!(
+        over_screen.contains("64 KiB"),
+        "expected >64 KiB notice in Operator:\n{over_screen}"
+    );
+    oversized.key(KeyCode::Esc);
+    oversized.drain_outbox();
+    oversized.ctrl('o');
+    oversized.event_action(Event::Paste("/copy".into()));
+    assert_eq!(oversized.key(KeyCode::Enter), DashboardAction::Redraw);
+    let over_quick = draw_text(&mut oversized, 120, 30);
+    assert!(over_quick.contains("64 KiB"), "{over_quick}");
+}
+
+#[test]
+fn slash_thinking_opens_picker_validates_capabilities_and_writes_settings_across_entry_points() {
+    // 1. Cold Quick message `/thinking` (no args) closes Quick, opens full Operator,
+    //    and opens ReasoningPicker with full capabilities once Opened arrives.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/thinking".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/thinking` opens Operator");
+    assert!(
+        !open_msgs
+            .iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. }))),
+        "must never submit `/thinking` as a prompt: {open_msgs:?}"
+    );
+    let out = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(reasoning_summary(false)),
+    );
+    let read = read_request(&out);
+    respond(
+        &mut cold,
+        read.request_id,
+        history_of(reasoning_summary(false), Vec::new(), None),
+    );
+    let cold_screen = draw_text(&mut cold, 140, 35);
+    assert!(
+        !cold_screen.contains("Quick message · Ctrl-o"),
+        "Quick message must be closed:\n{cold_screen}"
+    );
+    assert!(
+        cold_screen.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "full Operator must be open:\n{cold_screen}"
+    );
+    assert!(
+        cold_screen.contains("default (Pi's choice)")
+            && cold_screen.contains("not offered: off, xhigh, max")
+            && cold_screen.contains("Enter pick"),
+        "ReasoningPicker must be open with model capabilities:\n{cold_screen}"
+    );
+    cold.key(KeyCode::Esc);
+    let after_picker_esc = draw_text(&mut cold, 140, 35);
+    assert!(
+        !after_picker_esc.contains("Enter pick") && after_picker_esc.contains("> ▏"),
+        "Quick draft was cleared and composer is clean:\n{after_picker_esc}"
+    );
+
+    // 2. Before capabilities are known (`reasoning: None`), all 8 levels match case-insensitively,
+    //    while invalid names fail locally listing all 8 valid choices with draft preserved.
+    let mut unknown_caps = dashboard_fixture();
+    open_and_settle(&mut unknown_caps, summary());
+    for (input, expected) in [
+        ("/thinking DEFAULT", "\"default\""),
+        ("/thinking Off", "\"off\""),
+        ("/thinking MINIMAL", "\"minimal\""),
+        ("/thinking low", "\"low\""),
+        ("/thinking Medium", "\"medium\""),
+        ("/thinking HIGH", "\"high\""),
+        ("/thinking xHigh", "\"xhigh\""),
+        ("/thinking MAX", "\"max\""),
+    ] {
+        unknown_caps.event_action(Event::Paste(input.into()));
+        unknown_caps.key(KeyCode::Enter);
+        let out = unknown_caps.drain_outbox();
+        assert!(
+            out.iter().any(|m| matches!(
+                &m.request,
+                Request::SetSetting { path, value: Some(v) }
+                    if path == "operator.thinking_level" && v == expected
+            )),
+            "expected SetSetting {expected} for `{input}`, got {out:?}"
+        );
+    }
+    unknown_caps.event_action(Event::Paste("/thinking turbo".into()));
+    unknown_caps.key(KeyCode::Enter);
+    assert!(unknown_caps.drain_outbox().is_empty());
+    let invalid_screen = draw_text(&mut unknown_caps, 140, 30);
+    assert!(
+        invalid_screen.contains("> /thinking turbo▏"),
+        "{invalid_screen}"
+    );
+    for choice in [
+        "default", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+    ] {
+        assert!(
+            invalid_screen.contains(choice),
+            "expected `{choice}` listed in error:\n{invalid_screen}"
+        );
+    }
+
+    // 3. When model capabilities are known (`minimal, low, medium, high`), even during a running turn:
+    //    - `/th` + Enter in `/` menu opens ReasoningPicker
+    //    - `/thinking medium` and `/thinking DEFAULT` write SetSetting (in composer and Quick)
+    //    - `/thinking max` and `/thinking off` fail locally listing supported choices and keeping draft
+    let mut active = dashboard_fixture();
+    open_and_settle(&mut active, reasoning_summary(true));
+
+    active.event_action(Event::Paste("/th".into()));
+    active.key(KeyCode::Enter);
+    let picker_screen = draw_text(&mut active, 140, 35);
+    assert!(picker_screen.contains("Enter pick"), "{picker_screen}");
+    active.key(KeyCode::Esc);
+
+    active.event_action(Event::Paste("/thinking max".into()));
+    active.key(KeyCode::Enter);
+    assert!(active.drain_outbox().is_empty());
+    let unsupported_screen = draw_text(&mut active, 140, 30);
+    assert!(
+        unsupported_screen.contains("> /thinking max▏"),
+        "draft must be preserved on unsupported level:\n{unsupported_screen}"
+    );
+    assert!(
+        unsupported_screen.contains("default, minimal, low, medium, high"),
+        "expected supported choices listed:\n{unsupported_screen}"
+    );
+
+    active.ctrl('c');
+    active.event_action(Event::Paste("/thinking MEDIUM".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"medium\""
+        )),
+        "supported level writes SetSetting even while turn is running: {out:?}"
+    );
+
+    active.event_action(Event::Paste("/thinking DEFAULT".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"default\""
+        )),
+        "`default` is always allowed even when capabilities omit Default: {out:?}"
+    );
+
+    // Quick message (`Ctrl-o`) capability check and direct SetSetting execution.
+    active.key(KeyCode::Esc);
+    active.drain_outbox();
+    active.ctrl('o');
+    active.event_action(Event::Paste("/thinking OFF".into()));
+    active.key(KeyCode::Enter);
+    assert!(active.drain_outbox().is_empty());
+    let quick_unsupported = draw_text(&mut active, 140, 30);
+    assert!(
+        quick_unsupported.contains("Quick message · Ctrl-o")
+            && quick_unsupported.contains("/thinking OFF")
+            && quick_unsupported.contains("default, minimal, low, medium, high"),
+        "Quick message must reject model-unsupported level inline with draft preserved:\n{quick_unsupported}"
+    );
+
+    active.ctrl('c');
+    active.event_action(Event::Paste("/thinking low".into()));
+    active.key(KeyCode::Enter);
+    let out = active.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.thinking_level" && v == "\"low\""
+        )),
+        "Quick message valid `/thinking low` writes SetSetting directly: {out:?}"
+    );
+    let after_quick_set = draw_text(&mut active, 140, 30);
+    assert!(
+        !after_quick_set.contains("Quick message · Ctrl-o"),
+        "Quick message closes after valid `/thinking low`:\n{after_quick_set}"
+    );
+}
+
+#[test]
+fn slash_menu_lists_and_completes_new_and_session_and_rejects_extra_args() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    d.key(KeyCode::Char('/'));
+    let menu = draw_text(&mut d, 120, 30);
+    for entry in ["/copy", "/thinking", "/model", "/new", "/session"] {
+        assert!(
+            menu.contains(entry),
+            "expected `{entry}` in slash menu:\n{menu}"
+        );
+    }
+
+    // Filter `/n` -> Tab completes `/new` with no trailing space and dismisses menu.
+    d.key(KeyCode::Char('n'));
+    let filtered_new = draw_text(&mut d, 120, 30);
+    assert!(filtered_new.contains("/new"), "{filtered_new}");
+    assert!(!filtered_new.contains("/copy"), "{filtered_new}");
+    d.key(KeyCode::Tab);
+    let completed_new = draw_text(&mut d, 120, 30);
+    assert!(completed_new.contains("> /new▏"), "{completed_new}");
+
+    // `/new extra` fails locally with draft preserved.
+    d.event_action(Event::Paste(" extra".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(d.drain_outbox().is_empty());
+    let new_bad_args = draw_text(&mut d, 120, 30);
+    assert!(new_bad_args.contains("> /new extra▏"), "{new_bad_args}");
+    assert!(
+        new_bad_args.to_lowercase().contains("no arguments"),
+        "{new_bad_args}"
+    );
+
+    // Filter `/s` -> Tab completes `/session` with no trailing space and dismisses menu.
+    d.ctrl('c');
+    d.event_action(Event::Paste("/s".into()));
+    let filtered_session = draw_text(&mut d, 120, 30);
+    assert!(filtered_session.contains("/session"), "{filtered_session}");
+    d.key(KeyCode::Tab);
+    let completed_session = draw_text(&mut d, 120, 30);
+    assert!(
+        completed_session.contains("> /session▏"),
+        "{completed_session}"
+    );
+
+    // `/session extra` fails locally with draft preserved.
+    d.event_action(Event::Paste(" extra".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(d.drain_outbox().is_empty());
+    let session_bad_args = draw_text(&mut d, 120, 30);
+    assert!(
+        session_bad_args.contains("> /session extra▏"),
+        "{session_bad_args}"
+    );
+    assert!(
+        session_bad_args.to_lowercase().contains("no arguments"),
+        "{session_bad_args}"
+    );
+}
+
+#[test]
+fn slash_new_resets_feed_epoch_and_copy_state_while_refusing_busy_or_leased_workers() {
+    // 1. Busy (`Running`) and leased (`!worker_stopped || worker_live`) conversations refuse `/new`.
+    let mut busy_dash = dashboard_fixture();
+    open_and_settle(&mut busy_dash, busy());
+    busy_dash.event_action(Event::Paste("/new".into()));
+    busy_dash.key(KeyCode::Enter);
+    assert!(
+        busy_dash.drain_outbox().is_empty(),
+        "running turn must refuse `/new` locally without sending Submit"
+    );
+    let busy_screen = draw_text(&mut busy_dash, 120, 30);
+    assert!(busy_screen.contains("> /new▏"), "{busy_screen}");
+    assert!(
+        busy_screen.to_lowercase().contains("running"),
+        "expected running refusal reason:\n{busy_screen}"
+    );
+
+    let mut leased_state = with_model(summary());
+    leased_state.run = SessionRunId(2);
+    leased_state.worker_stopped = false;
+    leased_state.worker_live = true;
+    leased_state.current_turn = Some(turn(2, OperatorTurnState::Complete));
+    let mut leased_dash = dashboard_fixture();
+    open_and_settle(&mut leased_dash, leased_state);
+    leased_dash.event_action(Event::Paste("/new".into()));
+    leased_dash.key(KeyCode::Enter);
+    assert!(leased_dash.drain_outbox().is_empty());
+    let leased_screen = draw_text(&mut leased_dash, 120, 30);
+    assert!(leased_screen.contains("> /new▏"), "{leased_screen}");
+    assert!(
+        leased_screen.to_lowercase().contains("lease")
+            || leased_screen.to_lowercase().contains("active"),
+        "expected lease refusal reason:\n{leased_screen}"
+    );
+
+    // 2. Idle conversation with prior messages: `/new` sends NewSession, handles Server errors cleanly,
+    //    and on Conversation(epoch 1) clears visible feed, resets model/reasoning, and clears `/copy`.
+    let mut d = dashboard_fixture();
+    let mut initial = with_model(summary());
+    initial.run = SessionRunId(2);
+    initial.current_turn = Some(turn(2, OperatorTurnState::Complete));
+    let out = opened(&mut d, initial.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            initial.clone(),
+            vec![
+                user(1, "epoch zero prompt", OperatorContext::default()),
+                delta(2, "Epoch zero reply markdown."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    let before_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        before_screen.contains("epoch zero prompt"),
+        "{before_screen}"
+    );
+
+    d.event_action(Event::Paste("/new".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let new_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(2),
+                })
+            )
+        })
+        .expect("expected OperatorRequest::NewSession");
+
+    // Simulate Server conflict error first -> draft preserved, error rendered.
+    d.handle_server_message(ServerMessage::Response {
+        request_id: new_req.request_id,
+        response: Response::Error {
+            code: ovrcr_protocol::ErrorCode::Conflict,
+            message:
+                "cannot start a new Operator session while a watched-session work lease is active"
+                    .into(),
+        },
+    });
+    let conflict_screen = draw_text(&mut d, 120, 30);
+    assert!(conflict_screen.contains("> /new▏"), "{conflict_screen}");
+    assert!(
+        conflict_screen.contains("watched-session work lease"),
+        "{conflict_screen}"
+    );
+
+    // Retry `/new` and succeed with epoch 1 summary.
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let new_req2 = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession { .. })
+            )
+        })
+        .expect("expected retry NewSession");
+    let mut epoch1 = summary();
+    epoch1.run = SessionRunId(2);
+    epoch1.session_epoch = 1;
+    let follow = respond(
+        &mut d,
+        new_req2.request_id,
+        OperatorResponse::Conversation(epoch1.clone()),
+    );
+    if let Some(read_msg) = follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+    {
+        respond(
+            &mut d,
+            read_msg.request_id,
+            history_of(epoch1, Vec::new(), None),
+        );
+    }
+
+    let after_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        !after_screen.contains("epoch zero prompt") && !after_screen.contains("Epoch zero reply"),
+        "visible feed must be cleared after `/new`:\n{after_screen}"
+    );
+    assert!(
+        after_screen.contains("> ▏"),
+        "draft must be cleared:\n{after_screen}"
+    );
+    assert!(
+        after_screen.to_lowercase().contains("epoch 1"),
+        "expected epoch 1 confirmation notice:\n{after_screen}"
+    );
+
+    // `/copy` after `/new` no longer sees epoch-0 assistant replies!
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    let copy_after_new = draw_text(&mut d, 120, 30);
+    assert!(
+        copy_after_new
+            .to_lowercase()
+            .contains("no assistant reply to copy yet"),
+        "{copy_after_new}"
+    );
+
+    // 3. Cold Quick message (`Ctrl-o`) `/new` opens singleton, sends NewSession, and closes Quick.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/new".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/new` sends Open first");
+    let next_msgs = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let quick_new = next_msgs
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::NewSession { .. })
+            )
+        })
+        .expect("Opened triggers NewSession");
+    let mut reset = summary();
+    reset.session_epoch = 1;
+    respond(
+        &mut cold,
+        quick_new.request_id,
+        OperatorResponse::Conversation(reset),
+    );
+    let quick_done = draw_text(&mut cold, 120, 30);
+    assert!(
+        !quick_done.contains("Quick message · Ctrl-o"),
+        "Quick message closes once `/new` succeeds:\n{quick_done}"
+    );
+    assert!(
+        quick_done.to_lowercase().contains("epoch 1"),
+        "Browse notice confirms new epoch:\n{quick_done}"
+    );
+}
+
+#[test]
+fn slash_session_opens_modal_across_composer_and_quick_and_dismisses_with_esc_enter_or_q() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    // Invoke `/session` in full Operator composer.
+    d.event_action(Event::Paste("/session".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let session_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo {
+                    conversation: OperatorConversationId(7),
+                })
+            )
+        })
+        .expect("expected OperatorRequest::SessionInfo");
+
+    let populated = ovrcr_protocol::OperatorSessionInfo {
+        conversation: OperatorConversationId(7),
+        session: SessionId(99),
+        run: SessionRunId(2),
+        session_epoch: 0,
+        pi_session_id: Some("operator-7".into()),
+        checkpoint_turn: Some(OperatorTurnId(2)),
+        active_tip_turn: Some(OperatorTurnId(2)),
+        configured_model: Some("anthropic/claude-sonnet-4-5".into()),
+        active_model: Some(OperatorModel {
+            provider: "openai".into(),
+            id: "gpt-6.1-sol".into(),
+        }),
+        configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::High,
+        reasoning: Some(ovrcr_protocol::OperatorReasoning {
+            requested: ovrcr_protocol::OperatorThinkingLevel::High,
+            level: ovrcr_protocol::OperatorThinkingLevel::Medium,
+            available: vec![
+                ovrcr_protocol::OperatorThinkingLevel::Low,
+                ovrcr_protocol::OperatorThinkingLevel::Medium,
+                ovrcr_protocol::OperatorThinkingLevel::High,
+            ],
+        }),
+        turns: 3,
+        completed_turns: 2,
+        branch_turns: 2,
+        user_messages: 3,
+        assistant_messages: 2,
+        tool_calls: 5,
+        tool_results: 4,
+        epoch_tool_calls: 5,
+        epoch_tool_results: 4,
+        total_messages: 9,
+        epoch_total_messages: 9,
+        tokens: ovrcr_protocol::OperatorTokenStats {
+            input: 1_200,
+            output: 350,
+            cache_read: 400,
+            cache_write: 50,
+            total: 2_000,
+        },
+        cost_usd_nanos: 12_500_000,
+        context_window: ovrcr_protocol::OperatorContextWindowUsage {
+            used_tokens: Some(2_000),
+            capacity_tokens: Some(200_000),
+        },
+    };
+    respond(
+        &mut d,
+        session_req.request_id,
+        OperatorResponse::SessionInfo(Box::new(populated.clone())),
+    );
+    let modal_screen = draw_text(&mut d, 140, 35);
+    for expected in [
+        "operator-7",
+        "openai/gpt-6.1-sol",
+        "anthropic/claude-sonnet-4-5",
+        "medium",
+        "1,200",
+        "350",
+        "400",
+        "50",
+        "2,000",
+        "$0.0125",
+        "200,000",
+        "1.0%",
+    ] {
+        assert!(
+            modal_screen.contains(expected),
+            "expected `{expected}` in SessionModal:\n{modal_screen}"
+        );
+    }
+
+    // Dismiss with `Esc`, `Enter`, and `q` — each closes only SessionModal while staying in Operator!
+    for dismiss in [KeyCode::Esc, KeyCode::Enter, KeyCode::Char('q')] {
+        if !draw_text(&mut d, 140, 35).contains("operator-7") {
+            d.event_action(Event::Paste("/session".into()));
+            d.key(KeyCode::Enter);
+            let req = d
+                .drain_outbox()
+                .into_iter()
+                .find(|m| {
+                    matches!(
+                        m.request,
+                        Request::Operator(OperatorRequest::SessionInfo { .. })
+                    )
+                })
+                .unwrap();
+            respond(
+                &mut d,
+                req.request_id,
+                OperatorResponse::SessionInfo(Box::new(populated.clone())),
+            );
+        }
+        assert_eq!(d.key(dismiss), DashboardAction::Redraw);
+        let closed = draw_text(&mut d, 140, 35);
+        assert!(
+            !closed.contains("$0.0125"),
+            "`{dismiss:?}` must dismiss SessionModal:\n{closed}"
+        );
+        assert!(
+            closed.contains("Operator · pi · openai/gpt-6.1-sol"),
+            "`{dismiss:?}` must remain inside full Operator:\n{closed}"
+        );
+        assert!(closed.contains("> ▏"), "{closed}");
+    }
+
+    // Cold Quick message (`Ctrl-o`) `/session` transitions into full Operator and opens SessionModal
+    // cleanly on an empty / post-`/new` epoch!
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/session".into()));
+    cold.key(KeyCode::Enter);
+    let open_msgs = cold.drain_outbox();
+    let open_req = open_msgs
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/session` sends Open");
+    let mut empty_epoch = summary();
+    empty_epoch.session_epoch = 1;
+    let follow = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(empty_epoch.clone()),
+    );
+    let info_req = follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo { .. })
+            )
+        })
+        .expect("Opened triggers SessionInfo");
+    if let Some(read_req) = follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Read { .. })))
+    {
+        respond(
+            &mut cold,
+            read_req.request_id,
+            history_of(empty_epoch, Vec::new(), None),
+        );
+    }
+    let empty_info = ovrcr_protocol::OperatorSessionInfo {
+        conversation: OperatorConversationId(7),
+        session: SessionId(99),
+        run: SessionRunId(1),
+        session_epoch: 1,
+        pi_session_id: None,
+        checkpoint_turn: None,
+        active_tip_turn: None,
+        configured_model: None,
+        active_model: None,
+        configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::Default,
+        reasoning: None,
+        turns: 0,
+        completed_turns: 0,
+        branch_turns: 0,
+        user_messages: 0,
+        assistant_messages: 0,
+        tool_calls: 0,
+        tool_results: 0,
+        epoch_tool_calls: 0,
+        epoch_tool_results: 0,
+        total_messages: 0,
+        epoch_total_messages: 0,
+        tokens: ovrcr_protocol::OperatorTokenStats::default(),
+        cost_usd_nanos: 0,
+        context_window: ovrcr_protocol::OperatorContextWindowUsage::default(),
+    };
+    respond(
+        &mut cold,
+        info_req.request_id,
+        OperatorResponse::SessionInfo(Box::new(empty_info)),
+    );
+    let empty_modal = draw_text(&mut cold, 140, 35);
+    assert!(
+        !empty_modal.contains("Quick message · Ctrl-o"),
+        "Quick message must close when transitioning to SessionModal:\n{empty_modal}"
+    );
+    for expected in ["none", "harness default", "$0.0000"] {
+        assert!(
+            empty_modal.to_lowercase().contains(expected),
+            "expected `{expected}` in empty SessionModal:\n{empty_modal}"
+        );
+    }
+}
+
+#[test]
+fn slash_model_opens_searchable_picker_switches_default_and_exact_and_routes_quick_message() {
+    use ovrcr_protocol::OperatorModelCatalogEntry;
+
+    let catalog = vec![
+        OperatorModelCatalogEntry {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+            name: Some("Claude Sonnet 4.6".into()),
+        },
+        OperatorModelCatalogEntry {
+            provider: "openai".into(),
+            id: "gpt-5.4".into(),
+            name: None,
+        },
+        OperatorModelCatalogEntry {
+            provider: "openrouter".into(),
+            id: "vendor/sub/id".into(),
+            name: Some("Nested Router Model".into()),
+        },
+    ];
+
+    // 1. `/` menu includes `/model [provider/id | default]`, filters on `/MO`, Tab-completes `/model `,
+    //    and Enter in `/` menu triggers `OperatorRequest::Models`.
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, reasoning_summary(true)); // running turn (`true`) proves mid-turn switching works
+    d.key(KeyCode::Char('/'));
+    let menu_screen = draw_text(&mut d, 140, 30);
+    assert!(
+        menu_screen.contains("/model [provider/id | default]")
+            && menu_screen.contains("Choose or set Operator model"),
+        "expected `/model` in `/` popup:\n{menu_screen}"
+    );
+    d.key(KeyCode::Char('M'));
+    d.key(KeyCode::Char('O'));
+    let mo_screen = draw_text(&mut d, 140, 30);
+    assert!(
+        mo_screen.contains("Choose or set Operator model")
+            && !mo_screen.contains("Copy latest assistant reply Markdown"),
+        "case-insensitive `/MO` filter should isolate `/model`:\n{mo_screen}"
+    );
+    d.key(KeyCode::Tab);
+    let after_tab = draw_text(&mut d, 140, 30);
+    assert!(
+        after_tab.contains("> /model ▏") && !after_tab.contains("Choose or set Operator model"),
+        "Tab completes `/model ` with trailing space and dismisses menu:\n{after_tab}"
+    );
+
+    // 2. `/model DEFAULT` in both full Operator and cold Quick message writes `operator.model = None`
+    //    immediately without querying `OperatorRequest::Models` or opening a picker.
+    d.event_action(Event::Paste("DEFAULT".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: None } if path == "operator.model"
+        )),
+        "expected SetSetting operator.model = None, got {out:?}"
+    );
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Models))),
+        "`/model default` must not query catalog: {out:?}"
+    );
+    let after_default = draw_text(&mut d, 140, 30);
+    assert!(
+        after_default.contains("> ▏") && after_default.contains("Harness default"),
+        "composer cleared and confirmation shown:\n{after_default}"
+    );
+
+    let mut cold_default = dashboard_fixture();
+    cold_default.ctrl('o');
+    cold_default.event_action(Event::Paste("/model default".into()));
+    cold_default.key(KeyCode::Enter);
+    let out = cold_default.drain_outbox();
+    assert_eq!(out.len(), 1, "only SetSetting should be sent: {out:?}");
+    assert!(matches!(
+        &out[0].request,
+        Request::SetSetting { path, value: None } if path == "operator.model"
+    ));
+    let browse_screen = draw_text(&mut cold_default, 140, 30);
+    assert!(
+        !browse_screen.contains("Quick message · Ctrl-o")
+            && !browse_screen.contains("Operator · pi"),
+        "cold Quick `/model default` closes Quick without opening full Operator:\n{browse_screen}"
+    );
+
+    // 3. `/model` opens searchable `ModelPicker` with `Harness default` first, marks active setting,
+    //    filters live by substring on id or display name, closes on Esc, and writes SetSetting on Enter
+    //    even while a turn is running.
+    d.event_action(Event::Paste("/mo".into()));
+    d.key(KeyCode::Enter); // run `/model` directly from `/` menu
+    let out = d.drain_outbox();
+    let models_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("`/model` requests dedicated profile catalog");
+    respond(
+        &mut d,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    let picker_default_active = draw_text(&mut d, 140, 35);
+    assert!(
+        picker_default_active.contains("✓ Harness default")
+            && picker_default_active.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && picker_default_active.contains("openai/gpt-5.4")
+            && picker_default_active.contains("openrouter/vendor/sub/id · Nested Router Model"),
+        "picker lists Harness default first + catalog entries with display names:\n{picker_default_active}"
+    );
+
+    // Live substring filtering by display name ("Nested"), then Backspace + Enter selects `openrouter/vendor/sub/id`.
+    d.event_action(Event::Paste("nestedx".into()));
+    let no_match_live = draw_text(&mut d, 140, 35);
+    assert!(
+        no_match_live.contains("No Operator models match \"nestedx\""),
+        "live filter reports zero matches:\n{no_match_live}"
+    );
+    d.key(KeyCode::Backspace);
+    let filtered_nested = draw_text(&mut d, 140, 35);
+    assert!(
+        filtered_nested.contains("openrouter/vendor/sub/id · Nested Router Model")
+            && !filtered_nested.contains("openai/gpt-5.4"),
+        "backspacing live filter narrows to matching entry:\n{filtered_nested}"
+    );
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.model" && v == "\"openrouter/vendor/sub/id\""
+        )),
+        "Enter on filtered catalog model writes SetSetting mid-turn: {out:?}"
+    );
+
+    // Install updated Settings snapshot and verify `/model` marks `openrouter/vendor/sub/id` active (`✓`),
+    // and Esc closes only the picker while staying inside full Operator.
+    d.install_settings(ovrcr::tui::Settings {
+        operator: ovrcr_protocol::OperatorSettings {
+            model: Some("openrouter/vendor/sub/id".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    d.event_action(Event::Paste("/model".into()));
+    d.key(KeyCode::Enter);
+    let models_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("`/model` requests catalog");
+    respond(
+        &mut d,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    let picker_explicit_active = draw_text(&mut d, 140, 35);
+    assert!(
+        picker_explicit_active.contains("✓ openrouter/vendor/sub/id · Nested Router Model")
+            && !picker_explicit_active.contains("✓ Harness default"),
+        "picker marks configured Settings snapshot model active:\n{picker_explicit_active}"
+    );
+    assert_eq!(d.key(KeyCode::Esc), DashboardAction::Redraw);
+    let after_esc = draw_text(&mut d, 140, 35);
+    assert!(
+        !after_esc.contains("Filter:") && after_esc.contains("Operator · pi · openai/gpt-6.1-sol"),
+        "Esc closes ModelPicker while keeping full Operator open:\n{after_esc}"
+    );
+
+    // 4. `/model <provider/id>` exact match (including slash-containing ID) from `Ctrl-o` Quick message
+    //    writes SetSetting immediately on catalog response and closes Quick without opening full Operator.
+    let mut quick_exact = dashboard_fixture();
+    quick_exact.ctrl('o');
+    quick_exact.event_action(Event::Paste("/model openrouter/vendor/sub/id".into()));
+    quick_exact.key(KeyCode::Enter);
+    let out = quick_exact.drain_outbox();
+    let models_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("Quick `/model <arg>` queries catalog");
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Open))),
+        "Quick exact `/model <provider/id>` should not force Open before checking catalog: {out:?}"
+    );
+    let out = respond(
+        &mut quick_exact,
+        models_req.request_id,
+        OperatorResponse::Models(catalog.clone()),
+    );
+    assert!(
+        out.iter().any(|m| matches!(
+            &m.request,
+            Request::SetSetting { path, value: Some(v) }
+                if path == "operator.model" && v == "\"openrouter/vendor/sub/id\""
+        )),
+        "exact match from Quick writes SetSetting immediately: {out:?}"
+    );
+    assert!(
+        !out.iter()
+            .any(|m| matches!(m.request, Request::Operator(OperatorRequest::Open))),
+        "exact match from Quick does not force full Operator open: {out:?}"
+    );
+    let quick_exact_screen = draw_text(&mut quick_exact, 140, 30);
+    assert!(
+        !quick_exact_screen.contains("Quick message · Ctrl-o"),
+        "Quick closes after exact `/model <provider/id>`:\n{quick_exact_screen}"
+    );
+
+    // 5. Cold `Ctrl-o` `/model sonnet` (non-exact query) transitions into full Operator with
+    //    `ModelPicker` pre-filtered by `sonnet`, and empty catalog / zero-match queries surface clear notices.
+    let mut quick_partial = dashboard_fixture();
+    quick_partial.ctrl('o');
+    quick_partial.event_action(Event::Paste("/model sonnet".into()));
+    quick_partial.key(KeyCode::Enter);
+    let models_req = quick_partial
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("Quick `/model sonnet` queries catalog");
+    let out = respond(
+        &mut quick_partial,
+        models_req.request_id,
+        OperatorResponse::Models(catalog),
+    );
+    let open_req = out
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("non-exact Quick `/model <query>` transitions into full Operator");
+    let out = respond(
+        &mut quick_partial,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let read_req = read_request(&out);
+    respond(
+        &mut quick_partial,
+        read_req.request_id,
+        history_of(summary(), Vec::new(), None),
+    );
+    let prefiltered_screen = draw_text(&mut quick_partial, 140, 35);
+    assert!(
+        !prefiltered_screen.contains("Quick message · Ctrl-o")
+            && prefiltered_screen.contains("Filter: sonnet▏")
+            && prefiltered_screen.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && !prefiltered_screen.contains("openai/gpt-5.4"),
+        "Quick partial `/model sonnet` opens full Operator with pre-filtered ModelPicker:\n{prefiltered_screen}"
+    );
+
+    // Empty dedicated profile catalog surfaces a clear `ovrcr operator setup` notice.
+    quick_partial.key(KeyCode::Esc);
+    quick_partial.event_action(Event::Paste("/model anything".into()));
+    quick_partial.key(KeyCode::Enter);
+    let models_req = quick_partial
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Models)))
+        .expect("requests catalog");
+    respond(
+        &mut quick_partial,
+        models_req.request_id,
+        OperatorResponse::Models(Vec::new()),
+    );
+    let empty_catalog_screen = draw_text(&mut quick_partial, 140, 35);
+    assert!(
+        empty_catalog_screen.contains("ovrcr operator setup"),
+        "empty catalog must surface clear setup guidance:\n{empty_catalog_screen}"
+    );
+}
+
+#[test]
+fn slash_compact_menu_completion_and_empty_or_busy_refusal() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, with_model(summary()));
+
+    d.key(KeyCode::Char('/'));
+    let menu = draw_text(&mut d, 120, 30);
+    for entry in [
+        "/copy",
+        "/thinking",
+        "/model",
+        "/new",
+        "/session",
+        "/compact",
+        "/tree",
+    ] {
+        assert!(
+            menu.contains(entry),
+            "expected `{entry}` in slash menu:\n{menu}"
+        );
+    }
+
+    // `/co` matches `/copy` then `/compact`; Down + Tab completes `/compact ` with trailing space.
+    d.event_action(Event::Paste("co".into()));
+    let filtered = draw_text(&mut d, 120, 30);
+    assert!(
+        filtered.contains("/copy") && filtered.contains("/compact"),
+        "{filtered}"
+    );
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Tab);
+    let completed_draft = draw_text(&mut d, 120, 30);
+    assert!(
+        completed_draft.contains("> /compact ▏"),
+        "expected trailing space on `/compact` Tab completion:\n{completed_draft}"
+    );
+
+    // Brand-new conversation (`current_turn: None`) refuses `/compact` and keeps draft.
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        d.drain_outbox().is_empty(),
+        "empty-epoch `/compact` must refuse without sending Submit or Compact"
+    );
+    let empty_refusal = draw_text(&mut d, 120, 30);
+    assert!(
+        empty_refusal.contains("> /compact ▏"),
+        "draft preserved on refusal:\n{empty_refusal}"
+    );
+    assert!(
+        empty_refusal.contains("before the first completed turn"),
+        "expected empty-epoch refusal:\n{empty_refusal}"
+    );
+
+    // Busy (`Running`) conversation also refuses `/compact` and keeps draft.
+    let mut busy_dash = dashboard_fixture();
+    open_and_settle(&mut busy_dash, busy());
+    busy_dash.event_action(Event::Paste("/compact".into()));
+    busy_dash.key(KeyCode::Enter);
+    assert!(busy_dash.drain_outbox().is_empty());
+    let busy_screen = draw_text(&mut busy_dash, 120, 30);
+    assert!(busy_screen.contains("> /compact▏"), "{busy_screen}");
+    assert!(
+        busy_screen.to_lowercase().contains("busy"),
+        "expected busy refusal:\n{busy_screen}"
+    );
+}
+
+#[test]
+fn slash_compact_dispatches_across_composer_and_quick_renders_activity_receipt_and_stop_without_clobbering_copy()
+ {
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(2);
+    seeded.current_turn = Some(turn(1, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Prior assistant reply markdown."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+
+    // 1. Composer `/compact keep test failures` sends OperatorRequest::Compact.
+    d.event_action(Event::Paste("/compact keep test failures".into()));
+    d.key(KeyCode::Enter);
+    let out = d.drain_outbox();
+    let compact_req = out
+        .iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(2),
+                    instructions: Some(instructions),
+                }) if instructions == "keep test failures"
+            )
+        })
+        .expect("expected OperatorRequest::Compact");
+
+    // Server error keeps draft intact and renders error.
+    d.handle_server_message(ServerMessage::Response {
+        request_id: compact_req.request_id,
+        response: Response::Error {
+            code: ovrcr_protocol::ErrorCode::Conflict,
+            message:
+                "Cannot compact Operator context before the first completed turn in this session."
+                    .into(),
+        },
+    });
+    let err_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        err_screen.contains("> /compact keep test failures▏")
+            && err_screen.contains("before the first completed turn"),
+        "{err_screen}"
+    );
+
+    // Retry and accept turn 2 (`Running`): draft clears, activity shows `Compacting context…`,
+    // and `Ctrl-x` sends foreground `Stop`.
+    d.key(KeyCode::Enter);
+    let compact_req2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Compact { .. })
+            )
+        })
+        .expect("retry Compact");
+    let mut running_turn = turn(2, OperatorTurnState::Running);
+    running_turn.identity.run = SessionRunId(3);
+    let follow = respond(
+        &mut d,
+        compact_req2.request_id,
+        OperatorResponse::Submitted(running_turn.clone()),
+    );
+    let mut running_summary = seeded.clone();
+    running_summary.run = SessionRunId(3);
+    running_summary.worker_stopped = false;
+    running_summary.current_turn = Some(running_turn.clone());
+    let read_running = read_request(&follow);
+    respond(
+        &mut d,
+        read_running.request_id,
+        history_of(
+            running_summary.clone(),
+            vec![
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::Compaction {
+                        instructions: Some("keep test failures".into()),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+                ),
+            ],
+            None,
+        ),
+    );
+    let compacting_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        compacting_screen.contains("> ▏")
+            && compacting_screen.contains("Compacting context…")
+            && compacting_screen.contains("Compact context · keep test failures"),
+        "expected live compaction activity & header:\n{compacting_screen}"
+    );
+
+    // Stop (`Ctrl-x`) during manual compaction sends `OperatorRequest::Stop`.
+    d.ctrl('x');
+    let stop_out = d.drain_outbox();
+    let stop_req = stop_out
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Stop { identity })
+                    if identity == running_turn.identity
+            )
+        })
+        .expect("Ctrl-x during /compact sends Stop");
+    let mut interrupted_turn = running_turn.clone();
+    interrupted_turn.state = OperatorTurnState::Interrupted;
+    let follow_stop = respond(
+        &mut d,
+        stop_req.request_id,
+        OperatorResponse::Stopped(interrupted_turn.clone()),
+    );
+    let mut interrupted_summary = running_summary.clone();
+    interrupted_summary.worker_stopped = true;
+    interrupted_summary.current_turn = Some(interrupted_turn);
+    let read_stop = read_request(&follow_stop);
+    respond(
+        &mut d,
+        read_stop.request_id,
+        history_of(
+            interrupted_summary.clone(),
+            vec![turn_message(2, 6, OperatorMessageContent::Interrupted)],
+            None,
+        ),
+    );
+    let stopped_screen = draw_text(&mut d, 120, 30);
+    assert!(
+        stopped_screen.contains("previous context preserved"),
+        "expected truthful interrupted compaction receipt:\n{stopped_screen}"
+    );
+
+    // 2. Menu `Enter` on `/compact` executes zero-arg `/compact` and renders completed receipt
+    //    with `tokens_before` + summary while preserving `/copy` of the prior assistant reply!
+    d.event_action(Event::Paste("/compact".into()));
+    let menu_compact = draw_text(&mut d, 120, 30);
+    assert!(menu_compact.contains("/compact"), "{menu_compact}");
+    d.key(KeyCode::Enter);
+    let compact_req3 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    instructions: None,
+                    ..
+                })
+            )
+        })
+        .expect("menu Enter executes zero-arg Compact");
+    let mut turn3 = turn(3, OperatorTurnState::Running);
+    turn3.identity.run = SessionRunId(4);
+    let follow3 = respond(
+        &mut d,
+        compact_req3.request_id,
+        OperatorResponse::Submitted(turn3.clone()),
+    );
+    let mut complete_summary = interrupted_summary;
+    complete_summary.run = SessionRunId(4);
+    complete_summary.worker_stopped = true;
+    turn3.state = OperatorTurnState::Complete;
+    complete_summary.current_turn = Some(turn3);
+    let read3 = read_request(&follow3);
+    respond(
+        &mut d,
+        read3.request_id,
+        history_of(
+            complete_summary,
+            vec![
+                turn_message(
+                    3,
+                    7,
+                    OperatorMessageContent::Compaction { instructions: None },
+                ),
+                turn_message(
+                    3,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted),
+                ),
+                turn_message(
+                    3,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded),
+                ),
+                turn_message(
+                    3,
+                    10,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+                        summary: "Compacted summary body.".into(),
+                        tokens_before: 4_200,
+                    }),
+                ),
+                turn_message(
+                    3,
+                    11,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: None,
+                        pi_leaf_entry_id: None,
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let receipt_screen = draw_text(&mut d, 120, 30);
+    for expected in ["Compact context", "4,200 tokens", "Compacted summary body."] {
+        assert!(
+            receipt_screen.contains(expected),
+            "expected `{expected}` in compaction receipt:\n{receipt_screen}"
+        );
+    }
+
+    // `/copy` copies the prior assistant reply, NOT the compaction summary!
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText("Prior assistant reply markdown.".into())
+    );
+
+    // 3. Cold Quick message (`Ctrl-o`) `/compact concise` refuses empty-epoch conversations
+    //    keeping Quick open, and transitions into full Operator when a checkpoint exists.
+    let mut cold_empty = dashboard_fixture();
+    cold_empty.ctrl('o');
+    cold_empty.event_action(Event::Paste("/compact concise".into()));
+    cold_empty.key(KeyCode::Enter);
+    let open_req = cold_empty
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/compact` opens singleton");
+    respond(
+        &mut cold_empty,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let cold_empty_screen = draw_text(&mut cold_empty, 120, 30);
+    assert!(
+        cold_empty_screen.contains("Quick message · Ctrl-o")
+            && cold_empty_screen.contains("/compact concise")
+            && cold_empty_screen.contains("before the first completed turn"),
+        "cold Quick `/compact` on empty epoch must preserve Quick overlay and draft:\n{cold_empty_screen}"
+    );
+
+    let mut cold_ready = dashboard_fixture();
+    cold_ready.ctrl('o');
+    cold_ready.event_action(Event::Paste("/compact concise".into()));
+    cold_ready.key(KeyCode::Enter);
+    let open_req = cold_ready
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("cold Quick `/compact` opens singleton");
+    let next = respond(
+        &mut cold_ready,
+        open_req.request_id,
+        OperatorResponse::Opened(seeded.clone()),
+    );
+    let quick_compact = next
+        .iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::Compact {
+                    instructions: Some(instructions),
+                    ..
+                }) if instructions == "concise"
+            )
+        })
+        .expect("Opened triggers Compact");
+    let mut q_turn = turn(2, OperatorTurnState::Running);
+    q_turn.identity.run = SessionRunId(3);
+    respond(
+        &mut cold_ready,
+        quick_compact.request_id,
+        OperatorResponse::Submitted(q_turn),
+    );
+    let transitioned = draw_text(&mut cold_ready, 120, 30);
+    assert!(
+        !transitioned.contains("Quick message · Ctrl-o")
+            && transitioned.contains("Compacting context…"),
+        "accepted Quick `/compact` transitions into full Operator:\n{transitioned}"
+    );
+}
+
+#[test]
+fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_when_busy() {
+    use ovrcr_protocol::{
+        OperatorSessionTree, OperatorTreeEntry, OperatorTreeEntryKind, OperatorTreeNavigation,
+    };
+
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(3);
+    seeded.current_turn = Some(turn(3, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    3,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "check beta latency".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Beta p99 is 12ms.".into(),
+                    )),
+                ),
+                turn_message(
+                    3,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2b".into()),
+                        pi_leaf_entry_id: Some("a2b".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    // 1. `/tr` filters slash menu to `/tree` and Tab completes without trailing space;
+    //    `/tree extra` rejects locally with draft preserved.
+    d.event_action(Event::Paste("/tr".into()));
+    let menu = draw_text(&mut d, 120, 30);
+    assert!(
+        menu.contains("/tree") && menu.contains("Inspect or switch Operator conversation branch"),
+        "{menu}"
+    );
+    d.key(KeyCode::Tab);
+    assert!(draw_text(&mut d, 120, 30).contains("> /tree▏"));
+    d.event_action(Event::Paste(" extra".into()));
+    d.key(KeyCode::Enter);
+    assert!(d.drain_outbox().is_empty());
+    let bad_args = draw_text(&mut d, 120, 30);
+    assert!(
+        bad_args.contains("Usage: /tree (takes no arguments).")
+            && bad_args.contains("> /tree extra▏"),
+        "{bad_args}"
+    );
+
+    // 2. `/tree` sends `OperatorRequest::Tree` and renders connectors, `●` markers, filters, and search.
+    d.ctrl('c');
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Tree {
+                    conversation: OperatorConversationId(7)
+                })
+            )
+        })
+        .expect("expected OperatorRequest::Tree");
+
+    let sample_tree = OperatorSessionTree {
+        pi_session_id: Some("pi-7".into()),
+        current_leaf_id: Some("a2b".into()),
+        entries: vec![
+            OperatorTreeEntry {
+                id: "m1".into(),
+                parent_id: None,
+                kind: OperatorTreeEntryKind::ModelChange,
+                preview: "openai/gpt-6.1-sol".into(),
+            },
+            OperatorTreeEntry {
+                id: "u1".into(),
+                parent_id: Some("m1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "inspect logs".into(),
+            },
+            OperatorTreeEntry {
+                id: "tr1".into(),
+                parent_id: Some("u1".into()),
+                kind: OperatorTreeEntryKind::ToolResult,
+                preview: "tool result: list_sessions".into(),
+            },
+            OperatorTreeEntry {
+                id: "a1".into(),
+                parent_id: Some("tr1".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Found two sessions.".into(),
+            },
+            OperatorTreeEntry {
+                id: "u2a".into(),
+                parent_id: Some("a1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "restart alpha worker".into(),
+            },
+            OperatorTreeEntry {
+                id: "a2a".into(),
+                parent_id: Some("u2a".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Alpha restarted.".into(),
+            },
+            OperatorTreeEntry {
+                id: "u2b".into(),
+                parent_id: Some("a1".into()),
+                kind: OperatorTreeEntryKind::User,
+                preview: "check beta latency".into(),
+            },
+            OperatorTreeEntry {
+                id: "a2b".into(),
+                parent_id: Some("u2b".into()),
+                kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                preview: "Beta p99 is 12ms.".into(),
+            },
+        ],
+    };
+    respond(
+        &mut d,
+        tree_req.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree.clone())),
+    );
+    let tree_screen = draw_text(&mut d, 120, 32);
+    for expected in [
+        "filter: default",
+        "● user: inspect logs",
+        "├─   user: restart alpha worker",
+        "│    assistant: Alpha restarted.",
+        "└─ ● user: check beta latency",
+        "● assistant: Beta p99 is 12ms. ← active",
+    ] {
+        assert!(
+            tree_screen.contains(expected),
+            "expected `{expected}` in `/tree` modal:\n{tree_screen}"
+        );
+    }
+    assert!(
+        !tree_screen.contains("[model]"),
+        "`default` filter must hide model_change:\n{tree_screen}"
+    );
+
+    // Filter mode cycles `default` -> `no-tools` -> `user-only` -> `all` -> `default`.
+    d.key(KeyCode::Tab);
+    let no_tools = draw_text(&mut d, 120, 32);
+    assert!(
+        no_tools.contains("filter: no-tools") && !no_tools.contains("tool: tool result"),
+        "{no_tools}"
+    );
+    d.ctrl('f');
+    let user_only = draw_text(&mut d, 120, 32);
+    assert!(
+        user_only.contains("filter: user-only") && !user_only.contains("Alpha restarted."),
+        "{user_only}"
+    );
+    d.key(KeyCode::Tab);
+    let all_mode = draw_text(&mut d, 120, 32);
+    assert!(
+        all_mode.contains("filter: all") && all_mode.contains("[model]: openai/gpt-6.1-sol"),
+        "{all_mode}"
+    );
+    d.key(KeyCode::Tab);
+    assert!(draw_text(&mut d, 120, 32).contains("filter: default"));
+
+    // Multi-token search + `Ctrl-c` clear:
+    d.event_action(Event::Paste("alpha assistant".into()));
+    let searched = draw_text(&mut d, 120, 32);
+    assert!(
+        searched.contains("Alpha restarted.") && !searched.contains("← active"),
+        "{searched}"
+    );
+    d.ctrl('c');
+    assert!(draw_text(&mut d, 120, 32).contains("Beta p99 is 12ms. ← active"));
+
+    // 3. Pressing `Enter` on the already-active leaf (`a2b`) closes `/tree` as a zero-op!
+    d.key(KeyCode::Enter);
+    assert!(
+        d.drain_outbox().is_empty(),
+        "selecting active leaf must not send NavigateTree"
+    );
+    assert!(!draw_text(&mut d, 120, 32).contains("Operator tree · /tree"));
+
+    // 4. Reopen `/tree`, search `"alpha assistant"` (`a2a`), press `Enter` -> switches branch,
+    //    clears composer, reloads feed from `after: 0`, and `/session` shows branch vs epoch counts.
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let req2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        req2.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree.clone())),
+    );
+    d.event_action(Event::Paste("alpha assistant".into()));
+    d.key(KeyCode::Enter);
+    let summarize_prompt = draw_text(&mut d, 120, 32);
+    assert!(
+        summarize_prompt.contains("Summarize branch?")
+            && summarize_prompt.contains("No summary")
+            && summarize_prompt.contains("Summarize with custom prompt"),
+        "switching away from `a2b` must prompt `Summarize branch?`:\n{summarize_prompt}"
+    );
+    d.key(KeyCode::Enter); // confirm default `No summary`
+    let nav_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    conversation: OperatorConversationId(7),
+                    expected_run: SessionRunId(3),
+                    target_entry_id,
+                    summarize: None,
+                }) if target_entry_id == "a2a"
+            )
+        })
+        .expect("expected NavigateTree to `a2a`");
+    let follow = respond(
+        &mut d,
+        nav_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a2a".into()),
+            noop: false,
+            editor_text: None,
+            restored_context: None,
+            submitted: None,
+        })),
+    );
+    let reload = follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read {
+                    conversation: OperatorConversationId(7),
+                    after: 0,
+                    ..
+                })
+            )
+        })
+        .expect("branch switch reloads history from after=0");
+    respond(
+        &mut d,
+        reload.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "restart alpha worker".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Alpha restarted.".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2a".into()),
+                        pi_leaf_entry_id: Some("a2a".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let switched_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        switched_screen.contains("Alpha restarted.")
+            && !switched_screen.contains("Beta p99 is 12ms.")
+            && switched_screen.contains("> ▏"),
+        "{switched_screen}"
+    );
+
+    // `/session` shows active-branch vs epoch counts when branched.
+    d.event_action(Event::Paste("/session".into()));
+    d.key(KeyCode::Enter);
+    let sreq = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::SessionInfo { .. })
+            )
+        })
+        .unwrap();
+    respond(
+        &mut d,
+        sreq.request_id,
+        OperatorResponse::SessionInfo(Box::new(ovrcr_protocol::OperatorSessionInfo {
+            conversation: OperatorConversationId(7),
+            session: SessionId(99),
+            run: SessionRunId(3),
+            session_epoch: 0,
+            pi_session_id: Some("pi-7".into()),
+            checkpoint_turn: Some(OperatorTurnId(3)),
+            active_tip_turn: Some(OperatorTurnId(2)),
+            configured_model: None,
+            active_model: None,
+            configured_thinking_level: ovrcr_protocol::OperatorThinkingLevel::Default,
+            reasoning: None,
+            turns: 3,
+            completed_turns: 3,
+            branch_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            epoch_tool_calls: 3,
+            epoch_tool_results: 2,
+            total_messages: 5,
+            epoch_total_messages: 7,
+            tokens: ovrcr_protocol::OperatorTokenStats::default(),
+            cost_usd_nanos: 0,
+            context_window: ovrcr_protocol::OperatorContextWindowUsage::default(),
+        })),
+    );
+    let branched_session = draw_text(&mut d, 140, 35);
+    assert!(
+        branched_session.contains("2 on branch · 3 total")
+            && branched_session.contains("5 on branch (2 user · 2 assistant) · 7 in epoch")
+            && branched_session
+                .contains("1 calls · 1 results on branch · 3 calls · 2 results in epoch"),
+        "{branched_session}"
+    );
+    d.key(KeyCode::Esc);
+
+    // 5. Rewind a user prompt (`u2a`): restores unwrapped text + captured `OperatorContext` into composer!
+    let target_ctx = captured_context(&fixture_hierarchy(), SessionId(1));
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let req3 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    let mut branch_a_tree = sample_tree.clone();
+    branch_a_tree.current_leaf_id = Some("a2a".into());
+    respond(
+        &mut d,
+        req3.request_id,
+        OperatorResponse::Tree(Box::new(branch_a_tree)),
+    );
+    d.event_action(Event::Paste("restart alpha".into()));
+    d.key(KeyCode::Enter);
+    assert!(
+        draw_text(&mut d, 120, 32).contains("Summarize branch?"),
+        "rewinding `u2a` while `a2a` is leaf must prompt `Summarize branch?`"
+    );
+    d.key(KeyCode::Enter); // confirm `No summary`
+    let rewind_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    summarize: None,
+                    ..
+                }) if target_entry_id == "u2a"
+            )
+        })
+        .expect("expected NavigateTree to user node `u2a`");
+    let rewind_follow = respond(
+        &mut d,
+        rewind_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a1".into()),
+            noop: false,
+            editor_text: Some("restart alpha worker".into()),
+            restored_context: Some(target_ctx),
+            submitted: None,
+        })),
+    );
+    let rewind_read = read_request(&rewind_follow);
+    respond(
+        &mut d,
+        rewind_read.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+            ],
+            None,
+        ),
+    );
+    d.ctrl('l'); // hide notice on next edit? First verify notice + draft, then check restored context!
+    let rewound_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        rewound_screen.contains("> restart alpha worker▏"),
+        "expected unwrapped prompt restored in composer:\n{rewound_screen}"
+    );
+    // Editing a char clears the transient notice and reveals the restored `Managing consigint / auth / #1 run 1` caption!
+    d.key(KeyCode::Char('!'));
+    let ctx_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        ctx_screen.contains("Managing consigint / auth / #1 run 1")
+            && ctx_screen.contains("> restart alpha worker!▏"),
+        "expected restored OperatorContext in composer caption:\n{ctx_screen}"
+    );
+
+    // 6. Read-only `/tree` while a turn is `Running`: inspection works, switching refuses cleanly!
+    let mut busy = dashboard_fixture();
+    open_and_settle(&mut busy, running_request());
+    busy.event_action(Event::Paste("/tree".into()));
+    busy.key(KeyCode::Enter);
+    let busy_tree_req = busy
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("read-only `/tree` allowed while Running");
+    respond(
+        &mut busy,
+        busy_tree_req.request_id,
+        OperatorResponse::Tree(Box::new(sample_tree)),
+    );
+    assert!(draw_text(&mut busy, 120, 32).contains("● user: inspect logs"));
+    busy.key(KeyCode::Up); // move off active leaf `a2b` onto `u2b`
+    busy.key(KeyCode::Enter);
+    assert!(
+        busy.drain_outbox().is_empty(),
+        "busy `/tree` must refuse NavigateTree locally"
+    );
+    let busy_refused = draw_text(&mut busy, 120, 32);
+    assert!(
+        busy_refused.contains("Cannot switch Operator tree branch while a turn is running."),
+        "{busy_refused}"
+    );
+
+    // 7. Cold Quick message (`Ctrl-o`) `/tree` transitions into full Operator and renders empty state.
+    let mut cold = dashboard_fixture();
+    cold.ctrl('o');
+    cold.event_action(Event::Paste("/tree".into()));
+    cold.key(KeyCode::Enter);
+    let open_req = cold
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+        .expect("Quick `/tree` opens singleton");
+    let cold_follow = respond(
+        &mut cold,
+        open_req.request_id,
+        OperatorResponse::Opened(summary()),
+    );
+    let cold_tree_req = cold_follow
+        .iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("Opened triggers Tree");
+    respond(
+        &mut cold,
+        cold_tree_req.request_id,
+        OperatorResponse::Tree(Box::default()),
+    );
+    let cold_screen = draw_text(&mut cold, 120, 32);
+    assert!(
+        !cold_screen.contains("Quick message · Ctrl-o")
+            && cold_screen.contains("No turns in this Operator session yet."),
+        "{cold_screen}"
+    );
+}
+
+#[test]
+fn tree_summarize_branch_modal_supports_esc_back_navigation_custom_prompt_composer_restore_and_stop()
+ {
+    use ovrcr_protocol::{
+        OperatorBranchSummaryRequest, OperatorSessionTree, OperatorTreeEntry,
+        OperatorTreeEntryKind, OperatorTreeNavigation, OperatorTurn, OperatorTurnIdentity,
+    };
+
+    let mut d = dashboard_fixture();
+    let mut seeded = with_model(summary());
+    seeded.run = SessionRunId(3);
+    seeded.current_turn = Some(turn(3, OperatorTurnState::Complete));
+    let out = opened(&mut d, seeded.clone());
+    let read_req = read_request(&out);
+    respond(
+        &mut d,
+        read_req.request_id,
+        history_of(
+            seeded.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    3,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "check beta latency".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Beta p99 is 12ms.".into(),
+                    )),
+                ),
+                turn_message(
+                    3,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u2b".into()),
+                        pi_leaf_entry_id: Some("a2b".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    let entries = vec![
+        OperatorTreeEntry {
+            id: "u1".into(),
+            parent_id: None,
+            kind: OperatorTreeEntryKind::User,
+            preview: "inspect logs".into(),
+        },
+        OperatorTreeEntry {
+            id: "a1".into(),
+            parent_id: Some("u1".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Found two sessions.".into(),
+        },
+        OperatorTreeEntry {
+            id: "u2a".into(),
+            parent_id: Some("a1".into()),
+            kind: OperatorTreeEntryKind::User,
+            preview: "restart alpha worker".into(),
+        },
+        OperatorTreeEntry {
+            id: "a2a".into(),
+            parent_id: Some("u2a".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Alpha restarted.".into(),
+        },
+        OperatorTreeEntry {
+            id: "u2b".into(),
+            parent_id: Some("a1".into()),
+            kind: OperatorTreeEntryKind::User,
+            preview: "check beta latency".into(),
+        },
+        OperatorTreeEntry {
+            id: "a2b".into(),
+            parent_id: Some("u2b".into()),
+            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+            preview: "Beta p99 is 12ms.".into(),
+        },
+    ];
+
+    // 1. Navigating forward to a descendant (`current_leaf_id = Some("a1")` -> `"a2a"`) has ZERO
+    //    abandoned entries on `a1`, so it must NOT prompt `"Summarize branch?"`!
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req_1 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        tree_req_1.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a1".into()),
+            entries: entries.clone(),
+        })),
+    );
+    d.event_action(Event::Paste("Alpha restarted".into()));
+    d.key(KeyCode::Enter);
+    let forward_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    summarize: None,
+                    ..
+                }) if target_entry_id == "a2a"
+            )
+        })
+        .expect("descendant navigation with zero abandoned entries must not prompt");
+    let forward_follow = respond(
+        &mut d,
+        forward_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: seeded.clone(),
+            current_leaf_id: Some("a2b".into()),
+            noop: true,
+            editor_text: None,
+            restored_context: None,
+            submitted: None,
+        })),
+    );
+    assert!(forward_follow.is_empty());
+
+    // 2. Navigating from `a2b` to `u2a` with filter `user-only` + search `"restart alpha"` opens
+    //    `"Summarize branch?"`; `Esc` from custom-instructions -> `"Summarize branch?"` -> `/tree`
+    //    preserves filter, search query, and selected node!
+    d.event_action(Event::Paste("unsent draft before summary".into()));
+    d.ctrl('c'); // clear draft so `/tree` can be entered
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req_2 = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .unwrap();
+    respond(
+        &mut d,
+        tree_req_2.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a2b".into()),
+            entries: entries.clone(),
+        })),
+    );
+    d.key(KeyCode::Tab); // no-tools
+    d.key(KeyCode::Tab); // user-only
+    d.event_action(Event::Paste("restart alpha".into()));
+    assert!(draw_text(&mut d, 120, 32).contains("filter: user-only"));
+
+    d.key(KeyCode::Enter); // -> "Summarize branch?"
+    let confirm_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        confirm_screen.contains("Summarize branch?")
+            && confirm_screen.contains("▸ No summary")
+            && confirm_screen.contains("  Summarize")
+            && confirm_screen.contains("  Summarize with custom prompt"),
+        "{confirm_screen}"
+    );
+    d.key(KeyCode::Down); // Summarize
+    d.key(KeyCode::Down); // Summarize with custom prompt
+    d.key(KeyCode::Enter); // -> Custom instructions input
+    let custom_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        custom_screen.contains("Instructions:")
+            && custom_screen.contains("Summarize branch · Custom prompt"),
+        "{custom_screen}"
+    );
+
+    // `Esc` from custom instructions -> back to `"Summarize branch?"` with `Summarize with custom prompt` still selected!
+    d.key(KeyCode::Esc);
+    let back_to_confirm = draw_text(&mut d, 120, 32);
+    assert!(
+        back_to_confirm.contains("Summarize branch?")
+            && back_to_confirm.contains("▸ Summarize with custom prompt"),
+        "{back_to_confirm}"
+    );
+
+    // `Esc` from `"Summarize branch?"` -> back to `/tree` preserving `filter: user-only`, `Search: restart alpha▏`, and `u2a`!
+    d.key(KeyCode::Esc);
+    let back_to_tree = draw_text(&mut d, 120, 32);
+    assert!(
+        back_to_tree.contains("filter: user-only")
+            && back_to_tree.contains("Search: restart alpha▏")
+            && back_to_tree.contains("user: restart alpha worker"),
+        "{back_to_tree}"
+    );
+
+    // 3. Re-enter -> `Summarize with custom prompt` -> submit `"focus on auth"` -> running activity -> completion reloads
+    //    feed with receipt AND restores unwrapped `"restart alpha worker"` + `OperatorContext` into composer!
+    d.key(KeyCode::Enter); // -> "Summarize branch?"
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Down);
+    d.key(KeyCode::Enter); // -> Custom instructions
+    d.event_action(Event::Paste("focus on auth".into()));
+    d.key(KeyCode::Enter);
+
+    let sum_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| {
+            matches!(
+                &m.request,
+                Request::Operator(OperatorRequest::NavigateTree {
+                    target_entry_id,
+                    summarize: Some(OperatorBranchSummaryRequest {
+                        instructions: Some(inst),
+                    }),
+                    ..
+                }) if target_entry_id == "u2a" && inst == "focus on auth"
+            )
+        })
+        .expect("expected NavigateTree with custom instructions");
+
+    let target_ctx = captured_context(&fixture_hierarchy(), SessionId(1));
+    let running_turn = OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: seeded.id,
+            session: seeded.session,
+            run: SessionRunId(4),
+            turn: OperatorTurnId(4),
+        },
+        state: OperatorTurnState::Running,
+        sequence: 0,
+    };
+    let mut running_summary = seeded.clone();
+    running_summary.run = SessionRunId(4);
+    running_summary.current_turn = Some(running_turn.clone());
+    running_summary.worker_live = true;
+    running_summary.worker_stopped = false;
+
+    let sum_follow = respond(
+        &mut d,
+        sum_req.request_id,
+        OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+            conversation: running_summary.clone(),
+            current_leaf_id: Some("a2b".into()),
+            noop: false,
+            editor_text: Some("restart alpha worker".into()),
+            restored_context: Some(target_ctx.clone()),
+            submitted: Some(running_turn.clone()),
+        })),
+    );
+    let inc_read = read_request(&sum_follow);
+    respond(
+        &mut d,
+        inc_read.request_id,
+        history_of(
+            running_summary.clone(),
+            vec![turn_message(
+                4,
+                7,
+                OperatorMessageContent::BranchSummary {
+                    target_entry_id: "u2a".into(),
+                    instructions: Some("focus on auth".into()),
+                },
+            )],
+            None,
+        ),
+    );
+    let running_screen = draw_text(&mut d, 120, 32);
+    assert!(
+        running_screen.contains("Summarizing branch…")
+            && running_screen.contains("Summarize branch · focus on auth")
+            && !running_screen.contains("> restart alpha worker"),
+        "while running, show `Summarizing branch…` without prematurely overwriting composer:\n{running_screen}"
+    );
+
+    // Complete Turn 3 -> triggers full `Read { after: 0 }` and restores composer + context!
+    let mut completed_summary = running_summary.clone();
+    completed_summary.current_turn = Some(OperatorTurn {
+        state: OperatorTurnState::Complete,
+        sequence: 2,
+        ..running_turn
+    });
+    completed_summary.worker_live = false;
+    completed_summary.worker_stopped = true;
+
+    let changed_reqs = d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(
+        seeded.id,
+    )));
+    let tail_read = changed_reqs
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 7, .. })
+            )
+        })
+        .expect("incremental tail Read");
+    let complete_follow = respond(
+        &mut d,
+        tail_read.request_id,
+        history_of(
+            completed_summary.clone(),
+            vec![
+                turn_message(
+                    4,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary {
+                        summary: "Abandoned beta branch checked latency.".into(),
+                    }),
+                ),
+                turn_message(
+                    4,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("bs3".into()),
+                        pi_leaf_entry_id: Some("bs3".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+    let full_reload = complete_follow
+        .iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 0, .. })
+            )
+        })
+        .expect("completing branch summary must reload active-branch feed from after=0");
+    respond(
+        &mut d,
+        full_reload.request_id,
+        history_of(
+            completed_summary.clone(),
+            vec![
+                user(1, "inspect logs", OperatorContext::default()),
+                delta(2, "Found two sessions."),
+                completed(3),
+                turn_message(
+                    4,
+                    7,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id: "u2a".into(),
+                        instructions: Some("focus on auth".into()),
+                    },
+                ),
+                turn_message(
+                    4,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary {
+                        summary: "Abandoned beta branch checked latency.".into(),
+                    }),
+                ),
+                turn_message(
+                    4,
+                    9,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("bs3".into()),
+                        pi_leaf_entry_id: Some("bs3".into()),
+                    }),
+                ),
+            ],
+            None,
+        ),
+    );
+
+    let completed_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        completed_screen.contains("Branch summary recorded")
+            && completed_screen.contains("Abandoned beta branch checked latency.")
+            && !completed_screen.contains("Beta p99 is 12ms.")
+            && completed_screen.contains("> restart alpha worker▏"),
+        "expected branch summary receipt + active branch projection + composer restore:\n{completed_screen}"
+    );
+    d.key(KeyCode::Char('?'));
+    let restored_ctx_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        restored_ctx_screen.contains("Managing consigint / auth / #1 run 1")
+            && restored_ctx_screen.contains("> restart alpha worker?▏"),
+        "{restored_ctx_screen}"
+    );
+
+    // 4. Interrupted branch-summary turn renders interruption receipt without clobbering composer!
+    let interrupted_turn = OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: seeded.id,
+            session: seeded.session,
+            run: SessionRunId(5),
+            turn: OperatorTurnId(5),
+        },
+        state: OperatorTurnState::Interrupted,
+        sequence: 1,
+    };
+    let mut interrupted_summary = completed_summary;
+    interrupted_summary.run = SessionRunId(5);
+    interrupted_summary.current_turn = Some(interrupted_turn);
+    let int_reqs = d.handle_server_message(ServerMessage::Event(ServerEvent::OperatorChanged(
+        seeded.id,
+    )));
+    let int_read = int_reqs
+        .into_iter()
+        .find(|m| {
+            matches!(
+                m.request,
+                Request::Operator(OperatorRequest::Read { after: 9, .. })
+            )
+        })
+        .unwrap();
+    respond(
+        &mut d,
+        int_read.request_id,
+        history_of(
+            interrupted_summary,
+            vec![
+                turn_message(
+                    5,
+                    10,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id: "u1".into(),
+                        instructions: None,
+                    },
+                ),
+                turn_message(5, 11, OperatorMessageContent::Interrupted),
+            ],
+            None,
+        ),
+    );
+    let interrupted_screen = draw_text(&mut d, 120, 36);
+    assert!(
+        interrupted_screen
+            .contains("Interrupted · branch summarization cancelled; current branch preserved.")
+            && interrupted_screen.contains("> restart alpha worker?▏"),
+        "{interrupted_screen}"
+    );
+}
+
+#[test]
+fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
+    use ovrcr_protocol::{OperatorSessionTree, OperatorTreeEntry, OperatorTreeEntryKind};
+
+    // 1. `/copy` ignores partial assistant text on Interrupted, Error, and Running turns!
+    let mut d = dashboard_fixture();
+    let mut state = with_model(summary());
+    state.run = SessionRunId(3);
+    state.current_turn = Some(OperatorTurn {
+        identity: OperatorTurnIdentity {
+            conversation: state.id,
+            session: state.session,
+            run: SessionRunId(3),
+            turn: OperatorTurnId(3),
+        },
+        state: OperatorTurnState::Interrupted,
+        sequence: 2,
+    });
+    let out = opened(&mut d, state.clone());
+    let read = read_request(&out);
+    respond(
+        &mut d,
+        read.request_id,
+        history_of(
+            state,
+            vec![
+                turn_message(
+                    1,
+                    1,
+                    OperatorMessageContent::User {
+                        text: "completed question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    1,
+                    2,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Completed durable reply.".into(),
+                    )),
+                ),
+                turn_message(
+                    1,
+                    3,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                        leased: false,
+                        pi_first_entry_id: Some("u1".into()),
+                        pi_leaf_entry_id: Some("a1".into()),
+                    }),
+                ),
+                turn_message(
+                    2,
+                    4,
+                    OperatorMessageContent::User {
+                        text: "failed question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    2,
+                    5,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Partial failed reply MUST NOT COPY.".into(),
+                    )),
+                ),
+                turn_message(
+                    2,
+                    6,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::Failed("boom".into())),
+                ),
+                turn_message(
+                    3,
+                    7,
+                    OperatorMessageContent::User {
+                        text: "interrupted question".into(),
+                        context: OperatorContext::default(),
+                    },
+                ),
+                turn_message(
+                    3,
+                    8,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                        "Partial interrupted reply MUST NOT COPY.".into(),
+                    )),
+                ),
+                turn_message(3, 9, OperatorMessageContent::Interrupted),
+            ],
+            None,
+        ),
+    );
+
+    d.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        d.key(KeyCode::Enter),
+        DashboardAction::CopyText("Completed durable reply.".into()),
+        "/copy must skip Failed and Interrupted partial replies and copy the latest Complete reply"
+    );
+
+    d.event_action(Event::Paste("/tree".into()));
+    d.key(KeyCode::Enter);
+    let tree_req = d
+        .drain_outbox()
+        .into_iter()
+        .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Tree { .. })))
+        .expect("expected Tree request");
+
+    // Loading state advertises `Esc close`.
+    let loading_tree = draw_text(&mut d, 140, 32);
+    assert!(loading_tree.contains("Esc close"), "{loading_tree}");
+
+    respond(
+        &mut d,
+        tree_req.request_id,
+        OperatorResponse::Tree(Box::new(OperatorSessionTree {
+            pi_session_id: Some("pi-7".into()),
+            current_leaf_id: Some("a2".into()),
+            entries: vec![
+                OperatorTreeEntry {
+                    id: "u1".into(),
+                    parent_id: None,
+                    kind: OperatorTreeEntryKind::User,
+                    preview: "first prompt".into(),
+                },
+                OperatorTreeEntry {
+                    id: "a1".into(),
+                    parent_id: Some("u1".into()),
+                    kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                    preview: "first answer".into(),
+                },
+                OperatorTreeEntry {
+                    id: "u2".into(),
+                    parent_id: Some("a1".into()),
+                    kind: OperatorTreeEntryKind::User,
+                    preview: "second prompt".into(),
+                },
+                OperatorTreeEntry {
+                    id: "a2".into(),
+                    parent_id: Some("u2".into()),
+                    kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                    preview: "second answer".into(),
+                },
+            ],
+        })),
+    );
+
+    // 3. Browse state advertises `Tab/Ctrl-f` + `Ctrl-u user-only` + `Ctrl-c clear` + `Esc close`,
+    //    and `Ctrl-u` toggles `filter: user-only` <-> `filter: default` without deleting search text!
+    d.event_action(Event::Paste("first".into()));
+    let browse_screen = draw_text(&mut d, 140, 32);
+    for expected in [
+        "Tab/Ctrl-f",
+        "Ctrl-u user-only",
+        "Ctrl-c clear",
+        "Esc close",
+    ] {
+        assert!(
+            browse_screen.contains(expected),
+            "expected `{expected}` in /tree Browse footer:\n{browse_screen}"
+        );
+    }
+    d.ctrl('u');
+    let user_only_screen = draw_text(&mut d, 140, 32);
+    assert!(
+        user_only_screen.contains("filter: user-only")
+            && user_only_screen.contains("Search: first▏")
+            && !user_only_screen.contains("first answer"),
+        "Ctrl-u must toggle user-only filter while keeping search text:\n{user_only_screen}"
+    );
+    d.ctrl('u');
+    let back_default = draw_text(&mut d, 140, 32);
+    assert!(
+        back_default.contains("filter: default") && back_default.contains("first answer"),
+        "second Ctrl-u must return to default filter:\n{back_default}"
+    );
+
+    // 4. ConfirmSummarize advertises `Esc back`, and CustomInstructions advertises `Ctrl-c clear` + `Esc back`!
+    d.ctrl('c'); // clear search -> selects `a2`
+    d.key(KeyCode::Up); // selects `u2` (rewinding from `a2` prompts ConfirmSummarize)
+    d.key(KeyCode::Enter);
+    let confirm_screen = draw_text(&mut d, 140, 32);
+    assert!(
+        confirm_screen.contains("Summarize branch?") && confirm_screen.contains("Esc back"),
+        "{confirm_screen}"
+    );
+    d.key(KeyCode::Down); // Summarize
+    d.key(KeyCode::Down); // Summarize with custom prompt
+    d.key(KeyCode::Enter);
+    let custom_screen = draw_text(&mut d, 140, 32);
+    for expected in ["Ctrl-c clear", "Esc back"] {
+        assert!(
+            custom_screen.contains(expected),
+            "expected `{expected}` in CustomInstructions footer:\n{custom_screen}"
+        );
+    }
+
+    // 5. Running turn with only streaming text has no completed reply -> `/copy` refuses cleanly!
+    let mut running_dash = dashboard_fixture();
+    let mut running_state = with_model(summary());
+    running_state.run = SessionRunId(1);
+    running_state.current_turn = Some(turn(1, OperatorTurnState::Running));
+    let out_run = opened(&mut running_dash, running_state.clone());
+    let read_run = read_request(&out_run);
+    respond(
+        &mut running_dash,
+        read_run.request_id,
+        history_of(
+            running_state,
+            vec![
+                user(1, "streaming prompt", OperatorContext::default()),
+                delta(2, "Still streaming partial reply..."),
+            ],
+            None,
+        ),
+    );
+    running_dash.event_action(Event::Paste("/copy".into()));
+    assert_eq!(running_dash.key(KeyCode::Enter), DashboardAction::Redraw);
+    let running_copy_screen = draw_text(&mut running_dash, 140, 32);
+    assert!(
+        running_copy_screen.contains("No assistant reply to copy yet."),
+        "streaming Running turn must not copy partial text:\n{running_copy_screen}"
+    );
 }

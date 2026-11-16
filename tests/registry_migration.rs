@@ -670,13 +670,13 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     let connection = Connection::open(&database).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut version: i64 = 0;
-    while version != 34 && std::time::Instant::now() < deadline {
+    while version != 35 && std::time::Instant::now() < deadline {
         version = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(version, 34, "the application upgrades schema 28 to 34");
+    assert_eq!(version, 35, "the application upgrades schema 28 to 35");
     let columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_conversations')")
         .unwrap()
@@ -687,6 +687,7 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     assert!(columns.contains(&"singleton".to_string()));
     assert!(columns.contains(&"pi_checkpoint_turn".to_string()));
     assert!(columns.contains(&"reasoning".to_string()));
+    assert!(columns.contains(&"session_epoch".to_string()));
     let turn_columns: Vec<String> = connection
         .prepare("SELECT name FROM pragma_table_info('operator_turns')")
         .unwrap()
@@ -698,6 +699,7 @@ fn schema_28_operator_rows_survive_upgrade_and_no_singleton_exists_until_open() 
     assert!(turn_columns.contains(&"thinking_level".to_string()));
     assert!(turn_columns.contains(&"started_unix_ms".to_string()));
     assert!(turn_columns.contains(&"completed_unix_ms".to_string()));
+    assert!(turn_columns.contains(&"session_epoch".to_string()));
     let legacy_timing: Vec<(i64, Option<i64>, Option<i64>)> = connection
         .prepare("SELECT id,started_unix_ms,completed_unix_ms FROM operator_turns ORDER BY id")
         .unwrap()

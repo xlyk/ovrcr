@@ -2735,6 +2735,7 @@ mod wire_snapshot {
             worker_live: false,
             id: identity.conversation,
             session: identity.session,
+            session_epoch: 1,
             model: Some(OperatorModel {
                 provider: "openai".into(),
                 id: "model".into(),
@@ -2743,6 +2744,49 @@ mod wire_snapshot {
             current_turn: Some(turn.clone()),
             current_turn_started_unix_ms: Some(1),
             last_reply_unix_ms: Some(2),
+        };
+        let session_info = OperatorSessionInfo {
+            conversation: identity.conversation,
+            session: identity.session,
+            run: identity.run,
+            session_epoch: 1,
+            pi_session_id: Some("operator-1".into()),
+            checkpoint_turn: Some(identity.turn),
+            active_tip_turn: Some(identity.turn),
+            configured_model: Some("openai/model".into()),
+            active_model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "model".into(),
+            }),
+            configured_thinking_level: OperatorThinkingLevel::High,
+            reasoning: Some(OperatorReasoning {
+                requested: OperatorThinkingLevel::High,
+                level: OperatorThinkingLevel::High,
+                available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+            }),
+            turns: 2,
+            completed_turns: 2,
+            branch_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            epoch_tool_calls: 1,
+            epoch_tool_results: 1,
+            total_messages: 5,
+            epoch_total_messages: 5,
+            tokens: OperatorTokenStats {
+                input: 100,
+                output: 50,
+                cache_read: 25,
+                cache_write: 10,
+                total: 185,
+            },
+            cost_usd_nanos: 1_500_000,
+            context_window: OperatorContextWindowUsage {
+                used_tokens: Some(185),
+                capacity_tokens: Some(200_000),
+            },
         };
         let auth = crate::SupervisorAuth {
             session: identity.session,
@@ -2774,6 +2818,62 @@ mod wire_snapshot {
                 },
             ),
             ("Stop", OperatorRequest::Stop { identity }),
+            ("Models", OperatorRequest::Models),
+            (
+                "NewSession",
+                OperatorRequest::NewSession {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                },
+            ),
+            (
+                "SessionInfo",
+                OperatorRequest::SessionInfo {
+                    conversation: identity.conversation,
+                },
+            ),
+            (
+                "Compact",
+                OperatorRequest::Compact {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    instructions: None,
+                },
+            ),
+            (
+                "CompactInstructions",
+                OperatorRequest::Compact {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    instructions: Some("preserve branches".into()),
+                },
+            ),
+            (
+                "Tree",
+                OperatorRequest::Tree {
+                    conversation: identity.conversation,
+                },
+            ),
+            (
+                "NavigateTree",
+                OperatorRequest::NavigateTree {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    target_entry_id: "entry-1".into(),
+                    summarize: None,
+                },
+            ),
+            (
+                "NavigateTreeSummarize",
+                OperatorRequest::NavigateTree {
+                    conversation: identity.conversation,
+                    expected_run: identity.run,
+                    target_entry_id: "entry-1".into(),
+                    summarize: Some(crate::OperatorBranchSummaryRequest {
+                        instructions: Some("focus on failures".into()),
+                    }),
+                },
+            ),
         ] {
             all.push((
                 format!("Request::Operator::{name}"),
@@ -2804,14 +2904,19 @@ mod wire_snapshot {
             ),
             (
                 "ModelSelected",
-                OperatorWorkerEvent::ModelSelected(OperatorModel {
+                OperatorWorkerEvent::ModelSelected {
                     provider: "openai".into(),
                     id: "model".into(),
-                }),
+                    context_window: Some(200_000),
+                },
             ),
             (
                 "Completed",
-                OperatorWorkerEvent::Completed { leased: false },
+                OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: Some("entry-1".into()),
+                    pi_leaf_entry_id: Some("entry-2".into()),
+                },
             ),
             ("Failed", OperatorWorkerEvent::Failed("error".into())),
             (
@@ -2828,6 +2933,19 @@ mod wire_snapshot {
                     available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
                 }),
             ),
+            (
+                "CompactionSummary",
+                OperatorWorkerEvent::CompactionSummary {
+                    summary: "summary".into(),
+                    tokens_before: 1200,
+                },
+            ),
+            (
+                "BranchSummary",
+                OperatorWorkerEvent::BranchSummary {
+                    summary: "branch summary".into(),
+                },
+            ),
         ] {
             all.push((
                 format!("Request::OperatorExchange::{name}"),
@@ -2838,9 +2956,22 @@ mod wire_snapshot {
                         sequence: 1,
                         events: vec![event],
                     },
+                    leased: None,
                 })),
             ));
         }
+        all.push((
+            "Request::OperatorExchange::FailedLeased".into(),
+            encode(&Request::OperatorExchange(OperatorExchange {
+                auth: auth.clone(),
+                batch: OperatorEventBatch {
+                    identity,
+                    sequence: 1,
+                    events: vec![OperatorWorkerEvent::Failed("error".into())],
+                },
+                leased: Some(true),
+            })),
+        ));
         for (name, command) in [
             (
                 "Start",
@@ -2909,6 +3040,72 @@ mod wire_snapshot {
                     ..turn
                 }),
             ),
+            (
+                "Models",
+                OperatorResponse::Models(vec![
+                    OperatorModelCatalogEntry {
+                        provider: "openai".into(),
+                        id: "model".into(),
+                        name: Some("Model".into()),
+                    },
+                    OperatorModelCatalogEntry {
+                        provider: "vendor".into(),
+                        id: "sub/id".into(),
+                        name: None,
+                    },
+                ]),
+            ),
+            (
+                "Conversation",
+                OperatorResponse::Conversation(summary.clone()),
+            ),
+            (
+                "SessionInfo",
+                OperatorResponse::SessionInfo(Box::new(session_info)),
+            ),
+            (
+                "Tree",
+                OperatorResponse::Tree(Box::new(OperatorSessionTree {
+                    pi_session_id: Some("operator-1".into()),
+                    current_leaf_id: Some("entry-2".into()),
+                    entries: vec![
+                        OperatorTreeEntry {
+                            id: "entry-1".into(),
+                            parent_id: None,
+                            kind: OperatorTreeEntryKind::User,
+                            preview: "hello".into(),
+                        },
+                        OperatorTreeEntry {
+                            id: "entry-2".into(),
+                            parent_id: Some("entry-1".into()),
+                            kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                            preview: "reply".into(),
+                        },
+                    ],
+                })),
+            ),
+            (
+                "TreeNavigated",
+                OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+                    conversation: summary.clone(),
+                    current_leaf_id: None,
+                    noop: false,
+                    editor_text: Some("hello".into()),
+                    restored_context: Some(context.clone()),
+                    submitted: None,
+                })),
+            ),
+            (
+                "TreeNavigatedSubmitted",
+                OperatorResponse::TreeNavigated(Box::new(OperatorTreeNavigation {
+                    conversation: summary.clone(),
+                    current_leaf_id: Some("entry-2".into()),
+                    noop: false,
+                    editor_text: Some("hello".into()),
+                    restored_context: Some(context.clone()),
+                    submitted: Some(turn.clone()),
+                })),
+            ),
         ] {
             all.push((
                 format!("Response::Operator::{name}"),
@@ -2926,10 +3123,44 @@ mod wire_snapshot {
                     thinking_level: Default::default(),
                     identity,
                     model: Some("openai/model".into()),
-                    text: "hello".into(),
-                    context: context.clone(),
+                    submission: OperatorWorkerSubmission::Prompt {
+                        text: "hello".into(),
+                        context: context.clone(),
+                        async_wakeup: false,
+                    },
                     checkpoint_turn: Some(OperatorTurnId(2)),
-                    async_wakeup: false,
+                    tree_target_id: Some("entry-1".into()),
+                }),
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::StartCompact".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Start(
+                Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    submission: OperatorWorkerSubmission::Compact {
+                        instructions: Some("preserve branches".into()),
+                    },
+                    checkpoint_turn: Some(OperatorTurnId(2)),
+                    tree_target_id: None,
+                }),
+            ))),
+        ));
+        all.push((
+            "Response::OperatorWorker::StartBranchSummary".into(),
+            encode(&Response::OperatorWorker(OperatorWorkerResult::Start(
+                Box::new(OperatorWorkerStart {
+                    thinking_level: Default::default(),
+                    identity,
+                    model: None,
+                    submission: OperatorWorkerSubmission::BranchSummary {
+                        target_entry_id: "entry-1".into(),
+                        instructions: Some("focus on failures".into()),
+                    },
+                    checkpoint_turn: Some(OperatorTurnId(2)),
+                    tree_target_id: Some("entry-2".into()),
                 }),
             ))),
         ));
@@ -2940,10 +3171,13 @@ mod wire_snapshot {
                     thinking_level: Default::default(),
                     identity,
                     model: None,
-                    text: "warm".into(),
-                    context: context.clone(),
+                    submission: OperatorWorkerSubmission::Prompt {
+                        text: "warm".into(),
+                        context: context.clone(),
+                        async_wakeup: false,
+                    },
                     checkpoint_turn: Some(identity.turn),
-                    async_wakeup: false,
+                    tree_target_id: None,
                 })),
             ))),
         ));
@@ -2960,10 +3194,13 @@ mod wire_snapshot {
                     thinking_level: Default::default(),
                     identity,
                     model: None,
-                    text: "watch report".into(),
-                    context: context.clone(),
+                    submission: OperatorWorkerSubmission::Prompt {
+                        text: "watch report".into(),
+                        context: context.clone(),
+                        async_wakeup: true,
+                    },
                     checkpoint_turn: Some(identity.turn),
-                    async_wakeup: true,
+                    tree_target_id: None,
                 }))),
             )),
         ));
@@ -3041,6 +3278,36 @@ mod wire_snapshot {
             encode(&OperatorMessageContent::AsyncWakeup {
                 text: "watch report".into(),
             }),
+        ));
+        all.push((
+            "OperatorMessageContent::Compaction".into(),
+            encode(&OperatorMessageContent::Compaction {
+                instructions: Some("preserve branches".into()),
+            }),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerCompactionSummary".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::CompactionSummary {
+                    summary: "summary".into(),
+                    tokens_before: 1200,
+                },
+            )),
+        ));
+        all.push((
+            "OperatorMessageContent::BranchSummary".into(),
+            encode(&OperatorMessageContent::BranchSummary {
+                target_entry_id: "entry-1".into(),
+                instructions: Some("focus on failures".into()),
+            }),
+        ));
+        all.push((
+            "OperatorMessageContent::WorkerBranchSummary".into(),
+            encode(&OperatorMessageContent::Worker(
+                OperatorWorkerEvent::BranchSummary {
+                    summary: "branch summary".into(),
+                },
+            )),
         ));
     }
 
@@ -4668,45 +4935,74 @@ mod wire_snapshot {
             "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
+        ("Request::Operator::Models", "3905"),
+        ("Request::Operator::NewSession", "39060104"),
+        ("Request::Operator::SessionInfo", "390701"),
+        ("Request::Operator::Compact", "3908010400"),
+        (
+            "Request::Operator::CompactInstructions",
+            "3908010401117072657365727665206272616e63686573",
+        ),
+        ("Request::Operator::Tree", "390901"),
+        (
+            "Request::Operator::NavigateTree",
+            "390a010407656e7472792d3100",
+        ),
+        (
+            "Request::Operator::NavigateTreeSummarize",
+            "390a010407656e7472792d31010111666f637573206f6e206661696c75726573",
+        ),
         (
             "Request::OperatorExchange::AssistantDelta",
-            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101000568656c6c6f00",
         ),
         (
             "Request::OperatorExchange::ToolCall",
-            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101010463616c6c0462617368027b7d",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101010463616c6c0462617368027b7d00",
         ),
         (
             "Request::OperatorExchange::ToolOutput",
-            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101020463616c6c066f75747075740100",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101020463616c6c066f7574707574010000",
         ),
         (
             "Request::OperatorExchange::ModelSelected",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010103066f70656e6169056d6f64656c",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010103066f70656e6169056d6f64656c01fc400d030000",
         ),
         (
             "Request::OperatorExchange::Completed",
-            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010400",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010104000107656e7472792d310107656e7472792d3200",
         ),
         (
             "Request::OperatorExchange::Failed",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010105056572726f72",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010105056572726f7200",
         ),
         (
             "Request::OperatorExchange::ThinkingDelta",
-            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101060568656c6c6f",
+            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101060568656c6c6f00",
         ),
         (
             "Request::OperatorExchange::CompactionStarted",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010107",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010700",
         ),
         (
             "Request::OperatorExchange::CompactionEnded",
-            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010108",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010800",
         ),
         (
             "Request::OperatorExchange::ReasoningSelected",
-            "3a030707070707070707070707070707070707070707070707070707070707070707010203040101090605020305",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010109060502030500",
+        ),
+        (
+            "Request::OperatorExchange::CompactionSummary",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010a0773756d6d617279fbb00400",
+        ),
+        (
+            "Request::OperatorExchange::BranchSummary",
+            "3a0307070707070707070707070707070707070707070707070707070707070707070102030401010b0e6272616e63682073756d6d61727900",
+        ),
+        (
+            "Request::OperatorExchange::FailedLeased",
+            "3a03070707070707070707070707070707070707070707070707070707070707070701020304010105056572726f720101",
         ),
         (
             "Request::OperatorWorker::Start",
@@ -4735,31 +5031,63 @@ mod wire_snapshot {
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
-            "190001040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "19000104000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::Opened",
-            "1901040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+            "190104000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
         ),
         (
             "Response::Operator::History",
-            "1902040000010301066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
+        (
+            "Response::Operator::Models",
+            "190502066f70656e6169056d6f64656c01054d6f64656c0676656e646f72067375622f696400",
+        ),
+        (
+            "Response::Operator::Conversation",
+            "190604000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102",
+        ),
+        (
+            "Response::Operator::SessionInfo",
+            "190701030401010a6f70657261746f722d3101020102010c6f70656e61692f6d6f64656c01066f70656e6169056d6f64656c0501050502030502020202020101010105056432190ab9fc60e3160001b901fc400d0300",
+        ),
+        (
+            "Response::Operator::Tree",
+            "1908010a6f70657261746f722d310107656e7472792d320207656e7472792d3100000568656c6c6f07656e7472792d320107656e7472792d310100057265706c79",
+        ),
+        (
+            "Response::Operator::TreeNavigated",
+            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020000010568656c6c6f0101017001056c6162656c0106737461626c6501022f770105010600",
+        ),
+        (
+            "Response::Operator::TreeNavigatedSubmitted",
+            "190904000001030101066f70656e6169056d6f64656c0568656c6c6f0101020304000000010101020107656e7472792d3200010568656c6c6f0101017001056c6162656c0106737461626c6501022f770105010601010203040000",
+        ),
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c0568656c6c6f01017001056c6162656c0106737461626c6501022f770105010601020000",
+            "1b0001020304010c6f70656e61692f6d6f64656c000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
+        ),
+        (
+            "Response::OperatorWorker::StartCompact",
+            "1b0001020304000101117072657365727665206272616e6368657301020000",
+        ),
+        (
+            "Response::OperatorWorker::StartBranchSummary",
+            "1b0001020304000207656e7472792d310111666f637573206f6e206661696c757265730102000107656e7472792d32",
         ),
         (
             "Response::OperatorWorker::StartTurn",
-            "1b01010102030400047761726d01017001056c6162656c0106737461626c6501022f770105010601020000",
+            "1b0101010203040000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
         ),
         ("Response::OperatorWorker::StartTurnNone", "1b0100"),
         (
             "Response::OperatorWorker::BeginAsyncTurn",
-            "1b040101020304000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f770105010601020001",
+            "1b04010102030400000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
         ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),
@@ -4781,6 +5109,22 @@ mod wire_snapshot {
         (
             "OperatorMessageContent::AsyncWakeup",
             "030c7761746368207265706f7274",
+        ),
+        (
+            "OperatorMessageContent::Compaction",
+            "0401117072657365727665206272616e63686573",
+        ),
+        (
+            "OperatorMessageContent::WorkerCompactionSummary",
+            "010a0773756d6d617279fbb004",
+        ),
+        (
+            "OperatorMessageContent::BranchSummary",
+            "0507656e7472792d310111666f637573206f6e206661696c75726573",
+        ),
+        (
+            "OperatorMessageContent::WorkerBranchSummary",
+            "010b0e6272616e63682073756d6d617279",
         ),
     ];
 

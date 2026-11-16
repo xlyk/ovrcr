@@ -1,0 +1,6 @@
+Attempt 01 (2026-11-15T21:36:38Z)
+- GUI launcher exit: 0
+- Provider helper exit: 0
+- Fixture root /private/tmp/ovrcr-cua-490-35759/tmp/ovrcr-gui-5cfoGz exists after cleanup: false
+- Task base /private/tmp/ovrcr-cua-490-35759 exists after cleanup: false
+- Remaining target processes: none

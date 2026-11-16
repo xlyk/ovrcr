@@ -104,6 +104,14 @@ function clampThinkingLevel(level) {
 }
 let promptRunning = false;
 let promptCount = 0;
+let compactRunning = false;
+let compactCount = 0;
+let compactAborted = false;
+let pendingCompactPromise = null;
+let treeSummaryRunning = false;
+let treeSummaryCount = 0;
+let treeSummaryAborted = false;
+let pendingTreeSummaryPromise = null;
 let aborted = false;
 let rollbackSwitchSeen = false;
 let rollbackWakeupOffered = false;
@@ -111,6 +119,14 @@ let exited = false;
 let stdinClosed = false;
 
 // ---------------------------------------------------------------- session file
+
+let currentLeafId = null;
+let entrySequence = 0;
+
+function nextEntryId(prefix = "e") {
+  entrySequence += 1;
+  return `${prefix}${entrySequence}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
 
 function isoNow() {
   return new Date().toISOString();
@@ -132,6 +148,7 @@ function writeHeader(path) {
   } finally {
     closeSync(fd);
   }
+  currentLeafId = null;
 }
 
 function appendEntry(path, entry) {
@@ -147,8 +164,12 @@ function appendEntry(path, entry) {
 if (sessionFile) writeHeader(sessionFile);
 
 function appendSessionEntry(entry) {
-  if (!sessionFile) return;
-  appendEntry(sessionFile, { id: `e${Date.now()}${Math.random().toString(16).slice(2)}`, parentId: null, timestamp: isoNow(), ...entry });
+  if (!sessionFile) return null;
+  const id = typeof entry.id === "string" && entry.id.length > 0 ? entry.id : nextEntryId("e");
+  const parentId = entry.parentId !== undefined ? entry.parentId : currentLeafId;
+  appendEntry(sessionFile, { ...entry, id, parentId, timestamp: entry.timestamp ?? isoNow() });
+  currentLeafId = id;
+  return id;
 }
 
 // Pi records the initial model/thinking so a resumed session can restore them.
@@ -247,12 +268,45 @@ function respond(command, id, data, success = true) {
   writeRecord(response);
 }
 
+function configuredModelContextWindow(provider, id) {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (!agentDir) return undefined;
+  const modelsPath = join(agentDir, "models.json");
+  if (!existsSync(modelsPath)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(modelsPath, "utf8"));
+    const models = parsed?.providers?.[provider]?.models;
+    if (!Array.isArray(models)) return undefined;
+    const found = models.find((m) => m && m.id === id);
+    const cw = found?.contextWindow;
+    return typeof cw === "number" && Number.isFinite(cw) && cw > 0 ? Math.floor(cw) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function modelPayload(model) {
+  if (!model) return null;
+  const cw = model.contextWindow !== undefined
+    ? model.contextWindow
+    : (scenario.context_window !== undefined
+      ? scenario.context_window
+      : (configuredModelContextWindow(model.provider, model.id) ?? 200_000));
+  const out = {
+    provider: model.provider,
+    id: model.id,
+    name: model.name ?? model.id,
+  };
+  if (cw !== null) out.contextWindow = cw;
+  return out;
+}
+
 function stateData() {
   return {
-    model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name ?? currentModel.id } : null,
+    model: modelPayload(currentModel),
     thinkingLevel,
     isStreaming: promptRunning,
-    isCompacting: false,
+    isCompacting: compactRunning,
     steeringMode: "all",
     followUpMode: "one-at-a-time",
     sessionFile: sessionFile ?? null,
@@ -323,6 +377,24 @@ async function runTool(step, execute) {
   emitStart();
   const call = { id: step.id, name: step.name, input: step.input ?? {} };
   emitEnd(step.text ?? undefined, "toolUse", [call]);
+  if (scenario.record_tool_history && sessionFile) {
+    const extra = {};
+    if (currentModel?.provider && currentModel?.id) {
+      extra.provider = currentModel.provider;
+      extra.model = currentModel.id;
+    }
+    appendSessionEntry({
+      type: "message",
+      id: `tc-${call.id}`,
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: call.id, name: call.name, arguments: call.input }],
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+        ...extra,
+      },
+    });
+  }
   writeRecord({
     type: "tool_execution_start",
     toolCallId: call.id,
@@ -357,12 +429,27 @@ async function runTool(step, execute) {
     status: step.status ?? "succeeded",
   });
   record({ event: "result_ack", id: call.id, confirmed: result?.confirmed === true, cancelled: result?.cancelled === true });
+  const isError = (step.status ?? "succeeded") !== "succeeded";
+  if (scenario.record_tool_history && sessionFile) {
+    appendSessionEntry({
+      type: "message",
+      id: `tr-${call.id}`,
+      message: {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: [{ type: "text", text: step.output ?? "" }],
+        isError,
+        timestamp: Date.now(),
+      },
+    });
+  }
   writeRecord({
     type: "tool_execution_end",
     toolCallId: call.id,
     toolName: call.name,
     result: { content: [{ type: "text", text: step.output ?? "" }] },
-    isError: (step.status ?? "succeeded") !== "succeeded",
+    isError,
   });
   return result?.confirmed === true;
 }
@@ -548,6 +635,21 @@ async function runSteps(promptIndex) {
         if (result?.confirmed === true && step.marker) appendLine(step.marker, "UNKNOWN-CALL-RAN\n");
         break;
       }
+      case "unsolicited_tree_control": {
+        const resp = await askConfirm("ovrcr_operator_tree_control", {
+          targetId: step.targetId ?? "u1",
+          summarize: false,
+        });
+        record({
+          event: "unsolicited_tree_control",
+          confirmed: resp?.confirmed === true,
+          cancelled: resp?.cancelled === true,
+        });
+        if (resp?.confirmed === true && step.marker) {
+          appendLine(step.marker, "UNSOLICITED-TREE-CONTROL-CONFIRMED\n");
+        }
+        break;
+      }
       case "event":
         writeRecord(step.event);
         break;
@@ -573,6 +675,8 @@ async function runSteps(promptIndex) {
         if (!(await waitForFile(step.path))) return;
         break;
       case "settle":
+        appendAssistantHistory(finalText, "stop");
+        finalText = undefined;
         promptRunning = false;
         writeRecord({ type: "agent_settled" });
         break;
@@ -623,9 +727,10 @@ async function runSteps(promptIndex) {
         emitStart();
         emitDelta(step.answer);
         emitEnd(step.answer, "stop");
+        appendAssistantHistory(step.answer, "stop");
         promptRunning = false;
         writeRecord({ type: "agent_settled" });
-        finalText = step.answer;
+        finalText = undefined;
         break;
       }
       case "exit":
@@ -646,24 +751,58 @@ async function runSteps(promptIndex) {
 
 function appendPromptHistory(message) {
   if (!sessionFile) return;
-  appendEntry(sessionFile, {
+  appendSessionEntry({
     type: "message",
-    id: `u${Date.now()}`,
-    parentId: null,
-    timestamp: isoNow(),
+    id: nextEntryId("u"),
     message: { role: "user", content: message, timestamp: Date.now() },
   });
 }
 
 function appendAssistantHistory(text, stop) {
   if (!sessionFile || text === undefined) return;
-  appendEntry(sessionFile, {
+  const extra = {};
+  if (scenario.assistant_usage) {
+    if (currentModel?.provider && currentModel?.id) {
+      extra.provider = currentModel.provider;
+      extra.model = currentModel.id;
+    }
+    extra.usage = scenario.assistant_usage;
+  }
+  appendSessionEntry({
     type: "message",
-    id: `a${Date.now()}`,
-    parentId: null,
-    timestamp: isoNow(),
-    message: { role: "assistant", content: [{ type: "text", text }], stopReason: stop ?? "stop", timestamp: Date.now() },
+    id: nextEntryId("a"),
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: stop ?? "stop",
+      timestamp: Date.now(),
+      ...extra,
+    },
   });
+}
+
+function readSessionEntriesById(path) {
+  const byId = new Map();
+  if (!path || !existsSync(path)) return byId;
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return byId;
+  }
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry && typeof entry === "object" && entry.type !== "session" && typeof entry.id === "string") {
+      byId.set(entry.id, entry);
+    }
+  }
+  return byId;
 }
 
 function restoreSessionState(path) {
@@ -675,6 +814,7 @@ function restoreSessionState(path) {
   }
   let thinking = null;
   let model = null;
+  let lastId = null;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let entry;
@@ -685,6 +825,9 @@ function restoreSessionState(path) {
       continue;
     }
     if (!entry || typeof entry !== "object") continue;
+    if (entry.type !== "session" && typeof entry.id === "string") {
+      lastId = entry.id;
+    }
     if (entry.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
       thinking = entry.thinkingLevel;
     } else if (entry.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
@@ -698,6 +841,7 @@ function restoreSessionState(path) {
       model = { provider: entry.message.provider, id: entry.message.model, name: entry.message.model };
     }
   }
+  currentLeafId = lastId;
   if (model) currentModel = model;
   if (thinking) thinkingLevel = thinking;
 }
@@ -751,7 +895,7 @@ function handleCommand(command) {
       break;
     case "get_available_models":
       record({ event: "command", command: "get_available_models", id });
-      respond("get_available_models", id, { models: scenario.models ?? [] });
+      respond("get_available_models", id, { models: (scenario.models ?? []).map(modelPayload) });
       break;
     case "set_model": {
       const models = scenario.models ?? [];
@@ -768,7 +912,7 @@ function handleCommand(command) {
           ?? scenario.thinking_level ?? thinkingLevel);
         appendSessionEntry({ type: "model_change", provider: match.provider, modelId: match.id });
       }
-      respond("set_model", id, { provider: match.provider, id: match.id, name: match.name ?? match.id });
+      respond("set_model", id, modelPayload(match));
       break;
     }
     case "get_available_thinking_levels":
@@ -809,7 +953,245 @@ function handleCommand(command) {
       break;
     }
     case "prompt": {
-      record({ event: "prompt", id, message: command.message });
+      if (
+        typeof command.message === "string" &&
+        (command.message === "/ovrcr_tree_control" || command.message.startsWith("/ovrcr_tree_control "))
+      ) {
+        const rawArgs = command.message.slice("/ovrcr_tree_control".length).trim();
+        void (async () => {
+          let parsed;
+          try {
+            parsed = JSON.parse(rawArgs);
+          } catch (error) {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: String(error?.message ?? error) }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          const payload = {
+            targetId: parsed.targetId,
+            summarize: parsed.summarize === true,
+            ...(typeof parsed.customInstructions === "string"
+              ? { customInstructions: parsed.customInstructions }
+              : {}),
+          };
+          const confirmResp = await askConfirm("ovrcr_operator_tree_control", payload);
+          const authorized = confirmResp?.confirmed === true;
+          record({ event: "tree_control", ...payload, authorized });
+          if (!authorized) {
+            respond("prompt", id);
+            return;
+          }
+          if (scenario.tree_control === "cancel") {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, leafId: currentLeafId }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          if (scenario.tree_control === "error") {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: "fixture tree navigation failed" }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          const entriesById = readSessionEntriesById(sessionFile);
+          const target = entriesById.get(payload.targetId);
+          if (!target) {
+            writeRecord({
+              type: "extension_ui_request",
+              id: `status-${++dialogSequence}`,
+              method: "setStatus",
+              statusKey: "ovrcr_operator_tree_result",
+              statusText: JSON.stringify({ cancelled: true, error: `Entry ${payload.targetId} not found` }),
+            });
+            respond("prompt", id);
+            return;
+          }
+          const isUserOrCustom =
+            (target.type === "message" && target.message?.role === "user") ||
+            target.type === "custom_message";
+          const newLeafId = isUserOrCustom ? (target.parentId ?? null) : target.id;
+          if (payload.summarize === true) {
+            const summaryIndex = treeSummaryCount++;
+            const mode =
+              scenario.tree_summary_modes?.[summaryIndex] ?? scenario.tree_summary_mode ?? "ok";
+            const oldLeafId = currentLeafId;
+            treeSummaryRunning = true;
+            treeSummaryAborted = false;
+            pendingTreeSummaryPromise = (async () => {
+              try {
+                if (mode === "hold") {
+                  if (scenario.tree_summary_ready_file) {
+                    appendLine(scenario.tree_summary_ready_file, "ready");
+                  }
+                  const releaseFile = scenario.tree_summary_release_file;
+                  const deadline = Date.now() + 20_000;
+                  while (
+                    !treeSummaryAborted &&
+                    !stdinClosed &&
+                    Date.now() < deadline &&
+                    !(releaseFile && existsSync(releaseFile))
+                  ) {
+                    await sleep(10);
+                  }
+                  if (treeSummaryAborted || stdinClosed) {
+                    record({
+                      event: "tree_summary_aborted",
+                      targetId: payload.targetId,
+                      leafId: oldLeafId,
+                    });
+                    writeRecord({
+                      type: "extension_ui_request",
+                      id: `status-${++dialogSequence}`,
+                      method: "setStatus",
+                      statusKey: "ovrcr_operator_tree_result",
+                      statusText: JSON.stringify({
+                        cancelled: true,
+                        leafId: oldLeafId,
+                        summaryEntry: null,
+                      }),
+                    });
+                    respond("prompt", id);
+                    return;
+                  }
+                }
+                if (mode === "cancel") {
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: true,
+                      leafId: oldLeafId,
+                      summaryEntry: null,
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                if (mode === "error") {
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: false,
+                      leafId: oldLeafId,
+                      summaryEntry: null,
+                      error: scenario.tree_summary_error ?? "Branch summary provider failed",
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                if (mode === "corrupt_session") {
+                  if (sessionFile) appendLine(sessionFile, "not-valid-json");
+                  writeRecord({
+                    type: "extension_ui_request",
+                    id: `status-${++dialogSequence}`,
+                    method: "setStatus",
+                    statusKey: "ovrcr_operator_tree_result",
+                    statusText: JSON.stringify({
+                      cancelled: false,
+                      leafId: "corrupt-leaf",
+                      summaryEntry: {
+                        type: "branch_summary",
+                        id: "corrupt-leaf",
+                        parentId: newLeafId,
+                        fromId: oldLeafId ?? "root",
+                        summary: "Corrupt summary",
+                      },
+                    }),
+                  });
+                  respond("prompt", id);
+                  return;
+                }
+                const summary =
+                  scenario.tree_summary_text ??
+                  (payload.customInstructions
+                    ? `Branch summary (${payload.customInstructions})`
+                    : `Summarized abandoned branch from ${oldLeafId ?? "root"}.`);
+                let summaryEntry = null;
+                if (sessionFile) {
+                  const timestamp = isoNow();
+                  const entryBody = {
+                    type: "branch_summary",
+                    parentId: newLeafId,
+                    fromId: oldLeafId ?? "root",
+                    summary,
+                    details: { readFiles: [], modifiedFiles: [] },
+                    fromHook: false,
+                    timestamp,
+                  };
+                  const summaryId = appendSessionEntry(entryBody);
+                  summaryEntry = { ...entryBody, id: summaryId };
+                }
+                record({
+                  event: "tree_navigated",
+                  targetId: payload.targetId,
+                  leafId: currentLeafId,
+                  summarized: true,
+                  fromId: oldLeafId,
+                  customInstructions: payload.customInstructions ?? null,
+                });
+                writeRecord({
+                  type: "extension_ui_request",
+                  id: `status-${++dialogSequence}`,
+                  method: "setStatus",
+                  statusKey: "ovrcr_operator_tree_result",
+                  statusText: JSON.stringify({
+                    cancelled: false,
+                    leafId: currentLeafId,
+                    summaryEntry,
+                  }),
+                });
+                respond("prompt", id);
+              } finally {
+                treeSummaryRunning = false;
+                pendingTreeSummaryPromise = null;
+              }
+            })();
+            await pendingTreeSummaryPromise;
+            return;
+          }
+          if (payload.targetId !== currentLeafId) {
+            currentLeafId = newLeafId;
+          }
+          record({
+            event: "tree_navigated",
+            targetId: payload.targetId,
+            leafId: currentLeafId,
+            summarized: false,
+          });
+          writeRecord({
+            type: "extension_ui_request",
+            id: `status-${++dialogSequence}`,
+            method: "setStatus",
+            statusKey: "ovrcr_operator_tree_result",
+            statusText: JSON.stringify({ cancelled: false, leafId: currentLeafId, summaryEntry: null }),
+          });
+          respond("prompt", id);
+        })();
+        break;
+      }
+      record({ event: "prompt", id, message: command.message, parentLeafId: currentLeafId });
       const promptIndex = promptCount++;
       const promptResponse = scenario.prompt_responses?.[promptIndex] ?? scenario.prompt_response;
       if (promptResponse === "error") {
@@ -846,6 +1228,124 @@ function handleCommand(command) {
       }, 0);
       break;
     }
+    case "compact": {
+      const compactIndex = compactCount++;
+      const customInstructions = command.customInstructions ?? null;
+      record({ event: "compact", id, customInstructions });
+      const mode = scenario.compact_modes?.[compactIndex] ?? scenario.compact ?? "ok";
+      if (mode === "hang") break;
+      compactRunning = true;
+      compactAborted = false;
+      writeRecord({ type: "compaction_start", reason: "manual" });
+      pendingCompactPromise = (async () => {
+        try {
+          if (mode === "hold") {
+            if (scenario.compact_dirty_before_abort && sessionFile) {
+              appendSessionEntry({ type: "custom", customType: "dirty-compact", data: {} });
+            }
+            while (!compactAborted && !stdinClosed) {
+              if (scenario.compact_release_file && existsSync(scenario.compact_release_file)) break;
+              await sleep(15);
+            }
+            if (compactAborted || stdinClosed) {
+              compactRunning = false;
+              compactAborted = false;
+              writeRecord({
+                type: "compaction_end",
+                reason: "manual",
+                aborted: true,
+                willRetry: false,
+              });
+              writeRecord({
+                type: "response",
+                id,
+                command: "compact",
+                success: false,
+                error: "Compaction cancelled",
+              });
+              return;
+            }
+          }
+          if (mode === "already_compacted" || mode === "too_small" || mode === "error") {
+            const reason =
+              mode === "already_compacted"
+                ? "Already compacted"
+                : mode === "too_small"
+                  ? "Nothing to compact (session too small)"
+                  : (scenario.compact_error ?? "provider failure");
+            compactRunning = false;
+            writeRecord({
+              type: "compaction_end",
+              reason: "manual",
+              aborted: false,
+              willRetry: false,
+              errorMessage: `Compaction failed: ${reason}`,
+            });
+            writeRecord({
+              type: "response",
+              id,
+              command: "compact",
+              success: false,
+              error: reason,
+            });
+            return;
+          }
+          const summary =
+            scenario.compact_summary ??
+            (customInstructions
+              ? `Compacted summary (${customInstructions})`
+              : "Compacted summary of earlier context.");
+          const tokensBefore = scenario.compact_tokens_before ?? 4200;
+          const firstKeptEntryId = "kept-entry-1";
+          const usage = scenario.compact_usage ?? {
+            input: 300,
+            output: 80,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 380,
+            cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+          };
+          if (sessionFile) {
+            if (mode === "corrupt_session") {
+              appendLine(sessionFile, "not-valid-json");
+            } else {
+              appendSessionEntry({
+                type: "compaction",
+                summary,
+                firstKeptEntryId,
+                tokensBefore,
+                fromExtension: false,
+                usage,
+              });
+            }
+          }
+          const result = {
+            summary,
+            firstKeptEntryId,
+            tokensBefore,
+            usage,
+          };
+          compactRunning = false;
+          writeRecord({
+            type: "compaction_end",
+            reason: "manual",
+            result,
+            aborted: false,
+            willRetry: false,
+          });
+          writeRecord({
+            type: "response",
+            id,
+            command: "compact",
+            success: true,
+            data: result,
+          });
+        } finally {
+          pendingCompactPromise = null;
+        }
+      })();
+      break;
+    }
     case "clear_queue":
       record({ event: "command", command: "clear_queue", id });
       respond("clear_queue", id, { steering: [], followUp: [] }, scenario.clear_queue_result !== "error");
@@ -857,6 +1357,19 @@ function handleCommand(command) {
         break;
       }
       if (promptRunning) aborted = true;
+      if (compactRunning) compactAborted = true;
+      if (treeSummaryRunning) treeSummaryAborted = true;
+      const pendingControl =
+        pendingCompactPromise && scenario.abort_before_compact_response !== true
+          ? pendingCompactPromise
+          : pendingTreeSummaryPromise;
+      if (pendingControl) {
+        void pendingControl.then(() => {
+          respond("abort", id);
+          for (const raw of scenario.abort_records ?? []) writeRaw(raw);
+        });
+        break;
+      }
       respond("abort", id);
       for (const raw of scenario.abort_records ?? []) writeRaw(raw);
       break;

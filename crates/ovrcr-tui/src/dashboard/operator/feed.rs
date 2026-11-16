@@ -273,6 +273,12 @@ enum Opener<'a> {
         /// The captured target differs from the previous request's.
         retargeted: bool,
     },
+    Compaction {
+        instructions: Option<&'a str>,
+    },
+    BranchSummary {
+        instructions: Option<&'a str>,
+    },
     Wake(&'a str),
     /// Worker events with no request before them, as in a legacy journal.
     Orphan,
@@ -301,6 +307,8 @@ struct Entry<'a> {
     steps: Vec<Step<'a>>,
     reply: String,
     replying: bool,
+    compaction_summary: Option<(&'a str, u64)>,
+    branch_summary: Option<&'a str>,
     /// The thinking that trails the journal; shown only while the turn runs.
     thought: String,
     failure: Option<&'a str>,
@@ -317,7 +325,7 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
             // The selected model is retained metadata and compaction events are
             // transient phase state; neither is part of the feed.
             OperatorMessageContent::Worker(
-                OperatorWorkerEvent::ModelSelected(_)
+                OperatorWorkerEvent::ModelSelected { .. }
                 | OperatorWorkerEvent::ReasoningSelected(_)
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
@@ -329,6 +337,14 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                     text,
                     context,
                     retargeted,
+                })
+            }
+            OperatorMessageContent::Compaction { instructions } => Some(Opener::Compaction {
+                instructions: instructions.as_deref(),
+            }),
+            OperatorMessageContent::BranchSummary { instructions, .. } => {
+                Some(Opener::BranchSummary {
+                    instructions: instructions.as_deref(),
                 })
             }
             OperatorMessageContent::AsyncWakeup { text } => Some(Opener::Wake(text)),
@@ -349,6 +365,8 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                 steps: Vec::new(),
                 reply: String::new(),
                 replying: false,
+                compaction_summary: None,
+                branch_summary: None,
                 thought: String::new(),
                 failure: None,
                 state: State::Done,
@@ -412,6 +430,15 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                     }),
                 }
             }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+                summary,
+                tokens_before,
+            }) => {
+                entry.compaction_summary = Some((summary.as_str(), *tokens_before));
+            }
+            OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary }) => {
+                entry.branch_summary = Some(summary.as_str());
+            }
             OperatorMessageContent::Worker(OperatorWorkerEvent::Completed { .. }) => {
                 (entry.state, entry.recorded) = (State::Done, true);
             }
@@ -444,6 +471,14 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
         };
     }
     entries
+}
+
+pub(super) fn latest_assistant_reply(chat: &Chat) -> Option<String> {
+    entries(chat)
+        .into_iter()
+        .rev()
+        .find(|entry| entry.state == State::Done && !entry.reply.trim().is_empty())
+        .map(|entry| entry.reply)
 }
 
 fn wake_title(text: &str) -> String {
@@ -497,6 +532,14 @@ impl Entry<'_> {
     fn title(&self) -> String {
         match &self.opener {
             Opener::Request { text, .. } => display_text(text),
+            Opener::Compaction {
+                instructions: Some(instructions),
+            } => format!("Compact context · {}", display_text(instructions)),
+            Opener::Compaction { instructions: None } => "Compact context".into(),
+            Opener::BranchSummary {
+                instructions: Some(instructions),
+            } => format!("Summarize branch · {}", display_text(instructions)),
+            Opener::BranchSummary { instructions: None } => "Summarize branch".into(),
             Opener::Wake(text) => display_text(&wake_title(text)),
             Opener::Orphan => "Operator".into(),
         }
@@ -515,6 +558,25 @@ impl Entry<'_> {
             ),
             State::Interrupted => ("interrupted".into(), PEACH()),
             State::Running | State::Done => {
+                if matches!(self.opener, Opener::Compaction { .. }) {
+                    if self.state == State::Running {
+                        return ("compacting".into(), SUBTEXT());
+                    }
+                    if let Some((_, tokens_before)) = self.compaction_summary {
+                        return (
+                            format!("from {} tokens", super::render::format_count(tokens_before)),
+                            SUBTEXT(),
+                        );
+                    }
+                }
+                if matches!(self.opener, Opener::BranchSummary { .. }) {
+                    if self.state == State::Running {
+                        return ("summarizing".into(), SUBTEXT());
+                    }
+                    if self.branch_summary.is_some() {
+                        return ("branch summary".into(), SUBTEXT());
+                    }
+                }
                 let count =
                     |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
                 let changes = tiers
@@ -684,6 +746,27 @@ impl Entry<'_> {
                     );
                 }
             }
+            Opener::Compaction { .. } => {
+                if let Some((_, tokens_before)) = self.compaction_summary {
+                    lines(
+                        rows,
+                        &format!(
+                            "Compacted from {} tokens",
+                            super::render::format_count(tokens_before)
+                        ),
+                        2,
+                        quiet,
+                        CONTEXT,
+                        0,
+                        None,
+                    );
+                }
+            }
+            Opener::BranchSummary { .. } => {
+                if self.branch_summary.is_some() {
+                    lines(rows, "Branch summary recorded", 2, quiet, CONTEXT, 0, None);
+                }
+            }
             Opener::Wake(text) => lines(rows, &display_text(text), 2, quiet, CONTEXT, 0, None),
             _ => {}
         }
@@ -730,14 +813,20 @@ impl Entry<'_> {
             index += run.max(1);
         }
 
-        let reply = self.reply.trim_end();
-        if !reply.is_empty() {
+        let body_markdown = if let Some((summary, _)) = self.compaction_summary {
+            summary.trim_end()
+        } else if let Some(summary) = self.branch_summary {
+            summary.trim_end()
+        } else {
+            self.reply.trim_end()
+        };
+        if !body_markdown.is_empty() {
             if !self.steps.is_empty() {
                 rows.push(bar_row(color, Vec::new(), (self.owner, REPLY, 0), None));
             }
             // `tui-markdown` owns Markdown; the feed only adds its gutter and
             // a durable offset per rendered row.
-            for (offset, line) in super::markdown::lines(reply, width.saturating_sub(4))
+            for (offset, line) in super::markdown::lines(body_markdown, width.saturating_sub(4))
                 .into_iter()
                 .enumerate()
             {
@@ -758,7 +847,13 @@ impl Entry<'_> {
             ),
             State::Interrupted => lines(
                 rows,
-                "Interrupted · operations may finish; file changes remain.",
+                if matches!(self.opener, Opener::Compaction { .. }) {
+                    "Interrupted · compaction cancelled; previous context preserved."
+                } else if matches!(self.opener, Opener::BranchSummary { .. }) {
+                    "Interrupted · branch summarization cancelled; current branch preserved."
+                } else {
+                    "Interrupted · operations may finish; file changes remain."
+                },
                 2,
                 Style::default().fg(PEACH()),
                 OUTCOME,

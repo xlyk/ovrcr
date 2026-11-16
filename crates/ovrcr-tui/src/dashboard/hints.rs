@@ -55,7 +55,9 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
     // Browse shows only the keys that open everything else, and the jump while a
     // session needs the user; the menu and the palette carry the per-action hints.
-    let priority: &[&str] = if dashboard.operator_is_editing() {
+    let priority: &[&str] = if dashboard.operator_overlay_keymap().is_some() {
+        &["↑/↓", "Enter", "Tab", "Ctrl-f", "Ctrl-u", "Ctrl-c", "Esc"]
+    } else if dashboard.operator_is_editing() {
         &["Enter", "Shift-Enter", "Ctrl-g", "Ctrl-x"]
     } else if dashboard.mode == InputMode::Browse {
         &["Space", ":", "?", "i", "m"]

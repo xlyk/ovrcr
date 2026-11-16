@@ -585,8 +585,8 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
     use ovrcr_protocol::{
         AgentSecret, ClientMessage, OperatorConversationId, OperatorEventBatch,
         OperatorExchangeResult, OperatorRunIdentity, OperatorTurnId, OperatorTurnIdentity,
-        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, ServerMessage, SessionId,
-        SessionRunId, SupervisorAuth, read_frame, write_frame,
+        OperatorWorkerCommand, OperatorWorkerResult, OperatorWorkerStart, OperatorWorkerSubmission,
+        ServerMessage, SessionId, SessionRunId, SupervisorAuth, read_frame, write_frame,
     };
     use std::os::unix::net::UnixStream;
     let identity = OperatorTurnIdentity {
@@ -647,10 +647,13 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                         wrong_conversation
                                     },
                                     model: None,
-                                    text: "prompt".into(),
-                                    context: Default::default(),
+                                    submission: OperatorWorkerSubmission::Prompt {
+                                        text: "prompt".into(),
+                                        context: Default::default(),
+                                        async_wakeup: false,
+                                    },
                                     checkpoint_turn: None,
-                                    async_wakeup: false,
+                                    tree_target_id: None,
                                 },
                             )))
                         }
@@ -665,10 +668,13 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     thinking_level: Default::default(),
                                     identity: wrong_session,
                                     model: None,
-                                    text: "prompt".into(),
-                                    context: Default::default(),
+                                    submission: OperatorWorkerSubmission::Prompt {
+                                        text: "prompt".into(),
+                                        context: Default::default(),
+                                        async_wakeup: false,
+                                    },
                                     checkpoint_turn: None,
-                                    async_wakeup: false,
+                                    tree_target_id: None,
                                 }),
                             )))
                         }
@@ -685,10 +691,13 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     thinking_level: Default::default(),
                                     identity,
                                     model: None,
-                                    text,
-                                    context: Default::default(),
+                                    submission: OperatorWorkerSubmission::Prompt {
+                                        text,
+                                        context: Default::default(),
+                                        async_wakeup,
+                                    },
                                     checkpoint_turn: None,
-                                    async_wakeup,
+                                    tree_target_id: None,
                                 }),
                             )))
                         }

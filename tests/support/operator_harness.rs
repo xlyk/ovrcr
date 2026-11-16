@@ -242,6 +242,29 @@ impl OperatorClient {
         }
     }
 
+    pub fn compact(
+        &mut self,
+        summary: &OperatorConversationSummary,
+        instructions: Option<&str>,
+    ) -> Response {
+        self.exchange(Request::Operator(OperatorRequest::Compact {
+            conversation: summary.id,
+            expected_run: summary.run,
+            instructions: instructions.map(str::to_owned),
+        }))
+    }
+
+    pub fn compact_turn(
+        &mut self,
+        summary: &OperatorConversationSummary,
+        instructions: Option<&str>,
+    ) -> OperatorTurn {
+        match self.compact(summary, instructions) {
+            Response::Operator(OperatorResponse::Submitted(turn)) => turn,
+            other => panic!("Compact response: {other:?}"),
+        }
+    }
+
     pub fn stop(&mut self, identity: OperatorTurnIdentity) -> Response {
         self.exchange(Request::Operator(OperatorRequest::Stop { identity }))
     }
@@ -530,8 +553,11 @@ pub fn models_selected(history: &OperatorHistory) -> Vec<ovrcr::protocol::Operat
         .iter()
         .filter_map(|message| match &message.content {
             ovrcr::protocol::OperatorMessageContent::Worker(
-                ovrcr::protocol::OperatorWorkerEvent::ModelSelected(model),
-            ) => Some(model.clone()),
+                ovrcr::protocol::OperatorWorkerEvent::ModelSelected { provider, id, .. },
+            ) => Some(ovrcr::protocol::OperatorModel {
+                provider: provider.clone(),
+                id: id.clone(),
+            }),
             _ => None,
         })
         .collect()

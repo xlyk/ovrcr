@@ -233,9 +233,13 @@ an active composer remain ordinary text.
 scroll/follow-tail and completion Unread state. Selecting a terminal does not
 change a message that is already being composed or sent; the captured target
 travels with each message, and reopening either composer captures the current
-selection for the next one. `operator::feed` draws the journal as one entry per `User` or `AsyncWakeup`
+selection for the next one. `operator::feed` draws the journal as one entry per `User`, `Compaction`,
+`BranchSummary` or `AsyncWakeup`
 message, with the worker events of that turn folded into it; worker events with
-no opener (a legacy journal) form an `Operator` entry. Row anchors are
+no opener (a legacy journal) form an `Operator` entry. `CompactionSummary { summary, tokens_before }`
+and `BranchSummary { summary }` render inside `Compaction` and `BranchSummary`
+entries without setting `Entry.reply`, so `/copy`
+always targets the latest visible assistant reply. Row anchors are
 `(entry owner ordinal, part, offset)`, with parts in draw order (request, target,
 target detail, commands, reply, outcome, gap) and offsets that only grow under
 append (a command's index, a reply's byte offset), so a scrolled viewport keeps
@@ -297,8 +301,9 @@ hit-testing and review. The captured target uses the context row above the top r
 A single transient row follows the newest entry, under a blue bar while it
 animates: Sending before submission acceptance,
 Responding throughout Running (including silence), Waiting for a recorded
-current-turn tool result, or Compacting context… while the current turn's last
-durable compaction phase is started. Compaction phase events are durable phase
+current-turn tool result, Summarizing branch… while a `/tree` branch-summary
+turn runs, or Compacting context… while a `/compact` turn runs or the current
+turn's last durable compaction phase is started. Compaction phase events are durable phase
 state but never render as transcript rows; the matching end event, a terminal
 turn state, or a later turn returns the ordinary activity. The compaction phase
 and tool waits require
@@ -358,3 +363,30 @@ setting write, Esc closes, and the header distinguishes Pi's substituted actual
 level from a saved choice awaiting the next turn. Controls use a second header
 row when the title and controls cannot fit and at least 50 content columns remain;
 a tighter on-demand sidebar view prioritizes controls.
+
+Single-segment leading `/command` drafts at index `0` dispatch locally in both
+the full Operator composer and Quick message (`Ctrl-o`), while multi-segment
+Unix paths (`/etc/hosts`) and leading-space drafts (` /copy`) submit as normal
+prompts; unknown single-segment `/commands` fail locally with the draft intact.
+Typing a single-segment `/prefix` in the full composer opens a live `/` menu
+above the top rule (`Up`/`Down` select, `Tab` complete, `Enter` run, `Esc`
+close menu only); Quick message stays compact, running `/copy` (OSC 52 raw
+Markdown of the latest visible assistant reply, bounded at 64 KiB),
+`/thinking <level>`, `/model default`, exact `/model <provider/id>` matches and
+`/new` (idle/unleased session-epoch reset) directly, while transitioning into
+full Operator for bare `/thinking`, bare `/model`, non-exact `/model <query>`
+filters, `/compact [instructions]` (manual context compaction with live
+`Compacting context…` activity, foreground `Stop` rollback and receipt),
+`/session` (dismissible read-only session inspection modal: `Esc`, `Enter` or
+`q` closes), or `/tree` (`TreePicker` modal with `●` active-branch markers,
+`├─`/`└─`/`│` connectors, unwrapped user prompts, live multi-token search,
+`default`/`no-tools`/`user-only`/`all` filter cycling via `Tab`/`Ctrl-f`,
+idle/unleased branch switching, `"Summarize branch?"` confirmation (`No
+summary`, `Summarize`, `Summarize with custom prompt`, with `Esc` stepping back
+to `/tree` preserving selected node, filter and search), and user-prompt rewind
+into composer + captured `OperatorContext` on both immediate switches and
+completed branch summaries). `ModelPicker` queries the dedicated profile via
+`OperatorRequest::Models`, lists `Harness default` ahead of `provider/id`
+entries, marks the active `Settings` snapshot selection, filters live
+case-insensitively by `provider/id` or display name, and writes the chosen model
+exclusively through `SetSetting` on `operator.model`.

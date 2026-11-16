@@ -194,6 +194,7 @@ impl Dashboard {
         }
         let hint = match quick.phase {
             QuickPhase::Editing => "Enter Send  Shift-Enter Newline  Ctrl-c Clear  Esc Dismiss",
+            QuickPhase::CheckingModels => "Checking Operator models… · Esc Dismiss",
             QuickPhase::Opening => "Opening Operator… · Esc Dismiss",
             QuickPhase::Submitting => "Sending message… · Esc Dismiss",
         };
@@ -772,17 +773,17 @@ impl Dashboard {
             .collect();
         frame.render_widget(Paragraph::new(lines), layout.transcript);
         let error = chat.error.as_deref().or(self.operator.error.as_deref());
+        let notice = chat.notice.as_deref();
         let context = layout.context;
-        let caption = error.map_or_else(
-            || context_caption(&chat.context, context.width),
-            display_text,
-        );
+        let (caption, fg) = if let Some(error) = error {
+            (display_text(error), super::super::render::RED())
+        } else if let Some(notice) = notice {
+            (display_text(notice), GREEN())
+        } else {
+            (context_caption(&chat.context, context.width), BLUE())
+        };
         frame.render_widget(
-            Paragraph::new(caption).style(Style::default().fg(if error.is_some() {
-                super::super::render::RED()
-            } else {
-                BLUE()
-            })),
+            Paragraph::new(caption).style(Style::default().fg(fg)),
             context,
         );
         for (area, color) in [(layout.top_rule, MAUVE()), (layout.bottom_rule, SURFACE2())] {
@@ -841,11 +842,107 @@ impl Dashboard {
                 layout.composer.y + row.saturating_sub(offset) as u16,
             ));
         }
+        self.draw_operator_slash_menu(frame, &layout);
         self.draw_operator_reasoning_picker(frame);
+        self.draw_operator_model_picker(frame);
+        self.draw_operator_session_modal(frame);
+        self.draw_operator_tree_modal(frame);
+    }
+
+    fn draw_operator_slash_menu(&self, frame: &mut Frame<'_>, layout: &OperatorLayout) {
+        let specs = self.operator_slash_menu_specs();
+        if specs.is_empty() {
+            return;
+        }
+        let available_height = layout.top_rule.y.saturating_sub(layout.header.bottom());
+        if available_height == 0 || layout.top_rule.width < 12 {
+            return;
+        }
+        let width = layout.top_rule.width.min(76);
+        let selected = self
+            .operator
+            .slash_selected
+            .min(specs.len().saturating_sub(1));
+        let usage_col = specs
+            .iter()
+            .map(|spec| spec.usage.width())
+            .max()
+            .unwrap_or(0)
+            + 2;
+        let bordered = available_height >= 3;
+        let height = if bordered {
+            (specs.len() as u16 + 2).min(available_height)
+        } else {
+            (specs.len() as u16).min(available_height)
+        };
+        let inner_height = usize::from(if bordered {
+            height.saturating_sub(2)
+        } else {
+            height
+        })
+        .max(1);
+        let inner_width = usize::from(if bordered {
+            width.saturating_sub(2)
+        } else {
+            width
+        });
+        let start = selected.saturating_add(1).saturating_sub(inner_height);
+        let lines: Vec<Line<'static>> = specs
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(inner_height)
+            .map(|(index, spec)| {
+                let active = index == selected;
+                let row_bg = if active { SURFACE2() } else { BASE() };
+                let pad = usage_col.saturating_sub(spec.usage.width());
+                let left = format!(" {}{}", spec.usage, " ".repeat(pad));
+                let desc_room = inner_width.saturating_sub(left.width());
+                let desc = clip_text(spec.description, desc_room);
+                let tail_pad = inner_width.saturating_sub(left.width() + desc.width());
+                Line::from(vec![
+                    Span::styled(
+                        clip_text(&left, inner_width),
+                        Style::default()
+                            .fg(if active { TEXT() } else { MAUVE() })
+                            .bg(row_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{desc}{}", " ".repeat(tail_pad)),
+                        Style::default()
+                            .fg(if active { TEXT() } else { SUBTEXT() })
+                            .bg(row_bg),
+                    ),
+                ])
+            })
+            .collect();
+        let area = Rect::new(
+            layout.top_rule.x,
+            layout.top_rule.y.saturating_sub(height),
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let paragraph = Paragraph::new(lines).style(Style::default().fg(TEXT()).bg(BASE()));
+        if bordered {
+            frame.render_widget(
+                paragraph.block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Slash commands · ↑↓ Tab Enter Esc ")
+                        .style(Style::default().fg(TEXT()).bg(BASE()))
+                        .border_style(Style::default().fg(MAUVE())),
+                ),
+                area,
+            );
+        } else {
+            frame.render_widget(paragraph, area);
+        }
     }
 
     fn draw_operator_reasoning_picker(&self, frame: &mut Frame<'_>) {
-        let Some(picker) = &self.operator.reasoning_picker else {
+        let Some(picker) = self.operator.reasoning_picker() else {
             return;
         };
         let outer = frame.area();
@@ -896,7 +993,12 @@ impl Dashboard {
             vec![Line::raw(unsupported)],
             width.saturating_sub(2),
         ));
-        lines.push(Line::raw("↑↓ Enter pick · Esc close").style(Style::default().fg(MAUVE())));
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(width.saturating_sub(2)),
+        ) {
+            lines.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+        }
         let height = (lines.len() as u16 + 2).min(outer.height);
         let area = Rect::new(
             outer.x + (outer.width - width) / 2,
@@ -916,4 +1018,617 @@ impl Dashboard {
             area,
         );
     }
+
+    fn draw_operator_session_modal(&self, frame: &mut Frame<'_>) {
+        let Some(modal) = self.operator.session_modal() else {
+            return;
+        };
+        let outer = frame.area();
+        let width = outer.width.min(82);
+        let inner_width = width.saturating_sub(2);
+        let field = |label: &'static str, value: String| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!(" {label:<16}"), Style::default().fg(SUBTEXT())),
+                Span::styled(display_text(&value), Style::default().fg(TEXT())),
+            ])
+        };
+        let mut lines: Vec<Line<'static>> = match modal {
+            SessionModal::Loading => vec![
+                Line::raw(" Loading Operator session details…")
+                    .style(Style::default().fg(SUBTEXT())),
+            ],
+            SessionModal::Loaded(info) => {
+                let pi_session = info
+                    .pi_session_id
+                    .as_deref()
+                    .map_or_else(|| "none".to_owned(), ToOwned::to_owned);
+                let checkpoint = info
+                    .checkpoint_turn
+                    .map_or_else(|| "none".to_owned(), |turn| format!("turn #{}", turn.0));
+                let active_model = info.active_model.as_ref().map_or_else(
+                    || "none yet".to_owned(),
+                    |m| format!("{}/{}", m.provider, m.id),
+                );
+                let configured_model = info
+                    .configured_model
+                    .as_deref()
+                    .map_or_else(|| "harness default".to_owned(), ToOwned::to_owned);
+                let reasoning = match &info.reasoning {
+                    Some(r) => format!(
+                        "{} (configured: {})",
+                        r.level.as_str(),
+                        info.configured_thinking_level.as_str()
+                    ),
+                    None => format!(
+                        "— (configured: {})",
+                        info.configured_thinking_level.as_str()
+                    ),
+                };
+                let context_occupancy = match (
+                    info.context_window.used_tokens,
+                    info.context_window.capacity_tokens,
+                ) {
+                    (Some(used), Some(capacity)) if capacity > 0 => {
+                        let pct = (used as f64 * 100.0) / (capacity as f64);
+                        format!(
+                            "{} / {} tokens ({pct:.1}%)",
+                            format_count(used),
+                            format_count(capacity)
+                        )
+                    }
+                    (Some(used), _) => format!("{} tokens (capacity unknown)", format_count(used)),
+                    (None, Some(capacity)) if capacity > 0 => {
+                        format!("0 / {} tokens (0.0%)", format_count(capacity))
+                    }
+                    _ => "none yet".into(),
+                };
+                let branched = info.branch_turns != info.completed_turns
+                    || info.epoch_total_messages != info.total_messages
+                    || info.epoch_tool_calls != info.tool_calls
+                    || info.epoch_tool_results != info.tool_results;
+                let turns_value = if branched {
+                    format!(
+                        "{} on branch · {} total ({} completed)",
+                        format_count(info.branch_turns),
+                        format_count(info.turns),
+                        format_count(info.completed_turns)
+                    )
+                } else {
+                    format!(
+                        "{} total ({} completed)",
+                        format_count(info.turns),
+                        format_count(info.completed_turns)
+                    )
+                };
+                let messages_value = if branched {
+                    format!(
+                        "{} on branch ({} user · {} assistant) · {} in epoch",
+                        format_count(info.total_messages),
+                        format_count(info.user_messages),
+                        format_count(info.assistant_messages),
+                        format_count(info.epoch_total_messages)
+                    )
+                } else {
+                    format!(
+                        "{} total ({} user · {} assistant)",
+                        format_count(info.total_messages),
+                        format_count(info.user_messages),
+                        format_count(info.assistant_messages)
+                    )
+                };
+                let tools_value = if branched {
+                    format!(
+                        "{} calls · {} results on branch · {} calls · {} results in epoch",
+                        format_count(info.tool_calls),
+                        format_count(info.tool_results),
+                        format_count(info.epoch_tool_calls),
+                        format_count(info.epoch_tool_results)
+                    )
+                } else {
+                    format!(
+                        "{} calls · {} results",
+                        format_count(info.tool_calls),
+                        format_count(info.tool_results)
+                    )
+                };
+                let rows = vec![
+                    field(
+                        "Identities",
+                        format!(
+                            "conversation #{} · session #{} · run {}",
+                            info.conversation.0, info.session.0, info.run.0
+                        ),
+                    ),
+                    field(
+                        "Epoch & Pi",
+                        format!(
+                            "epoch {} · pi {} · checkpoint {}",
+                            info.session_epoch, pi_session, checkpoint
+                        ),
+                    ),
+                    field("Active model", active_model),
+                    field("Configured", configured_model),
+                    field("Reasoning", reasoning),
+                    field("Turns", turns_value),
+                    field("Messages", messages_value),
+                    field("Tools", tools_value),
+                    field(
+                        "Tokens",
+                        format!(
+                            "{} total (in {} · out {})",
+                            format_count(info.tokens.total),
+                            format_count(info.tokens.input),
+                            format_count(info.tokens.output)
+                        ),
+                    ),
+                    field(
+                        "Cache tokens",
+                        format!(
+                            "read {} · write {}",
+                            format_count(info.tokens.cache_read),
+                            format_count(info.tokens.cache_write)
+                        ),
+                    ),
+                    field("Cost", format_cost_usd_nanos(info.cost_usd_nanos)),
+                    field("Context window", context_occupancy),
+                ];
+                wrapped_lines(rows, inner_width)
+            }
+        };
+        lines.push(Line::default());
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(inner_width.saturating_sub(1)),
+        ) {
+            lines.push(Line::raw(format!(" {line}")).style(Style::default().fg(MAUVE())));
+        }
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Operator session · /session ")
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
+    }
+
+    fn draw_operator_model_picker(&self, frame: &mut Frame<'_>) {
+        let Some(picker) = self.operator.model_picker() else {
+            return;
+        };
+        let outer = frame.area();
+        if outer.width < 20 || outer.height < 6 {
+            return;
+        }
+        let width = outer.width.min(72);
+        let inner_width = usize::from(width.saturating_sub(2));
+        let active = self.settings.operator.model.as_deref();
+        let configured = active.unwrap_or("Harness default");
+
+        let pos = picker.cursor.position(&picker.query);
+        let before = display_text(&picker.query[..pos]);
+        let after = display_text(&picker.query[pos..]);
+        let filter_prefix = "Filter: ";
+        let filter_room = inner_width.saturating_sub(filter_prefix.width() + 1);
+        let filter_text = format!("{before}▏{after}");
+        let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+            Span::styled(
+                filter_prefix,
+                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                clip_text(&filter_text, filter_room.max(1)),
+                Style::default().fg(TEXT()),
+            ),
+        ])];
+
+        let filtered = picker.filtered_choices();
+        let selected = picker.selected.min(filtered.len().saturating_sub(1));
+        let max_list_rows = usize::from(outer.height.saturating_sub(6)).clamp(1, 12);
+
+        if filtered.is_empty() {
+            let empty_msg = if picker.entries.is_empty() {
+                EMPTY_MODEL_CATALOG_NOTICE.to_owned()
+            } else {
+                format!(
+                    "No Operator models match \"{}\".",
+                    display_text(picker.query.trim())
+                )
+            };
+            lines.extend(wrapped_lines(
+                vec![Line::styled(empty_msg, Style::default().fg(PEACH()))],
+                width.saturating_sub(2),
+            ));
+        } else {
+            let start = selected.saturating_add(1).saturating_sub(max_list_rows);
+            for (index, choice) in filtered
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(start)
+                .take(max_list_rows)
+            {
+                let tick = if picker.choice_is_active(choice, active) {
+                    "✓"
+                } else {
+                    " "
+                };
+                let label = match choice {
+                    ModelChoice::HarnessDefault => "Harness default (Pi profile default)".into(),
+                    ModelChoice::Catalog(idx) => {
+                        let entry = &picker.entries[idx];
+                        let full = display_text(&entry.full_id());
+                        match entry.name.as_deref() {
+                            Some(name) if !name.is_empty() && name != entry.id => {
+                                format!("{full} · {}", display_text(name))
+                            }
+                            _ => full,
+                        }
+                    }
+                };
+                let row_text = clip_text(&format!("{tick} {label}"), inner_width);
+                let pad = inner_width.saturating_sub(row_text.width());
+                lines.push(Line::raw(format!("{row_text}{}", " ".repeat(pad))).style(
+                    if index == selected {
+                        Style::default().fg(TEXT()).bg(SURFACE2())
+                    } else {
+                        Style::default().fg(TEXT())
+                    },
+                ));
+            }
+            if picker.entries.is_empty() {
+                lines.extend(wrapped_lines(
+                    vec![Line::styled(
+                        EMPTY_MODEL_CATALOG_NOTICE,
+                        Style::default().fg(PEACH()),
+                    )],
+                    width.saturating_sub(2),
+                ));
+            }
+        }
+
+        for line in super::super::keymap::operator_overlay_footer_lines(
+            self,
+            usize::from(width.saturating_sub(2)),
+        ) {
+            lines.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+        }
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let title_room = usize::from(width.saturating_sub(22)).max(8);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(
+                        " Operator model · {} ",
+                        clip_text(&display_text(configured), title_room)
+                    ))
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
+        if area.height >= 3 && area.width >= 12 {
+            let cursor_col = (filter_prefix.width() + before.width())
+                .min(usize::from(area.width.saturating_sub(3))) as u16;
+            frame.set_cursor_position((area.x + 1 + cursor_col, area.y + 1));
+        }
+    }
+
+    fn draw_operator_tree_modal(&self, frame: &mut Frame<'_>) {
+        let Some(modal) = self.operator.tree_modal() else {
+            return;
+        };
+        let outer = frame.area();
+        if outer.width < 24 || outer.height < 6 {
+            return;
+        }
+        let width = outer.width.min(92);
+        let inner_width = usize::from(width.saturating_sub(2));
+        let footer_lines = super::super::keymap::operator_overlay_footer_lines(self, inner_width);
+
+        let (lines, title, modal_cursor) = match modal {
+            TreeModal::Loading => {
+                let mut rows = vec![
+                    Line::raw(" Loading Operator session tree…")
+                        .style(Style::default().fg(SUBTEXT())),
+                    Line::default(),
+                ];
+                for line in footer_lines {
+                    rows.push(Line::raw(format!(" {line}")).style(Style::default().fg(MAUVE())));
+                }
+                (rows, " Operator tree · /tree ".to_owned(), None)
+            }
+            TreeModal::Loaded(picker) => match &picker.step {
+                TreePickerStep::ConfirmSummarize {
+                    target_preview,
+                    choice,
+                    ..
+                } => {
+                    let mut rows: Vec<Line<'static>> = vec![
+                        Line::styled(
+                            "Summarize abandoned branch entries before switching?",
+                            Style::default().fg(TEXT()).add_modifier(Modifier::BOLD),
+                        ),
+                        Line::styled(
+                            clip_text(
+                                &format!("Target: {}", display_text(target_preview)),
+                                inner_width,
+                            ),
+                            Style::default().fg(SUBTEXT()),
+                        ),
+                    ];
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
+                    }
+                    rows.push(Line::default());
+                    for item in BranchSummaryChoice::ALL {
+                        let active = item == *choice;
+                        let bg = if active { SURFACE2() } else { BASE() };
+                        let prefix = if active { "▸ " } else { "  " };
+                        let row_text = clip_text(&format!("{prefix}{}", item.label()), inner_width);
+                        let pad = inner_width.saturating_sub(row_text.width());
+                        rows.push(Line::raw(format!("{row_text}{}", " ".repeat(pad))).style(
+                            Style::default().fg(TEXT()).bg(bg).add_modifier(if active {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                        ));
+                    }
+                    rows.push(Line::default());
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
+                    (rows, " Summarize branch? · /tree ".to_owned(), None)
+                }
+                TreePickerStep::CustomInstructions {
+                    target_preview,
+                    input,
+                    cursor,
+                    ..
+                } => {
+                    let pos = cursor.position(input);
+                    let before = display_text(&input[..pos]);
+                    let after = display_text(&input[pos..]);
+                    let prompt_prefix = "Instructions: ";
+                    let prompt_room = inner_width.saturating_sub(prompt_prefix.width() + 1);
+                    let prompt_text = format!("{before}▏{after}");
+                    let mut rows: Vec<Line<'static>> = vec![
+                        Line::styled(
+                            clip_text(
+                                &format!("Target: {}", display_text(target_preview)),
+                                inner_width,
+                            ),
+                            Style::default().fg(SUBTEXT()),
+                        ),
+                        Line::from(vec![
+                            Span::styled(
+                                prompt_prefix,
+                                Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                clip_text(&prompt_text, prompt_room.max(1)),
+                                Style::default().fg(TEXT()),
+                            ),
+                        ]),
+                    ];
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
+                    }
+                    rows.push(Line::default());
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
+                    let cursor_col = prompt_prefix.width() + before.width();
+                    (
+                        rows,
+                        " Summarize branch · Custom prompt ".to_owned(),
+                        Some((cursor_col, 2u16)),
+                    )
+                }
+                TreePickerStep::Browse => {
+                    let pos = picker.cursor.position(&picker.query);
+                    let before = display_text(&picker.query[..pos]);
+                    let after = display_text(&picker.query[pos..]);
+                    let search_prefix = "Search: ";
+                    let search_room = inner_width.saturating_sub(search_prefix.width() + 1);
+                    let search_text = format!("{before}▏{after}");
+                    let mut rows: Vec<Line<'static>> = vec![Line::from(vec![
+                        Span::styled(
+                            search_prefix,
+                            Style::default().fg(MAUVE()).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            clip_text(&search_text, search_room.max(1)),
+                            Style::default().fg(TEXT()),
+                        ),
+                    ])];
+
+                    if let Some(error) = &picker.error {
+                        rows.extend(wrapped_lines(
+                            vec![Line::styled(
+                                display_text(error),
+                                Style::default().fg(super::super::render::RED()),
+                            )],
+                            width.saturating_sub(2),
+                        ));
+                    }
+
+                    let visible = picker.visible_rows();
+                    let selected = picker.selected.min(visible.len().saturating_sub(1));
+                    let max_list_rows = usize::from(outer.height.saturating_sub(7)).clamp(1, 14);
+
+                    if picker.tree.entries.is_empty() {
+                        rows.push(
+                            Line::raw("No turns in this Operator session yet.")
+                                .style(Style::default().fg(SUBTEXT())),
+                        );
+                    } else if visible.is_empty() {
+                        rows.push(
+                            Line::raw("No tree entries match current filter or search.")
+                                .style(Style::default().fg(PEACH())),
+                        );
+                    } else {
+                        let start = selected.saturating_add(1).saturating_sub(max_list_rows);
+                        for (idx, row) in visible.iter().enumerate().skip(start).take(max_list_rows)
+                        {
+                            let active_sel = idx == selected;
+                            let bg = if active_sel { SURFACE2() } else { BASE() };
+                            let marker = if row.active_branch { "● " } else { "  " };
+                            let role_fg = match row.kind {
+                                OperatorTreeEntryKind::User => MAUVE(),
+                                OperatorTreeEntryKind::Assistant { .. } => BLUE(),
+                                OperatorTreeEntryKind::Compaction
+                                | OperatorTreeEntryKind::BranchSummary => PEACH(),
+                                OperatorTreeEntryKind::CustomMessage
+                                | OperatorTreeEntryKind::ToolResult
+                                | OperatorTreeEntryKind::ModelChange
+                                | OperatorTreeEntryKind::ThinkingLevelChange
+                                | OperatorTreeEntryKind::Other => SUBTEXT(),
+                            };
+                            let leaf_badge = if row.current_leaf { " ← active" } else { "" };
+                            let role_tag = format!("{}: ", row.role_label);
+                            let prefix_width =
+                                row.connector.width() + marker.width() + role_tag.width();
+                            let preview_room = inner_width.saturating_sub(prefix_width);
+                            let preview_raw = format!("{}{leaf_badge}", display_text(&row.preview));
+                            let clipped_preview = clip_text(&preview_raw, preview_room);
+                            let used = prefix_width + clipped_preview.width();
+                            let pad = inner_width.saturating_sub(used);
+
+                            rows.push(Line::from(vec![
+                                Span::styled(
+                                    row.connector.clone(),
+                                    Style::default()
+                                        .fg(if active_sel { TEXT() } else { SUBTEXT() })
+                                        .bg(bg),
+                                ),
+                                Span::styled(
+                                    marker,
+                                    Style::default()
+                                        .fg(if row.active_branch {
+                                            GREEN()
+                                        } else {
+                                            SUBTEXT()
+                                        })
+                                        .bg(bg)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    role_tag,
+                                    Style::default()
+                                        .fg(role_fg)
+                                        .bg(bg)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    format!("{clipped_preview}{}", " ".repeat(pad)),
+                                    Style::default().fg(TEXT()).bg(bg),
+                                ),
+                            ]));
+                        }
+                    }
+
+                    for line in footer_lines {
+                        rows.push(Line::raw(line).style(Style::default().fg(MAUVE())));
+                    }
+                    let leaf_status = if picker.tree.entries.is_empty() {
+                        "empty"
+                    } else if picker.tree.current_leaf_id.is_some() {
+                        "active"
+                    } else {
+                        "root"
+                    };
+                    let title = format!(
+                        " Operator tree · /tree · filter: {} · {} ",
+                        picker.filter.as_str(),
+                        leaf_status
+                    );
+                    let cursor_col = search_prefix.width() + before.width();
+                    (rows, title, Some((cursor_col, 1u16)))
+                }
+            },
+        };
+
+        let height = (lines.len() as u16 + 2).min(outer.height);
+        let area = Rect::new(
+            outer.x + (outer.width - width) / 2,
+            outer.y + (outer.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .style(Style::default().fg(TEXT()).bg(BASE()))
+                    .border_style(Style::default().fg(MAUVE())),
+            ),
+            area,
+        );
+        if let Some((col, row_offset)) = modal_cursor
+            && area.height > row_offset + 1
+            && area.width >= 12
+        {
+            let bounded = col.min(usize::from(area.width.saturating_sub(3))) as u16;
+            frame.set_cursor_position((area.x + 1 + bounded, area.y + row_offset));
+        }
+    }
+}
+
+pub(super) fn format_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (idx, ch) in digits.chars().enumerate() {
+        if idx > 0 && (digits.len() - idx).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn format_cost_usd_nanos(nanos: u64) -> String {
+    let whole = nanos / 1_000_000_000;
+    let frac = nanos % 1_000_000_000;
+    let frac9 = format!("{frac:09}");
+    let trimmed = frac9.trim_end_matches('0');
+    let decimals = if trimmed.len() < 4 {
+        &frac9[..4]
+    } else {
+        trimmed
+    };
+    format!("${}.{decimals}", format_count(whole))
 }

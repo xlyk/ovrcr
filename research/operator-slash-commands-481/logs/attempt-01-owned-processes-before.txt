@@ -1,0 +1,3 @@
+36070 35759 /Users/xlyk/.gemini/antigravity-cli/worktrees/8e7164ff-a249-4e06-b817-978e9f424385/subagent-Implementer--490-self-43170654/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+36562 35759 /Users/xlyk/.gemini/antigravity-cli/worktrees/8e7164ff-a249-4e06-b817-978e9f424385/subagent-Implementer--490-self-43170654/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+37275 35759 /Users/xlyk/.gemini/antigravity-cli/worktrees/8e7164ff-a249-4e06-b817-978e9f424385/subagent-Implementer--490-self-43170654/target/OVRCR GUI.app/Contents/MacOS/ovrcr project add spacelift-agent /private/tmp/ovrcr-cua-490-35759/tmp/ovrcr-gui-5cfoGz/repositories/spacelift-agent --workspace-root /private/tmp/ovrcr-cua-490-35759/tmp/ovrcr-gui-5cfoGz/workspaces/spacelift-agent

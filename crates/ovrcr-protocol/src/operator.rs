@@ -6,6 +6,9 @@ use std::path::PathBuf;
 pub const MAX_OPERATOR_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_OPERATOR_BATCH_EVENTS: usize = 32;
 pub const MAX_OPERATOR_PAGE_MESSAGES: u16 = 100;
+pub const MAX_OPERATOR_MODEL_CATALOG_ENTRIES: usize = 4096;
+pub const MAX_OPERATOR_TREE_ENTRIES: usize = 8192;
+pub const MAX_OPERATOR_TREE_PREVIEW_BYTES: usize = 512;
 
 /// `Default` leaves Pi's model-specific choice alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +206,8 @@ pub struct OperatorConversationSummary {
     pub worker_live: bool,
     pub id: OperatorConversationId,
     pub session: SessionId,
+    /// Monotonic `/new` epoch on the singleton Operator conversation (`0` initially).
+    pub session_epoch: u64,
     /// The last pi model the worker selected; `None` before the first selection.
     pub model: Option<OperatorModel>,
     pub title: String,
@@ -212,6 +217,120 @@ pub struct OperatorConversationSummary {
     pub current_turn_started_unix_ms: Option<u64>,
     /// Latest completed reply time; legacy turns without a stored time are unknown.
     pub last_reply_unix_ms: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorTokenStats {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total: u64,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorContextWindowUsage {
+    pub used_tokens: Option<u64>,
+    pub capacity_tokens: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorSessionInfo {
+    pub conversation: OperatorConversationId,
+    pub session: SessionId,
+    pub run: SessionRunId,
+    pub session_epoch: u64,
+    pub pi_session_id: Option<String>,
+    pub checkpoint_turn: Option<OperatorTurnId>,
+    pub active_tip_turn: Option<OperatorTurnId>,
+    pub configured_model: Option<String>,
+    pub active_model: Option<OperatorModel>,
+    pub configured_thinking_level: OperatorThinkingLevel,
+    pub reasoning: Option<OperatorReasoning>,
+    pub turns: u64,
+    pub completed_turns: u64,
+    pub branch_turns: u64,
+    pub user_messages: u64,
+    pub assistant_messages: u64,
+    pub tool_calls: u64,
+    pub tool_results: u64,
+    #[serde(default)]
+    pub epoch_tool_calls: u64,
+    #[serde(default)]
+    pub epoch_tool_results: u64,
+    pub total_messages: u64,
+    pub epoch_total_messages: u64,
+    pub tokens: OperatorTokenStats,
+    /// Cumulative cost in nano-USD (`1_000_000_000 == $1.00`).
+    pub cost_usd_nanos: u64,
+    pub context_window: OperatorContextWindowUsage,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperatorTreeEntryKind {
+    User,
+    Assistant { tool_only: bool },
+    ToolResult,
+    Compaction,
+    BranchSummary,
+    CustomMessage,
+    ModelChange,
+    ThinkingLevelChange,
+    Other,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorTreeEntry {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub kind: OperatorTreeEntryKind,
+    pub preview: String,
+}
+impl OperatorTreeEntry {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_token(&self.id)?;
+        if let Some(parent_id) = &self.parent_id {
+            validate_token(parent_id)?;
+        }
+        if self.preview.len() > MAX_OPERATOR_TREE_PREVIEW_BYTES || self.preview.contains('\0') {
+            return Err("invalid operator tree preview".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorSessionTree {
+    pub pi_session_id: Option<String>,
+    /// Effective active leaf in the current epoch (`None` when empty or rewound before root).
+    pub current_leaf_id: Option<String>,
+    pub entries: Vec<OperatorTreeEntry>,
+}
+impl OperatorSessionTree {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(id) = &self.pi_session_id {
+            validate_token(id)?;
+        }
+        if let Some(leaf) = &self.current_leaf_id {
+            validate_token(leaf)?;
+        }
+        if self.entries.len() > MAX_OPERATOR_TREE_ENTRIES {
+            return Err("operator session tree bounds exceeded".into());
+        }
+        for entry in &self.entries {
+            entry.validate()?;
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorBranchSummaryRequest {
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorTreeNavigation {
+    pub conversation: OperatorConversationSummary,
+    pub current_leaf_id: Option<String>,
+    pub noop: bool,
+    pub editor_text: Option<String>,
+    pub restored_context: Option<OperatorContext>,
+    #[serde(default)]
+    pub submitted: Option<OperatorTurn>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorToolStatus {
@@ -233,9 +352,18 @@ pub enum OperatorWorkerEvent {
         truncated: bool,
         status: OperatorToolStatus,
     },
-    ModelSelected(OperatorModel),
+    ModelSelected {
+        provider: String,
+        id: String,
+        #[serde(default)]
+        context_window: Option<u64>,
+    },
     Completed {
         leased: bool,
+        #[serde(default)]
+        pi_first_entry_id: Option<String>,
+        #[serde(default)]
+        pi_leaf_entry_id: Option<String>,
     },
     Failed(String),
     /// Displayable incremental thinking text; provider signatures are never carried.
@@ -247,8 +375,25 @@ pub enum OperatorWorkerEvent {
     /// remain represented by the turn's terminal event/state, never by an end.
     CompactionEnded,
     ReasoningSelected(OperatorReasoning),
+    /// Durable receipt emitted when manual `/compact` finishes summarizing prior context.
+    CompactionSummary {
+        summary: String,
+        tokens_before: u64,
+    },
+    /// Durable receipt emitted when `/tree` branch summarization finishes appending `branch_summary`.
+    BranchSummary {
+        summary: String,
+    },
 }
 impl OperatorWorkerEvent {
+    pub fn model_selected(model: OperatorModel, context_window: Option<u64>) -> Self {
+        Self::ModelSelected {
+            provider: model.provider,
+            id: model.id,
+            context_window,
+        }
+    }
+
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed { .. } | Self::Failed(_))
     }
@@ -275,10 +420,45 @@ impl OperatorEventBatch {
             }
             match event {
                 OperatorWorkerEvent::ReasoningSelected(reasoning) => reasoning.validate()?,
-                OperatorWorkerEvent::ModelSelected(model) => model.validate()?,
-                OperatorWorkerEvent::Completed { .. }
-                | OperatorWorkerEvent::CompactionStarted
-                | OperatorWorkerEvent::CompactionEnded => {}
+                OperatorWorkerEvent::ModelSelected {
+                    provider,
+                    id,
+                    context_window,
+                } => {
+                    OperatorModel {
+                        provider: provider.clone(),
+                        id: id.clone(),
+                    }
+                    .validate()?;
+                    if *context_window == Some(0) {
+                        return Err("invalid operator model context window".into());
+                    }
+                }
+                OperatorWorkerEvent::Completed {
+                    pi_first_entry_id,
+                    pi_leaf_entry_id,
+                    ..
+                } => {
+                    if let Some(id) = pi_first_entry_id {
+                        validate_token(id)?;
+                    }
+                    if let Some(id) = pi_leaf_entry_id {
+                        validate_token(id)?;
+                    }
+                }
+                OperatorWorkerEvent::CompactionStarted | OperatorWorkerEvent::CompactionEnded => {}
+                OperatorWorkerEvent::CompactionSummary { summary, .. } => {
+                    if summary.len() > MAX_OPERATOR_TEXT_BYTES || summary.contains('\0') {
+                        return Err("invalid operator compaction summary".into());
+                    }
+                    bytes += summary.len();
+                }
+                OperatorWorkerEvent::BranchSummary { summary } => {
+                    if summary.len() > MAX_OPERATOR_TEXT_BYTES || summary.contains('\0') {
+                        return Err("invalid operator branch summary".into());
+                    }
+                    bytes += summary.len();
+                }
                 OperatorWorkerEvent::AssistantDelta(text)
                 | OperatorWorkerEvent::Failed(text)
                 | OperatorWorkerEvent::ThinkingDelta(text) => {
@@ -355,6 +535,16 @@ pub enum OperatorMessageContent {
     AsyncWakeup {
         text: String,
     },
+    /// User-initiated `/compact` turn opener with optional summarization instructions.
+    Compaction {
+        instructions: Option<String>,
+    },
+    /// User-initiated `/tree` branch-summarization turn opener targeting `target_entry_id`.
+    BranchSummary {
+        target_entry_id: String,
+        #[serde(default)]
+        instructions: Option<String>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorMessage {
@@ -368,6 +558,43 @@ pub struct OperatorHistory {
     pub messages: Vec<OperatorMessage>,
     pub next_after: Option<u64>,
 }
+/// One model entry discovered from the dedicated Operator Pi profile catalog.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorModelCatalogEntry {
+    pub provider: String,
+    pub id: String,
+    pub name: Option<String>,
+}
+impl OperatorModelCatalogEntry {
+    pub fn full_id(&self) -> String {
+        format!("{}/{}", self.provider, self.id)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        OperatorModel {
+            provider: self.provider.clone(),
+            id: self.id.clone(),
+        }
+        .validate()?;
+        if let Some(name) = &self.name {
+            validate_token(name)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_operator_model_catalog(
+    entries: &[OperatorModelCatalogEntry],
+) -> Result<(), String> {
+    if entries.len() > MAX_OPERATOR_MODEL_CATALOG_ENTRIES {
+        return Err("operator model catalog bounds exceeded".into());
+    }
+    for entry in entries {
+        entry.validate()?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorRequest {
     /// Reads the sole conversation; never creates a record or a process.
@@ -388,6 +615,36 @@ pub enum OperatorRequest {
     Stop {
         identity: OperatorTurnIdentity,
     },
+    /// Lists models available in the dedicated Operator Pi profile without starting a turn.
+    Models,
+    /// Atomically resets the singleton conversation onto a new session epoch when idle and unleased.
+    NewSession {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+    },
+    /// Reads current-epoch session metadata and promoted checkpoint stats without spawning pi.
+    SessionInfo {
+        conversation: OperatorConversationId,
+    },
+    /// Compacts the current-epoch Operator conversation context via Pi's native `compact` RPC.
+    Compact {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+        instructions: Option<String>,
+    },
+    /// Reads the current-epoch conversation tree from `session.jsonl` without spawning pi.
+    Tree {
+        conversation: OperatorConversationId,
+    },
+    /// Navigates the active leaf to `target_entry_id` (zero-token switch, user-prompt rewind,
+    /// or managed branch-summarization turn when `summarize` is present).
+    NavigateTree {
+        conversation: OperatorConversationId,
+        expected_run: SessionRunId,
+        target_entry_id: String,
+        #[serde(default)]
+        summarize: Option<OperatorBranchSummaryRequest>,
+    },
 }
 impl OperatorRequest {
     pub fn validate(&self) -> Result<(), String> {
@@ -395,8 +652,33 @@ impl OperatorRequest {
             Self::Read { limit, .. } if *limit == 0 || *limit > MAX_OPERATOR_PAGE_MESSAGES => {
                 Err("invalid operator page limit".into())
             }
-            Self::Read { conversation, .. } if conversation.0 == 0 => {
+            Self::Read { conversation, .. }
+            | Self::NewSession { conversation, .. }
+            | Self::SessionInfo { conversation }
+            | Self::Tree { conversation }
+                if conversation.0 == 0 =>
+            {
                 Err("zero conversation identity".into())
+            }
+            Self::NavigateTree {
+                conversation,
+                target_entry_id,
+                summarize,
+                ..
+            } => {
+                if conversation.0 == 0 {
+                    return Err("zero conversation identity".into());
+                }
+                validate_token(target_entry_id)?;
+                if let Some(summary) = summarize
+                    && let Some(instructions) = &summary.instructions
+                {
+                    validate_text(instructions)?;
+                    if instructions.trim().is_empty() {
+                        return Err("empty branch summary instructions".into());
+                    }
+                }
+                Ok(())
             }
             Self::Submit {
                 conversation,
@@ -413,6 +695,22 @@ impl OperatorRequest {
                 }
                 context.validate()
             }
+            Self::Compact {
+                conversation,
+                instructions,
+                ..
+            } => {
+                if conversation.0 == 0 {
+                    return Err("zero conversation identity".into());
+                }
+                if let Some(instructions) = instructions {
+                    validate_text(instructions)?;
+                    if instructions.trim().is_empty() {
+                        return Err("empty compaction instructions".into());
+                    }
+                }
+                Ok(())
+            }
             Self::Stop { identity } => identity.validate(),
             _ => Ok(()),
         }
@@ -425,12 +723,34 @@ pub enum OperatorResponse {
     History(OperatorHistory),
     Submitted(OperatorTurn),
     Stopped(OperatorTurn),
+    Models(Vec<OperatorModelCatalogEntry>),
+    Conversation(OperatorConversationSummary),
+    SessionInfo(Box<OperatorSessionInfo>),
+    Tree(Box<OperatorSessionTree>),
+    TreeNavigated(Box<OperatorTreeNavigation>),
 }
 /// Auth must be verified against the current owned worker by the Server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorExchange {
     pub auth: SupervisorAuth,
     pub batch: OperatorEventBatch,
+    /// Optional lease retention recorded atomically when `batch` ends in `Failed`.
+    #[serde(default)]
+    pub leased: Option<bool>,
+}
+impl OperatorExchange {
+    pub fn validate(&self) -> Result<(), String> {
+        self.batch.validate()?;
+        if self.leased.is_some()
+            && !matches!(
+                self.batch.events.last(),
+                Some(OperatorWorkerEvent::Failed(_))
+            )
+        {
+            return Err("operator batch lease requires a terminal failure".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorExchangeResult {
@@ -458,19 +778,37 @@ impl Default for OperatorSettings {
     }
 }
 
+/// Worker turn payload generalized across prompt, manual compaction, and branch summary turns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperatorWorkerSubmission {
+    Prompt {
+        text: String,
+        context: OperatorContext,
+        /// Pi has already started this prompt through its native async input API.
+        async_wakeup: bool,
+    },
+    Compact {
+        instructions: Option<String>,
+    },
+    BranchSummary {
+        target_entry_id: String,
+        instructions: Option<String>,
+    },
+}
+
 /// Immutable bootstrap data read only by the authenticated current worker.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerStart {
     pub identity: OperatorTurnIdentity,
-    /// The `operator.model` override captured when Submit was durably accepted.
+    /// The `operator.model` override captured when the turn was durably accepted.
     pub model: Option<String>,
-    pub text: String,
-    pub context: OperatorContext,
+    pub submission: OperatorWorkerSubmission,
     /// The last completed turn whose native session is this turn's context base.
     pub checkpoint_turn: Option<OperatorTurnId>,
     pub thinking_level: OperatorThinkingLevel,
-    /// Pi has already started this prompt through its native async input API.
-    pub async_wakeup: bool,
+    /// Selected `/tree` target entry ID to re-apply on cold start / warm rollback.
+    #[serde(default)]
+    pub tree_target_id: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
@@ -573,7 +911,11 @@ mod tests {
             "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
         )];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::Completed { leased: false }];
+        batch.events = vec![OperatorWorkerEvent::Completed {
+            leased: false,
+            pi_first_entry_id: None,
+            pi_leaf_entry_id: None,
+        }];
         assert!(batch.validate().is_ok());
         batch.events = vec![
             OperatorWorkerEvent::Failed("failed".into()),
@@ -581,20 +923,42 @@ mod tests {
         ];
         assert!(batch.validate().is_err());
         batch.events = vec![
-            OperatorWorkerEvent::Completed { leased: false },
+            OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            },
             OperatorWorkerEvent::AssistantDelta("late".into()),
         ];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
             provider: String::new(),
             id: "id".into(),
-        })];
+            context_window: None,
+        }];
         assert!(batch.validate().is_err());
-        batch.events = vec![OperatorWorkerEvent::ModelSelected(OperatorModel {
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
             provider: "openai".into(),
             id: "gpt".into(),
-        })];
+            context_window: Some(0),
+        }];
+        assert!(batch.validate().is_err());
+        batch.events = vec![OperatorWorkerEvent::ModelSelected {
+            provider: "openai".into(),
+            id: "gpt".into(),
+            context_window: Some(200_000),
+        }];
         assert!(batch.validate().is_ok());
+        let legacy: OperatorWorkerEvent =
+            serde_json::from_str(r#"{"ModelSelected":{"provider":"openai","id":"gpt"}}"#).unwrap();
+        assert_eq!(
+            legacy,
+            OperatorWorkerEvent::ModelSelected {
+                provider: "openai".into(),
+                id: "gpt".into(),
+                context_window: None,
+            }
+        );
     }
     #[test]
     fn empty_tool_output_has_explicit_outcome_without_relaxing_other_text() {
@@ -637,7 +1001,11 @@ mod tests {
         batch.events = vec![
             OperatorWorkerEvent::CompactionStarted,
             OperatorWorkerEvent::CompactionEnded,
-            OperatorWorkerEvent::Completed { leased: false },
+            OperatorWorkerEvent::Completed {
+                leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            },
         ];
         assert!(batch.validate().is_ok());
         batch.events = vec![OperatorWorkerEvent::ToolOutput {
@@ -682,5 +1050,447 @@ mod tests {
         assert!(validate_operator_model("openai/id/with/slashes").is_ok());
         assert!(validate_operator_model(" ").is_err());
         assert!(validate_operator_model("openai").is_err());
+    }
+
+    #[test]
+    fn new_session_and_session_info_validate_and_round_trip_framed() {
+        assert!(
+            OperatorRequest::NewSession {
+                conversation: OperatorConversationId(0),
+                expected_run: SessionRunId(0),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperatorRequest::NewSession {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(0),
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            OperatorRequest::SessionInfo {
+                conversation: OperatorConversationId(0),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperatorRequest::SessionInfo {
+                conversation: OperatorConversationId(1),
+            }
+            .validate()
+            .is_ok()
+        );
+
+        let summary = OperatorConversationSummary {
+            run: SessionRunId(2),
+            worker_stopped: true,
+            worker_live: false,
+            id: OperatorConversationId(1),
+            session: SessionId(3),
+            session_epoch: 4,
+            model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+            }),
+            title: "Operator".into(),
+            current_turn: None,
+            reasoning: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
+        };
+        let info = OperatorSessionInfo {
+            conversation: OperatorConversationId(1),
+            session: SessionId(3),
+            run: SessionRunId(2),
+            session_epoch: 4,
+            pi_session_id: Some("operator-1".into()),
+            checkpoint_turn: Some(OperatorTurnId(9)),
+            active_tip_turn: Some(OperatorTurnId(9)),
+            configured_model: Some("openai/gpt-5.4".into()),
+            active_model: Some(OperatorModel {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+            }),
+            configured_thinking_level: OperatorThinkingLevel::High,
+            reasoning: Some(OperatorReasoning {
+                requested: OperatorThinkingLevel::High,
+                level: OperatorThinkingLevel::High,
+                available: vec![OperatorThinkingLevel::Low, OperatorThinkingLevel::High],
+            }),
+            turns: 2,
+            completed_turns: 2,
+            branch_turns: 2,
+            user_messages: 2,
+            assistant_messages: 2,
+            tool_calls: 1,
+            tool_results: 1,
+            epoch_tool_calls: 2,
+            epoch_tool_results: 2,
+            total_messages: 5,
+            epoch_total_messages: 5,
+            tokens: OperatorTokenStats {
+                input: 1200,
+                output: 300,
+                cache_read: 400,
+                cache_write: 100,
+                total: 2000,
+            },
+            cost_usd_nanos: 12_500_000,
+            context_window: OperatorContextWindowUsage {
+                used_tokens: Some(1800),
+                capacity_tokens: Some(200_000),
+            },
+        };
+        for response in [
+            crate::Response::Operator(OperatorResponse::Conversation(summary)),
+            crate::Response::Operator(OperatorResponse::SessionInfo(Box::new(info))),
+        ] {
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &response).unwrap();
+            let decoded: crate::Response =
+                crate::read_frame::<crate::Response>(&mut bytes.as_slice()).unwrap();
+            assert_eq!(response, decoded);
+        }
+    }
+
+    #[test]
+    fn operator_model_catalog_validates_entries_and_round_trips_framed() {
+        assert!(OperatorRequest::Models.validate().is_ok());
+        let models_request = crate::Request::Operator(OperatorRequest::Models);
+        let mut bytes = Vec::new();
+        crate::write_frame(&mut bytes, &models_request).unwrap();
+        let decoded_request: crate::Request =
+            crate::read_frame::<crate::Request>(&mut bytes.as_slice()).unwrap();
+        assert_eq!(models_request, decoded_request);
+
+        let entries = vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5.4".into(),
+                name: Some("GPT-5.4".into()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "vendor".into(),
+                id: "nested/model-id".into(),
+                name: None,
+            },
+        ];
+        assert_eq!(entries[0].full_id(), "openai/gpt-5.4");
+        assert_eq!(entries[1].full_id(), "vendor/nested/model-id");
+        assert!(validate_operator_model_catalog(&entries).is_ok());
+
+        let models_response = crate::Response::Operator(OperatorResponse::Models(entries));
+        let mut response_bytes = Vec::new();
+        crate::write_frame(&mut response_bytes, &models_response).unwrap();
+        let decoded_response: crate::Response =
+            crate::read_frame::<crate::Response>(&mut response_bytes.as_slice()).unwrap();
+        assert_eq!(models_response, decoded_response);
+
+        for invalid in [
+            OperatorModelCatalogEntry {
+                provider: String::new(),
+                id: "gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "open/ai".into(),
+                id: "gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: " gpt-5".into(),
+                name: None,
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: Some(String::new()),
+            },
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: Some("bad\nname".into()),
+            },
+        ] {
+            assert!(invalid.validate().is_err(), "{invalid:?}");
+        }
+
+        let oversized = vec![
+            OperatorModelCatalogEntry {
+                provider: "openai".into(),
+                id: "gpt-5".into(),
+                name: None,
+            };
+            MAX_OPERATOR_MODEL_CATALOG_ENTRIES + 1
+        ];
+        assert!(validate_operator_model_catalog(&oversized).is_err());
+    }
+
+    #[test]
+    fn compact_request_worker_submission_and_compaction_summary_validate_and_round_trip() {
+        assert!(
+            OperatorRequest::Compact {
+                conversation: OperatorConversationId(0),
+                expected_run: SessionRunId(1),
+                instructions: None,
+            }
+            .validate()
+            .is_err()
+        );
+        for invalid in [
+            Some(String::new()),
+            Some("   ".into()),
+            Some("bad\0text".into()),
+            Some("x".repeat(MAX_OPERATOR_TEXT_BYTES + 1)),
+        ] {
+            assert!(
+                OperatorRequest::Compact {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(1),
+                    instructions: invalid,
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for valid in [None, Some("preserve branches and open PR numbers".into())] {
+            let request = crate::Request::Operator(OperatorRequest::Compact {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(2),
+                instructions: valid.clone(),
+            });
+            if let crate::Request::Operator(inner) = &request {
+                assert!(inner.validate().is_ok());
+            }
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &request).unwrap();
+            let decoded: crate::Request =
+                crate::read_frame::<crate::Request>(&mut bytes.as_slice()).unwrap();
+            assert_eq!(request, decoded);
+
+            let message = OperatorMessageContent::Compaction {
+                instructions: valid.clone(),
+            };
+            let json = serde_json::to_string(&message).unwrap();
+            assert_eq!(
+                serde_json::from_str::<OperatorMessageContent>(&json).unwrap(),
+                message
+            );
+
+            let start = OperatorWorkerResult::Start(Box::new(OperatorWorkerStart {
+                identity: OperatorTurnIdentity {
+                    conversation: OperatorConversationId(1),
+                    turn: OperatorTurnId(3),
+                    session: SessionId(2),
+                    run: SessionRunId(4),
+                },
+                model: Some("openai/gpt-5.4".into()),
+                submission: OperatorWorkerSubmission::Compact {
+                    instructions: valid,
+                },
+                checkpoint_turn: Some(OperatorTurnId(2)),
+                thinking_level: OperatorThinkingLevel::Medium,
+                tree_target_id: Some("entry-2".into()),
+            }));
+            let response = crate::Response::OperatorWorker(start);
+            let mut resp_bytes = Vec::new();
+            crate::write_frame(&mut resp_bytes, &response).unwrap();
+            let decoded_resp: crate::Response =
+                crate::read_frame::<crate::Response>(&mut resp_bytes.as_slice()).unwrap();
+            assert_eq!(response, decoded_resp);
+        }
+
+        let identity = OperatorTurnIdentity {
+            conversation: OperatorConversationId(1),
+            turn: OperatorTurnId(2),
+            session: SessionId(1),
+            run: SessionRunId(1),
+        };
+        let mut batch = OperatorEventBatch {
+            identity,
+            sequence: 1,
+            events: vec![
+                OperatorWorkerEvent::CompactionStarted,
+                OperatorWorkerEvent::CompactionEnded,
+                OperatorWorkerEvent::CompactionSummary {
+                    summary: "Kept active workspace decisions.".into(),
+                    tokens_before: 42_500,
+                },
+                OperatorWorkerEvent::Completed {
+                    leased: false,
+                    pi_first_entry_id: Some("entry-1".into()),
+                    pi_leaf_entry_id: Some("entry-2".into()),
+                },
+            ],
+        };
+        assert!(batch.validate().is_ok());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: String::new(),
+            tokens_before: 0,
+        };
+        assert!(batch.validate().is_ok());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: "bad\0summary".into(),
+            tokens_before: 10,
+        };
+        assert!(batch.validate().is_err());
+        batch.events[2] = OperatorWorkerEvent::CompactionSummary {
+            summary: "x".repeat(MAX_OPERATOR_TEXT_BYTES + 1),
+            tokens_before: 10,
+        };
+        assert!(batch.validate().is_err());
+    }
+
+    #[test]
+    fn tree_requests_responses_and_legacy_completed_rows_validate_and_round_trip() {
+        let legacy_completed: OperatorMessageContent =
+            serde_json::from_str(r#"{"Worker":{"Completed":{"leased":true}}}"#).unwrap();
+        assert_eq!(
+            legacy_completed,
+            OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
+                leased: true,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
+            })
+        );
+
+        assert!(
+            OperatorRequest::Tree {
+                conversation: OperatorConversationId(0),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperatorRequest::Tree {
+                conversation: OperatorConversationId(1),
+            }
+            .validate()
+            .is_ok()
+        );
+        for invalid in ["", "bad\ntarget"] {
+            assert!(
+                OperatorRequest::NavigateTree {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(1),
+                    target_entry_id: invalid.into(),
+                    summarize: None,
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for invalid_instructions in ["", "   ", "bad\0instructions"] {
+            assert!(
+                OperatorRequest::NavigateTree {
+                    conversation: OperatorConversationId(1),
+                    expected_run: SessionRunId(1),
+                    target_entry_id: "entry-user-2".into(),
+                    summarize: Some(OperatorBranchSummaryRequest {
+                        instructions: Some(invalid_instructions.into()),
+                    }),
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for summarize in [
+            None,
+            Some(OperatorBranchSummaryRequest { instructions: None }),
+            Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on failing tests".into()),
+            }),
+        ] {
+            let nav_req = crate::Request::Operator(OperatorRequest::NavigateTree {
+                conversation: OperatorConversationId(1),
+                expected_run: SessionRunId(2),
+                target_entry_id: "entry-user-2".into(),
+                summarize,
+            });
+            if let crate::Request::Operator(inner) = &nav_req {
+                assert!(inner.validate().is_ok());
+            }
+            let mut req_bytes = Vec::new();
+            crate::write_frame(&mut req_bytes, &nav_req).unwrap();
+            assert_eq!(
+                crate::read_frame::<crate::Request>(&mut req_bytes.as_slice()).unwrap(),
+                nav_req
+            );
+        }
+
+        let tree = OperatorSessionTree {
+            pi_session_id: Some("operator-1".into()),
+            current_leaf_id: Some("entry-assistant-1".into()),
+            entries: vec![
+                OperatorTreeEntry {
+                    id: "entry-user-1".into(),
+                    parent_id: None,
+                    kind: OperatorTreeEntryKind::User,
+                    preview: "Inspect workspace branches".into(),
+                },
+                OperatorTreeEntry {
+                    id: "entry-assistant-1".into(),
+                    parent_id: Some("entry-user-1".into()),
+                    kind: OperatorTreeEntryKind::Assistant { tool_only: false },
+                    preview: "Found two active branches.".into(),
+                },
+            ],
+        };
+        assert!(tree.validate().is_ok());
+        let summary = OperatorConversationSummary {
+            run: SessionRunId(2),
+            worker_stopped: true,
+            worker_live: false,
+            id: OperatorConversationId(1),
+            session: SessionId(3),
+            session_epoch: 0,
+            model: None,
+            title: "Operator".into(),
+            current_turn: None,
+            reasoning: None,
+            current_turn_started_unix_ms: None,
+            last_reply_unix_ms: None,
+        };
+        for response in [
+            crate::Response::Operator(OperatorResponse::Tree(Box::new(tree))),
+            crate::Response::Operator(OperatorResponse::TreeNavigated(Box::new(
+                OperatorTreeNavigation {
+                    conversation: summary,
+                    current_leaf_id: None,
+                    noop: false,
+                    editor_text: Some("Inspect workspace branches".into()),
+                    restored_context: Some(OperatorContext {
+                        project: Some("ovrcr".into()),
+                        workspace: Some("main".into()),
+                        workspace_id: Some("main".into()),
+                        cwd: Some("/work".into()),
+                        session: None,
+                        run: None,
+                    }),
+                    submitted: Some(OperatorTurn {
+                        identity: OperatorTurnIdentity {
+                            conversation: OperatorConversationId(1),
+                            turn: OperatorTurnId(3),
+                            session: SessionId(3),
+                            run: SessionRunId(2),
+                        },
+                        state: OperatorTurnState::Running,
+                        sequence: 0,
+                    }),
+                },
+            ))),
+        ] {
+            let mut bytes = Vec::new();
+            crate::write_frame(&mut bytes, &response).unwrap();
+            assert_eq!(
+                crate::read_frame::<crate::Response>(&mut bytes.as_slice()).unwrap(),
+                response
+            );
+        }
     }
 }

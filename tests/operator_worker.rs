@@ -69,7 +69,7 @@ fn selected_models_in_transcript(history: &ovrcr::protocol::OperatorHistory) -> 
         .filter(|message| {
             matches!(
                 message.content,
-                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected(_))
+                OperatorMessageContent::Worker(OperatorWorkerEvent::ModelSelected { .. })
             )
         })
         .count()
@@ -294,6 +294,47 @@ fn models_lists_the_dedicated_profiles_catalog_without_launching_a_server() {
     assert!(
         log.iter().filter(|line| line["event"] == "start").count() >= 2,
         "each listing launches its own Pi catalog process: {log:#?}"
+    );
+
+    // Trailing `operator models --json` uses the dedicated `operator-pi` profile,
+    // ignores any ambient `HOME/.pi` scenario, and redacts native stderr on failure.
+    let ambient_home = live.root.path().join("ambient-home");
+    let mut ambient_scenario = Scenario::new();
+    ambient_scenario.models(vec![("ambient", "wrong", "Ambient Wrong")]);
+    ambient_scenario.install_at(&ambient_home.join(".pi").join("fake-pi-scenario.json"));
+
+    let trailing_json = live
+        .command()
+        .args(["operator", "models", "--json"])
+        .env("HOME", &ambient_home)
+        .env("OVRCR_PI_EXECUTABLE", &fake.wrapper)
+        .output()
+        .unwrap();
+    assert!(
+        trailing_json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&trailing_json.stderr)
+    );
+    let trailing_decoded: Value = serde_json::from_slice(&trailing_json.stdout).unwrap();
+    assert_eq!(trailing_decoded, decoded);
+
+    let mut failing = Scenario::new();
+    failing.startup("exit");
+    failing.startup_stderr("sk-secret-native-stderr-token\n");
+    fake.script(&failing);
+    let failed_json = live
+        .command()
+        .args(["operator", "models", "--json"])
+        .env("OVRCR_PI_EXECUTABLE", &fake.wrapper)
+        .output()
+        .unwrap();
+    assert!(!failed_json.status.success());
+    let stdout = String::from_utf8_lossy(&failed_json.stdout);
+    let stderr = String::from_utf8_lossy(&failed_json.stderr);
+    assert!(
+        !stdout.contains("sk-secret-native-stderr-token")
+            && !stderr.contains("sk-secret-native-stderr-token"),
+        "native stderr must stay redacted: stdout={stdout:?} stderr={stderr:?}"
     );
 }
 
@@ -2307,4 +2348,1079 @@ fn a_streaming_peer_cannot_defer_a_control_deadline() {
     );
     assert_eq!(Registry::of(&live).checkpoint(opened.id.0), None);
     client.wait_stopped(opened.id);
+}
+
+#[test]
+fn manual_compact_cold_and_with_instructions_promotes_compacted_checkpoint_and_updates_session_info()
+ {
+    let mut first = Scenario::new();
+    first.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    first.steps(vec![Step::assistant("First turn answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&first);
+    let opened = client.open();
+
+    // Before the first checkpoint, `/compact` is refused cleanly without spawning Pi.
+    match client.compact(&opened, None) {
+        ovrcr::protocol::Response::Error { message, .. } => {
+            assert!(
+                message.contains("before the first completed turn"),
+                "{message}"
+            );
+        }
+        other => panic!("expected refusal on empty conversation, got {other:?}"),
+    }
+    assert!(fake.log().is_empty());
+
+    let turn_one = client.submit_turn(&opened, "seed conversation");
+    client.wait_history(opened.id, |history| {
+        history.conversation.current_turn.as_ref().unwrap().state == OperatorTurnState::Complete
+    });
+    let seeded = client.wait_stopped(opened.id);
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_one.identity.turn.0 as i64)
+    );
+
+    let mut compact_scenario = first.clone();
+    compact_scenario.compact_mode("ok");
+    compact_scenario.set("compact_tokens_before", json!(4200));
+    fake.script(&compact_scenario);
+
+    let turn_two = client.compact_turn(&seeded.conversation, Some("keep only test results"));
+    let compacted = client.wait_terminal(opened.id);
+    assert_eq!(
+        compacted.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{compacted:#?}\n{:#?}",
+        fake.log()
+    );
+    client.wait_stopped(opened.id);
+
+    let compacts = fake.events("compact");
+    assert_eq!(compacts.len(), 1, "{compacts:#?}");
+    assert_eq!(compacts[0]["customInstructions"], "keep only test results");
+
+    let turn_two_messages: Vec<_> = compacted
+        .messages
+        .iter()
+        .filter(|m| m.turn == turn_two.identity.turn)
+        .map(|m| &m.content)
+        .collect();
+    assert!(matches!(
+        turn_two_messages.first(),
+        Some(OperatorMessageContent::Compaction {
+            instructions: Some(instructions)
+        }) if instructions == "keep only test results"
+    ));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+    )));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionEnded)
+    )));
+    assert!(turn_two_messages.iter().any(|content| matches!(
+        content,
+        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary {
+            summary,
+            tokens_before: 4200,
+        }) if summary == "Compacted summary (keep only test results)"
+    )));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_two.identity.turn.0 as i64)
+    );
+
+    // `/session` (`SessionInfo`) parses the compacted checkpoint cleanly: trailing
+    // compaction clears pre-compaction context_tokens while accumulating usage.
+    let session_info = match client.exchange(Request::Operator(
+        ovrcr::protocol::OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        },
+    )) {
+        ovrcr::protocol::Response::Operator(ovrcr::protocol::OperatorResponse::SessionInfo(
+            info,
+        )) => info,
+        other => panic!("expected SessionInfo, got {other:?}"),
+    };
+    assert_eq!(session_info.context_window.used_tokens, None);
+    assert_eq!(session_info.tokens.total, 1250 + 380);
+
+    // A subsequent prompt turn resumes from the compacted checkpoint cleanly.
+    let mut third = first.clone();
+    third.steps(vec![Step::assistant("Post-compact reply."), Step::Settle]);
+    fake.script(&third);
+    let summary = client.current().unwrap();
+    let turn_three = client.submit_turn(&summary, "after compaction");
+    let final_history = client.wait_terminal(opened.id);
+    assert_eq!(
+        final_history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .state,
+        OperatorTurnState::Complete
+    );
+    assert!(harness::has_assistant(
+        &final_history,
+        "Post-compact reply."
+    ));
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_three.identity.turn.0 as i64)
+    );
+    client.wait_stopped(opened.id);
+}
+
+#[test]
+fn manual_compact_on_warm_watch_leased_worker_reuses_run_and_preserves_lease() {
+    let mut scenario = Scenario::new();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::assistant("Watching session."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch complete."),
+            Step::Settle,
+        ],
+    ]);
+    scenario.compact_mode("ok");
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    let turn_one = client.submit_turn(&opened, "start watch");
+    let leased = client.wait_history(opened.id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|t| t.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+
+    let turn_two = client.compact_turn(&leased.conversation, None);
+    assert_eq!(turn_two.identity.run, turn_one.identity.run);
+    let compacted = client.wait_history(opened.id, |history| {
+        history.conversation.current_turn.as_ref().is_some_and(|t| {
+            t.identity.turn == turn_two.identity.turn && t.state == OperatorTurnState::Complete
+        })
+    });
+    assert!(
+        !compacted.conversation.worker_stopped,
+        "warm watch lease must survive /compact"
+    );
+    assert_eq!(
+        fake.events("start").len(),
+        1,
+        "warm /compact must reuse the existing Pi process"
+    );
+    let compacts = fake.events("compact");
+    assert_eq!(compacts.len(), 1);
+    assert!(compacts[0]["customInstructions"].is_null());
+    assert_eq!(
+        Registry::of(&live).checkpoint(opened.id.0),
+        Some(turn_two.identity.turn.0 as i64)
+    );
+
+    let turn_three = client.submit_turn(&compacted.conversation, "finish watch");
+    assert_eq!(turn_three.identity.run, turn_one.identity.run);
+    let finished = client.wait_stopped(opened.id);
+    assert_eq!(
+        finished.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete
+    );
+    assert!(harness::has_assistant(&finished, "Watch complete."));
+}
+
+#[test]
+fn stop_during_manual_compact_aborts_pi_and_rolls_back_cold_and_warm_sessions() {
+    for (warm, abort_first) in [(false, false), (true, true)] {
+        let mut scenario = Scenario::new();
+        scenario.compact_mode("hold");
+        scenario.set("compact_dirty_before_abort", json!(true));
+        scenario.set("abort_before_compact_response", json!(abort_first));
+        if warm {
+            scenario.prompt_steps(vec![
+                vec![
+                    Step::WatchStatus(1),
+                    Step::assistant("Warm baseline."),
+                    Step::Settle,
+                ],
+                vec![
+                    Step::WatchStatus(0),
+                    Step::assistant("After stopped compact."),
+                    Step::Settle,
+                ],
+            ]);
+        } else {
+            scenario.steps(vec![Step::assistant("Cold baseline."), Step::Settle]);
+        }
+
+        let (live, fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        let turn_one = client.submit_turn(&opened, "seed");
+        let after_one = if warm {
+            client.wait_history(opened.id, |history| {
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && !history.conversation.worker_stopped
+            })
+        } else {
+            client.wait_history(opened.id, |history| {
+                history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+            });
+            client.wait_stopped(opened.id)
+        };
+        let checkpoint_path = live
+            .config
+            .join("operator-pi/turns")
+            .join(turn_one.identity.turn.0.to_string())
+            .join("session.jsonl");
+        let baseline_bytes = std::fs::read(&checkpoint_path).unwrap();
+
+        let turn_two = client.compact_turn(&after_one.conversation, Some("focus on blockers"));
+        client.wait_history(opened.id, |history| {
+            history.messages.iter().any(|m| {
+                m.turn == turn_two.identity.turn
+                    && matches!(
+                        m.content,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+                    )
+            })
+        });
+        client.stop_turn(turn_two.identity);
+        let after_stop = if warm {
+            client.wait_history(opened.id, |history| {
+                history.conversation.current_turn.as_ref().is_some_and(|t| {
+                    t.identity.turn == turn_two.identity.turn
+                        && t.state == OperatorTurnState::Interrupted
+                })
+            })
+        } else {
+            client.wait_stopped(opened.id)
+        };
+
+        assert_eq!(
+            after_stop.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Interrupted
+        );
+        assert!(!after_stop.messages.iter().any(|m| {
+            m.turn == turn_two.identity.turn
+                && matches!(
+                    m.content,
+                    OperatorMessageContent::Worker(
+                        OperatorWorkerEvent::CompactionEnded
+                            | OperatorWorkerEvent::CompactionSummary { .. }
+                    )
+                )
+        }));
+        assert_eq!(
+            Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_one.identity.turn.0 as i64)
+        );
+        assert_eq!(std::fs::read(&checkpoint_path).unwrap(), baseline_bytes);
+
+        if warm {
+            assert!(
+                !after_stop.conversation.worker_stopped,
+                "warm lease must stay alive after Stop rollback on /compact"
+            );
+            let turn_three = client.submit_turn(&after_stop.conversation, "continue after stop");
+            assert_eq!(turn_three.identity.run, turn_one.identity.run);
+            let finished = client.wait_stopped(opened.id);
+            assert!(harness::has_assistant(&finished, "After stopped compact."));
+        }
+        let _ = fake;
+    }
+}
+
+#[test]
+fn manual_compact_failures_and_corrupt_snapshot_roll_back_without_promoting_or_leaking_provider_errors()
+ {
+    for (mode, expected_message) in [
+        (
+            "already_compacted",
+            "Operator context is already compacted.",
+        ),
+        ("too_small", "Operator context has nothing to compact yet."),
+        (
+            "error",
+            "Pi request failed; inspect the partial journal before retrying.",
+        ),
+        (
+            "corrupt_session",
+            "Operator Pi context is unavailable; saved data was preserved.",
+        ),
+    ] {
+        let mut scenario = Scenario::new();
+        scenario.steps(vec![Step::assistant("Seed turn."), Step::Settle]);
+        scenario.compact_mode(mode);
+        scenario.set("compact_error", json!(format!("provider boom {SENTINEL}")));
+        let (live, _fake, mut client) = worker_fixture(&scenario);
+        let opened = client.open();
+        let turn_one = client.submit_turn(&opened, "seed");
+        client.wait_history(opened.id, |history| {
+            history.conversation.current_turn.as_ref().unwrap().state == OperatorTurnState::Complete
+        });
+        let seeded = client.wait_stopped(opened.id);
+        let checkpoint_path = live
+            .config
+            .join("operator-pi/turns")
+            .join(turn_one.identity.turn.0.to_string())
+            .join("session.jsonl");
+        let baseline_bytes = std::fs::read(&checkpoint_path).unwrap();
+
+        let turn_two = client.compact_turn(&seeded.conversation, None);
+        let failed = client.wait_terminal(opened.id);
+        client.wait_stopped(opened.id);
+
+        assert_eq!(
+            failed.conversation.current_turn.as_ref().unwrap().state,
+            OperatorTurnState::Error,
+            "mode={mode}: {failed:#?}"
+        );
+        assert_eq!(
+            failed_text(&failed).as_deref(),
+            Some(expected_message),
+            "mode={mode}"
+        );
+        assert!(!harness::history_text(&failed).contains(SENTINEL));
+        assert!(!failed.messages.iter().any(|m| {
+            m.turn == turn_two.identity.turn
+                && matches!(
+                    m.content,
+                    OperatorMessageContent::Worker(
+                        OperatorWorkerEvent::CompactionSummary { .. }
+                            | OperatorWorkerEvent::Completed { .. }
+                    )
+                )
+        }));
+        assert_eq!(
+            Registry::of(&live).checkpoint(opened.id.0),
+            Some(turn_one.identity.turn.0 as i64),
+            "mode={mode}: pre-compaction checkpoint must remain authoritative"
+        );
+        assert_eq!(std::fs::read(&checkpoint_path).unwrap(), baseline_bytes);
+    }
+}
+
+#[test]
+fn tree_target_restores_leaf_on_cold_start_and_warm_rollback_and_tracks_entry_ids() {
+    use ovrcr::protocol::{OperatorRequest, OperatorResponse, OperatorTreeEntryKind};
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    // 1. Complete Turn 1 (root) and Turn 2 (Branch A).
+    let turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    // Inspect Tree via real Server -> verify unwrapped prompts + 2 user + 2 assistant entries.
+    let Response::Operator(OperatorResponse::Tree(tree_initial)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let user_entries: Vec<_> = tree_initial
+        .entries
+        .iter()
+        .filter(|e| e.kind == OperatorTreeEntryKind::User)
+        .collect();
+    let assistant_entries: Vec<_> = tree_initial
+        .entries
+        .iter()
+        .filter(|e| matches!(e.kind, OperatorTreeEntryKind::Assistant { .. }))
+        .collect();
+    assert_eq!(user_entries.len(), 2);
+    assert_eq!(user_entries[0].preview, "root prompt");
+    assert_eq!(user_entries[1].preview, "branch A prompt");
+    assert_eq!(assistant_entries.len(), 2);
+    let turn_one_assistant_id = assistant_entries[0].id.clone();
+    let turn_two_user_id = user_entries[1].id.clone();
+
+    // Verify worker recorded `pi_first_entry_id` and `pi_leaf_entry_id` in SQLite for both turns!
+    {
+        let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        let (t1_first, t1_leaf): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT pi_first_entry_id, pi_leaf_entry_id FROM operator_turns WHERE id=?1",
+                [turn_one.identity.turn.0 as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let (t2_first, t2_leaf): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT pi_first_entry_id, pi_leaf_entry_id FROM operator_turns WHERE id=?1",
+                [turn_two.identity.turn.0 as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(t1_first.is_some());
+        assert_eq!(t1_leaf.as_deref(), Some(turn_one_assistant_id.as_str()));
+        assert!(t2_first.is_some());
+        assert!(t2_leaf.is_some());
+    }
+
+    // 2. NavigateTree to `turn_two_user_id` (user rewind -> rewinds active leaf to `turn_one_assistant_id`).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    assert_eq!(
+        rewound.current_leaf_id.as_deref(),
+        Some(turn_one_assistant_id.as_str())
+    );
+    assert_eq!(rewound.editor_text.as_deref(), Some("branch A prompt"));
+
+    // 3. Test warm rollback re-applying `tree_target_id`:
+    // Start Turn 3 cold with `tree_target_id = Some(turn_two_user_id)`. During Turn 3, set active watch = 1
+    // and hold until Stop aborts Turn 3 -> worker rolls back via `switch_session` AND re-applies `tree_target_id`,
+    // then Turn 4 runs warm on the same worker and branches from `turn_one_assistant_id`!
+    let reached_hold = live.root.path().join("tree-rollback-hold");
+    fake.clear_log();
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::Delta("partial before abort".into()),
+            Step::Tool {
+                id: "touch-hold".into(),
+                name: "write".into(),
+                input: json!({"path": reached_hold.display().to_string(), "content": "ready"}),
+                output: "ok".into(),
+                status: "succeeded",
+                truncated: false,
+                marker: Some(reached_hold.clone()),
+            },
+            Step::Hold,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Branch B answer after rollback."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&scenario);
+
+    let turn_three = client.submit_turn(&rewound.conversation, "aborted branch attempt");
+    let deadline = std::time::Instant::now() + harness::BUDGET;
+    while !reached_hold.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "turn 3 did not reach hold"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(matches!(
+        client.exchange(Request::Operator(OperatorRequest::Stop {
+            identity: turn_three.identity,
+        })),
+        Response::Operator(OperatorResponse::Stopped(_))
+    ));
+    let after_abort = client.wait_history(opened.id, |h| {
+        h.conversation.current_turn.as_ref().is_some_and(|t| {
+            t.identity == turn_three.identity && t.state == OperatorTurnState::Interrupted
+        })
+    });
+    assert!(
+        after_abort.conversation.worker_live,
+        "leased worker stays warm across aborted Turn 3"
+    );
+
+    // Submit Turn 4 warm on the same worker!
+    let turn_four = client.submit_turn(&after_abort.conversation, "branch B prompt");
+    assert_eq!(turn_four.identity.run, turn_three.identity.run);
+    let after_four = client.wait_stopped(opened.id);
+    assert!(harness::has_assistant(
+        &after_four,
+        "Branch B answer after rollback."
+    ));
+
+    // Verify fake-pi executed `/ovrcr_tree_control` TWICE (once on cold start, once after rollback switch_session),
+    // and that Turn 4's prompt had `parentLeafId == turn_one_assistant_id`!
+    let tree_navs = fake.events("tree_navigated");
+    assert_eq!(
+        tree_navs.len(),
+        2,
+        "expected cold + rollback tree_navigated events: {:#?}",
+        fake.log()
+    );
+    for nav in &tree_navs {
+        assert_eq!(nav["targetId"], turn_two_user_id);
+        assert_eq!(nav["leafId"], turn_one_assistant_id);
+    }
+    let prompts = fake.events("prompt");
+    assert_eq!(prompts.len(), 2, "{prompts:#?}");
+    assert_eq!(prompts[0]["parentLeafId"], turn_one_assistant_id);
+    assert_eq!(prompts[1]["parentLeafId"], turn_one_assistant_id);
+
+    // And SQLite cleared `pi_tree_target_id = NULL` once Turn 4 completed, while `Tree` shows both sibling branches!
+    let Response::Operator(OperatorResponse::Tree(final_tree)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected final Tree");
+    };
+    let branch_children: Vec<_> = final_tree
+        .entries
+        .iter()
+        .filter(|e| e.parent_id.as_deref() == Some(turn_one_assistant_id.as_str()))
+        .collect();
+    assert_eq!(
+        branch_children.len(),
+        2,
+        "both Branch A and Branch B user prompts must hang off Turn 1's assistant leaf: {final_tree:#?}"
+    );
+}
+
+#[test]
+fn unsolicited_tree_control_dialog_is_rejected_and_fails_the_turn() {
+    let marker = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+    let marker_path = marker.to_path_buf();
+    drop(marker);
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::UnsolicitedTreeControl {
+            target_id: "u1".into(),
+            marker: Some(marker_path.clone()),
+        },
+        Step::assistant("must never complete"),
+        Step::Settle,
+    ]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "trigger unsolicited tree confirm");
+    let failed = client.wait_terminal(opened.id);
+    client.wait_stopped(opened.id);
+
+    assert_eq!(
+        failed.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Error
+    );
+    assert_eq!(
+        failed_text(&failed).as_deref(),
+        Some("Unsupported Pi interaction; the turn was stopped.")
+    );
+    assert!(!marker_path.exists());
+    let unsolicited = fake.events("unsolicited_tree_control");
+    assert_eq!(unsolicited.len(), 1);
+    assert_eq!(unsolicited[0]["confirmed"], false);
+}
+
+#[test]
+fn branch_summary_turn_records_summary_advances_branch_and_applies_prior_tree_target() {
+    use ovrcr::protocol::{
+        OperatorBranchSummaryRequest, OperatorRequest, OperatorResponse, OperatorTreeEntryKind,
+    };
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    // Turn 1: root
+    let turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    // Turn 2: Branch A
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::Tree(tree_after_two)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let turn_one_assistant_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "Root answer.")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_user_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A prompt")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_assistant_id = tree_after_two
+        .entries
+        .iter()
+        .find(|e| e.preview == "Branch A answer.")
+        .unwrap()
+        .id
+        .clone();
+
+    // Zero-token rewind to Turn 2's user node, then run Turn 3 (Branch B) so checkpoint_turn = Turn 3 (Branch B).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound_for_b)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    scenario.steps(vec![Step::assistant("Branch B answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_three = client.submit_turn(&rewound_for_b.conversation, "branch B prompt");
+    let after_three = client.wait_stopped(opened.id);
+
+    // Zero-token switch back to Branch A's assistant leaf (`pi_tree_target_id = Some(turn_two_assistant_id)`).
+    let Response::Operator(OperatorResponse::TreeNavigated(switched_to_a)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_three.conversation.run,
+            target_entry_id: turn_two_assistant_id.clone(),
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated back to Branch A");
+    };
+
+    // Now summarize Branch A while rewinding to `turn_two_user_id` with custom instructions!
+    fake.clear_log();
+    let Response::Operator(OperatorResponse::TreeNavigated(summary_nav)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: switched_to_a.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: Some(OperatorBranchSummaryRequest {
+                instructions: Some("focus on branch A decisions".into()),
+            }),
+        }))
+    else {
+        panic!("expected TreeNavigated with submitted branch-summary turn");
+    };
+    let summary_turn = summary_nav
+        .submitted
+        .as_ref()
+        .expect("branch summary must submit a worker turn");
+    assert_eq!(summary_nav.editor_text.as_deref(), Some("branch A prompt"));
+
+    let after_summary = client.wait_stopped(opened.id);
+    assert_eq!(
+        after_summary
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| (t.identity, t.state)),
+        Some((summary_turn.identity, OperatorTurnState::Complete))
+    );
+    assert!(
+        after_summary.messages.iter().any(|m| {
+            m.turn == summary_turn.identity.turn
+                && matches!(
+                    &m.content,
+                    OperatorMessageContent::BranchSummary {
+                        target_entry_id,
+                        instructions: Some(inst),
+                    } if target_entry_id == &turn_two_user_id && inst == "focus on branch A decisions"
+                )
+        }),
+        "missing BranchSummary opener: {after_summary:#?}"
+    );
+    assert!(
+        after_summary.messages.iter().any(|m| {
+            m.turn == summary_turn.identity.turn
+                && matches!(
+                    &m.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary == "Branch summary (focus on branch A decisions)"
+                )
+        }),
+        "missing BranchSummary worker event: {after_summary:#?}"
+    );
+    // Active branch history now contains Turn 1 + Turn 4 (BranchSummary), hiding abandoned Branch A & Branch B turns!
+    let visible_turns: Vec<u64> = after_summary
+        .messages
+        .iter()
+        .fold(Vec::new(), |mut acc, m| {
+            if !acc.contains(&m.turn.0) {
+                acc.push(m.turn.0);
+            }
+            acc
+        });
+    assert_eq!(
+        visible_turns,
+        vec![turn_one.identity.turn.0, summary_turn.identity.turn.0]
+    );
+
+    // Fake-pi must have applied `pi_tree_target_id` (`turn_two_assistant_id`, summarize: false) FIRST,
+    // then summarized from `fromId == turn_two_assistant_id`!
+    let nav_events = fake.events("tree_navigated");
+    assert_eq!(nav_events.len(), 2, "{nav_events:#?}");
+    assert_eq!(nav_events[0]["targetId"], turn_two_assistant_id);
+    assert_eq!(nav_events[0]["summarized"], false);
+    assert_eq!(nav_events[1]["targetId"], turn_two_user_id);
+    assert_eq!(nav_events[1]["summarized"], true);
+    assert_eq!(nav_events[1]["fromId"], turn_two_assistant_id);
+    assert_eq!(
+        nav_events[1]["customInstructions"],
+        "focus on branch A decisions"
+    );
+
+    let Response::Operator(OperatorResponse::Tree(tree_after_summary)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree after summary");
+    };
+    let summary_entry = tree_after_summary
+        .entries
+        .iter()
+        .find(|e| e.kind == OperatorTreeEntryKind::BranchSummary)
+        .expect("branch_summary entry in tree");
+    assert_eq!(
+        summary_entry.parent_id.as_deref(),
+        Some(turn_one_assistant_id.as_str())
+    );
+    assert_eq!(
+        tree_after_summary.current_leaf_id.as_deref(),
+        Some(summary_entry.id.as_str())
+    );
+
+    // Follow-up prompt Turn 5 continues from the branch_summary leaf!
+    fake.clear_log();
+    scenario.steps(vec![Step::assistant("Post-summary answer."), Step::Settle]);
+    fake.script(&scenario);
+    let _turn_five = client.submit_turn(&after_summary.conversation, "post-summary prompt");
+    let after_five = client.wait_stopped(opened.id);
+    assert!(harness::has_assistant(&after_five, "Post-summary answer."));
+    let prompts = fake.events("prompt");
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0]["parentLeafId"], summary_entry.id);
+}
+
+#[test]
+fn branch_summary_turn_stop_and_failure_preserve_checkpoint_and_active_branch() {
+    use ovrcr::protocol::{OperatorBranchSummaryRequest, OperatorRequest, OperatorResponse};
+
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+
+    let _turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    scenario.steps(vec![Step::assistant("Branch A answer."), Step::Settle]);
+    fake.script(&scenario);
+    let turn_two = client.submit_turn(&after_one.conversation, "branch A prompt");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::Tree(tree_before)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let turn_two_user_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A prompt")
+        .unwrap()
+        .id
+        .clone();
+    let turn_two_assistant_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "Branch A answer.")
+        .unwrap()
+        .id
+        .clone();
+
+    let checkpoint_path = live
+        .config
+        .join("operator-pi/turns")
+        .join(turn_two.identity.turn.0.to_string())
+        .join("session.jsonl");
+    let checkpoint_bytes_before = std::fs::read(&checkpoint_path).unwrap();
+
+    // 1. Stop mid-summarization ("hold") -> Interrupted, pre-switch branch & checkpoint preserved!
+    let ready_file = live.root.path().join("tree-summary-ready");
+    scenario
+        .tree_summary_mode("hold")
+        .set("tree_summary_ready_file", ready_file.display().to_string());
+    fake.clear_log();
+    fake.script(&scenario);
+
+    let Response::Operator(OperatorResponse::TreeNavigated(hold_nav)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: turn_two_user_id.clone(),
+            summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    let hold_turn = hold_nav.submitted.expect("submitted hold turn");
+    let deadline = std::time::Instant::now() + harness::BUDGET;
+    while !ready_file.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tree summary never reached hold"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    client.stop_turn(hold_turn.identity);
+    let after_stop = client.wait_stopped(opened.id);
+    assert_eq!(
+        after_stop
+            .conversation
+            .current_turn
+            .as_ref()
+            .map(|t| (t.identity, t.state)),
+        Some((hold_turn.identity, OperatorTurnState::Interrupted))
+    );
+    assert_eq!(fake.events("tree_summary_aborted").len(), 1);
+    assert_eq!(
+        std::fs::read(&checkpoint_path).unwrap(),
+        checkpoint_bytes_before
+    );
+    let Response::Operator(OperatorResponse::Tree(tree_after_stop)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree after stop");
+    };
+    assert_eq!(
+        tree_after_stop.current_leaf_id.as_deref(),
+        Some(turn_two_assistant_id.as_str())
+    );
+    assert!(harness::has_assistant(&after_stop, "Branch A answer."));
+
+    // 2. Provider error ("error") and corrupt session ("corrupt_session") -> Error, checkpoint & leaf preserved!
+    let mut current_conv = after_stop.conversation;
+    for mode in ["error", "corrupt_session"] {
+        scenario.tree_summary_mode(mode);
+        fake.script(&scenario);
+        let Response::Operator(OperatorResponse::TreeNavigated(err_nav)) =
+            client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+                conversation: opened.id,
+                expected_run: current_conv.run,
+                target_entry_id: turn_two_user_id.clone(),
+                summarize: Some(OperatorBranchSummaryRequest { instructions: None }),
+            }))
+        else {
+            panic!("expected TreeNavigated for {mode}");
+        };
+        let err_turn = err_nav.submitted.expect("submitted turn");
+        let after_err = client.wait_stopped(opened.id);
+        assert_eq!(
+            after_err
+                .conversation
+                .current_turn
+                .as_ref()
+                .map(|t| (t.identity, t.state)),
+            Some((err_turn.identity, OperatorTurnState::Error))
+        );
+        assert_eq!(
+            std::fs::read(&checkpoint_path).unwrap(),
+            checkpoint_bytes_before,
+            "checkpoint corrupted after {mode}"
+        );
+        let Response::Operator(OperatorResponse::Tree(tree_after_err)) =
+            client.exchange(Request::Operator(OperatorRequest::Tree {
+                conversation: opened.id,
+            }))
+        else {
+            panic!("expected Tree after {mode}");
+        };
+        assert_eq!(
+            tree_after_err.current_leaf_id.as_deref(),
+            Some(turn_two_assistant_id.as_str())
+        );
+        current_conv = after_err.conversation;
+    }
+
+    // Switching to another branch via `No summary` must NOT leak Branch A's
+    // interrupted/failed BranchSummary turns into `Read`!
+    let turn_one_assistant_id = tree_before
+        .entries
+        .iter()
+        .find(|e| e.preview == "Root answer.")
+        .unwrap()
+        .id
+        .clone();
+    let Response::Operator(OperatorResponse::TreeNavigated(_switched_root)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: current_conv.run,
+            target_entry_id: turn_one_assistant_id,
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated to root");
+    };
+    let root_history = client.read(opened.id.0, 0, 100);
+    assert!(
+        !root_history
+            .messages
+            .iter()
+            .any(|m| matches!(m.content, OperatorMessageContent::BranchSummary { .. })),
+        "interrupted/failed BranchSummary from Branch A leaked onto root branch: {root_history:#?}"
+    );
+}
+
+#[test]
+fn session_info_reports_builtin_pi_context_window_and_branched_epoch_tool_counts() {
+    use ovrcr::protocol::{OperatorRequest, OperatorResponse};
+
+    let mut scenario = Scenario::new();
+    scenario.set("context_window", json!(128_000));
+    scenario.set("record_tool_history", json!(true));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 4_000,
+            "output": 500,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 4_500,
+            "cost": { "total": 0.01 }
+        }),
+    );
+    scenario.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    let (live, fake, mut client) = worker_fixture(&scenario);
+    assert!(
+        !live.config.join("operator-pi/models.json").exists(),
+        "built-in pi models do not write operator-pi/models.json"
+    );
+    let opened = client.open();
+
+    // Turn 1: root
+    let _turn_one = client.submit_turn(&opened, "root prompt");
+    let after_one = client.wait_stopped(opened.id);
+
+    // Turn 2: Branch A with 1 tool call + 1 tool result
+    scenario.steps(vec![
+        Step::Tool {
+            id: "call-1".into(),
+            name: "read".into(),
+            input: json!({ "path": "README.md" }),
+            output: "readme contents".into(),
+            status: "succeeded",
+            truncated: false,
+            marker: None,
+        },
+        Step::assistant("Branch A tool answer."),
+        Step::Settle,
+    ]);
+    fake.script(&scenario);
+    let _turn_two = client.submit_turn(&after_one.conversation, "branch A with tool");
+    let after_two = client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::SessionInfo(info_branch_a)) =
+        client.exchange(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected SessionInfo on Branch A");
+    };
+    assert_eq!(info_branch_a.tool_calls, 1);
+    assert_eq!(info_branch_a.tool_results, 1);
+    assert_eq!(info_branch_a.epoch_tool_calls, 1);
+    assert_eq!(info_branch_a.epoch_tool_results, 1);
+
+    let Response::Operator(OperatorResponse::Tree(tree)) =
+        client.exchange(Request::Operator(OperatorRequest::Tree {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected Tree");
+    };
+    let branch_a_user_id = tree
+        .entries
+        .iter()
+        .find(|e| e.preview == "branch A with tool")
+        .unwrap()
+        .id
+        .clone();
+
+    // Rewind to `branch_a_user_id` (`No summary`) and submit Turn 3 (Branch B without tools).
+    let Response::Operator(OperatorResponse::TreeNavigated(rewound)) =
+        client.exchange(Request::Operator(OperatorRequest::NavigateTree {
+            conversation: opened.id,
+            expected_run: after_two.conversation.run,
+            target_entry_id: branch_a_user_id,
+            summarize: None,
+        }))
+    else {
+        panic!("expected TreeNavigated");
+    };
+    scenario.steps(vec![
+        Step::assistant("Branch B plain answer."),
+        Step::Settle,
+    ]);
+    fake.script(&scenario);
+    let _turn_three = client.submit_turn(&rewound.conversation, "branch B without tool");
+    client.wait_stopped(opened.id);
+
+    let Response::Operator(OperatorResponse::SessionInfo(info)) =
+        client.exchange(Request::Operator(OperatorRequest::SessionInfo {
+            conversation: opened.id,
+        }))
+    else {
+        panic!("expected SessionInfo");
+    };
+    assert_eq!(
+        info.context_window.capacity_tokens,
+        Some(128_000),
+        "built-in pi contextWindow must populate SessionInfo capacity without models.json"
+    );
+    assert_eq!(info.context_window.used_tokens, Some(4_500));
+    assert_eq!(info.tool_calls, 0);
+    assert_eq!(info.tool_results, 0);
+    assert_eq!(info.epoch_tool_calls, 1);
+    assert_eq!(info.epoch_tool_results, 1);
 }

@@ -12,7 +12,8 @@ use crate::report::{reporter::Reporter, reserve_invocation_for};
 use anyhow::{Result, anyhow};
 use ovrcr_protocol::{
     AgentProvider, OperatorEventBatch, OperatorModel, OperatorRunIdentity, OperatorToolStatus,
-    OperatorTurnId, OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart, SessionRunId,
+    OperatorTurnId, OperatorTurnIdentity, OperatorWorkerEvent, OperatorWorkerStart,
+    OperatorWorkerSubmission, SessionRunId,
 };
 use serde_json::{Value, json};
 use std::{
@@ -35,6 +36,8 @@ const MODEL_UNAVAILABLE: &str =
 const CONTEXT_UNAVAILABLE: &str = "Operator Pi context is unavailable; saved data was preserved.";
 const INTEGRATION_UNAVAILABLE: &str = "Pi Operator integration is unavailable; no prompt was sent.";
 const REQUEST_FAILED: &str = "Pi request failed; inspect the partial journal before retrying.";
+const ALREADY_COMPACTED: &str = "Operator context is already compacted.";
+const NOTHING_TO_COMPACT: &str = "Operator context has nothing to compact yet.";
 const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was stopped.";
 
 /// The trusted extension's startup contract and watch-lease status keys.
@@ -44,6 +47,9 @@ const TOOLS: [&str; 5] = ["read", "bash", "edit", "write", "watch_sessions"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
 const WAKEUP_ADMISSION_TITLE: &str = "OVRCR Operator async wakeup admission";
+const TREE_CONTROL_COMMAND: &str = "/ovrcr_tree_control";
+const TREE_CONTROL_TITLE: &str = "ovrcr_operator_tree_control";
+const TREE_RESULT_KEY: &str = "ovrcr_operator_tree_result";
 
 /// Pi's extensions stay off except the OVRCR lifecycle adapter. Pi supplies the four
 /// native tool factories; this adapter adds the custom watch_sessions tool.
@@ -261,20 +267,12 @@ fn attempt(
             Err(Failure::ToolTimedOut) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
                 journal.flush()?;
-                journal.commit(OperatorWorkerEvent::Failed(REQUEST_FAILED.to_owned()))?;
-                journal
-                    .reporter
-                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
-                    .map_err(|_| Failure::ReportFailed)?;
+                journal.commit_leased_failure(REQUEST_FAILED.to_owned())?;
             }
             Err(Failure::Failed(message)) if state.active_watches > 0 => {
                 rollback_turn(&mut connection, journal, &mut state, &paths, &turn)?;
                 journal.flush()?;
-                journal.commit(OperatorWorkerEvent::Failed(message.to_owned()))?;
-                journal
-                    .reporter
-                    .operator_abort_turn(turn.identity, true, Instant::now() + REPORT_DEADLINE)
-                    .map_err(|_| Failure::ReportFailed)?;
+                journal.commit_leased_failure(message.to_owned())?;
             }
             Err(failure) => return Err(failure),
         }
@@ -321,36 +319,75 @@ fn run_turn(
     turn: &OperatorWorkerStart,
     termination: &Termination,
 ) -> std::result::Result<bool, Failure> {
-    if turn.async_wakeup {
-        // `sendUserMessage` already started this exact Pi turn after the Server
-        // durably reserved its AsyncWakeup identity.
-        state.prompted = true;
-    } else {
-        let model = resolve_model(connection, journal, state, turn.model.as_deref())?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
+    match &turn.submission {
+        OperatorWorkerSubmission::Prompt {
+            text,
+            context,
+            async_wakeup: true,
+        } => {
+            let _ = (text, context);
+            // `sendUserMessage` already started this exact Pi turn after the Server
+            // durably reserved its AsyncWakeup identity.
+            state.prompted = true;
         }
-        journal.commit(OperatorWorkerEvent::ModelSelected(model))?;
-        let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
-        if termination.requested() {
-            return Err(Failure::Terminated);
+        OperatorWorkerSubmission::Prompt {
+            text,
+            context,
+            async_wakeup: false,
+        } => {
+            let (model, context_window) =
+                resolve_model(connection, journal, state, turn.model.as_deref())?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
+            let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+            if termination.requested() {
+                return Err(Failure::Terminated);
+            }
+            journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+            let prompt = prompt_text(text, context)?;
+            state.prompted = true;
+            let response = connection.request(
+                journal,
+                state,
+                "prompt",
+                json!({ "message": prompt }),
+                CONTROL_DEADLINE,
+            )?;
+            if !response.success {
+                // An explicit negative response means Pi did not admit this user
+                // message into an agent turn. Do not wait for `agent_settled` while
+                // rolling back an unchanged native session.
+                state.prompted = false;
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
         }
-        journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-        let prompt = prompt_text(turn)?;
-        state.prompted = true;
-        let response = connection.request(
-            journal,
-            state,
-            "prompt",
-            json!({ "message": prompt }),
-            CONTROL_DEADLINE,
-        )?;
-        if !response.success {
-            // An explicit negative response means Pi did not admit this user
-            // message into an agent turn. Do not wait for `agent_settled` while
-            // rolling back an unchanged native session.
-            state.prompted = false;
-            return Err(Failure::Failed(REQUEST_FAILED));
+        OperatorWorkerSubmission::Compact { instructions } => {
+            return run_compact_turn(
+                connection,
+                journal,
+                state,
+                paths,
+                turn,
+                instructions.as_deref(),
+                termination,
+            );
+        }
+        OperatorWorkerSubmission::BranchSummary {
+            target_entry_id,
+            instructions,
+        } => {
+            return run_branch_summary_turn(
+                connection,
+                journal,
+                state,
+                paths,
+                turn,
+                target_entry_id,
+                instructions.as_deref(),
+                termination,
+            );
         }
     }
     connection.stream(journal, state)?;
@@ -372,18 +409,292 @@ fn run_turn(
         .session_file
         .as_deref()
         .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
-    snapshot_session(
+    let (pi_first_entry_id, pi_leaf_entry_id) = snapshot_session(
         &attempt_dir,
         &state.session_root,
         native,
         &state.session_id,
         &state.workdir,
+        state.turn_start_file_len,
     )?;
     if termination.requested() {
         return Err(Failure::Terminated);
     }
-    journal.commit(OperatorWorkerEvent::Completed { leased })?;
+    journal.commit(OperatorWorkerEvent::Completed {
+        leased,
+        pi_first_entry_id,
+        pi_leaf_entry_id,
+    })?;
     Ok(leased)
+}
+
+fn run_compact_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+    instructions: Option<&str>,
+    termination: &Termination,
+) -> std::result::Result<bool, Failure> {
+    if turn.checkpoint_turn.is_none() {
+        return Err(Failure::Failed(NOTHING_TO_COMPACT));
+    }
+    let (model, context_window) = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
+    let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+
+    let compact_id = format!("ovrcr-{}", connection.next_id);
+    connection.next_id += 1;
+    let mut payload = json!({
+        "id": &compact_id,
+        "type": "compact",
+    });
+    if let Some(instructions) = instructions {
+        payload["customInstructions"] = json!(instructions);
+    }
+    connection.send(&payload)?;
+    state.pending_compact_id = Some(compact_id.clone());
+
+    let mut drain_deadline: Option<Instant> = None;
+    let compact_response = loop {
+        let message = connection.next_message(journal, drain_deadline)?;
+        match message {
+            RpcMessage::Response(response) if response.id == compact_id => {
+                state.pending_compact_id = None;
+                break response;
+            }
+            RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+            RpcMessage::Event(event) => {
+                connection.event(journal, state, event)?;
+                if state.compaction_failed_event && drain_deadline.is_none() {
+                    drain_deadline = Some(Instant::now() + ROLLBACK_DEADLINE);
+                }
+            }
+        }
+    };
+
+    if !compact_response.success || state.compaction_failed_event {
+        return Err(compact_refusal_failure(compact_response.error.as_deref()));
+    }
+    if !state.compaction_started_seen
+        || !state.compaction_ended_seen
+        || state.compacting
+        || state.pending.is_some()
+    {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let raw_summary = compact_response.data["summary"]
+        .as_str()
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    let tokens_before = compact_response.data["tokensBefore"]
+        .as_u64()
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    let summary = sanitize_summary(raw_summary);
+
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    let leased = state.active_watches > 0;
+    if !leased {
+        connection.settle(journal, state, SHUTDOWN_GRACE)?;
+    }
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let (pi_first_entry_id, pi_leaf_entry_id) = snapshot_session(
+        &attempt_dir,
+        &state.session_root,
+        native,
+        &state.session_id,
+        &state.workdir,
+        state.turn_start_file_len,
+    )?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit_events(vec![
+        OperatorWorkerEvent::CompactionSummary {
+            summary,
+            tokens_before,
+        },
+        OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id,
+            pi_leaf_entry_id,
+        },
+    ])?;
+    Ok(leased)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_branch_summary_turn(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    paths: &PiPaths,
+    turn: &OperatorWorkerStart,
+    target_entry_id: &str,
+    instructions: Option<&str>,
+    termination: &Termination,
+) -> std::result::Result<bool, Failure> {
+    if turn.checkpoint_turn.is_none() || !valid_token(target_entry_id) {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let (model, context_window) = resolve_model(connection, journal, state, turn.model.as_deref())?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::model_selected(model, context_window))?;
+    let reasoning = resolve_reasoning(connection, journal, state, turn.thinking_level)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
+
+    state.tree_control_result = None;
+    state.pending_tree_control = Some(PendingTreeControl {
+        target_id: target_entry_id.to_owned(),
+        summarize: true,
+        custom_instructions: instructions.map(str::to_owned),
+    });
+    let mut args = json!({
+        "targetId": target_entry_id,
+        "summarize": true,
+    });
+    if let Some(instructions) = instructions {
+        args["customInstructions"] = json!(instructions);
+    }
+    let encoded = serde_json::to_string(&args).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    let message = format!("{TREE_CONTROL_COMMAND} {encoded}");
+    let control_id = format!("ovrcr-{}", connection.next_id);
+    connection.next_id += 1;
+    connection.send(&json!({
+        "id": &control_id,
+        "type": "prompt",
+        "message": message,
+    }))?;
+    state.pending_tree_control_id = Some(control_id.clone());
+
+    let control_response = loop {
+        let message = match connection.next_message(journal, None) {
+            Ok(message) => message,
+            Err(err) => {
+                state.pending_tree_control = None;
+                return Err(err);
+            }
+        };
+        match message {
+            RpcMessage::Response(response) if response.id == control_id => {
+                state.pending_tree_control_id = None;
+                state.pending_tree_control = None;
+                break response;
+            }
+            RpcMessage::Response(_) => {
+                state.pending_tree_control = None;
+                return Err(Failure::Failed(REQUEST_FAILED));
+            }
+            RpcMessage::Event(event) => {
+                if let Err(err) = connection.event(journal, state, event) {
+                    state.pending_tree_control = None;
+                    return Err(err);
+                }
+            }
+        }
+    };
+
+    if !control_response.success || state.pending.is_some() {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let Some(result) = state.tree_control_result.take() else {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    };
+    if result.error.is_some() || result.cancelled {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+    let expected_summary_id = result
+        .summary_entry_id
+        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+    if result.leaf_id.as_deref() != Some(expected_summary_id.as_str()) {
+        return Err(Failure::Failed(REQUEST_FAILED));
+    }
+
+    let response = connection.request(journal, state, "get_state", json!({}), CONTROL_DEADLINE)?;
+    require_success(&response)?;
+    state.capture(&response.data)?;
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    let leased = state.active_watches > 0;
+    if !leased {
+        connection.settle(journal, state, SHUTDOWN_GRACE)?;
+    }
+    let attempt_dir = paths.attempt_dir(turn.identity.turn);
+    let native = state
+        .session_file
+        .as_deref()
+        .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let _ = snapshot_session(
+        &attempt_dir,
+        &state.session_root,
+        native,
+        &state.session_id,
+        &state.workdir,
+        state.turn_start_file_len,
+    )?;
+    let file_summary = extract_branch_summary_entry(
+        &attempt_dir.join("session.jsonl"),
+        state.turn_start_file_len,
+        &expected_summary_id,
+    )?;
+    let summary = sanitize_summary(&file_summary);
+    if termination.requested() {
+        return Err(Failure::Terminated);
+    }
+    journal.commit_events(vec![
+        OperatorWorkerEvent::BranchSummary { summary },
+        OperatorWorkerEvent::Completed {
+            leased,
+            pi_first_entry_id: Some(expected_summary_id.clone()),
+            pi_leaf_entry_id: Some(expected_summary_id),
+        },
+    ])?;
+    Ok(leased)
+}
+
+fn compact_refusal_failure(error: Option<&str>) -> Failure {
+    match error {
+        Some(reason) if reason.contains("Already compacted") => Failure::Failed(ALREADY_COMPACTED),
+        Some(reason) if reason.contains("Nothing to compact") => {
+            Failure::Failed(NOTHING_TO_COMPACT)
+        }
+        _ => Failure::Failed(REQUEST_FAILED),
+    }
+}
+
+fn sanitize_summary(raw: &str) -> String {
+    let cleaned = raw.replace('\0', "\u{FFFD}");
+    let max_bytes = ovrcr_protocol::operator::MAX_OPERATOR_TEXT_BYTES;
+    if cleaned.len() <= max_bytes {
+        return cleaned;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_owned()
 }
 
 // ---------------------------------------------------------------- journal
@@ -430,18 +741,38 @@ impl<'a> Journal<'a> {
     }
 
     fn commit(&mut self, event: OperatorWorkerEvent) -> std::result::Result<(), Failure> {
+        self.commit_events(vec![event])
+    }
+
+    fn commit_leased_failure(&mut self, message: String) -> std::result::Result<(), Failure> {
+        self.commit_events_with_lease(vec![OperatorWorkerEvent::Failed(message)], Some(true))
+    }
+
+    fn commit_events(
+        &mut self,
+        events: Vec<OperatorWorkerEvent>,
+    ) -> std::result::Result<(), Failure> {
+        self.commit_events_with_lease(events, None)
+    }
+
+    fn commit_events_with_lease(
+        &mut self,
+        events: Vec<OperatorWorkerEvent>,
+        leased: Option<bool>,
+    ) -> std::result::Result<(), Failure> {
         if self.poisoned {
             return Err(Failure::ReportFailed);
         }
         let batch = OperatorEventBatch {
             identity: self.identity,
             sequence: self.sequence,
-            events: vec![event],
+            events,
         };
-        match self
-            .reporter
-            .operator_batch(batch, Instant::now() + REPORT_DEADLINE)
-        {
+        match self.reporter.operator_batch_with_lease(
+            batch,
+            leased,
+            Instant::now() + REPORT_DEADLINE,
+        ) {
             Ok(()) => {
                 self.sequence += 1;
                 Ok(())
@@ -686,6 +1017,7 @@ impl Connection {
     ) -> std::result::Result<(), Failure> {
         let until = Instant::now() + ROLLBACK_DEADLINE;
         let should_wait = state.prompted && !state.settled;
+        state.pending_tree_control = None;
         for command in ["clear_queue", "abort"] {
             let id = format!("ovrcr-{}", self.next_id);
             self.next_id += 1;
@@ -698,9 +1030,19 @@ impl Connection {
                         }
                         break;
                     }
+                    RpcMessage::Response(response)
+                        if state.take_pending_control_response(&response.id) => {}
                     RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
                     RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
                 }
+            }
+        }
+        while state.has_pending_control_response() {
+            match self.next_message(journal, Some(until))? {
+                RpcMessage::Response(response)
+                    if state.take_pending_control_response(&response.id) => {}
+                RpcMessage::Response(_) => return Err(Failure::Failed(REQUEST_FAILED)),
+                RpcMessage::Event(event) => self.rollback_event(journal, state, event)?,
             }
         }
         while should_wait && !state.settled {
@@ -722,6 +1064,10 @@ impl Connection {
             Some("agent_settled") => {
                 state.settled = true;
                 journal.flush()?;
+            }
+            Some("compaction_end") => {
+                state.compacting = false;
+                state.reset_stream();
             }
             Some("message_start") if event["message"]["role"] == "assistant" => {
                 state.reset_stream();
@@ -752,6 +1098,11 @@ impl Connection {
             {
                 self.read_watch_status(state, &event)?;
             }
+            Some("extension_ui_request")
+                if !matches!(
+                    event["method"].as_str(),
+                    Some("confirm" | "select" | "input" | "editor")
+                ) => {}
             Some("extension_ui_request") => {
                 if let Some(dialog) = event["id"].as_str() {
                     self.send(&json!({
@@ -893,6 +1244,18 @@ impl Connection {
                     if event["method"] == "confirm" && event["title"] == WAKEUP_ADMISSION_TITLE =>
                 {
                     self.begin_async_wakeup(journal, state, &event)
+                }
+                Some("extension_ui_request")
+                    if event["method"] == "confirm" && event["title"] == TREE_CONTROL_TITLE =>
+                {
+                    if let Some(dialog) = event["id"].as_str() {
+                        let _ = self.send(&json!({
+                            "type": "extension_ui_response",
+                            "id": dialog,
+                            "confirmed": false,
+                        }));
+                    }
+                    Err(Failure::Failed(UNSUPPORTED_INTERACTION))
                 }
                 Some("agent_start") => Err(Failure::Failed(REQUEST_FAILED)),
                 Some("extension_error") => Err(Failure::Failed(REQUEST_FAILED)),
@@ -1154,13 +1517,21 @@ impl Connection {
                 journal.flush()?;
                 state.reset_stream();
                 state.compacting = true;
+                state.compaction_started_seen = true;
                 journal.commit(OperatorWorkerEvent::CompactionStarted)?;
             }
             Some("compaction_end") => {
                 if event.get("errorMessage").is_some() || event["aborted"] == true {
+                    state.compacting = false;
+                    state.reset_stream();
+                    if state.pending_compact_id.is_some() {
+                        state.compaction_failed_event = true;
+                        return Ok(());
+                    }
                     return Err(Failure::Failed(REQUEST_FAILED));
                 }
                 state.compacting = false;
+                state.compaction_ended_seen = true;
                 state.reset_stream();
                 journal.commit(OperatorWorkerEvent::CompactionEnded)?;
             }
@@ -1192,6 +1563,8 @@ impl Connection {
                 state.ready_count += 1;
             } else if event["statusKey"].as_str() == Some(WATCHES_KEY) {
                 self.read_watch_status(state, event)?;
+            } else if event["statusKey"].as_str() == Some(TREE_RESULT_KEY) {
+                self.read_tree_result_status(state, event)?;
             }
             // A duplicate binding is harmless; unrelated status entries are display only.
             return Ok(());
@@ -1216,6 +1589,39 @@ impl Connection {
                         return Ok(());
                     }
                     return Err(Failure::Failed(REQUEST_FAILED));
+                }
+                Some(TREE_CONTROL_TITLE) => {
+                    let dialog = event["id"]
+                        .as_str()
+                        .ok_or(Failure::Failed(REQUEST_FAILED))?;
+                    let pending = state.pending_tree_control.take();
+                    let payload = event["message"]
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<Value>(text).ok());
+                    let matches = match (pending.as_ref(), payload.as_ref()) {
+                        (Some(expected), Some(actual)) => {
+                            actual["targetId"].as_str() == Some(expected.target_id.as_str())
+                                && actual["summarize"].as_bool() == Some(expected.summarize)
+                                && actual.get("customInstructions").and_then(Value::as_str)
+                                    == expected.custom_instructions.as_deref()
+                        }
+                        _ => false,
+                    };
+                    if !matches {
+                        let _ = self.send(&json!({
+                            "type": "extension_ui_response",
+                            "id": dialog,
+                            "confirmed": false,
+                        }));
+                        return Err(Failure::Failed(UNSUPPORTED_INTERACTION));
+                    }
+                    self.send(&json!({
+                        "type": "extension_ui_response",
+                        "id": dialog,
+                        "confirmed": true,
+                    }))
+                    .map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+                    return Ok(());
                 }
                 Some(ADMISSION_TITLE) => {
                     return self.flush_admission(journal, state, event.clone());
@@ -1256,6 +1662,47 @@ impl Connection {
         Ok(())
     }
 
+    fn read_tree_result_status(
+        &self,
+        state: &mut TurnState,
+        event: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let text = event["statusText"]
+            .as_str()
+            .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        let payload: Value =
+            serde_json::from_str(text).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        let cancelled = payload["cancelled"].as_bool().unwrap_or(true);
+        let leaf_id = match payload.get("leafId") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if valid_token(id) => Some(id.clone()),
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        };
+        let summary_entry_id = match payload.get("summaryEntry") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(entry)) => Some(
+                entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| valid_token(id))
+                    .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?
+                    .to_owned(),
+            ),
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        };
+        let error = payload
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        state.tree_control_result = Some(TreeControlResult {
+            cancelled,
+            leaf_id,
+            summary_entry_id,
+            error,
+        });
+        Ok(())
+    }
+
     /// Stream until `agent_settled`. Prompt execution has no added wall-clock deadline.
     fn stream(
         &mut self,
@@ -1290,6 +1737,21 @@ struct PendingCall {
     id: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingTreeControl {
+    target_id: String,
+    summarize: bool,
+    custom_instructions: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TreeControlResult {
+    cancelled: bool,
+    leaf_id: Option<String>,
+    summary_entry_id: Option<String>,
+    error: Option<String>,
+}
+
 struct TurnState {
     session_id: String,
     workdir: PathBuf,
@@ -1321,6 +1783,13 @@ struct TurnState {
     /// Pi's automatic compaction can replace context between assistant messages.
     /// Its summary stream is never journaled and never shares message state.
     compacting: bool,
+    pending_compact_id: Option<String>,
+    pending_tree_control_id: Option<String>,
+    compaction_started_seen: bool,
+    compaction_ended_seen: bool,
+    compaction_failed_event: bool,
+    pending_tree_control: Option<PendingTreeControl>,
+    tree_control_result: Option<TreeControlResult>,
     last_assistant: Option<AssistantTurn>,
     /// Admitted tool-call ids whose ordinary execution end has not arrived yet.
     admitted: Vec<String>,
@@ -1376,6 +1845,13 @@ impl TurnState {
             deferred_runs: Vec::new(),
             deferred_bytes: 0,
             compacting: false,
+            pending_compact_id: None,
+            pending_tree_control_id: None,
+            compaction_started_seen: false,
+            compaction_ended_seen: false,
+            compaction_failed_event: false,
+            pending_tree_control: None,
+            tree_control_result: None,
             last_assistant: None,
             admitted: Vec::new(),
             pending: None,
@@ -1407,6 +1883,29 @@ impl TurnState {
         self.settled = false;
         self.prompted = false;
         self.compacting = false;
+        self.pending_compact_id = None;
+        self.pending_tree_control_id = None;
+        self.compaction_started_seen = false;
+        self.compaction_ended_seen = false;
+        self.compaction_failed_event = false;
+        self.pending_tree_control = None;
+        self.tree_control_result = None;
+    }
+
+    fn take_pending_control_response(&mut self, id: &str) -> bool {
+        if self.pending_compact_id.as_deref() == Some(id) {
+            self.pending_compact_id = None;
+            return true;
+        }
+        if self.pending_tree_control_id.as_deref() == Some(id) {
+            self.pending_tree_control_id = None;
+            return true;
+        }
+        false
+    }
+
+    fn has_pending_control_response(&self) -> bool {
+        self.pending_compact_id.is_some() || self.pending_tree_control_id.is_some()
     }
 
     fn note_display(&mut self, index: usize) {
@@ -1884,14 +2383,15 @@ fn clean_stream_end(error: &pi::PiError) -> bool {
         && error.detail() == "Pi closed its output before a reply"
 }
 
-fn prompt_text(start: &OperatorWorkerStart) -> std::result::Result<String, Failure> {
-    let context =
-        serde_json::to_string(&start.context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+fn prompt_text(
+    text: &str,
+    context: &ovrcr_protocol::OperatorContext,
+) -> std::result::Result<String, Failure> {
+    let context = serde_json::to_string(context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
     // The captured context is always ahead of the user text so input such as `/new`
     // cannot become a native pi command.
     Ok(format!(
-        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{}",
-        start.text
+        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{text}"
     ))
 }
 
@@ -1972,11 +2472,66 @@ fn restore_checkpoint(
     state.capture(&response.data)?;
     match state.session_file.as_deref() {
         Some(reported) => match (reported.canonicalize(), target.canonicalize()) {
-            (Ok(reported), Ok(expected)) if reported == expected => Ok(()),
-            _ => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+            (Ok(reported), Ok(expected)) if reported == expected => {}
+            _ => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
         },
-        None => Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        None => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
     }
+    if let Some(target_id) = start.tree_target_id.as_deref() {
+        apply_tree_target(connection, journal, state, target_id, false, None)?;
+    }
+    Ok(())
+}
+
+fn apply_tree_target(
+    connection: &mut Connection,
+    journal: &mut Journal<'_>,
+    state: &mut TurnState,
+    target_id: &str,
+    summarize: bool,
+    custom_instructions: Option<&str>,
+) -> std::result::Result<(), Failure> {
+    if !valid_token(target_id) {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    state.tree_control_result = None;
+    state.pending_tree_control = Some(PendingTreeControl {
+        target_id: target_id.to_owned(),
+        summarize,
+        custom_instructions: custom_instructions.map(str::to_owned),
+    });
+    let mut args = json!({
+        "targetId": target_id,
+        "summarize": summarize,
+    });
+    if let Some(instructions) = custom_instructions {
+        args["customInstructions"] = json!(instructions);
+    }
+    let encoded = serde_json::to_string(&args).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let message = format!("{TREE_CONTROL_COMMAND} {encoded}");
+    let request_result = connection.request(
+        journal,
+        state,
+        "prompt",
+        json!({ "message": message }),
+        CONTROL_DEADLINE,
+    );
+    state.pending_tree_control = None;
+    let response = match request_result {
+        Ok(response) => response,
+        Err(Failure::Failed(_)) => return Err(Failure::Failed(CONTEXT_UNAVAILABLE)),
+        Err(other) => return Err(other),
+    };
+    if !response.success {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    let Some(result) = state.tree_control_result.take() else {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    };
+    if result.error.is_some() || result.cancelled {
+        return Err(Failure::Failed(CONTEXT_UNAVAILABLE));
+    }
+    Ok(())
 }
 
 fn rollback_turn(
@@ -2064,6 +2619,11 @@ fn rollback_turn(
         &state.session_id,
         &state.workdir,
     )?;
+    if turn.checkpoint_turn.is_some()
+        && let Some(target_id) = turn.tree_target_id.as_deref()
+    {
+        apply_tree_target(connection, journal, state, target_id, false, None)?;
+    }
     Ok(())
 }
 
@@ -2194,7 +2754,7 @@ fn resolve_model(
     journal: &mut Journal<'_>,
     state: &mut TurnState,
     selection: Option<&str>,
-) -> std::result::Result<OperatorModel, Failure> {
+) -> std::result::Result<(OperatorModel, Option<u64>), Failure> {
     let explicit = selection.is_some();
     let desired = match selection {
         Some(selection) => {
@@ -2221,13 +2781,14 @@ fn resolve_model(
         // A success reply without the catalog array is a protocol fault, not a
         // model configuration answer.
         .ok_or(Failure::Failed(REQUEST_FAILED))?;
-    let found = available.iter().take(MAX_MODELS).any(|model| {
+    let catalog_entry = available.iter().take(MAX_MODELS).find(|model| {
         model["provider"].as_str() == Some(desired.provider.as_str())
             && model["id"].as_str() == Some(desired.id.as_str())
     });
-    if !found {
+    let Some(catalog_entry) = catalog_entry else {
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
-    }
+    };
+    let catalog_context_window = catalog_entry["contextWindow"].as_u64().filter(|&w| w > 0);
     let response = model_step_outcome(
         connection.request(
             journal,
@@ -2243,6 +2804,7 @@ fn resolve_model(
         // The command succeeded but a different model is active.
         return Err(Failure::Failed(MODEL_UNAVAILABLE));
     }
+    let set_model_context_window = response.data["contextWindow"].as_u64().filter(|&w| w > 0);
     for (command, params) in [
         ("set_auto_retry", json!({ "enabled": false })),
         ("set_auto_compaction", json!({ "enabled": true })),
@@ -2261,7 +2823,13 @@ fn resolve_model(
             .entry(model_key(&desired))
             .or_insert(level);
     }
-    Ok(desired)
+    let state_context_window = response.data["model"]["contextWindow"]
+        .as_u64()
+        .filter(|&w| w > 0);
+    let context_window = state_context_window
+        .or(set_model_context_window)
+        .or(catalog_context_window);
+    Ok((desired, context_window))
 }
 
 fn resolve_reasoning(
@@ -2691,7 +3259,8 @@ fn snapshot_session(
     native: &Path,
     expected_session: &str,
     workdir: &Path,
-) -> std::result::Result<(), Failure> {
+    turn_start_file_len: Option<u64>,
+) -> std::result::Result<(Option<String>, Option<String>), Failure> {
     let metadata =
         fs::symlink_metadata(native).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     if !metadata.file_type().is_file()
@@ -2717,10 +3286,89 @@ fn snapshot_session(
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
     let target = checkpoint_attempt.join("session.jsonl");
     copy_checkpoint(&native, &target, expected_session, workdir)?;
+    let entry_ids = extract_turn_entry_ids(&target, turn_start_file_len)?;
     File::open(checkpoint_attempt)
         .and_then(|file| file.sync_all())
         .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    Ok(entry_ids)
+}
+
+fn for_each_turn_session_record(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+    mut visit: impl FnMut(Value) -> std::result::Result<(), Failure>,
+) -> std::result::Result<(), Failure> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(session_path)
+        .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+    let mut reader = BufReader::new(file);
+    let header = read_header(&mut reader)?;
+    let mut offset = header.len() as u64;
+    let start_offset = turn_start_file_len.unwrap_or(0);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .by_ref()
+            .take((MAX_CHECKPOINT_RECORD + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        if read == 0 {
+            break;
+        }
+        let record_offset = offset;
+        offset = offset.saturating_add(read as u64);
+        if line.iter().all(u8::is_ascii_whitespace) || record_offset < start_offset {
+            continue;
+        }
+        let value: Value =
+            serde_json::from_slice(&line).map_err(|_| Failure::Failed(CONTEXT_UNAVAILABLE))?;
+        visit(value)?;
+    }
     Ok(())
+}
+
+fn extract_turn_entry_ids(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+) -> std::result::Result<(Option<String>, Option<String>), Failure> {
+    let mut first_id: Option<String> = None;
+    let mut leaf_id: Option<String> = None;
+    for_each_turn_session_record(session_path, turn_start_file_len, |value| {
+        if value["type"].as_str() != Some("session")
+            && let Some(id) = value["id"].as_str().filter(|id| valid_token(id))
+        {
+            if first_id.is_none() {
+                first_id = Some(id.to_owned());
+            }
+            leaf_id = Some(id.to_owned());
+        }
+        Ok(())
+    })?;
+    Ok((first_id, leaf_id))
+}
+
+fn extract_branch_summary_entry(
+    session_path: &Path,
+    turn_start_file_len: Option<u64>,
+    expected_id: &str,
+) -> std::result::Result<String, Failure> {
+    let mut found_summary: Option<String> = None;
+    for_each_turn_session_record(session_path, turn_start_file_len, |value| {
+        if value["type"].as_str() == Some("branch_summary")
+            && value["id"].as_str() == Some(expected_id)
+        {
+            let summary = value["summary"]
+                .as_str()
+                .ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))?
+                .to_owned();
+            found_summary = Some(summary);
+        }
+        Ok(())
+    })?;
+    found_summary.ok_or(Failure::Failed(CONTEXT_UNAVAILABLE))
 }
 
 fn read_header(reader: &mut BufReader<File>) -> std::result::Result<Vec<u8>, Failure> {
@@ -3101,21 +3749,7 @@ mod tests {
 
     #[test]
     fn prompt_text_always_keeps_the_context_ahead_of_user_text() {
-        let start = OperatorWorkerStart {
-            thinking_level: Default::default(),
-            identity: ovrcr_protocol::OperatorTurnIdentity {
-                conversation: ovrcr_protocol::OperatorConversationId(1),
-                turn: ovrcr_protocol::OperatorTurnId(1),
-                session: ovrcr_protocol::SessionId(1),
-                run: ovrcr_protocol::SessionRunId(1),
-            },
-            model: None,
-            text: "/new".into(),
-            context: ovrcr_protocol::OperatorContext::default(),
-            checkpoint_turn: None,
-            async_wakeup: false,
-        };
-        let prompt = prompt_text(&start).unwrap();
+        let prompt = prompt_text("/new", &ovrcr_protocol::OperatorContext::default()).unwrap();
         assert!(prompt.starts_with("Captured OVRCR context"));
         assert!(prompt.ends_with("User request:\n/new"));
     }

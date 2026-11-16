@@ -25,6 +25,7 @@ fn summary() -> OperatorConversationSummary {
         worker_live: false,
         id: OperatorConversationId(7),
         session: SessionId(99),
+        session_epoch: 0,
         model: None,
         title: "Operator".into(),
         current_turn: None,
@@ -117,6 +118,8 @@ fn assistant_reply(text: &str) -> Vec<OperatorMessage> {
             turn: OperatorTurnId(1),
             content: OperatorMessageContent::Worker(OperatorWorkerEvent::Completed {
                 leased: false,
+                pi_first_entry_id: None,
+                pi_leaf_entry_id: None,
             }),
         },
     ]

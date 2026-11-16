@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│Operator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]  
+┃ Operator                            ┃│                                                                                                                              
+┃· Idle   
+		3 text (settable) 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+		4 text (settable) ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│Operator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]  
+		5 text (settable) ┃ Operator                            ┃│                                                                                                                              
+		6 text (settable) ┃· Idle                  last reply 5s┃│                                                                                                                              
+		7 text (settable) ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│                                                                                                                              
+		8 text (settable)                                        │                                                                                                                              
+		9 text (settable)  CONSIGINT ────────────────────────────│                                                                                                                              
+		10 text (settable)   󰘬 main                          root │                                                                                                                              
+		11 text (settable)      $ local                           │                                                                                                                              
+		12 text (settable)   󰘬 gui-consigint-auth-handoff         │                                                                                                                              
+		13 text (settable)      $ local                           │                                                                                                                              
+		14 text (settable)      - review auth handoff    grok:4.6 │                                                                                                                              
+		15 text (settable)   󰘬 gui-consigint-worktree-lifecycle   │                                                                                                                              
+		16 text (settable)      $ local                           │                                                                                                                              
+		17 text (settable)      - implement lifecycle cleanup     │                                                                                                                              
+		18 text (settable)      - review websocket shutdown       │                                                                                                                              
+		19 text (settable)      - plan snapshot restore        pi │                                                                                                                              
+		20 text (settable)                                        │                                                                                                                              
+		21 text (settable)  SPACELIFT-AGENT ──────────────────────│                                                                                                                              
+		22 text (settable)   󰘬 main                          root │                                                                                                                              
+		23 text (settable)      $ local                           │                                                                                                                              
+		24 text (settable)   󰘬 gui-spacelift-agent-pipeline-progr…│                                                                                                                              
+		25 text (settable)      $ local                           │                                                                                                                              
+		26 text (settable)      - build pipeline progress  claude │                                                                                                                              
+		27 text (settable)   󰘬 gui-spacelift-agent-scope-quality  │                                                                                                                              
+		28 text (settable)      $ local                           │                                                                                                                              
+		29 text (settable)      - review scope quality      code┌ Operator tree · /tree · filter: default · active ────────────────────────────────────────┐                                     
+		30 text (settable)                                      │Search: ▏                                                                                 │                                     
+		31 text (settable)                                      │● user: GUI_SLASH_SEED                                                                    │                                     
+		32 text (settable)                                      │● assistant: Seeded root turn for Operator slash commands. - Protocol version: `88` - Reg…│                                     
+		33 text (settable)                                      │● user: GUI_BRANCH_ALPHA                                                                  │                                     
+		34 text (settable)                                      │● assistant: Alpha branch exploration: verified `/model`, `/thinking`, `/session`, and `/…│                                     
+		35 text (settable)                                      │● [compaction]: [compaction: 5026 tok] FIXTURE_COMPACTION_SUMMARY --- **Turn Context (spl…│                                     
+		36 text (settable)                                      │Type search · ↑↓ select · Tab/Ctrl-f filter · Enter switch · Esc close                    │                                     
+		37 text (settable)                                      └──────────────────────────────────────────────────────────────────────────────────────────┘                                     
+		38 text (settable)                                        │                                                                                                                              
+		39 text (settable)                                        │                                                                                                                              
+		40 text (settable)                                        │                                                                                                                              
+		41 text (settable)                                        │                                                                                                                              
+		42 text (settable)                                        │                                                                                                                              
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │▌ ✓ GUI_SLASH_SEED                                                                                                            
+		46 text (settable)                                        │▌ ✓ GUI_BRANCH_ALPHA                                                                                                          
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │▌ ✓ Compact context · focus on protocol 88                                                                                    
+		49 text (settable)                                        │▌   Compacted from 5,026 tokens                                                                                               
+		50 text (settable)                                        │▌   FIXTURE_COMPACTION_SUMMARY                                                                                                
+		51 text (settable)                                        │▌                                                                                                                             
+		52 text (settable)                                        │▌   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		53 text (settable)  RESOURCES ────────────────────────────│▌                                                                                                                             
+		54 text (settable)  cpu       ━━━━━━━───────────────  30% │▌   Turn Context (split turn):                                                                                                
+		55 text (settable)  mem       ━━━━━━━━━━━━━━──── 36.6/48G │▌                                                                                                                             
+		56 text (settable)                                        │▌   FIXTURE_COMPACTION_SUMMARY                                                                                                
+		57 text (settable)  QUOTA LEFT ───────────────────────────│                                                                                                                              
+		58 text (settable) Claude · not signed in                 │ Managing consigint / main / #1 run 1                                                                                         
+		59 text (settable) Codex · usage off                      │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+		60 text (settable) Grok · usage off                       │ > ▏                                                                                                                          
+		61 text (settable) Cursor · usage off                     │                                                                                                                              
+		62 text (settable)                                        │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+		63 text (settable) Clipboard request sent; paste to verify                                                                                                                               
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│Operator · pi · fixture/operator-fixture-fast · complete                                         [Reasoning medium ▾ Ctrl-t]  
+┃ Operator                            ┃│                                                                                                                              
+┃· Idle   

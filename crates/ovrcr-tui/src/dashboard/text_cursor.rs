@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Byte position shared by keyboard editing and cell-based pointer placement.
 /// None follows the end when a field is populated by an existing form default.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TextCursor(Option<usize>);
 
 fn boundaries(text: &str) -> Vec<usize> {

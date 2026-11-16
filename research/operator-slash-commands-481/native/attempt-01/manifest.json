@@ -1,0 +1,308 @@
+[
+  {
+    "name": "00-initial-state",
+    "timestamp": "2026-11-15T21:29:40.329Z",
+    "image": {
+      "file": "00-initial-state.jpg",
+      "format": "JPEG",
+      "bytes": 193842,
+      "sha256": "ff5cb6bbb7f361d475e8f03eb2a78353a966d21b15fee3b1cbf9e9b51e0e1426"
+    },
+    "ax": {
+      "file": "00-initial-state.ax.txt",
+      "bytes": 2417,
+      "sha256": "55219069d77aee044dbcda2560cb7a5caa8498a8887e2150a1fc8fa8293c0382"
+    },
+    "verified": [
+      "Startup optional Connect agent status offer visible"
+    ]
+  },
+  {
+    "name": "01-slash-menu-filtered",
+    "timestamp": "2026-11-15T21:31:10.013Z",
+    "image": {
+      "file": "01-slash-menu-filtered.jpg",
+      "format": "JPEG",
+      "bytes": 252167,
+      "sha256": "3b1965e177f7c59c4cccfdbdc2168ffaa660c784c1109f5686a9dc3f777ab21d"
+    },
+    "ax": {
+      "file": "01-slash-menu-filtered.ax.txt",
+      "bytes": 14461,
+      "sha256": "934f4479466c6af4a5e052284ac6c510243235759cdfbfca662624a4fae95380"
+    },
+    "verified": [
+      "Composer > /mo",
+      "Live / menu filtered to /model above top composer rule"
+    ]
+  },
+  {
+    "name": "02-typo-rejection-draft-retained",
+    "timestamp": "2026-11-15T21:31:14.508Z",
+    "image": {
+      "file": "02-typo-rejection-draft-retained.jpg",
+      "format": "JPEG",
+      "bytes": 250829,
+      "sha256": "8c09b1cdd43a1dabc50b33fc2b62da7169b4fdb80537e4e6ae1712b116dc9038"
+    },
+    "ax": {
+      "file": "02-typo-rejection-draft-retained.ax.txt",
+      "bytes": 14218,
+      "sha256": "fda82fb09b7b9959e7b62448979eadca3768fa5a94054331a227dd2bb18181f3"
+    },
+    "verified": [
+      "Unknown slash command \"/modle\"",
+      "Composer retains > /modle"
+    ]
+  },
+  {
+    "name": "03-model-picker",
+    "timestamp": "2026-11-15T21:31:33.860Z",
+    "image": {
+      "file": "03-model-picker.jpg",
+      "format": "JPEG",
+      "bytes": 278833,
+      "sha256": "974e3194659c82747bd30f5e28060a2ccef17bc37dc59301e605310d9c52bf2b"
+    },
+    "ax": {
+      "file": "03-model-picker.ax.txt",
+      "bytes": 14471,
+      "sha256": "c446fb3a5643dbfed75059313ce2ed39f9afa28f29177b4dcb7f41ddb185f8f6"
+    },
+    "verified": [
+      "Model picker shows Harness default, fixture/operator-fixture, fixture/operator-fixture-fast"
+    ]
+  },
+  {
+    "name": "04-thinking-picker",
+    "timestamp": "2026-11-15T21:31:57.546Z",
+    "image": {
+      "file": "04-thinking-picker.jpg",
+      "format": "JPEG",
+      "bytes": 260420,
+      "sha256": "1e6cf43a2d9a73954ad29fc074a01248ff9095c056e3a9872064885698fe140a"
+    },
+    "ax": {
+      "file": "04-thinking-picker.ax.txt",
+      "bytes": 14406,
+      "sha256": "c867d753da5561e43dd4e1231f58ac1ac4d39b4324f5dab1a6e615d74245d08e"
+    },
+    "verified": [
+      "Reasoning picker shows default (Pi's choice)"
+    ]
+  },
+  {
+    "name": "05-session-modal",
+    "timestamp": "2026-11-15T21:32:34.816Z",
+    "image": {
+      "file": "05-session-modal.jpg",
+      "format": "JPEG",
+      "bytes": 358829,
+      "sha256": "977cb59948c80b483eb56f0f06c8e6601d386c56c0f5f3a5921fdf567b4ebf18"
+    },
+    "ax": {
+      "file": "05-session-modal.ax.txt",
+      "bytes": 14536,
+      "sha256": "b1755665fa5351618630331d9ecb2c804eb941daece405214eaad454c208f776"
+    },
+    "verified": [
+      "Operator session · /session modal",
+      "Epoch, session id, model, turns, and token counters visible"
+    ]
+  },
+  {
+    "name": "06-copy-confirmation",
+    "timestamp": "2026-11-15T21:32:38.696Z",
+    "image": {
+      "file": "06-copy-confirmation.jpg",
+      "format": "JPEG",
+      "bytes": 270370,
+      "sha256": "a530c9c7b5bd5c37040a9730ab81679b50836063728b01963c36bbf1f3cea64f"
+    },
+    "ax": {
+      "file": "06-copy-confirmation.ax.txt",
+      "bytes": 14225,
+      "sha256": "d920d1b0afafde4bdad8a194427f17df7549754e49e6c06ef86959cfa71ae99c"
+    },
+    "verified": [
+      "Copied confirmation visible after /copy"
+    ]
+  },
+  {
+    "name": "07-compact-receipt",
+    "timestamp": "2026-11-15T21:32:53.311Z",
+    "image": {
+      "file": "07-compact-receipt.jpg",
+      "format": "JPEG",
+      "bytes": 281092,
+      "sha256": "bf5e3841f1e4cfd3340f9066a45cdcb220bdceebcbdae1704ed165b1f5a5eb58"
+    },
+    "ax": {
+      "file": "07-compact-receipt.ax.txt",
+      "bytes": 14488,
+      "sha256": "167cc2673a4854a5028faa4c054a079c79218ae591998cb0b1a1737e66f730f4"
+    },
+    "verified": [
+      "Compacted from receipt visible",
+      "FIXTURE_COMPACTION_SUMMARY visible",
+      "Turn complete with Idle and no Sending/Responding"
+    ]
+  },
+  {
+    "name": "08-tree-active-branch",
+    "timestamp": "2026-11-15T21:32:56.179Z",
+    "image": {
+      "file": "08-tree-active-branch.jpg",
+      "format": "JPEG",
+      "bytes": 369959,
+      "sha256": "6dc2eb449aa3877f8c198bde1bdc72da4fc6af90ad81a88d62bc0d1087862fb6"
+    },
+    "ax": {
+      "file": "08-tree-active-branch.ax.txt",
+      "bytes": 14795,
+      "sha256": "942fa8bd11b68b508d0d9afff7014ca3f423f42e0cef53af52d97caa9fc70116"
+    },
+    "verified": [
+      "Operator tree · /tree open",
+      "Active ● markers for GUI_SLASH_SEED, GUI_BRANCH_ALPHA, and [compaction]"
+    ]
+  },
+  {
+    "name": "09-tree-summarize-modal",
+    "timestamp": "2026-11-15T21:33:14.782Z",
+    "image": {
+      "file": "09-tree-summarize-modal.jpg",
+      "format": "JPEG",
+      "bytes": 331536,
+      "sha256": "96608289ba3880cd28e0ae59be6e6b45f68239e75e1d0dfc6a5fc7f1af4bd84b"
+    },
+    "ax": {
+      "file": "09-tree-summarize-modal.ax.txt",
+      "bytes": 14823,
+      "sha256": "b2c6a2c5554f11d7c2cd637c56150684943e35227ac9ee79a04cf23d0d4dfa79"
+    },
+    "verified": [
+      "Summarize branch? · /tree",
+      "No summary, Summarize, Summarize with custom prompt choices"
+    ]
+  },
+  {
+    "name": "10-branch-summary-composer-restore",
+    "timestamp": "2026-11-15T21:33:31.866Z",
+    "image": {
+      "file": "10-branch-summary-composer-restore.jpg",
+      "format": "JPEG",
+      "bytes": 300841,
+      "sha256": "0708377dec02dd2ad69f18429679f4a25b0c8cdff53971986a1dbc2dfa602cef"
+    },
+    "ax": {
+      "file": "10-branch-summary-composer-restore.ax.txt",
+      "bytes": 14243,
+      "sha256": "52292471a4f404d3e0340e10fdfbb69f906a215ecc35aa8157664937f9e93765"
+    },
+    "verified": [
+      "Branch summary recorded in feed",
+      "Summarized abandoned branch in feed",
+      "Composer restores unwrapped > GUI_BRANCH_ALPHA",
+      "Turn complete and idle"
+    ]
+  },
+  {
+    "name": "11-tree-diverging-branches",
+    "timestamp": "2026-11-15T21:33:57.148Z",
+    "image": {
+      "file": "11-tree-diverging-branches.jpg",
+      "format": "JPEG",
+      "bytes": 400809,
+      "sha256": "92b8b71460f51a89af7f526993a8b0282c279b4ee23606b2f8cc51d8243244cd"
+    },
+    "ax": {
+      "file": "11-tree-diverging-branches.ax.txt",
+      "bytes": 14558,
+      "sha256": "8c4f1b0256ff171a48ac091b66234cbae7bddef957852bbe12f37dcd01da4961"
+    },
+    "verified": [
+      "Tree shows alpha and beta branches",
+      "├─ / └─ / │ connectors visible",
+      "[branch summary] node visible"
+    ]
+  },
+  {
+    "name": "12-branch-switched-feed",
+    "timestamp": "2026-11-15T21:34:01.559Z",
+    "image": {
+      "file": "12-branch-switched-feed.jpg",
+      "format": "JPEG",
+      "bytes": 266857,
+      "sha256": "47a49523c403fa4d0feec13d7839438fb857200f0beb3b15070dbfc4f48b5a78"
+    },
+    "ax": {
+      "file": "12-branch-switched-feed.ax.txt",
+      "bytes": 14225,
+      "sha256": "81ac29b4432c9812e081357f547d6dec81ca50988138c8b32702f9504d4be48d"
+    },
+    "verified": [
+      "Alpha branch exploration visible in feed",
+      "Beta branch exploration absent",
+      "Tree and summarize modal closed"
+    ]
+  },
+  {
+    "name": "13-new-session-reset",
+    "timestamp": "2026-11-15T21:34:21.316Z",
+    "image": {
+      "file": "13-new-session-reset.jpg",
+      "format": "JPEG",
+      "bytes": 236100,
+      "sha256": "e78db7b201c671dc19534d44c18536a543fcd9ea57d8632f6d5aed1fbde1fa21"
+    },
+    "ax": {
+      "file": "13-new-session-reset.ax.txt",
+      "bytes": 14218,
+      "sha256": "5362ffd967e2077d5ef0dd4e7b038383d247c8ba797b0d80f72fe817853d5171"
+    },
+    "verified": [
+      "Visible Operator feed cleared",
+      "New Operator session confirmation"
+    ]
+  },
+  {
+    "name": "14-quick-message-slash-input",
+    "timestamp": "2026-11-15T21:34:26.098Z",
+    "image": {
+      "file": "14-quick-message-slash-input.jpg",
+      "format": "JPEG",
+      "bytes": 259016,
+      "sha256": "8ac975e53dee7b6c989b447a2cc1440a8173e686944833e51482b4d2ca52d70d"
+    },
+    "ax": {
+      "file": "14-quick-message-slash-input.ax.txt",
+      "bytes": 14762,
+      "sha256": "fc2789e55921e4f54f45bf87c7b3e8436e24c15c13996c754b88c1bdc905552f"
+    },
+    "verified": [
+      "Quick message · Ctrl-o open",
+      "/session in Quick message input before Return"
+    ]
+  },
+  {
+    "name": "15-quick-message-slash-executed",
+    "timestamp": "2026-11-15T21:34:45.864Z",
+    "image": {
+      "file": "15-quick-message-slash-executed.jpg",
+      "format": "JPEG",
+      "bytes": 319337,
+      "sha256": "3d67bf413db2303bc736f396e86a4e6e02ded1d48df30f4cdab30f94c45af4f3"
+    },
+    "ax": {
+      "file": "15-quick-message-slash-executed.ax.txt",
+      "bytes": 14531,
+      "sha256": "0f423ab844e690cfeb824b8de14b68a956c020f36b5de258cb7cb3ca786f84c1"
+    },
+    "verified": [
+      "Quick message transitioned to full Operator",
+      "Operator session · /session modal shows epoch 1",
+      "Zero turns and zero messages for new epoch"
+    ]
+  }
+]

@@ -74,6 +74,14 @@ impl Scenario {
         self.set("prompt_response", json!(mode))
     }
 
+    pub fn compact_mode(&mut self, mode: &str) -> &mut Self {
+        self.set("compact", json!(mode))
+    }
+
+    pub fn tree_summary_mode(&mut self, mode: &str) -> &mut Self {
+        self.set("tree_summary_mode", json!(mode))
+    }
+
     pub fn default_model(&mut self, provider: &str, id: &str) -> &mut Self {
         self.set(
             "default_model",
@@ -252,6 +260,11 @@ pub enum Step {
         text: String,
         answer: String,
     },
+    /// Offer an unsolicited `ovrcr_operator_tree_control` confirm dialog during a turn.
+    UnsolicitedTreeControl {
+        target_id: String,
+        marker: Option<PathBuf>,
+    },
     Stderr(String),
     Sleep(u64),
     WaitFile(PathBuf),
@@ -420,6 +433,11 @@ impl Step {
                 "kind": "async_wakeup",
                 "text": text,
                 "answer": answer,
+            }),
+            Self::UnsolicitedTreeControl { target_id, marker } => json!({
+                "kind": "unsolicited_tree_control",
+                "targetId": target_id,
+                "marker": marker.map(|path| path.display().to_string()),
             }),
             Self::Stderr(text) => json!({"kind": "stderr", "text": text}),
             Self::Sleep(ms) => json!({"kind": "sleep", "ms": ms}),

@@ -236,7 +236,14 @@ impl Reporter {
                 start,
             )) => {
                 if start.as_ref().is_some_and(|start| {
-                    !identity.matches_turn(&start.identity) || !start.async_wakeup
+                    !identity.matches_turn(&start.identity)
+                        || !matches!(
+                            start.submission,
+                            ovrcr_protocol::OperatorWorkerSubmission::Prompt {
+                                async_wakeup: true,
+                                ..
+                            }
+                        )
                 }) {
                     anyhow::bail!("async turn bootstrap identity changed");
                 }
@@ -271,14 +278,30 @@ impl Reporter {
         batch: ovrcr_protocol::OperatorEventBatch,
         deadline: Instant,
     ) -> anyhow::Result<()> {
+        self.operator_batch_with_lease(batch, None, deadline)
+    }
+    pub fn operator_batch_with_lease(
+        &mut self,
+        batch: ovrcr_protocol::OperatorEventBatch,
+        leased: Option<bool>,
+        deadline: Instant,
+    ) -> anyhow::Result<()> {
         batch.validate().map_err(anyhow::Error::msg)?;
+        if leased.is_some()
+            && !matches!(
+                batch.events.last(),
+                Some(ovrcr_protocol::OperatorWorkerEvent::Failed(_))
+            )
+        {
+            anyhow::bail!("operator batch lease requires a terminal failure");
+        }
         let identity = batch.identity;
         let sequence = batch.sequence;
         let lease = self
             .lease
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
-        match lease.operator_batch(batch, deadline)? {
+        match lease.operator_batch(batch, leased, deadline)? {
             Response::OperatorExchange(receipt)
                 if receipt.identity == identity && receipt.sequence == sequence =>
             {

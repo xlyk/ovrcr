@@ -319,10 +319,13 @@ arrival runs across interleaved blocks, end-only redacted thinking placeholders,
 thinking/tool/answer ordering, contradictory thinking
 prefixes and content indexes, empty/signature-only thinking,
 automatic-compaction start/end isolation (including summary-stream suppression,
-failure, Stop and no duplicate thinking after compaction), failed and timed-out
+failure, Stop and no duplicate thinking after compaction), manual `/compact`
+turn execution and rollback, `/tree` leaf restoration and `BranchSummary` turn
+execution/Stop/failure rollback, failed and timed-out
 tool results, sequential admissions with no command after a refusal, results for
 unadmitted calls, credential sentinels never reaching the journal, settings or
-events, and direct-worker termination/reaping. The fixture `pi` prints
+events, and direct-worker termination/reaping. The fixture `pi`
+(`tests/fixtures/operator-pi/operator_fake_pi.mjs`) prints
 deterministic records; it proves OVRCR's composition and refusal behavior, not
 provider inference.
 
@@ -332,13 +335,21 @@ diagnostics-gated paths). Ignored entry points are product evidence only when
 their owning parent or native run explicitly selects and checks them.
 
 The compiled e2e suite also covers same-run leased chat and model/default
-changes, atomic Submit-versus-wakeup admission, batched reports, Stop/failure/
+changes, all seven Operator slash commands (`/copy`, `/thinking`, `/model`,
+`/new`, `/session`, `/compact`, `/tree` including `"Summarize branch?"` custom
+prompts, user-prompt rewind composer restore and `Stop` rollback),
+`CatalogProcessOwner` dedicated-profile model discovery, atomic
+Submit-versus-wakeup admission, batched reports, Stop/failure/
 timeout rollback, first-turn empty and zero-record rollback, and the five-second
-owned-group fallback. The Node extension probe covers add/list/remove,
-pre-send baseline catch-up with opaque turn identities, queued reports and
-same-process extension reload. Dashboard tests cover AsyncWakeup headings,
-unread and draft preservation. The schema-32 migration regression preserves
-legacy Completed payloads and dependent journal/receipt bytes. See the
+owned-group fallback. The Node extension probe
+(`tests/fixtures/operator-pi/extension_probe.mjs`) covers add/list/remove,
+pre-send baseline catch-up with opaque turn identities, queued reports,
+same-process extension reload, and `ctx.ui.confirm`-gated `/ovrcr_tree_control`
+navigation and `session_tree` branch-summary capture. Dashboard tests cover
+AsyncWakeup, Compaction and BranchSummary headings/receipts, slash-command
+modals/menus, unread and draft preservation. The schema-32 through schema-35
+migration regressions preserve legacy Completed payloads, epoch-0 journals and
+dependent receipt bytes. See the
 [merged acceptance record](../../research/operator-async-delegation-465/README.md)
 for focused results and final CI; ignored installed-Pi tests need their own
 explicit passing result.
@@ -390,6 +401,12 @@ the HOME Pi profile for two real managed Workspace sessions. Follow the
 [coordinator setup and walkthrough](../../research/operator-async-delegation-465/470-evidence.md#native-helper-instructions)
 and retain screenshots/AX plus journal, baseline and cleanup JSON as in the
 [completed native run](../../research/operator-async-delegation-465/native/README.md).
+For the Operator slash-command walkthrough (`/model`, `/thinking`, `/session`,
+`/copy`, `/compact`, `/tree`, `"Summarize branch?"`, `/new` and `Ctrl-o` Quick
+message), set `OVRCR_OPERATOR_GUI_SLASH=1` so the synthetic loopback profile
+seeds manual-only compaction (`enabled: false`, `keepRecentTokens: 1`) alongside
+two synthetic models (`fixture/operator-fixture` and
+`fixture/operator-fixture-fast`) and deterministic branch-summary responses.
 
 The Dashboard path is asserted by `tests/tui/operator.rs` and the crate's own unit
 suite: one fixed sidebar navigation row, direct open with composer focus, no

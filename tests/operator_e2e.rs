@@ -1786,6 +1786,2154 @@ fn operator_session_identity_is_the_conversation_session() {
     assert!(!row.archived);
 }
 
+#[test]
+fn dashboard_slash_commands_menu_copy_and_thinking_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{
+        self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorResponse,
+        ServerMessage, Settings, TerminalSize,
+    };
+    use ovrcr::tui::{Dashboard, DashboardAction, write_clipboard};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use std::collections::VecDeque;
+
+    struct LiveDashboard {
+        stream: std::os::unix::net::UnixStream,
+        dashboard: Dashboard,
+        pending: VecDeque<ClientMessage>,
+        next_probe_id: u64,
+    }
+
+    impl LiveDashboard {
+        fn connect(live: &Live) -> Self {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            let budget = Duration::from_secs(5);
+            stream.set_read_timeout(Some(budget)).unwrap();
+            stream.set_write_timeout(Some(budget)).unwrap();
+            let hierarchy =
+                match protocol::client::request(&mut stream, 900_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_area(Rect::new(0, 0, 160, 40));
+            dashboard.install_settings(Settings::default());
+            Self {
+                stream,
+                dashboard,
+                pending: VecDeque::new(),
+                next_probe_id: 900_001,
+            }
+        }
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_probe_id += 1;
+            let id = self.next_probe_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                let matched = match &incoming {
+                    ServerMessage::Response {
+                        request_id,
+                        response,
+                    } if *request_id == id => Some(response.clone()),
+                    _ => None,
+                };
+                self.pending
+                    .extend(self.dashboard.handle_server_message(incoming));
+                self.pending.extend(self.dashboard.drain_outbox());
+                if let Some(response) = matched {
+                    self.flush();
+                    return response;
+                }
+            }
+        }
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
+                }
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!("Dashboard outbox did not converge");
+        }
+
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
+        }
+
+        fn current_id(&mut self) -> OperatorConversationId {
+            match self.exchange(Request::Operator(OperatorRequest::Current)) {
+                Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+                other => panic!("expected current conversation, got {other:?}"),
+            }
+        }
+
+        fn wait_turn_settled(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && history.conversation.worker_stopped
+                {
+                    self.pump();
+                    return history;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for settled turn: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn render(&mut self) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    let raw_markdown = "# Deployment Plan\n\n```sh\ncargo test\n```";
+    let mut scenario = Scenario::new();
+    scenario.set(
+        "available_thinking_levels",
+        json!(["minimal", "low", "medium", "high"]),
+    );
+    scenario.prompt_steps(vec![
+        vec![Step::assistant(raw_markdown), Step::Settle],
+        vec![
+            Step::assistant("Second reply with high thinking."),
+            Step::Settle,
+        ],
+    ]);
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold Quick message (`Ctrl-o`) rejects `/compcat` and empty `/copy` locally,
+    //    then transitions into full Operator with ReasoningPicker open on `/thinking`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/compcat".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let quick_err = ui.render();
+    assert!(
+        quick_err.contains("Unknown slash command \"/compcat\"") && quick_err.contains("/compcat"),
+        "{quick_err}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "must not start Pi on unknown slash command"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let quick_no_reply = ui.render();
+    assert!(
+        quick_no_reply.contains("No assistant reply to copy yet."),
+        "{quick_no_reply}"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/thinking".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let opened_picker = ui.render();
+    assert!(
+        !opened_picker.contains("Quick message · Ctrl-o")
+            && opened_picker.contains("default (Pi's choice)")
+            && opened_picker.contains("Enter pick"),
+        "Quick `/thinking` must open full Operator with ReasoningPicker:\n{opened_picker}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "`/thinking` picker must not start Pi"
+    );
+    ui.dashboard.key(KeyCode::Esc);
+
+    // 2. Full Operator `/` menu shows all 7 registered commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`, `/compact`, `/tree`) and
+    //    dismisses cleanly on `Esc` without leaving Operator.
+    ui.dashboard.event_action(Event::Paste("/".into()));
+    let menu_screen = ui.render();
+    assert!(
+        menu_screen.contains("/copy")
+            && menu_screen.contains("/thinking [level]")
+            && menu_screen.contains("/model [provider/id | default]")
+            && menu_screen.contains("/new")
+            && menu_screen.contains("/session")
+            && menu_screen.contains("/compact [instructions]")
+            && menu_screen.contains("/tree"),
+        "{menu_screen}"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    let menu_dismissed = ui.render();
+    assert!(
+        !menu_dismissed.contains("Copy latest assistant reply Markdown")
+            && menu_dismissed.contains("> /▏"),
+        "{menu_dismissed}"
+    );
+    ui.dashboard.ctrl('c');
+
+    // 3. Multi-segment path `/etc/hosts` submits as a real prompt to `FakePi`.
+    ui.dashboard
+        .event_action(Event::Paste("/etc/hosts audit".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let conversation_id = ui.current_id();
+    ui.wait_turn_settled(conversation_id);
+    let after_turn_one = ui.render();
+    assert!(
+        after_turn_one.contains("Deployment Plan") && after_turn_one.contains("cargo test"),
+        "{after_turn_one}"
+    );
+
+    // 4. `/copy` returns raw Markdown (`DashboardAction::CopyText`) from both the `/` menu
+    //    and Quick message (`Ctrl-o`), and writes valid OSC 52 bytes via `write_clipboard`.
+    ui.dashboard.event_action(Event::Paste("/co".into()));
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_markdown.into())
+    );
+    let mut osc52 = Vec::new();
+    write_clipboard(&mut osc52, raw_markdown).unwrap();
+    let osc52_str = String::from_utf8(osc52).unwrap();
+    assert_eq!(
+        osc52_str,
+        "\x1b]52;c;IyBEZXBsb3ltZW50IFBsYW4KCmBgYHNoCmNhcmdvIHRlc3QKYGBg\x1b\\"
+    );
+
+    ui.dashboard.key(KeyCode::Esc);
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Enter),
+        DashboardAction::CopyText(raw_markdown.into())
+    );
+
+    // 5. Reopen Operator: model capabilities (`minimal, low, medium, high`) reject `/thinking max`
+    //    locally while `/thinking HIGH` persists via real Server `SetSetting` and applies to the
+    //    next turn, and leading-space ` /copy` submits as a normal prompt.
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.pump();
+
+    ui.dashboard
+        .event_action(Event::Paste("/thinking max".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let unsupported = ui.render();
+    assert!(
+        unsupported.contains("Unsupported thinking level \"max\"")
+            && unsupported.contains("default, minimal, low, medium, high")
+            && unsupported.contains("> /thinking max▏"),
+        "{unsupported}"
+    );
+
+    ui.dashboard.ctrl('c');
+    ui.dashboard
+        .event_action(Event::Paste("/thinking HIGH".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let after_thinking = ui.render();
+    assert!(
+        after_thinking.contains("Set thinking level to high.")
+            || after_thinking.contains("set: high"),
+        "{after_thinking}"
+    );
+
+    let dashboard_toml = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        dashboard_toml.contains("thinking_level = \"high\""),
+        "{dashboard_toml}"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste(" /copy literal prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let second_history = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        second_history
+            .conversation
+            .reasoning
+            .as_ref()
+            .unwrap()
+            .level,
+        ovrcr::protocol::OperatorThinkingLevel::High
+    );
+    let prompts: Vec<_> = fake
+        .log()
+        .into_iter()
+        .filter(|entry| entry["event"] == "prompt")
+        .map(|entry| {
+            let msg = entry["message"].as_str().unwrap_or_default();
+            msg.rsplit_once("User request:\n")
+                .map_or(msg, |(_, body)| body)
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        prompts,
+        vec!["/etc/hosts audit", " /copy literal prompt"],
+        "multi-segment path and leading-space draft must both submit as prompts"
+    );
+}
+
+#[test]
+fn dashboard_slash_model_picker_and_switching_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{
+        self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorModel,
+        OperatorResponse, ServerMessage, Settings, TerminalSize,
+    };
+    use ovrcr::tui::Dashboard;
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use std::collections::VecDeque;
+
+    struct LiveDashboard {
+        stream: std::os::unix::net::UnixStream,
+        dashboard: Dashboard,
+        pending: VecDeque<ClientMessage>,
+        next_probe_id: u64,
+    }
+
+    impl LiveDashboard {
+        fn connect(live: &Live) -> Self {
+            let mut stream = protocol::connect_server(&live.socket).unwrap();
+            let budget = Duration::from_secs(5);
+            stream.set_read_timeout(Some(budget)).unwrap();
+            stream.set_write_timeout(Some(budget)).unwrap();
+            let hierarchy =
+                match protocol::client::request(&mut stream, 900_000, Request::DashboardHello)
+                    .unwrap()
+                {
+                    Response::Hierarchy(hierarchy) => hierarchy,
+                    other => panic!("Dashboard handshake: {other:?}"),
+                };
+            let mut dashboard = Dashboard::new(TerminalSize {
+                rows: 40,
+                cols: 160,
+            });
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_area(Rect::new(0, 0, 160, 40));
+            dashboard.install_settings(Settings::default());
+            Self {
+                stream,
+                dashboard,
+                pending: VecDeque::new(),
+                next_probe_id: 900_001,
+            }
+        }
+
+        fn exchange(&mut self, request: Request) -> Response {
+            self.next_probe_id += 1;
+            let id = self.next_probe_id;
+            protocol::write_frame(
+                &mut self.stream,
+                &ClientMessage {
+                    request_id: id,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                let matched = match &incoming {
+                    ServerMessage::Response {
+                        request_id,
+                        response,
+                    } if *request_id == id => Some(response.clone()),
+                    _ => None,
+                };
+                self.pending
+                    .extend(self.dashboard.handle_server_message(incoming));
+                self.pending.extend(self.dashboard.drain_outbox());
+                if let Some(response) = matched {
+                    self.flush();
+                    return response;
+                }
+            }
+        }
+
+        fn flush(&mut self) {
+            for _ in 0..200 {
+                self.pending.extend(self.dashboard.drain_outbox());
+                if self.pending.is_empty() {
+                    return;
+                }
+                while let Some(message) = self.pending.pop_front() {
+                    let id = message.request_id;
+                    protocol::write_frame(&mut self.stream, &message).unwrap();
+                    loop {
+                        let incoming: ServerMessage =
+                            protocol::read_frame(&mut self.stream).unwrap();
+                        let done = matches!(
+                            &incoming,
+                            ServerMessage::Response { request_id, .. } if *request_id == id
+                        );
+                        self.pending
+                            .extend(self.dashboard.handle_server_message(incoming));
+                        self.pending.extend(self.dashboard.drain_outbox());
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!("Dashboard outbox did not converge");
+        }
+
+        fn pump(&mut self) {
+            self.stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .unwrap();
+            while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+                self.pending
+                    .extend(self.dashboard.handle_server_message(message));
+            }
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            self.pending.extend(self.dashboard.drain_outbox());
+            if !self.pending.is_empty() {
+                self.flush();
+            }
+        }
+
+        fn current_id(&mut self) -> OperatorConversationId {
+            match self.exchange(Request::Operator(OperatorRequest::Current)) {
+                Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+                other => panic!("expected current conversation, got {other:?}"),
+            }
+        }
+
+        fn wait_turn_running(&mut self, conversation: OperatorConversationId, expected_turn: u64) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history.conversation.current_turn.as_ref().is_some_and(|t| {
+                    t.identity.turn.0 == expected_turn && t.state == OperatorTurnState::Running
+                }) {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for running turn {expected_turn}: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn wait_turn_settled(&mut self, conversation: OperatorConversationId) -> OperatorHistory {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                self.pump();
+                let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                    conversation,
+                    after: 0,
+                    limit: 100,
+                })) {
+                    Response::Operator(OperatorResponse::History(history)) => history,
+                    other => panic!("expected history, got {other:?}"),
+                };
+                if history
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|t| t.state == OperatorTurnState::Complete)
+                    && history.conversation.worker_stopped
+                {
+                    self.pump();
+                    return history;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for settled turn: {history:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn render(&mut self) -> String {
+            let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    let hold_gate = tempfile::tempdir().unwrap();
+    let release_turn_two = hold_gate.path().join("release-turn-two");
+
+    let mut scenario = Scenario::new();
+    scenario
+        .default_model("fixture", "default")
+        .models(vec![
+            ("fixture", "default", "Fixture Default"),
+            ("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ("openrouter", "vendor/sub/id", "Nested Router Model"),
+        ])
+        .prompt_steps(vec![
+            vec![Step::assistant("Reply 1 on sonnet"), Step::Settle],
+            vec![
+                Step::Start,
+                Step::Delta("Streaming turn 2...".into()),
+                Step::WaitFile(release_turn_two.clone()),
+                Step::assistant("Reply 2 finished cleanly"),
+                Step::Settle,
+            ],
+            vec![Step::assistant("Reply 3 on nested router"), Step::Settle],
+            vec![Step::assistant("Reply 4 on harness default"), Step::Settle],
+        ]);
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    fake.script(&scenario);
+
+    // Populate a conflicting ambient HOME/.pi catalog to prove the live Server + TUI
+    // only ever inspect `<OVRCR_HOME>/operator-pi`.
+    let ambient_home = live.root.path().join("ambient-home");
+    std::fs::create_dir_all(ambient_home.join(".pi")).unwrap();
+    std::fs::write(
+        ambient_home.join(".pi/fake-pi-scenario.json"),
+        serde_json::to_vec(&json!({
+            "models": [
+                {"provider": "ambient-leak", "id": "forbidden", "name": "Ambient Leak"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    live.start_binary_env(&[
+        fake_pi::executable_env(&fake),
+        ("HOME", ambient_home.as_os_str()),
+    ]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `Ctrl-o` `/model sonnet` discovers models from the dedicated `operator-pi` profile
+    //    without starting an RPC turn, ignores `ambient-leak/forbidden`, transitions into full
+    //    Operator, and opens `ModelPicker` pre-filtered by `sonnet`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/model sonnet".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+
+    let prefiltered = ui.render();
+    assert!(
+        !prefiltered.contains("Quick message · Ctrl-o")
+            && prefiltered.contains("Filter: sonnet▏")
+            && prefiltered.contains("anthropic/claude-sonnet-4-6 · Claude Sonnet 4.6")
+            && !prefiltered.contains("ambient-leak"),
+        "expected dedicated profile model picker pre-filtered by sonnet:\n{prefiltered}"
+    );
+    assert!(
+        !fake.log().iter().any(|entry| entry["event"] == "prompt"),
+        "model discovery must not submit an Operator turn: {:?}",
+        fake.log()
+    );
+
+    // Pick `anthropic/claude-sonnet-4-6` via Enter -> persists `operator.model` in dashboard.toml
+    // and applies to Turn 1.
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let toml_after_pick = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        toml_after_pick.contains("model = \"anthropic/claude-sonnet-4-6\""),
+        "{toml_after_pick}"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste("first turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let conversation_id = ui.current_id();
+    let turn_one = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_one.conversation.model,
+        Some(OperatorModel {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+        })
+    );
+
+    // 2. Start Turn 2 (held mid-flight) and run exact `/model openrouter/vendor/sub/id` DURING
+    //    the running turn: persists immediately without disrupting Turn 2, and takes effect on Turn 3.
+    ui.dashboard
+        .event_action(Event::Paste("second turn held".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_turn_running(conversation_id, 2);
+
+    ui.dashboard
+        .event_action(Event::Paste("/model openrouter/vendor/sub/id".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let mid_turn_screen = ui.render();
+    assert!(
+        !mid_turn_screen.contains("Filter:")
+            && mid_turn_screen.contains("Set Operator model to openrouter/vendor/sub/id."),
+        "exact `/model <provider/id>` writes setting immediately without opening picker:\n{mid_turn_screen}"
+    );
+
+    std::fs::write(&release_turn_two, "go").unwrap();
+    let turn_two = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_two.conversation.model,
+        Some(OperatorModel {
+            provider: "anthropic".into(),
+            id: "claude-sonnet-4-6".into(),
+        }),
+        "in-flight Turn 2 finishes on its already-selected model without disruption"
+    );
+
+    ui.dashboard
+        .event_action(Event::Paste("third turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let turn_three = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_three.conversation.model,
+        Some(OperatorModel {
+            provider: "openrouter".into(),
+            id: "vendor/sub/id".into(),
+        }),
+        "Turn 3 picks up the model switched during Turn 2"
+    );
+
+    // 3. `/model default` from Quick message (`Ctrl-o`) resets `operator.model` to `None`
+    //    without opening a picker, and Turn 4 uses the dedicated Pi profile's default (`fixture/default`).
+    ui.dashboard.key(KeyCode::Esc);
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/model default".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let after_quick_default = ui.render();
+    assert!(
+        !after_quick_default.contains("Quick message · Ctrl-o"),
+        "Quick message closes on `/model default`:\n{after_quick_default}"
+    );
+    let toml_after_default = std::fs::read_to_string(live.config.join("dashboard.toml")).unwrap();
+    assert!(
+        !toml_after_default.contains("openrouter/vendor/sub/id"),
+        "`/model default` clears explicit operator.model from dashboard.toml:\n{toml_after_default}"
+    );
+
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.dashboard
+        .event_action(Event::Paste("fourth turn prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let turn_four = ui.wait_turn_settled(conversation_id);
+    assert_eq!(
+        turn_four.conversation.model,
+        Some(OperatorModel {
+            provider: "fixture".into(),
+            id: "default".into(),
+        }),
+        "Turn 4 delegates to dedicated Pi profile default (`Harness default`)"
+    );
+
+    // 4. Empty dedicated catalog surfaces clear `ovrcr operator setup` guidance while offering Harness default.
+    let mut empty_catalog = Scenario::new();
+    empty_catalog.models(Vec::new());
+    fake.script(&empty_catalog);
+    ui.dashboard.event_action(Event::Paste("/model".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let empty_screen = ui.render();
+    assert!(
+        empty_screen.contains("✓ Harness default") && empty_screen.contains("ovrcr operator setup"),
+        "empty catalog offers Harness default and setup guidance:\n{empty_screen}"
+    );
+}
+
+struct LiveDashboard {
+    stream: std::os::unix::net::UnixStream,
+    dashboard: ovrcr::tui::Dashboard,
+    pending: std::collections::VecDeque<ovrcr::protocol::ClientMessage>,
+    next_probe_id: u64,
+}
+
+impl LiveDashboard {
+    fn connect(live: &Live) -> Self {
+        use ovrcr::protocol::{self, Settings, TerminalSize};
+        use ovrcr::tui::Dashboard;
+        use ratatui::layout::Rect;
+        use std::collections::VecDeque;
+
+        let mut stream = protocol::connect_server(&live.socket).unwrap();
+        let budget = Duration::from_secs(5);
+        stream.set_read_timeout(Some(budget)).unwrap();
+        stream.set_write_timeout(Some(budget)).unwrap();
+        let hierarchy =
+            match protocol::client::request(&mut stream, 910_000, Request::DashboardHello).unwrap()
+            {
+                Response::Hierarchy(hierarchy) => hierarchy,
+                other => panic!("Dashboard handshake: {other:?}"),
+            };
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 160,
+        });
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_area(Rect::new(0, 0, 160, 40));
+        dashboard.install_settings(Settings::default());
+        Self {
+            stream,
+            dashboard,
+            pending: VecDeque::new(),
+            next_probe_id: 910_001,
+        }
+    }
+
+    fn exchange(&mut self, request: Request) -> Response {
+        use ovrcr::protocol::{self, ClientMessage, ServerMessage};
+
+        self.next_probe_id += 1;
+        let id = self.next_probe_id;
+        protocol::write_frame(
+            &mut self.stream,
+            &ClientMessage {
+                request_id: id,
+                request,
+            },
+        )
+        .unwrap();
+        loop {
+            let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+            let matched = match &incoming {
+                ServerMessage::Response {
+                    request_id,
+                    response,
+                } if *request_id == id => Some(response.clone()),
+                _ => None,
+            };
+            self.pending
+                .extend(self.dashboard.handle_server_message(incoming));
+            self.pending.extend(self.dashboard.drain_outbox());
+            if let Some(response) = matched {
+                self.flush();
+                return response;
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        use ovrcr::protocol::{self, ServerMessage};
+
+        for _ in 0..200 {
+            self.pending.extend(self.dashboard.drain_outbox());
+            if self.pending.is_empty() {
+                return;
+            }
+            while let Some(message) = self.pending.pop_front() {
+                let id = message.request_id;
+                protocol::write_frame(&mut self.stream, &message).unwrap();
+                loop {
+                    let incoming: ServerMessage = protocol::read_frame(&mut self.stream).unwrap();
+                    let done = matches!(
+                        &incoming,
+                        ServerMessage::Response { request_id, .. } if *request_id == id
+                    );
+                    self.pending
+                        .extend(self.dashboard.handle_server_message(incoming));
+                    self.pending.extend(self.dashboard.drain_outbox());
+                    if done {
+                        break;
+                    }
+                }
+            }
+        }
+        panic!("Dashboard outbox did not converge");
+    }
+
+    fn pump(&mut self) {
+        use ovrcr::protocol::{self, ServerMessage};
+
+        self.stream
+            .set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        while let Ok(message) = protocol::read_frame::<ServerMessage>(&mut self.stream) {
+            self.pending
+                .extend(self.dashboard.handle_server_message(message));
+        }
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        self.pending.extend(self.dashboard.drain_outbox());
+        if !self.pending.is_empty() {
+            self.flush();
+        }
+    }
+
+    fn wait_history(
+        &mut self,
+        conversation: ovrcr::protocol::OperatorConversationId,
+        predicate: impl Fn(&ovrcr::protocol::OperatorHistory) -> bool,
+    ) -> ovrcr::protocol::OperatorHistory {
+        use ovrcr::protocol::OperatorResponse;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            self.pump();
+            let history = match self.exchange(Request::Operator(OperatorRequest::Read {
+                conversation,
+                after: 0,
+                limit: 100,
+            })) {
+                Response::Operator(OperatorResponse::History(history)) => history,
+                other => panic!("expected history, got {other:?}"),
+            };
+            if predicate(&history) {
+                self.pump();
+                return history;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for history predicate: {history:#?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn render(&mut self) -> String {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard(frame, &self.dashboard))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..40)
+            .map(|y| {
+                (0..160)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[test]
+fn dashboard_slash_new_and_zero_spawn_session_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{ErrorCode, OperatorResponse};
+    use ovrcr::tui::DashboardAction;
+    use std::os::unix::fs::PermissionsExt;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let release_turn_one = live.root.path().join("release-turn-one");
+
+    let models_json = fake.profile.join("models.json");
+    std::fs::write(
+        &models_json,
+        serde_json::to_vec_pretty(&json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "SECRET_DO_NOT_LEAK_487",
+                    "models": [
+                        {
+                            "id": "default",
+                            "name": "Fixture Default",
+                            "contextWindow": 100_000
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&models_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut scenario = Scenario::new();
+    scenario.set("record_tool_history", json!(true));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WaitFile(release_turn_one.clone()),
+            Step::WatchStatus(1),
+            Step::tool("call-1", "read", json!({"path": "README.md"}), "ok"),
+            Step::assistant("Epoch zero reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch complete."),
+            Step::Settle,
+        ],
+        vec![Step::assistant("Epoch one fresh reply."), Step::Settle],
+    ]);
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `/session` from `Ctrl-o` Quick message transitions into full Operator,
+    //    renders empty epoch-0 stats, never leaks `models.json` credentials, and spawns zero Pi processes.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let cold_modal = ui.render();
+    assert!(
+        !cold_modal.contains("Quick message · Ctrl-o")
+            && cold_modal.contains("Operator session · /session")
+            && cold_modal.contains("epoch 0 · pi none")
+            && cold_modal.contains("0 total (in 0 · out 0)")
+            && cold_modal.contains("$0.0000")
+            && cold_modal.contains("none yet")
+            && !cold_modal.contains("SECRET_DO_NOT_LEAK_487"),
+        "cold `/session` modal unexpected:\n{cold_modal}"
+    );
+    assert!(fake.log().is_empty(), "cold `/session` must never spawn Pi");
+    assert_eq!(
+        ui.dashboard.key(KeyCode::Char('q')),
+        DashboardAction::Redraw
+    );
+    assert!(!ui.render().contains("Operator session · /session"));
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Start turn 1 and verify `/new` refuses while the turn is `Running`.
+    ui.dashboard
+        .event_action(Event::Paste("Inspect workspace".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let running_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+    });
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let busy_screen = ui.render();
+    assert!(
+        busy_screen.contains("Cannot start a new Operator session while a turn is running."),
+        "{busy_screen}"
+    );
+    ui.dashboard.ctrl('c');
+    match ui.exchange(Request::Operator(OperatorRequest::NewSession {
+        conversation: conversation_id,
+        expected_run: running_history.conversation.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("running") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict while turn is running, got {other:?}"),
+    }
+
+    // 3. Complete turn 1 under an active `watch_sessions` warm-worker lease and verify `/new` refuses.
+    std::fs::write(&release_turn_one, b"go\n").unwrap();
+    let leased_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let leased_screen = ui.render();
+    assert!(
+        leased_screen.contains(
+            "Cannot start a new Operator session while a watched-session lease or worker is active."
+        ),
+        "{leased_screen}"
+    );
+    ui.dashboard.ctrl('c');
+    match ui.exchange(Request::Operator(OperatorRequest::NewSession {
+        conversation: conversation_id,
+        expected_run: leased_history.conversation.run,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict while watch lease is active, got {other:?}"),
+    }
+
+    // 4. Finish the watched turn on the warm worker (`WatchStatus(0)`) so it retires cleanly,
+    //    and verify zero-spawn `/session` reads the promoted `session.jsonl` + `models.json`
+    //    contextWindow without spawning Pi.
+    let turn_one_id = leased_history
+        .conversation
+        .current_turn
+        .as_ref()
+        .expect("leased turn")
+        .identity
+        .turn
+        .0;
+    let turn_one_checkpoint = fake
+        .profile
+        .join("turns")
+        .join(turn_one_id.to_string())
+        .join("session.jsonl");
+    assert!(
+        turn_one_checkpoint.is_file(),
+        "leased turn checkpoint missing at {}",
+        turn_one_checkpoint.display()
+    );
+    ui.dashboard
+        .event_action(Event::Paste("Finish watch".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let settled_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != turn_one_id && turn.state == OperatorTurnState::Complete
+            })
+            && history.conversation.worker_stopped
+    });
+    let turn_two_id = settled_history
+        .conversation
+        .current_turn
+        .as_ref()
+        .expect("completed turn")
+        .identity
+        .turn
+        .0;
+    let checkpoint_path = fake
+        .profile
+        .join("turns")
+        .join(turn_two_id.to_string())
+        .join("session.jsonl");
+    assert!(
+        !turn_one_checkpoint.exists() && checkpoint_path.is_file(),
+        "expected turn 2 checkpoint promoted and turn 1 superseded: {} / {}",
+        turn_one_checkpoint.display(),
+        checkpoint_path.display()
+    );
+
+    let starts_before_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_before_session, 1);
+
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let populated_modal = ui.render();
+    assert!(
+        populated_modal.contains("Operator session · /session")
+            && populated_modal.contains(&format!("epoch 0 · pi operator-{}", conversation_id.0))
+            && populated_modal.contains("fixture/default")
+            && populated_modal.contains("medium")
+            && populated_modal.contains("2 total (2 completed)")
+            && populated_modal.contains("1 calls · 1 results")
+            && populated_modal.contains("2,500 total (in 1,600 · out 300)")
+            && populated_modal.contains("read 400 · write 200")
+            && populated_modal.contains("$0.0250")
+            && populated_modal.contains("1,250 / 100,000 tokens (1.2%)")
+            && !populated_modal.contains("SECRET_DO_NOT_LEAK_487"),
+        "populated `/session` modal unexpected:\n{populated_modal}"
+    );
+    let starts_after_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(
+        starts_after_session, starts_before_session,
+        "`/session` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // 5. `/new` advances `session_epoch` to 1, clears visible feed + `/copy`, deletes all
+    //    superseded prior-epoch checkpoint files on disk, and preserves prior-epoch SQLite audit rows.
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let reset_screen = ui.render();
+    assert!(
+        !reset_screen.contains("Epoch zero reply.")
+            && !reset_screen.contains("Watch complete.")
+            && reset_screen.contains("Started new Operator session (epoch 1)."),
+        "{reset_screen}"
+    );
+    assert!(
+        !turn_one_checkpoint.exists() && !checkpoint_path.exists(),
+        "superseded prior-epoch checkpoints should be removed: {} / {}",
+        turn_one_checkpoint.display(),
+        checkpoint_path.display()
+    );
+
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        ui.render().contains("No assistant reply to copy yet."),
+        "prior-epoch reply must not remain copyable after `/new`"
+    );
+
+    let registry = Registry::of(&live);
+    assert_eq!(registry.checkpoint(conversation_id.0), None);
+    let db = rusqlite::Connection::open(&registry.path).unwrap();
+    let conv_epoch: i64 = db
+        .query_row(
+            "SELECT session_epoch FROM operator_conversations WHERE id = ?1",
+            [conversation_id.0 as i64],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(conv_epoch, 1);
+    let (prior_turn_epoch, prior_turn_state, prior_msg_count): (i64, String, i64) = db
+        .query_row(
+            "SELECT t.session_epoch, t.state,
+                    (SELECT COUNT(*) FROM operator_messages m WHERE m.turn = t.id)
+               FROM operator_turns t WHERE t.id = ?1",
+            [turn_one_id as i64],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(prior_turn_epoch, 0);
+    assert_eq!(prior_turn_state, "Complete");
+    assert!(
+        prior_msg_count >= 2,
+        "epoch-0 messages must remain preserved"
+    );
+    drop(db);
+
+    // `/session` on the reset epoch reports zeroed stats and `pi none` without spawning Pi.
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let epoch_one_modal = ui.render();
+    assert!(
+        epoch_one_modal.contains("epoch 1 · pi none")
+            && epoch_one_modal.contains("0 total (in 0 · out 0)")
+            && epoch_one_modal.contains("$0.0000")
+            && epoch_one_modal.contains("none yet"),
+        "epoch-1 `/session` modal unexpected:\n{epoch_one_modal}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_before_session,
+        "`/session` after `/new` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+
+    // 6. Submitting a prompt in epoch 1 starts cold with fresh model context (zero `switch_session`).
+    let mut epoch_one_scenario = Scenario::new();
+    epoch_one_scenario.steps(vec![
+        Step::assistant("Epoch one fresh reply."),
+        Step::Settle,
+    ]);
+    fake.script(&epoch_one_scenario);
+    ui.dashboard
+        .event_action(Event::Paste("Fresh epoch one prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let epoch_one_history = ui.wait_history(conversation_id, |history| {
+        history.conversation.session_epoch == 1
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&epoch_one_history, "Epoch one fresh reply."));
+    assert!(
+        !has_assistant(&epoch_one_history, "Epoch zero reply."),
+        "epoch-1 history must not surface epoch-0 messages"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "switch")
+            .count(),
+        0,
+        "epoch-1 cold turn must not switch_session to epoch-0 checkpoint"
+    );
+}
+
+#[test]
+fn dashboard_slash_compact_and_stop_rollback_work_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::OperatorResponse;
+    use ovrcr::tui::DashboardAction;
+    use std::os::unix::fs::PermissionsExt;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let models_json = fake.profile.join("models.json");
+    std::fs::write(
+        &models_json,
+        serde_json::to_vec_pretty(&json!({
+            "providers": {
+                "fixture": {
+                    "apiKey": "SECRET_DO_NOT_LEAK_488",
+                    "models": [
+                        {
+                            "id": "default",
+                            "name": "Fixture Default",
+                            "contextWindow": 100_000
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&models_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut scenario = Scenario::new();
+    scenario.set("compact_modes", json!(["hold", "ok"]));
+    scenario.set("compact_tokens_before", json!(4_200));
+    scenario.set("compact_summary", json!("Compacted context summary."));
+    scenario.set(
+        "assistant_usage",
+        json!({
+            "input": 800,
+            "output": 150,
+            "cacheRead": 200,
+            "cacheWrite": 100,
+            "totalTokens": 1_250,
+            "cost": { "total": 0.0125 }
+        }),
+    );
+    scenario.prompt_steps(vec![
+        vec![
+            Step::WatchStatus(1),
+            Step::assistant("Pre-compact warm reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Post-compact follow-up reply."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&scenario);
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `/compact` before any completed turn refuses without spawning Pi.
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    ui.dashboard.event_action(Event::Paste("/compact".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let cold_refused = ui.render();
+    assert!(
+        cold_refused.contains(
+            "Cannot compact Operator context before the first completed turn in this session."
+        ),
+        "{cold_refused}"
+    );
+    assert!(
+        fake.log().is_empty(),
+        "empty-epoch `/compact` must never spawn Pi"
+    );
+    ui.dashboard.ctrl('c');
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Seed turn 1 under an active `watch_sessions` warm-worker lease (`WatchStatus(1)`).
+    ui.dashboard
+        .event_action(Event::Paste("Seed warm session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let seeded_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.conversation.worker_live
+            && !history.conversation.worker_stopped
+    });
+    let warm_run = seeded_history.conversation.run;
+    let registry = Registry::of(&live);
+    let seed_turn_id = registry
+        .checkpoint(conversation_id.0)
+        .expect("seed checkpoint");
+
+    // 3. Dispatch `/compact cancel me` from `Ctrl-o` Quick message (`compact: "hold"`),
+    //    observe live `"Compacting context…"`, then press `Ctrl-x` (`Stop`) and verify rollback.
+    ui.dashboard.key(KeyCode::Esc);
+    ui.flush();
+    ui.dashboard.ctrl('o');
+    ui.dashboard
+        .event_action(Event::Paste("/compact cancel me".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| {
+                turn.identity.turn.0 != seed_turn_id as u64
+                    && turn.state == OperatorTurnState::Running
+            })
+            && history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionStarted)
+                )
+            })
+    });
+    let running_screen = ui.render();
+    assert!(
+        !running_screen.contains("Quick message · Ctrl-o")
+            && running_screen.contains("Compact context · cancel me")
+            && running_screen.contains("Compacting context…"),
+        "running `/compact` screen unexpected:\n{running_screen}"
+    );
+
+    ui.dashboard.ctrl('x');
+    ui.flush();
+    let rolled_back_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Interrupted)
+            && history.conversation.worker_live
+            && !history.conversation.worker_stopped
+    });
+    assert_eq!(rolled_back_history.conversation.run, warm_run);
+    assert_eq!(
+        registry.checkpoint(conversation_id.0),
+        Some(seed_turn_id),
+        "Stop during `/compact` must preserve pre-compaction checkpoint"
+    );
+    let cancelled_screen = ui.render();
+    assert!(
+        cancelled_screen
+            .contains("Interrupted · compaction cancelled; previous context preserved."),
+        "{cancelled_screen}"
+    );
+
+    // 4. Run `/compact focus on rust tests` (`compact_modes[1] == "ok"`) on the same warm worker.
+    ui.dashboard
+        .event_action(Event::Paste("/compact focus on rust tests".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let compacted_history = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && history.messages.iter().any(|message| {
+                matches!(
+                    message.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary { .. })
+                )
+            })
+    });
+    assert_eq!(compacted_history.conversation.run, warm_run);
+    assert!(
+        compacted_history.conversation.worker_live
+            && !compacted_history.conversation.worker_stopped,
+        "warm watch lease must survive completed `/compact`"
+    );
+    let compacted_turn_id = registry
+        .checkpoint(conversation_id.0)
+        .expect("promoted compacted checkpoint");
+    assert_ne!(compacted_turn_id, seed_turn_id);
+    let receipt_screen = ui.render();
+    assert!(
+        receipt_screen.contains("Compact context · focus on rust tests")
+            && receipt_screen.contains("Compacted from 4,200 tokens")
+            && receipt_screen.contains("Compacted context summary."),
+        "completed `/compact` receipt unexpected:\n{receipt_screen}"
+    );
+
+    // `/copy` still copies the prior assistant reply, never the compaction summary.
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    match ui.dashboard.key(KeyCode::Enter) {
+        DashboardAction::CopyText(text) => assert_eq!(text, "Pre-compact warm reply."),
+        other => panic!("expected CopyText of assistant reply after `/compact`, got {other:?}"),
+    }
+
+    // Zero-spawn `/session` reads the compacted checkpoint cleanly without spawning another Pi.
+    let starts_before_session = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_before_session, 1);
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let session_modal = ui.render();
+    assert!(
+        session_modal.contains("Operator session · /session")
+            && session_modal.contains("checkpoint turn #3")
+            && session_modal.contains("3 total (2 completed)")
+            && session_modal.contains("1,630 total (in 1,100 · out 230)")
+            && session_modal.contains("0 / 100,000 tokens (0.0%)")
+            && !session_modal.contains("SECRET_DO_NOT_LEAK_488"),
+        "compacted `/session` modal unexpected:\n{session_modal}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        1,
+        "`/session` must never spawn Pi"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // 5. Follow-up prompt on the warm worker succeeds on the compacted session and releases the lease.
+    ui.dashboard
+        .event_action(Event::Paste("Finish watch after compact".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let settled_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Post-compact follow-up reply.")
+            && history.conversation.worker_stopped
+    });
+    assert_eq!(settled_history.conversation.run, warm_run);
+
+    // 6. `/new` advances `session_epoch`, after which `/compact` refuses again without spawning Pi.
+    ui.dashboard.event_action(Event::Paste("/new".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.event_action(Event::Paste("/compact".into()));
+    assert_eq!(ui.dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(
+        ui.render().contains(
+            "Cannot compact Operator context before the first completed turn in this session."
+        ),
+        "post-`/new` `/compact` must refuse cleanly"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        1,
+        "post-`/new` refused `/compact` must not spawn Pi"
+    );
+}
+
+#[test]
+fn dashboard_slash_tree_rewinds_branches_switches_and_restores_cold_leaf_end_to_end() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::{ErrorCode, OperatorResponse};
+    use ovrcr::tui::DashboardAction;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let release_turn_four = live.root.path().join("release-turn-four");
+
+    let mut s1 = Scenario::new();
+    s1.steps(vec![Step::assistant("Root reply one."), Step::Settle]);
+    fake.script(&s1);
+
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+
+    // 1. Cold `Ctrl-o` Quick message `/tree` transitions into full Operator and reports empty state
+    //    without spawning `pi`.
+    ui.dashboard.ctrl('o');
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let cold_tree = ui.render();
+    assert!(
+        !cold_tree.contains("Quick message · Ctrl-o")
+            && cold_tree.contains("Operator tree · /tree")
+            && cold_tree.contains("No turns in this Operator session yet."),
+        "cold `/tree` unexpected:\n{cold_tree}"
+    );
+    assert!(fake.log().is_empty(), "cold `/tree` must never spawn Pi");
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 2. Run Turn 1 (`Seed root turn`) and Turn 2 (`Branch alpha prompt`).
+    ui.dashboard
+        .event_action(Event::Paste("Seed root turn".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Root reply one.") && history.conversation.worker_stopped
+    });
+
+    let mut s2 = Scenario::new();
+    s2.steps(vec![Step::assistant("Branch alpha reply."), Step::Settle]);
+    fake.script(&s2);
+
+    ui.dashboard
+        .event_action(Event::Paste("Branch alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let alpha_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Branch alpha reply.") && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&alpha_history, "Root reply one."));
+    assert!(has_assistant(&alpha_history, "Branch alpha reply."));
+
+    let starts_after_alpha = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_after_alpha, 2);
+
+    // 3. Open `/tree` (zero Pi spawns!), verify unwrapped user prompts, select `Branch alpha prompt`
+    //    (`Up` from active leaf `Branch alpha reply.`), and press `Enter` to rewind!
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let linear_tree = ui.render();
+    assert!(
+        linear_tree.contains("● user: Seed root turn")
+            && linear_tree.contains("● assistant: Root reply one.")
+            && linear_tree.contains("● user: Branch alpha prompt")
+            && linear_tree.contains("● assistant: Branch alpha reply. ← active")
+            && !linear_tree.contains("Captured OVRCR context"),
+        "expected clean unwrapped prompts in `/tree`:\n{linear_tree}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_alpha,
+        "`/tree` inspection must never spawn Pi"
+    );
+
+    ui.dashboard.key(KeyCode::Up);
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(
+        ui.render().contains("Summarize branch? · /tree"),
+        "leaving Branch A tip must offer Summarize branch? modal"
+    );
+    // Confirm default `No summary` choice.
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_alpha,
+        "zero-token `/tree` rewind must never spawn Pi"
+    );
+
+    let rewound_screen = ui.render();
+    assert!(
+        !rewound_screen.contains("Operator tree · /tree")
+            && rewound_screen.contains("Root reply one.")
+            && !rewound_screen.contains("Branch alpha reply.")
+            && rewound_screen.contains("> Branch alpha prompt▏"),
+        "user rewind must project Turn 1 feed and restore unwrapped prompt to composer:\n{rewound_screen}"
+    );
+
+    // `/copy` follows the rewound active branch (`Root reply one.`), not `Branch alpha reply.`.
+    ui.dashboard.ctrl('c');
+    ui.dashboard.event_action(Event::Paste("/copy".into()));
+    match ui.dashboard.key(KeyCode::Enter) {
+        DashboardAction::CopyText(text) => assert_eq!(text, "Root reply one."),
+        other => panic!("expected CopyText of rewound branch tip, got {other:?}"),
+    }
+
+    // 4. Submit Turn 3 (`Branch beta prompt`) on the rewound branch: cold worker restores exact leaf
+    //    via `/ovrcr_tree_control` (`summarize: false`) before prompting, creating sibling Branch B!
+    let mut s3 = Scenario::new();
+    s3.steps(vec![Step::assistant("Branch beta reply."), Step::Settle]);
+    fake.script(&s3);
+
+    ui.dashboard
+        .event_action(Event::Paste("Branch beta prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let beta_history = ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Branch beta reply.") && history.conversation.worker_stopped
+    });
+    assert!(has_assistant(&beta_history, "Root reply one."));
+    assert!(has_assistant(&beta_history, "Branch beta reply."));
+    assert!(
+        !has_assistant(&beta_history, "Branch alpha reply."),
+        "active Branch B feed must exclude sibling Branch A"
+    );
+    assert!(
+        fake.log()
+            .iter()
+            .any(|entry| { entry["event"] == "tree_control" && entry["summarize"] == false }),
+        "expected cold worker to execute authorized tree_control leaf restoration: {:?}",
+        fake.log()
+    );
+
+    // 5. Open `/tree` and verify both diverging branches (`├─` / `└─` / `│`) are preserved;
+    //    switch to Branch A (`Branch alpha reply.`), inspect `/session` branch vs epoch counts,
+    //    then switch back to Branch B (`Branch beta reply.`) — all with zero Pi spawns!
+    let starts_after_beta = fake
+        .log()
+        .iter()
+        .filter(|entry| entry["event"] == "start")
+        .count();
+    assert_eq!(starts_after_beta, 3);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let branched_tree = ui.render();
+    for expected in [
+        "● user: Seed root turn",
+        "● assistant: Root reply one.",
+        "├─   user: Branch alpha prompt",
+        "│    assistant: Branch alpha reply.",
+        "└─ ● user: Branch beta prompt",
+        "● assistant: Branch beta reply. ← active",
+    ] {
+        assert!(
+            branched_tree.contains(expected),
+            "expected `{expected}` in branched `/tree`:\n{branched_tree}"
+        );
+    }
+
+    ui.dashboard
+        .event_action(Event::Paste("alpha assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let on_alpha = ui.render();
+    assert!(
+        on_alpha.contains("Branch alpha reply.")
+            && !on_alpha.contains("Branch beta reply.")
+            && on_alpha.contains("> ▏"),
+        "switching to assistant leaf `Branch alpha reply.` must update feed with empty composer:\n{on_alpha}"
+    );
+
+    ui.dashboard.event_action(Event::Paste("/session".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let session_on_alpha = ui.render();
+    assert!(
+        session_on_alpha.contains("2 on branch · 3 total (3 completed)"),
+        "expected active-branch vs epoch turn counts in `/session`:\n{session_on_alpha}"
+    );
+    assert_eq!(ui.dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+
+    // Switch back to Branch B (`Branch beta reply.`).
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard
+        .event_action(Event::Paste("beta assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let back_on_beta = ui.render();
+    assert!(
+        back_on_beta.contains("Branch beta reply.")
+            && !back_on_beta.contains("Branch alpha reply."),
+        "switching back to Branch B must restore Branch B feed:\n{back_on_beta}"
+    );
+    assert_eq!(
+        fake.log()
+            .iter()
+            .filter(|entry| entry["event"] == "start")
+            .count(),
+        starts_after_beta,
+        "switching back and forth across `/tree` branches must spawn zero Pi processes"
+    );
+
+    // 6. Start Turn 4 (held mid-flight) -> read-only `/tree` works while `Running`, whereas
+    //    branch navigation refuses cleanly while `Running` AND while `watch_sessions` lease is active!
+    let mut s4 = Scenario::new();
+    s4.prompt_steps(vec![
+        vec![
+            Step::WaitFile(release_turn_four.clone()),
+            Step::WatchStatus(1),
+            Step::assistant("Watched leaf reply."),
+            Step::Settle,
+        ],
+        vec![
+            Step::WatchStatus(0),
+            Step::assistant("Watch released."),
+            Step::Settle,
+        ],
+    ]);
+    fake.script(&s4);
+
+    ui.dashboard
+        .event_action(Event::Paste("Start watched turn".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    let running = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Running)
+    });
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert!(ui.render().contains("Branch alpha reply."));
+    ui.dashboard
+        .event_action(Event::Paste("alpha assistant".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    assert!(
+        ui.render()
+            .contains("Cannot switch Operator tree branch while a turn is running."),
+    );
+    ui.dashboard.key(KeyCode::Esc);
+
+    let tree_resp = match ui.exchange(Request::Operator(OperatorRequest::Tree {
+        conversation: conversation_id,
+    })) {
+        Response::Operator(OperatorResponse::Tree(tree)) => tree,
+        other => panic!("expected Tree response while running, got {other:?}"),
+    };
+    let alpha_id = tree_resp
+        .entries
+        .iter()
+        .find(|e| e.preview.contains("Branch alpha reply."))
+        .expect("alpha entry")
+        .id
+        .clone();
+    match ui.exchange(Request::Operator(OperatorRequest::NavigateTree {
+        conversation: conversation_id,
+        expected_run: running.conversation.run,
+        target_entry_id: alpha_id.clone(),
+        summarize: None,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        } => {}
+        other => panic!("expected Conflict navigating tree while Running, got {other:?}"),
+    }
+
+    // Release Turn 4 into active `watch_sessions` warm lease -> navigation still refuses!
+    std::fs::write(&release_turn_four, b"go\n").unwrap();
+    let leased = ui.wait_history(conversation_id, |history| {
+        history
+            .conversation
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.state == OperatorTurnState::Complete)
+            && !history.conversation.worker_stopped
+    });
+    match ui.exchange(Request::Operator(OperatorRequest::NavigateTree {
+        conversation: conversation_id,
+        expected_run: leased.conversation.run,
+        target_entry_id: alpha_id,
+        summarize: None,
+    })) {
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } => assert!(
+            message.contains("lease") || message.contains("active"),
+            "{message}"
+        ),
+        other => panic!("expected Conflict navigating tree while leased, got {other:?}"),
+    }
+
+    // Finish the watch lease cleanly.
+    ui.dashboard
+        .event_action(Event::Paste("Release watch".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Watch released.") && history.conversation.worker_stopped
+    });
+}
+
+#[test]
+fn dashboard_slash_tree_summarize_branch_supports_custom_prompt_user_rewind_and_stop_rollback() {
+    use crossterm::event::{Event, KeyCode};
+    use ovrcr::protocol::OperatorResponse;
+
+    let live = Live::idle().bounded();
+    let fake = FakePi::install(&live.config, live.root.path());
+    let summary_ready = live.root.path().join("summary-ready");
+    let summary_release = live.root.path().join("summary-release");
+
+    let mut s1 = Scenario::new();
+    s1.steps(vec![Step::assistant("Root answer."), Step::Settle]);
+    fake.script(&s1);
+
+    live.start_binary_env(&[fake_pi::executable_env(&fake)]);
+    let mut ui = LiveDashboard::connect(&live);
+    ui.dashboard.key(KeyCode::Char('o'));
+    ui.flush();
+    let conversation_id = match ui.exchange(Request::Operator(OperatorRequest::Current)) {
+        Response::Operator(OperatorResponse::Current(Some(summary))) => summary.id,
+        other => panic!("expected current conversation, got {other:?}"),
+    };
+
+    // 1. Seed Turn 1 (`Root prompt`) and Turn 2 (`Branch alpha prompt`).
+    ui.dashboard
+        .event_action(Event::Paste("Root prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Root answer.") && history.conversation.worker_stopped
+    });
+
+    let mut s2 = Scenario::new();
+    s2.steps(vec![Step::assistant("Alpha exploration."), Step::Settle]);
+    fake.script(&s2);
+    ui.dashboard
+        .event_action(Event::Paste("Branch alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Alpha exploration.") && history.conversation.worker_stopped
+    });
+
+    // 2. Open `/tree`: selecting the current leaf (`Alpha exploration.`) does NOT prompt
+    //    `"Summarize branch?"`.
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    assert!(
+        !ui.render().contains("Summarize branch? · /tree")
+            && !ui.render().contains("Operator tree · /tree"),
+        "selecting current leaf must close `/tree` without prompting Summarize branch?"
+    );
+
+    // 3. Reopen `/tree`, filter + search for `Branch alpha prompt`, verify `Esc` back-navigation
+    //    from Custom prompt -> Summarize branch? -> `/tree` preserves filter/search/selection,
+    //    then submit `Summarize with custom prompt` onto user entry `Branch alpha prompt`!
+    let mut s_sum = Scenario::new();
+    s_sum.set("tree_summary_mode", json!("ok"));
+    s_sum.set(
+        "tree_summary_text",
+        json!("## Goal\nCaptured alpha exploration findings."),
+    );
+    fake.script(&s_sum);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    ui.dashboard.key(KeyCode::Tab);
+    ui.dashboard.key(KeyCode::Tab); // Filter: user-only
+    ui.dashboard
+        .event_action(Event::Paste("alpha prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    let confirm_screen = ui.render();
+    assert!(
+        confirm_screen.contains("Summarize branch? · /tree")
+            && confirm_screen.contains("No summary")
+            && confirm_screen.contains("Summarize")
+            && confirm_screen.contains("Summarize with custom prompt"),
+        "expected Summarize branch? choices:\n{confirm_screen}"
+    );
+    // Navigate to `Summarize with custom prompt`, open it, type draft, then Esc twice back to `/tree`.
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch · Custom prompt"));
+    ui.dashboard
+        .event_action(Event::Paste("temporary draft".into()));
+    ui.dashboard.key(KeyCode::Esc);
+    assert!(
+        ui.render().contains("Summarize branch? · /tree"),
+        "Esc in custom prompt returns to Summarize branch?"
+    );
+    ui.dashboard.key(KeyCode::Esc);
+    let back_to_tree = ui.render();
+    assert!(
+        back_to_tree.contains("Operator tree · /tree")
+            && back_to_tree.contains("filter: user-only")
+            && back_to_tree.contains("alpha prompt")
+            && back_to_tree.contains("Branch alpha prompt"),
+        "Esc from Summarize branch? must preserve `/tree` filter, query, and selection:\n{back_to_tree}"
+    );
+
+    // Now confirm `Summarize with custom prompt` (`preserve alpha hypothesis`) onto `Branch alpha prompt`.
+    ui.dashboard.key(KeyCode::Enter);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Down);
+    ui.dashboard.key(KeyCode::Enter);
+    ui.dashboard
+        .event_action(Event::Paste("preserve alpha hypothesis".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+
+    let summarized_history = ui.wait_history(conversation_id, |history| {
+        history.conversation.worker_stopped
+            && history.messages.iter().any(|msg| {
+                matches!(
+                    &msg.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary.contains("Captured alpha exploration findings.")
+                )
+            })
+    });
+    assert!(
+        fake.log().iter().any(|entry| {
+            entry["event"] == "tree_control"
+                && entry["summarize"] == true
+                && entry["customInstructions"] == "preserve alpha hypothesis"
+        }),
+        "expected worker to pass customInstructions to authorized tree_control: {:?}",
+        fake.log()
+    );
+    // Drain server notifications + automatic history reload so TUI restores user prompt to composer.
+    for _ in 0..4 {
+        ui.pump();
+    }
+    let after_summary = ui.render();
+    assert!(
+        after_summary.contains("Captured alpha exploration findings.")
+            && after_summary.contains("Branch summary recorded")
+            && after_summary.contains("▌ ✓ Root prompt")
+            && !after_summary.contains("▌ ✓ Branch alpha prompt")
+            && !after_summary.contains("Alpha exploration.")
+            && after_summary.contains("> Branch alpha prompt▏"),
+        "branch summary onto user entry must show summary receipt, project target branch, and restore unwrapped prompt to composer:\n{after_summary}"
+    );
+
+    // 4. Submit the restored composer prompt (edited to `Branch beta prompt`) to advance past the
+    //    branch_summary entry, then start a held `Summarize` switch back to `Alpha exploration.`
+    //    and cancel it via foreground `Stop` (`Esc`) -> active Branch B and checkpoint survive!
+    let mut s3 = Scenario::new();
+    s3.steps(vec![Step::assistant("Beta branch reply."), Step::Settle]);
+    fake.script(&s3);
+    ui.dashboard.ctrl('c');
+    ui.dashboard
+        .event_action(Event::Paste("Branch beta prompt".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.wait_history(conversation_id, |history| {
+        has_assistant(history, "Beta branch reply.") && history.conversation.worker_stopped
+    });
+    let checkpoint_before_stop =
+        operator_harness::Registry::of(&live).checkpoint(conversation_id.0);
+
+    let mut s_hold = Scenario::new();
+    s_hold.set("tree_summary_mode", json!("hold"));
+    s_hold.set(
+        "tree_summary_ready_file",
+        json!(summary_ready.display().to_string()),
+    );
+    s_hold.set(
+        "tree_summary_release_file",
+        json!(summary_release.display().to_string()),
+    );
+    fake.script(&s_hold);
+
+    ui.dashboard.event_action(Event::Paste("/tree".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+    ui.pump();
+    let tree_with_summary = ui.render();
+    assert!(
+        tree_with_summary.contains("[branch summary]:"),
+        "expected persisted branch_summary node in `/tree`:\n{tree_with_summary}"
+    );
+    ui.dashboard
+        .event_action(Event::Paste("Alpha exploration".into()));
+    ui.dashboard.key(KeyCode::Enter);
+    assert!(ui.render().contains("Summarize branch? · /tree"));
+    ui.dashboard.key(KeyCode::Down); // `Summarize`
+    ui.dashboard.key(KeyCode::Enter);
+    ui.flush();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !summary_ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "held branch summary never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    ui.pump();
+    let running_summary = ui.render();
+    assert!(
+        running_summary.contains("Summarizing branch"),
+        "expected live Summarizing branch activity label:\n{running_summary}"
+    );
+
+    // Foreground `Ctrl-x` stops the in-flight branch summarization and preserves Branch B!
+    ui.dashboard.ctrl('x');
+    ui.flush();
+    let aborted = ui.wait_history(conversation_id, |history| {
+        history.conversation.worker_stopped
+            && history
+                .conversation
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.state == OperatorTurnState::Interrupted)
+    });
+    assert!(has_assistant(&aborted, "Beta branch reply."));
+    assert!(!has_assistant(&aborted, "Alpha exploration."));
+    assert_eq!(
+        operator_harness::Registry::of(&live).checkpoint(conversation_id.0),
+        checkpoint_before_stop,
+        "aborted branch summarization must preserve pre-switch session.jsonl checkpoint"
+    );
+    let _ = summarized_history;
+}
+
 #[cfg(feature = "acceptance-diagnostics")]
 mod installed_pi {
     use super::{
@@ -2911,6 +5059,23 @@ mod installed_pi {
     ) -> operator_provider::Handler {
         let counters: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
         Box::new(move |body: &Value, _index: usize| {
+            if operator_provider::is_branch_summary_request(body) {
+                let user = operator_provider::last_user_text(body);
+                let focus = user
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Additional focus: "))
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty());
+                let summary = match focus {
+                    Some(focus) => format!(
+                        "## Goal\nSummarized abandoned branch ({focus}).\n\n## Key Decisions\n- Preserved branch context before switching."
+                    ),
+                    None => String::from(
+                        "## Goal\nSummarized abandoned branch before switching.\n\n## Key Decisions\n- Preserved branch context on the target branch.",
+                    ),
+                };
+                return Plan::text(&summary);
+            }
             if operator_provider::is_compaction_request(body) {
                 let plan = Plan::text("FIXTURE_COMPACTION_SUMMARY");
                 return if mode.hold_compaction {
@@ -2942,6 +5107,9 @@ mod installed_pi {
                 "REQUEST_THINKING_LONG_HELD",
                 "COMPACT_ONE",
                 "COMPACT_TWO",
+                "GUI_SLASH_SEED",
+                "GUI_BRANCH_ALPHA",
+                "GUI_BRANCH_BETA",
             ]
             .into_iter()
             .find(|marker| user.contains(marker))
@@ -3208,6 +5376,15 @@ mod installed_pi {
                 }
                 ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
                 ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
+                ("GUI_SLASH_SEED", _) => Plan::text(
+                    "Seeded root turn for Operator slash commands.\n\n- Protocol version: `88`\n- Registry schema: `35`",
+                ),
+                ("GUI_BRANCH_ALPHA", _) => Plan::text(
+                    "Alpha branch exploration: verified `/model`, `/thinking`, `/session`, and `/compact` checkpoints.",
+                ),
+                ("GUI_BRANCH_BETA", _) => Plan::text(
+                    "Beta branch exploration: verified `/tree` active-branch switching and branch summarization.",
+                ),
                 _ => Plan::text("FIXTURE_FOLLOWUP_DONE"),
             }
         })
@@ -4473,6 +6650,139 @@ PY"#
         );
     }
 
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_tree_branch_summarization_and_slash_commands() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let workspace = live.root.path().join("operator-target");
+        std::fs::create_dir(&workspace).unwrap();
+        let marker = workspace.join("slash-marker.txt");
+        let background_pid = workspace.join("slash-background.pid");
+        let provider = Provider::start(scenario_handler(workspace.clone(), marker, background_pid));
+        provider.seed_profile_with(
+            &live.config,
+            200_000,
+            Some(json!({"enabled": false, "reserveTokens": 1024, "keepRecentTokens": 1})),
+        );
+        live.start_binary_env(&launcher_environment(&pi));
+
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let opened = driver.conversation();
+
+        // 1. `/model` discovers both synthetic loopback models (`operator-fixture` + `operator-fixture-fast`).
+        driver.submit("/model");
+        let model_screen = driver.screen();
+        assert!(
+            model_screen.contains("Harness default")
+                && model_screen.contains("fixture/operator-fixture")
+                && model_screen.contains("fixture/operator-fixture-fast"),
+            "installed pi `/model` picker must discover loopback catalog:\n{model_screen}"
+        );
+        driver.dashboard.key(KeyCode::Esc);
+
+        // 2. Seed Turn 1 (`GUI_SLASH_SEED`) and Turn 2 (`GUI_BRANCH_ALPHA`).
+        driver.submit("GUI_SLASH_SEED");
+        let seed_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&seed_history).contains("Seeded root turn"));
+        wait_stopped(&mut driver, opened.id);
+
+        driver.submit("GUI_BRANCH_ALPHA");
+        let alpha_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&alpha_history).contains("Alpha branch exploration"));
+        wait_stopped(&mut driver, opened.id);
+
+        // 3. `/compact` runs real manual compaction against installed `pi 0.87.1`.
+        driver.submit("/compact focus on protocol 88");
+        let compacted = driver.wait_history(opened.id, |history| {
+            history.conversation.worker_stopped
+                && history.messages.iter().any(|msg| {
+                    matches!(
+                        &msg.content,
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::CompactionSummary { summary, .. })
+                            if summary.contains("FIXTURE_COMPACTION_SUMMARY")
+                    )
+                })
+        });
+        for _ in 0..4 {
+            driver.pump();
+        }
+        let compacted_screen = driver.screen();
+        assert!(
+            compacted_screen.contains("Compacted from")
+                && compacted_screen.contains("FIXTURE_COMPACTION_SUMMARY"),
+            "expected `/compact` receipt in installed-pi Dashboard:\n{compacted_screen}"
+        );
+        let _ = compacted;
+
+        // 4. Open `/tree`, select user node `GUI_BRANCH_ALPHA`, choose `Summarize with custom prompt`,
+        //    and verify real `pi 0.87.1` `ctx.navigateTree(..., { summarize: true, customInstructions })`
+        //    appends a `branch_summary` entry, updates the feed, and restores `GUI_BRANCH_ALPHA` into the composer!
+        driver.submit("/tree");
+        let tree_screen = driver.screen();
+        assert!(
+            tree_screen.contains("GUI_SLASH_SEED")
+                && tree_screen.contains("GUI_BRANCH_ALPHA")
+                && tree_screen.contains("[compaction]:"),
+            "expected real session.jsonl entries in `/tree`:\n{tree_screen}"
+        );
+        driver.dashboard.key(KeyCode::Tab);
+        driver.dashboard.key(KeyCode::Tab);
+        driver
+            .dashboard
+            .event_action(Event::Paste("GUI_BRANCH_ALPHA".into()));
+        driver.dashboard.key(KeyCode::Enter);
+        assert!(
+            driver.screen().contains("Summarize branch? · /tree"),
+            "expected Summarize branch? modal on installed pi"
+        );
+        driver.dashboard.key(KeyCode::Down);
+        driver.dashboard.key(KeyCode::Down);
+        driver.dashboard.key(KeyCode::Enter);
+        driver
+            .dashboard
+            .event_action(Event::Paste("keep protocol notes".into()));
+        driver.dashboard.key(KeyCode::Enter);
+        driver.flush();
+
+        let summarized = driver.wait_history(opened.id, |history| {
+            history.conversation.worker_stopped && history.messages.iter().any(|msg| {
+                matches!(
+                    &msg.content,
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::BranchSummary { summary })
+                        if summary.contains("Summarized abandoned branch (keep protocol notes).")
+                )
+            })
+        });
+        for _ in 0..4 {
+            driver.pump();
+        }
+        let after_summary = driver.screen();
+        assert!(
+            after_summary.contains("Branch summary recorded")
+                && after_summary.contains("Summarized abandoned branch (keep protocol notes).")
+                && after_summary.contains("> GUI_BRANCH_ALPHA▏"),
+            "installed pi branch summary must render receipt and restore user prompt to composer:\n{after_summary}"
+        );
+
+        // 5. Submit Turn 4 (`GUI_BRANCH_BETA`) on the new summarized branch and verify the provider
+        //    receives `pi`'s native `<branch_summary>` message in the next model request!
+        driver.dashboard.ctrl('c');
+        driver.submit("GUI_BRANCH_BETA");
+        let beta_history = wait_terminal(&mut driver, opened.id, &provider, &live);
+        assert!(delta_text(&beta_history).contains("Beta branch exploration"));
+        wait_stopped(&mut driver, opened.id);
+
+        let last_request = provider.requests().pop().expect("beta request");
+        let payload = operator_provider::non_system_text(&last_request.body);
+        assert!(
+            payload.contains("Summarized abandoned branch (keep protocol notes)."),
+            "installed pi must include the branch_summary in subsequent branch context:\n{payload}"
+        );
+        let _ = summarized;
+    }
+
     // ------------------------------------------------------------ GUI provider
 
     /// The GUI smoke's scripted provider. It refuses anything but a
@@ -4508,8 +6818,10 @@ PY"#
             .is_some_and(|value| !value.is_empty());
         let coordinator = std::env::var_os("OVRCR_OPERATOR_GUI_COORDINATOR")
             .is_some_and(|value| !value.is_empty());
+        let slash =
+            std::env::var_os("OVRCR_OPERATOR_GUI_SLASH").is_some_and(|value| !value.is_empty());
         assert!(
-            !(compaction && coordinator),
+            usize::from(compaction) + usize::from(coordinator) + usize::from(slash) <= 1,
             "run one GUI provider mode at a time"
         );
         let provider = Provider::start(scenario_handler_mode(
@@ -4527,6 +6839,12 @@ PY"#
                 &root,
                 COMPACTION_CONTEXT_WINDOW,
                 Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
+            );
+        } else if slash {
+            provider.seed_profile_with(
+                &root,
+                200_000,
+                Some(json!({"enabled": false, "reserveTokens": 1024, "keepRecentTokens": 1})),
             );
         } else {
             provider.seed_profile(&root);

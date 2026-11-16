@@ -483,6 +483,7 @@ impl InvocationLease {
     fn operator_batch(
         &mut self,
         batch: ovrcr_protocol::OperatorEventBatch,
+        leased: Option<bool>,
         deadline: Instant,
     ) -> Result<Response> {
         self.next_request += 1;
@@ -492,6 +493,7 @@ impl InvocationLease {
             Request::OperatorExchange(ovrcr_protocol::OperatorExchange {
                 auth: self.auth.clone(),
                 batch,
+                leased,
             }),
             deadline,
         )

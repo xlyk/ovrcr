@@ -67,6 +67,7 @@ fn conversation() -> OperatorConversationSummary {
     OperatorConversationSummary {
         id: OperatorConversationId(7),
         session: SessionId(99),
+        session_epoch: 0,
         run: SessionRunId(1),
         model: None,
         title: "Operator".into(),
