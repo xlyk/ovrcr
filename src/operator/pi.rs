@@ -61,6 +61,11 @@ const BUNDLED_SKILLS: &[BundledSkill] = &[
         document: include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md"),
         assets: &[],
     },
+    BundledSkill {
+        name: "ovrcr-session-care",
+        document: include_str!("../../pi/skills/ovrcr-session-care/SKILL.md"),
+        assets: &[],
+    },
 ];
 
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
@@ -1079,6 +1084,12 @@ mod tests {
                     .join("ovrcr-coordinator/SKILL.md")
                     .to_str()
                     .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-session-care/SKILL.md")
+                    .to_str()
+                    .unwrap(),
                 "--no-prompt-templates",
                 "--no-themes",
                 "--no-context-files",
@@ -1123,7 +1134,16 @@ mod tests {
             fs::read_to_string(&reference).unwrap(),
             include_str!("../../pi/skills/ovrcr-status/references/inventory.md")
         );
-        for asset in [&status, &reference] {
+        let care = paths.profile.join("ovrcr-session-care/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&care).unwrap(),
+            include_str!("../../pi/skills/ovrcr-session-care/SKILL.md")
+        );
+        assert!(
+            !system_prompt.contains(include_str!("../../pi/skills/ovrcr-session-care/SKILL.md")),
+            "session care is read on demand"
+        );
+        for asset in [&status, &reference, &care] {
             let metadata = fs::symlink_metadata(asset).unwrap();
             assert!(metadata.is_file());
             assert_eq!(metadata.mode() & 0o777, 0o600);
