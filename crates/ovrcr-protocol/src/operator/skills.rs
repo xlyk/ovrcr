@@ -28,6 +28,12 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         assets: &[],
     },
     BundledSkill {
+        revision: 1,
+        name: "ovrcr-workspaces",
+        document: include_str!("../../../../pi/skills/ovrcr-workspaces/SKILL.md"),
+        assets: &[],
+    },
+    BundledSkill {
         revision: 2,
         name: "ovrcr-session-care",
         document: include_str!("../../../../pi/skills/ovrcr-session-care/SKILL.md"),

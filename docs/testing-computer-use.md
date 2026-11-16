@@ -480,6 +480,35 @@ requests must remain unchanged. For narrower scope in a fixture with Project
 supports these exact phrases, not arbitrary rephrasings. No catalog picker or
 explicit skill command is part of this status-only walkthrough.
 
+For Workspace provisioning, use `OVRCR_OPERATOR_GUI_WORKSPACES=1` with the
+same private HOME ownership marker required by the coordinator helper. This seeds
+only the private Operator and Workspace Pi profiles; it creates no sessions.
+Prepare a task-owned Git repository at `$HOME/repo` on `main` and an empty instance
+(no registered Projects), preserving the GUI fixture's ownership receipts. Keep
+`OVRCR_PI_EXECUTABLE` pointed at installed Pi in the GUI launch environment.
+The provider recognizes these exact marker prefixes followed by the stated request:
+
+1. `WORKSPACES_inspect: Inspect $HOME/repo only; do not register or launch.`
+   Expand the shipped `ovrcr-workspaces/SKILL.md` read and CLI receipts. Confirm no
+   Project or Workspace session was added.
+2. `WORKSPACES_provision: Register $HOME/repo as fixture with $HOME/fixture-workspaces;
+   create feature/setup from main, preserving automatic-local-terminal policy.`
+   Observe the created Workspace and exact path/branch in the reply and hierarchy.
+3. `WORKSPACES_reuse: Reuse fixture's feature/setup without creating or launching.`
+   Send from Quick message and confirm the same Workspace id/path survives.
+4. `WORKSPACES_terminal: Open requested-terminal in feature/setup; print its cwd
+   then open /bin/sh.` Send again requesting reuse; verify the same session/run.
+5. `WORKSPACES_agent: Launch managed Pi in feature/setup; after its composer is
+   visible send the readiness probe and verify its response.` Confirm the Agent's
+   actual PTY shows `WORKSPACES_AGENT_RESPONSE`, not just command echo. Keep the
+   provider request and CLI inventory evidence alongside screenshots/AX.
+
+The helper also accepts `WORKSPACES_missing-base: Show the missing-base CLI refusal
+and ask me for a base.` No resource may be created. The deterministic ambiguous,
+detached, off-default Root and unanswered trust-screen cases are in the installed
+headless gate; native evidence must be collected separately, not inferred from it.
+Stop only owned fixture resources at cleanup, retaining original process receipts.
+
 For leased multi-session coordination, use the helper's
 `OVRCR_OPERATOR_GUI_COORDINATOR=1` scenario with a fresh private HOME and matching
 ownership marker. The [setup and exact request sequence](../research/operator-async-delegation-465/470-evidence.md#native-helper-instructions)

@@ -125,8 +125,8 @@ Existing OVRCR CLI guards still apply.
 The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
-without a checkout. The bundled `ovrcr-status`, `ovrcr-coordinator` and
-`ovrcr-session-care` skills,
+without a checkout. The bundled `ovrcr-status`, `ovrcr-workspaces`,
+`ovrcr-coordinator` and `ovrcr-session-care` skills,
 including supporting references, are materialized in the private Operator
 profile and advertised to Pi by their exact `--skill` paths. Pi reads the relevant
 instructions on demand. Automatic discovery stays off, so personal, Project and
@@ -149,6 +149,28 @@ and Terminals against fifty slots; Operator has a separate slot.
 Status starts with inventory metadata. It reads session content only when the
 requested inspection needs it, preserves Unread and Input requests, and does not
 acknowledge ownership, create or control resources, or start periodic checks.
+
+## Prepare a Project Workspace
+
+Ask “Inspect Project example without creating anything” or “Create feature/auth
+in example from main and open a managed Pi Agent.” The bundled
+`ovrcr-workspaces` procedure inspects current registrations and checkouts first,
+reuses suitable Workspaces and sessions, and registers a repository only when
+requested. A new branch needs your explicit base. Ambiguous branch labels and
+detached checkouts prompt for an exact path rather than choosing a checkout.
+
+Registration keeps Root's current branch. Root remains protected from removal
+and delegated feature edits; new Root launches are refused off the repository's
+default branch. Provisioning preserves your `automatic_local_terminals` setting:
+any automatic `local` shell is distinct from an explicitly requested launch.
+
+The result identifies the Project, Workspace id/path/branch and session id/run,
+and distinguishes reuse, creation, verified readiness and blockers. An Agent's
+label, process creation or successful input write does not prove readiness.
+Operator inspects its actual composer and provider observations, surfaces
+unexpected setup/trust/approval questions without answering, and sends tasks
+only when requested. Partial effects are reconciled before any retry; resources
+stay available afterward.
 
 ## Diagnose, control or recover a session
 

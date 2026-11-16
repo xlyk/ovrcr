@@ -39,14 +39,14 @@ Done when the JSON names the repo. Register a repository only when the user aske
 "$OVRCR_EXECUTABLE" project add NAME /absolute/repo --workspace-root /absolute/worktrees
 ```
 
-Registration creates the protected root workspace on the detected default branch. Whether it also starts a `local` shell follows `automatic_local_terminals` in `dashboard.toml` (default **default branch only**).
+Registration records the protected Root workspace on its current checkout branch; it never switches Git branches. New Root launches are blocked while it is off the repository's default branch. On that default branch, an initial `local` shell follows `automatic_local_terminals` in `dashboard.toml` (default **default branch only**).
 
 ## 2. Create a workspace
 
-A new branch needs `--base`. Read the repository's default branch and pass that name. An existing local branch uses `--branch` and takes no `--base`. The workspace's name is the branch, slashes included.
+Inspect existing Workspaces first and reuse a suitable checkout. A new branch needs an explicitly chosen `--base`; ask the user if it is missing rather than guessing the default branch. An existing local branch uses `--branch` and takes no `--base`. The workspace's name is its current branch, slashes included. Ambiguous or detached targets need the user's exact checkout choice; use `workspace get --project NAME --path PATH` and `terminal create --project NAME --path PATH` after resolution.
 
 ```sh
-"$OVRCR_EXECUTABLE" workspace create --project NAME --new-branch temp/topic --base DEFAULT --json
+"$OVRCR_EXECUTABLE" workspace create --project NAME --new-branch temp/topic --base BASE --json
 "$OVRCR_EXECUTABLE" workspace create --project NAME --branch existing/branch --json
 "$OVRCR_EXECUTABLE" workspace get --project NAME --branch temp/topic --json
 ```

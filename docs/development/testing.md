@@ -408,6 +408,27 @@ work, invalid required assets and recoverable requests, and ordinary slash-like
 text. They reuse the status inventory/watch fixture and local provider. Native
 keyboard/visible-outcome evidence remains separate from this Dashboard driver.
 
+Workspace provisioning (installed Pi, relocated matching CLI, real Git and PTYs):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_workspaces -- --ignored --nocapture
+```
+
+The production Dashboard driver loads the complete bundled procedure and drives
+inspection without registration, explicit-base creation, Workspace/Terminal reuse,
+and all three automatic-local-terminal policies. A managed installed Pi session
+must return a real provider response through its PTY with an Unread observation;
+process creation and successful input alone do not pass. Separate real-checkout
+cases exercise ambiguous branches, detached targeting, off-default Root launch
+refusal, and an unanswered permission screen in a shell carrying a Pi label.
+The controlled provider executes `tests/fixtures/operator-pi/workspaces.py` through
+Pi's admitted Bash tool. Assertions check actual CLI/Git/session results; these
+cases do not prove an unconstrained model's judgment or native keyboard use.
+The explicit-selection case also drives full/Quick `/skill:ovrcr-workspaces`
+inspection, checking instruction order and unchanged inventory.
+
 Read-only session diagnosis (installed Pi, actual inventory/transcript/screen reads):
 
 ```sh

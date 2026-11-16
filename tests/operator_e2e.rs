@@ -4660,9 +4660,15 @@ mod installed_pi {
             "<location>{}</location>",
             operator_profile.join("ovrcr-status/SKILL.md").display()
         )));
+        assert!(system.contains("<name>ovrcr-workspaces</name>"));
+        assert!(system.contains("<description>Inspect or register Projects, create or reuse Git Workspaces, and launch requested Terminals or managed Agents with verified readiness.</description>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-workspaces/SKILL.md").display()
+        )));
         assert_eq!(
             system.matches("<name>ovrcr-").count(),
-            3,
+            4,
             "only implemented skills are advertised"
         );
         assert!(system.contains("<name>ovrcr-session-care</name>"));
@@ -5070,6 +5076,8 @@ mod installed_pi {
         inflate_compaction_turn: bool,
         /// Script the private local-provider Operator coordinator walkthrough.
         coordinator: bool,
+        /// Provision only in fixtures that explicitly own their HOME/repo.
+        workspaces: bool,
     }
 
     /// Scripted operator/tool scenario shared by the installed-pi test and the
@@ -5116,6 +5124,23 @@ mod installed_pi {
                 };
             }
             let user = operator_provider::last_user_text(body);
+            if user.starts_with("WORKSPACES_AGENT_PROBE:") {
+                return Plan::text(
+                    "WORKSPACES_AGENT_RESPONSE: managed Pi received the requested probe.",
+                );
+            }
+            if mode.workspaces
+                && let Some(request) = user.split("User request:\n").last()
+                && let Some(action) = request
+                    .strip_prefix("WORKSPACES_")
+                    .and_then(|text| text.split(':').next())
+            {
+                let mut counters = counters.lock().unwrap();
+                let step = counters.entry(format!("workspaces-{action}")).or_default();
+                let plan = workspaces_plan(body, action, *step % 3);
+                *step += 1;
+                return plan;
+            }
             let key = [
                 "Control exact session",
                 "CARE_NATIVE_SEED",
@@ -5533,6 +5558,109 @@ table = [
 print("OVRCR_WATCH_INPUT=" + json.dumps(watch, separators=(",", ":")))
 print("OVRCR_SESSION_TABLE=" + json.dumps(table, separators=(",", ":")))
 PY"#
+    }
+
+    fn workspaces_plan(body: &Value, action: &str, step: usize) -> Plan {
+        let system = operator_provider::system_text(body);
+        let location = system
+            .split("<name>ovrcr-workspaces</name>")
+            .nth(1)
+            .and_then(|tail| tail.split("<location>").nth(1))
+            .and_then(|tail| tail.split("</location>").next())
+            .expect("Pi must advertise the shipped Workspace procedure");
+        match step {
+            0 => {
+                assert!(
+                    !system.contains("Read the repository's default branch and pass that name."),
+                    "the shared guide must not override the explicit-base requirement"
+                );
+                assert!(!system.contains("Registration creates the protected root workspace on the detected default branch."), "registration must not promise a Root branch switch");
+                Plan::tool("workspaces-instructions", "read", json!({"path": location}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                for required in [
+                    "Inspection alone neither registers",
+                    "user's explicit base",
+                    "ask which path",
+                    "Leave it unanswered",
+                    "Process creation",
+                ] {
+                    assert!(
+                        instructions.contains(required),
+                        "missing Workspace procedure: {required}"
+                    );
+                }
+                assert!(
+                    [
+                        "inspect",
+                        "missing-base",
+                        "provision",
+                        "reuse",
+                        "terminal",
+                        "agent",
+                        "ambiguous",
+                        "detached",
+                        "root",
+                        "trust"
+                    ]
+                    .contains(&action)
+                );
+                Plan::tool(
+                    "workspaces-cli",
+                    "bash",
+                    json!({"command": format!("python3 - {action} <<'PY'\n{}\nPY", include_str!("fixtures/operator-pi/workspaces.py"))}),
+                )
+            }
+            _ => {
+                let result = marked_tool_json(body, "WORKSPACES_RESULT=");
+                let detail = match action {
+                    "inspect" => format!(
+                        "Inspection only: repository {} on {}. No registration or launch.",
+                        result["repo"], result["branch"]
+                    ),
+                    "missing-base" => format!(
+                        "Which explicit base branch or commit should the new branch use? CLI refused: {}",
+                        result["refusal"]
+                    ),
+                    "ambiguous" => format!(
+                        "Which exact Workspace path should I use? Candidates: {}. Refused: {}",
+                        result["candidates"], result["refusal"]
+                    ),
+                    "detached" => format!(
+                        "Confirm whether detached checkout {} at HEAD {} is intended; no launch. {}",
+                        result["workspace"]["path"], result["head"], result["refusal"]
+                    ),
+                    "root" => format!(
+                        "Root launch refused on {}; Root left unchanged. {}",
+                        result["branch"], result["refusal"]
+                    ),
+                    "trust" => format!(
+                        "Running but not a verified Agent: session {} run {} requires a human decision. Left unanswered: {}",
+                        result["session"]["id"], result["session"]["run"], result["screen"]
+                    ),
+                    "agent" | "terminal" => format!(
+                        "Verified requested {action}: session {} run {} in {}. Observed: {}",
+                        result["session"]["id"],
+                        result["session"]["run"],
+                        result["session"]["cwd"],
+                        result["screen"]
+                    ),
+                    _ => format!(
+                        "{} Workspace: {}",
+                        if action == "reuse" {
+                            "Reused"
+                        } else {
+                            "Created"
+                        },
+                        result["workspace"]
+                    ),
+                };
+                Plan::text(&format!(
+                    "Scope: requested repository / Project fixture. {detail}"
+                ))
+            }
+        }
     }
 
     // Controlled model responses exercise native reads and the matching-instance
@@ -6660,6 +6788,7 @@ PY"#
                 hold_compaction: true,
                 inflate_compaction_turn: true,
                 coordinator: false,
+                workspaces: false,
             },
         ));
         provider.seed_profile_with(
@@ -6998,6 +7127,550 @@ PY"#
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
+    fn workspaces_turn(
+        driver: &mut DashboardDriver,
+        live: &live::Live,
+        provider: &Provider,
+        action: &str,
+        request: &str,
+    ) -> (Value, String) {
+        driver.reopen();
+        driver.submit(&format!("WORKSPACES_{action}: {request}"));
+        let conversation = driver.conversation().id;
+        let history = wait_terminal(driver, conversation, provider, live);
+        wait_stopped(driver, conversation);
+        let turn = history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn;
+        let outputs = tool_outputs_with_status(&history);
+        assert!(
+            outputs
+                .iter()
+                .all(|(_, _, status)| *status == OperatorToolStatus::Succeeded),
+            "{outputs:?}"
+        );
+        let answer: String = history
+            .messages
+            .iter()
+            .filter(|message| message.turn == turn)
+            .filter_map(|message| match &message.content {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            answer.contains("Scope: requested repository / Project fixture"),
+            "{answer}"
+        );
+        assert!(driver.screen().contains("Scope: requested repository"));
+        let result = marked_tool_json(
+            &provider.requests().last().unwrap().body,
+            "WORKSPACES_RESULT=",
+        );
+        assert_eq!(
+            result["executable"],
+            live.executable.to_string_lossy().as_ref()
+        );
+        assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+        (result, answer)
+    }
+
+    fn workspace_session_identities(rows: &Value) -> Vec<Value> {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                json!([
+                    row["id"],
+                    row["run"],
+                    row["cwd"],
+                    row["phase"],
+                    row["kind"],
+                    row["unread"]
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; explicit Workspace inspection through full/Quick"]
+    fn installed_pi_operator_workspaces_explicit_selection() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(scenario_handler_mode(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+                ScenarioMode {
+                    workspaces: true,
+                    ..ScenarioMode::default()
+                },
+            ));
+            provider.seed_profile(&live.config);
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            let request = "WORKSPACES_inspect: Inspect $HOME/repo only; do not register or launch.";
+            let input = format!("/skill:ovrcr-workspaces {request}");
+            if quick {
+                driver.quick(&input);
+            } else {
+                driver.open();
+                driver.submit(&input);
+            }
+            let conversation = driver.conversation().id;
+            let history = wait_terminal(&mut driver, conversation, &provider, &live);
+            wait_stopped(&mut driver, conversation);
+            assert!(delta_text(&history).contains("Inspection only:"));
+            assert!(driver.screen().contains("Scope: requested repository"));
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 3, "skill read, real CLI inspection, reply");
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-workspaces/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"));
+            let selected = user
+                .find("Selected Operator skill: ovrcr-workspaces")
+                .unwrap();
+            let instructions = user.find(document).expect("complete selected instructions");
+            let request_start = user.find(&format!("User request:\n{request}")).unwrap();
+            assert!(selected < instructions && instructions < request_start);
+            assert!(!operator_harness::history_text(&history).contains(document));
+            let result = marked_tool_json(&requests.last().unwrap().body, "WORKSPACES_RESULT=");
+            assert_eq!(result["before"], result["after"]);
+            assert_eq!(result["after"]["projects"], json!([]));
+            assert_eq!(result["after"]["sessions"], json!([]));
+            assert_eq!(
+                result["executable"],
+                live.executable.to_string_lossy().as_ref()
+            );
+            assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+            assert_eq!(status_cli(&live, &["project", "list"]), json!([]));
+            assert_eq!(status_cli(&live, &["workspace", "list"]), json!([]));
+            drop(driver);
+            assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+            live.join();
+            eprintln!(
+                "INSTALLED_PI_WORKSPACES_EXPLICIT_PASS quick={quick} requests=3 shutdown=verified"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; real Operator CLI/Git/PTY provisioning"]
+    fn installed_pi_operator_workspaces_provision_reuse_and_readiness() {
+        let pi = pi_executable();
+        for policy in ["off", "default_branch_only", "on"] {
+            let mut live = live::Live::idle().bounded();
+            // The matching binary and fixed working directory have no source checkout.
+            let relocated = live.root.path().join("installed/ovrcr");
+            std::fs::create_dir(relocated.parent().unwrap()).unwrap();
+            std::fs::copy(&live.executable, &relocated).unwrap();
+            live.executable = relocated;
+            std::fs::write(
+                live.config.join("dashboard.toml"),
+                format!("automatic_local_terminals = \"{policy}\"\n"),
+            )
+            .unwrap();
+            let provider = Provider::start(scenario_handler_mode(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+                ScenarioMode {
+                    workspaces: true,
+                    ..ScenarioMode::default()
+                },
+            ));
+            provider.seed_profile(&live.config);
+            provider.seed_workspace_profile(live.root.path());
+            install_personal_skill(live.root.path());
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.open();
+            let (inspect, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "inspect",
+                "Inspect the repository at $HOME/repo only; do not register it or launch anything.",
+            );
+            assert_eq!(inspect["before"], inspect["after"]);
+            assert_eq!(inspect["after"]["projects"], json!([]));
+            assert_eq!(status_cli(&live, &["project", "list"]), json!([]));
+            assert_skill_only_in_system(
+                "workspaces",
+                &provider.requests()[0].body,
+                &live.config.join("operator-pi"),
+            );
+            assert_eq!(
+                std::fs::read_to_string(live.config.join("operator-pi/ovrcr-workspaces/SKILL.md"))
+                    .unwrap(),
+                include_str!("../pi/skills/ovrcr-workspaces/SKILL.md")
+            );
+
+            let (missing, question) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "missing-base",
+                "Prepare a new branch, but I have not chosen its base. Show the missing-base CLI refusal and ask me; do not guess.",
+            );
+            assert_eq!(missing["before"], missing["after"]);
+            assert!(question.contains("Which explicit base"));
+            assert!(
+                missing["refusal"]["stderr"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--base")
+            );
+
+            let (created, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "provision",
+                "Register $HOME/repo as fixture with $HOME/fixture-workspaces; create feature/setup from main. No explicit session launch; preserve automatic-local-terminal policy.",
+            );
+            assert_eq!(created["head"], created["base"]);
+            assert_eq!(created["workspace"]["branch"], "feature/setup");
+            assert_eq!(created["after"]["workspaces"].as_array().unwrap().len(), 2);
+            let expected_shells = match policy {
+                "off" => 0,
+                "on" => 2,
+                _ => 1,
+            };
+            assert_eq!(
+                created["after"]["sessions"].as_array().unwrap().len(),
+                expected_shells
+            );
+            let (reused, reply) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "reuse",
+                "Reuse fixture's existing feature/setup Workspace; do not register or create a duplicate or launch anything.",
+            );
+            assert!(reply.contains("Reused Workspace"));
+            assert_eq!(created["workspace"], reused["workspace"]);
+            assert_eq!(
+                reused["before"]["workspaces"],
+                reused["after"]["workspaces"]
+            );
+            assert_eq!(
+                workspace_session_identities(&reused["before"]["sessions"]),
+                workspace_session_identities(&reused["after"]["sessions"])
+            );
+
+            let (terminal, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "terminal",
+                "Open a Terminal named requested-terminal in feature/setup that prints its cwd then opens /bin/sh. Reuse that named Terminal if already running.",
+            );
+            let (again, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "terminal",
+                "Reuse the requested-terminal Terminal in feature/setup.",
+            );
+            assert_eq!(terminal["session"]["id"], again["session"]["id"]);
+            assert_eq!(terminal["session"]["run"], again["session"]["run"]);
+            assert_eq!(
+                again["after"]["sessions"].as_array().unwrap().len(),
+                expected_shells + 1
+            );
+            assert_eq!(again["session"]["cwd"], created["workspace"]["path"]);
+            if policy == "off" {
+                let (agent, reply) = workspaces_turn(
+                    &mut driver,
+                    &live,
+                    &provider,
+                    "agent",
+                    "Start a managed Pi Agent named requested-agent in feature/setup using the supplied Pi executable. Once its composer is verified, send the readiness probe and verify the response.",
+                );
+                assert_eq!(agent["session"]["kind"], json!({"agent": "pi"}));
+                assert_eq!(agent["session"]["cwd"], created["workspace"]["path"]);
+                assert!(agent["session"]["unread"].is_object());
+                assert!(reply.contains("WORKSPACES_AGENT_RESPONSE"));
+                eprintln!(
+                    "WORKSPACES_AGENT_STARTUP_SCREEN {}",
+                    agent["startup_screen"]
+                );
+                let id = agent["session"]["id"].as_u64().unwrap().to_string();
+                assert!(
+                    status_cli(&live, &["terminal", "read", &id])["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("WORKSPACES_AGENT_RESPONSE")
+                );
+                assert!(provider.requests().iter().any(|request| {
+                    operator_provider::last_user_text(&request.body)
+                        .starts_with("WORKSPACES_AGENT_PROBE:")
+                }));
+            }
+            let root_branch = Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["branch", "--show-current"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8(root_branch.stdout).unwrap().trim(),
+                "main"
+            );
+            assert!(
+                Command::new("git")
+                    .env("HOME", live.root.path())
+                    .arg("-C")
+                    .arg(&live.repo)
+                    .args(["diff", "--exit-code"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert_eq!(
+                status_cli(&live, &["workspace", "list"])
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            drop(driver);
+            assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+            live.join();
+            eprintln!(
+                "INSTALLED_PI_WORKSPACES_PASS policy={policy} provider_requests={} real_git=true real_pty=true shutdown=verified",
+                provider.requests().len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; real ambiguous/detached/Root and permission refusals"]
+    fn installed_pi_operator_workspaces_refusals_preserve_resources() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler_mode(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
+        ));
+        provider.seed_profile(&live.config);
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        live.ready("feature/setup");
+        status_cli(
+            &live,
+            &[
+                "workspace",
+                "create",
+                "--project",
+                "fixture",
+                "--new-branch",
+                "other",
+                "--base",
+                "main",
+            ],
+        );
+        let other = status_cli(
+            &live,
+            &[
+                "workspace",
+                "get",
+                "--project",
+                "fixture",
+                "--branch",
+                "other",
+            ],
+        );
+        let other_path = other["path"].as_str().unwrap();
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .args([
+                    "-C",
+                    other_path,
+                    "checkout",
+                    "--ignore-other-worktrees",
+                    "feature/setup"
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let (ambiguous, question) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "ambiguous",
+            "Inspect feature/setup and show any CLI ambiguity; ask me to choose a path before launching.",
+        );
+        assert!(question.contains("Which exact Workspace path"));
+        assert!(
+            ambiguous["refusal"]
+                .to_string()
+                .contains("ambiguous workspace")
+        );
+        assert_eq!(ambiguous["candidates"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            ambiguous["before"]["workspaces"],
+            ambiguous["after"]["workspaces"]
+        );
+        assert_eq!(
+            workspace_session_identities(&ambiguous["before"]["sessions"]),
+            workspace_session_identities(&ambiguous["after"]["sessions"])
+        );
+        for candidate in ambiguous["candidates"].as_array().unwrap() {
+            assert!(question.contains(candidate["path"].as_str().unwrap()));
+        }
+
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .args(["-C", other_path, "checkout", "--detach"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (detached, question) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "detached",
+            "Inspect the detached Workspace; show why branch targeting refuses and ask me to resolve its path. Do not launch.",
+        );
+        assert!(
+            question.contains("Confirm whether detached checkout") && question.contains(other_path)
+        );
+        assert!(detached["refusal"].to_string().contains("by --path"));
+        assert_eq!(
+            detached["before"]["workspaces"],
+            detached["after"]["workspaces"]
+        );
+        assert_eq!(
+            workspace_session_identities(&detached["before"]["sessions"]),
+            workspace_session_identities(&detached["after"]["sessions"])
+        );
+
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["checkout", "-b", "root-off-default"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (root, reply) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "root",
+            "Try opening a Terminal in Root; if its branch protection refuses, surface that refusal without switching branches or editing files.",
+        );
+        assert!(reply.contains("Root launch refused"));
+        assert_eq!(root["branch"], "root-off-default");
+        assert!(root["refusal"].to_string().contains("default branch"));
+        assert_eq!(root["before"]["workspaces"], root["after"]["workspaces"]);
+        assert_eq!(
+            workspace_session_identities(&root["before"]["sessions"]),
+            workspace_session_identities(&root["after"]["sessions"])
+        );
+
+        let input_marker = live.root.path().join("permission-answered");
+        let command = format!(
+            "printf 'Trust this workspace? [y/N]\\n'; IFS= read -r answer; printf '%s' \"$answer\" > '{}'",
+            input_marker.display()
+        );
+        let trust = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "feature/setup",
+                "--name",
+                "trust-screen",
+                "--label",
+                "pi",
+                "--",
+                "/bin/sh",
+                "-c",
+                &command,
+            ],
+        );
+        let id = trust["id"].as_u64().unwrap().to_string();
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if status_cli(&live, &["terminal", "read", &id])["text"]
+                .as_str()
+                .unwrap()
+                .contains("Trust this workspace?")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        let (trust, reply) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "trust",
+            "Inspect trust-screen. Is the Agent ready? Surface unexpected permission questions; do not answer them.",
+        );
+        assert_eq!(trust["session"]["kind"], "terminal");
+        assert!(reply.contains("not a verified Agent") && reply.contains("Trust this workspace?"));
+        assert!(
+            !input_marker.exists(),
+            "inspection must not answer a permission question"
+        );
+        assert_eq!(
+            workspace_session_identities(&trust["before"]["sessions"]),
+            workspace_session_identities(&trust["after"]["sessions"])
+        );
+        assert_eq!(
+            status_cli(&live, &["workspace", "list"])
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["diff", "--exit-code"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        drop(driver);
+        assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+        live.join();
+        eprintln!(
+            "INSTALLED_PI_WORKSPACES_REFUSALS_PASS provider_requests={} cases=4 permission_input=false shutdown=verified",
+            provider.requests().len()
+        );
+    }
+
     fn control_turn(
         driver: &mut DashboardDriver,
         live: &live::Live,
@@ -7238,10 +7911,14 @@ PY"#
         use ovrcr::protocol::AgentProvider;
         let pi = pi_executable();
         let live = live::Live::idle().bounded();
-        let provider = Provider::start(scenario_handler(
+        let provider = Provider::start(scenario_handler_mode(
             live.repo.clone(),
             live.root.path().join("marker"),
             live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
         ));
         provider.seed_profile(&live.config);
         install_personal_skill(live.root.path());
@@ -8597,8 +9274,14 @@ PY"#
             .is_some_and(|value| !value.is_empty());
         let slash =
             std::env::var_os("OVRCR_OPERATOR_GUI_SLASH").is_some_and(|value| !value.is_empty());
+        let workspaces = std::env::var_os("OVRCR_OPERATOR_GUI_WORKSPACES")
+            .is_some_and(|value| !value.is_empty());
         assert!(
-            usize::from(compaction) + usize::from(coordinator) + usize::from(slash) <= 1,
+            usize::from(compaction)
+                + usize::from(coordinator)
+                + usize::from(slash)
+                + usize::from(workspaces)
+                <= 1,
             "run one GUI provider mode at a time"
         );
         let provider = Provider::start(scenario_handler_mode(
@@ -8609,6 +9292,7 @@ PY"#
                 hold_compaction: compaction,
                 inflate_compaction_turn: compaction,
                 coordinator,
+                workspaces,
             },
         ));
         if compaction {
@@ -8617,7 +9301,7 @@ PY"#
                 COMPACTION_CONTEXT_WINDOW,
                 Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
             );
-        } else if slash {
+        } else if slash || workspaces {
             provider.seed_profile_with(
                 &root,
                 200_000,
@@ -8626,7 +9310,7 @@ PY"#
         } else {
             provider.seed_profile(&root);
         }
-        if coordinator {
+        if coordinator || workspaces {
             let token = std::env::var("OVRCR_OPERATOR_GUI_TOKEN")
                 .expect("gui_root validated OVRCR_OPERATOR_GUI_TOKEN");
             let home = gui_private_workspace_home(std::env::var_os("HOME"), &token)
@@ -8640,13 +9324,15 @@ PY"#
                 "clear inherited PI_CODING_AGENT_DIR before starting the GUI"
             );
             provider.seed_workspace_profile(&home);
-            let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
-            eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+            if coordinator {
+                let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
+                eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+            }
         }
         let _ = std::fs::remove_file(&release_marker);
         let _ = std::fs::remove_file(&stop_marker);
         println!(
-            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator}",
+            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator} workspaces={workspaces}",
             provider.base,
             root.display()
         );
