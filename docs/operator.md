@@ -197,7 +197,7 @@ recovery preserves the record and evidence; awaiting native attachment remains
 visible rather than being called successful recovery. Changed runs and uncertain
 ownership are refused, not automatically acknowledged or retried on replacements.
 
-## Preview cleanup
+## Preview and approve cleanup
 
 Ask “What old sessions and unused Workspaces could I clean up?” or send
 `/skill:ovrcr-cleanup` in full Operator or Quick message. General Cleanup proposals
@@ -214,11 +214,18 @@ Operator conversations are excluded. Dirty or occupied checkouts, Root, active
 tasks and provider-history dependencies block Workspace removal. Unmerged or
 unpublished work and unverifiable history locations remain visible.
 
-This version previews only: even approval returns **Cleanup execution unavailable**
-instead of falling back to generic close or remove. Preview preserves resources,
-attention state, ownership acknowledgements, watches, branches, Retained records
-and provider history. It starts no periodic checks. A precise, separate request
-to close a named session still uses session care's existing controls.
+Preview changes nothing and waits for approval. Approve selected listed stopped
+records to archive just those exact runs. The Server refuses reopened/live,
+ownership-uncertain, watched, task-owned or attention-protected targets at action
+admission; an unrelated watch does not block an eligible record. Archived records
+retain their context and provider history. Reports separate verified completion,
+changed/skipped, refused and uncertain effects; lost replies are reconciled against
+inventory, never blindly retried with a new run.
+
+Live-Agent stop-and-archive and Workspace removal still report **Cleanup execution
+unavailable**. Archive approval cannot stop processes, acknowledge ownership,
+delete records or remove checkout files. No periodic check is started. A precise,
+separate request to close a named session retains session care's existing controls.
 
 ## Coordinate Workspace sessions
 

@@ -670,6 +670,176 @@ fn operator_current_never_creates_and_open_is_idempotent() {
 }
 
 #[test]
+fn stopped_archive_and_watch_admission_share_exact_run_protection() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+    let identity = OperatorRunIdentity {
+        conversation: c.id,
+        session: c.session,
+        run: turn.identity.run,
+    };
+    let create = |name: &str| {
+        live.state
+            .retained
+            .lock()
+            .create(SessionMetadata {
+                scope: SessionScope::Workspace,
+                project: "fixture".into(),
+                workspace: "fixture".into(),
+                name: name.into(),
+                label: name.into(),
+                cwd: live.root.path().into(),
+                kind: SessionKind::Terminal,
+                pinned_title: None,
+                application_title: None,
+            })
+            .unwrap()
+    };
+    let watched = create("watched");
+    let other = create("other");
+    let archive = |row: &crate::retained::RetainedSession| {
+        live.control(Request::ControlSession {
+            session: row.id,
+            expected_run: row.run,
+            action: SessionControlAction::ArchiveStopped,
+        })
+    };
+    let update = |revision, targets| {
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity,
+                update: OperatorWatchUpdate { revision, targets },
+            },
+        }))
+    };
+    assert!(
+        matches!(
+            archive(&watched),
+            Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                ..
+            }
+        ),
+        "missing projection is not empty"
+    );
+    let target = OperatorWatchTarget {
+        session: watched.id,
+        run: watched.run,
+    };
+    let accepted = update(1, vec![target.clone()]); // registration wins before archive admission
+    assert!(matches!(
+        accepted,
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { revision: 1, .. })
+    ));
+    // Discarding the first reply and reconnecting reconciles only that exact update.
+    assert_eq!(update(1, vec![target.clone()]), accepted);
+    assert!(matches!(update(1, vec![]), Response::Error { .. }));
+    assert!(matches!(
+        archive(&watched),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        archive(&other),
+        Response::Ok,
+        "unrelated watches do not block selected approval"
+    );
+    // Archive won first: a subsequent registration cannot protect a replacement run.
+    assert!(matches!(
+        update(
+            2,
+            vec![
+                target.clone(),
+                OperatorWatchTarget {
+                    session: other.id,
+                    run: other.run
+                }
+            ]
+        ),
+        Response::Error { .. }
+    ));
+    assert!(matches!(
+        update(2, vec![]),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { revision: 2, .. })
+    ));
+    assert!(
+        matches!(update(1, vec![target]), Response::Error { .. }),
+        "late snapshots cannot overwrite an acknowledged removal"
+    );
+    // Inject a persistence refusal at the real archive commit, preserving original identity/evidence.
+    live.state.retained.lock().connection.execute_batch("CREATE TRIGGER refuse_archive BEFORE UPDATE OF disposition ON retained_sessions BEGIN SELECT RAISE(ABORT, 'fixture archive failure'); END;").unwrap();
+    assert!(matches!(archive(&watched), Response::Error { .. }));
+    let record = live.state.session_summary(watched.id).unwrap();
+    assert!(!record.archived);
+    assert_eq!(record.run, watched.run);
+    live.state
+        .retained
+        .lock()
+        .connection
+        .execute_batch("DROP TRIGGER refuse_archive;")
+        .unwrap();
+    assert_eq!(archive(&watched), Response::Ok);
+    assert!(live.state.session_summary(watched.id).unwrap().archived);
+    assert_eq!(
+        live.control(Request::ControlSession {
+            session: c.session,
+            expected_run: identity.run,
+            action: SessionControlAction::ArchiveStopped
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message: "approved stopped session changed; refresh the proposal".into()
+        }
+    );
+    let lost = create("worker-loss");
+    assert!(matches!(
+        update(
+            3,
+            vec![OperatorWatchTarget {
+                session: lost.id,
+                run: lost.run
+            }]
+        ),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    let worker = live.state.sessions.lock().unwrap()[&c.session].clone();
+    worker.terminate(Duration::from_secs(2)).unwrap(); // fixture-owned process loss, not Server stop proof
+    wait_until(|| !worker.is_live());
+    assert!(
+        matches!(update(4, vec![]), Response::Error { .. }),
+        "lost worker cannot replace protection on a fresh connection"
+    );
+    assert!(
+        matches!(
+            archive(&lost),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "worker loss preserves its last acknowledged protection"
+    );
+    assert!(!live.state.retained.lock().get(c.session).unwrap().stopped);
+    live.state
+        .acknowledge_session_stopped(c.session, identity.run)
+        .unwrap();
+    assert_eq!(
+        archive(&lost),
+        Response::Ok,
+        "explicit exact-owner stop proof retires only that worker's protection"
+    );
+    assert!(
+        matches!(update(4, vec![]), Response::Error { .. }),
+        "retired worker cannot replace protection"
+    );
+}
+
+#[test]
 fn operator_worker_completes_and_retires_with_stop_proof() {
     let mut live = LiveOperator::new();
     let c = live.open();
@@ -1253,7 +1423,43 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     let mut live = LiveOperator::new();
     let c = live.open();
     let turn = live.submit(&c);
-    live.ready(&c);
+    let auth = live.ready(&c);
+    let stopped = live
+        .state
+        .retained
+        .lock()
+        .create(SessionMetadata {
+            scope: SessionScope::Workspace,
+            project: "fixture".into(),
+            workspace: "fixture".into(),
+            name: "watched-before-restart".into(),
+            label: "fixture".into(),
+            cwd: live.root.path().into(),
+            kind: SessionKind::Terminal,
+            pinned_title: None,
+            application_title: None,
+        })
+        .unwrap();
+    assert!(matches!(
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity: OperatorRunIdentity {
+                    conversation: c.id,
+                    session: c.session,
+                    run: turn.identity.run
+                },
+                update: OperatorWatchUpdate {
+                    revision: 1,
+                    targets: vec![OperatorWatchTarget {
+                        session: stopped.id,
+                        run: stopped.run
+                    }]
+                },
+            },
+        })),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
     live.stop_server();
     let root = std::mem::replace(&mut live.root, tempfile::tempdir().unwrap());
     let mut restarted = LiveOperator::from_root(root);
@@ -1277,6 +1483,47 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     ));
     assert_eq!(restarted.history(&c).messages.len(), 3);
     assert!(restarted.state.sessions.lock().unwrap().is_empty());
+    assert!(
+        matches!(
+            restarted.control(Request::ControlSession {
+                session: stopped.id,
+                expected_run: stopped.run,
+                action: SessionControlAction::ArchiveStopped,
+            }),
+            Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                ..
+            }
+        ),
+        "missing watch state after restart is uncertainty, never an empty projection"
+    );
+    assert!(
+        !restarted
+            .state
+            .session_summary(stopped.id)
+            .unwrap()
+            .archived
+    );
+    assert!(
+        matches!(
+            restarted.control(Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::SetWatches {
+                    identity: OperatorRunIdentity {
+                        conversation: c.id,
+                        session: c.session,
+                        run: turn.identity.run
+                    },
+                    update: OperatorWatchUpdate {
+                        revision: 2,
+                        targets: vec![]
+                    },
+                },
+            })),
+            Response::Error { .. }
+        ),
+        "prior worker authority cannot clear missing protection after restart"
+    );
 }
 
 #[test]

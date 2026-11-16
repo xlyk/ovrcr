@@ -467,12 +467,15 @@ processes, Unread, Input requests and recovery acknowledgements. Controlled
 provider replies derive from those observations; they do not establish an
 unconstrained model's inference quality or native keyboard behavior.
 
-Proposal-only cleanup (installed Pi, relocated matching binary):
+Cleanup preview and approved stopped-record archive (installed Pi, relocated matching binary):
 
 ```sh
 OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
   cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
   installed_pi_operator_cleanup_preview -- --ignored --nocapture
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_cleanup_archive_stopped -- --ignored --nocapture
 ```
 
 The owning Dashboard/provider fixture uses full and Quick requests, real Git
@@ -482,12 +485,20 @@ Server is stopped; request observation time pins the default 24-hour boundary at
 ±1 ms, with null time and 0/48-hour overrides. Assertions cover scope, exact runs,
 protected states, stopped archive versus live review, dirty/Root/occupied/task
 blockers, archived uncertainty and ignored provider history. Inventory, task
-runs, input files, Git refs/status/HEAD and history bytes remain unchanged; even
-approval is unavailable. The controlled provider follows the shipped procedure
+runs, input files, Git refs/status/HEAD and history bytes remain unchanged during
+preview. The archive case then partially approves exact listed records through
+Quick message: one archives, one reopened run refuses, and unapproved records,
+provider history, branches and checkouts remain. It verifies real native watch
+handshakes and an unrelated active watch alongside actual archived inventory. The controlled provider follows the shipped procedure
 with real native reads and emits reports from tool results, not unconstrained
 model judgment. Assignment-control CLI observations are also checked in the
 owning `pi_delegation` Controller/Human/Uncertain lifecycle regressions. Native
-keyboard and visible-outcome proof remains a separate gate.
+keyboard and visible-outcome proof remains a separate gate. `retained_ownership`
+checks the CLI stopped-only fence, stale approval and uncertain ownership;
+`server::operator_tests::stopped_archive_and_watch_admission_share_exact_run_protection`
+checks both admission orderings, unrelated targets, projection uncertainty,
+exact-update replay, stale updates, persistence refusal and retired authority.
+The extension probe checks lost-ack mutation fencing and preserved warm watch state.
 
 Exact-run session control and native recovery (installed Pi):
 

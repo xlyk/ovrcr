@@ -704,6 +704,9 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                 }),
                             )))
                         }
+                        OperatorWorkerCommand::SetWatches { .. } => {
+                            panic!("unexpected watch update")
+                        }
                         OperatorWorkerCommand::AbortTurn { .. } => Response::Error {
                             code: ovrcr_protocol::ErrorCode::Conflict,
                             message: "refused".into(),

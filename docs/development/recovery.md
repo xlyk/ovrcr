@@ -38,6 +38,13 @@ ownership or falls back to a picker, including when the reference is absent.
 Validation failure preserves retained evidence. Legacy explicit reopen retains
 its picker and successor-reconciliation behavior.
 
+Protocol 91 appends `ArchiveStopped` to the same typed control action. This
+cleanup-only action requires exact run, stopped ownership and no protected
+attention, assignment, task Workspace or Operator watch at Server admission.
+It shares the lifecycle mutation lock and retained archive transition, advances
+the run and preserves history; it never enters the controlled-stop or ownership
+acknowledgement paths. Legacy direct close semantics are unchanged.
+
 ## Display-triggered recovery (protocol 20)
 
 `Request::RecoverSession { session, expected_run }` is the automatic counterpart

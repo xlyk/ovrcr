@@ -181,6 +181,51 @@ fn read_marker(fixture: &RecoveryFixture, child: SessionId, marker: &str) {
 }
 
 #[test]
+fn cleanup_archive_refuses_stopped_assigned_records_and_preserves_evidence() {
+    let fixture = OwnedFollowup::new();
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let original = settled(&fixture, &complete(&fixture, &started));
+    let child = original.identity.session.unwrap();
+    let run = original.identity.run.unwrap();
+    let evidence = fs::read(&original.result_path).unwrap();
+    if let Some(expected) = current(&fixture, child).unread {
+        assert_eq!(
+            fixture.live.request(Request::MarkReviewed {
+                session: child,
+                expected
+            }),
+            Response::Ok
+        );
+    }
+    assert_eq!(
+        fixture.live.request(Request::ControlSession {
+            session: child,
+            expected_run: run,
+            action: SessionControlAction::Stop
+        }),
+        Response::Ok
+    );
+    let stopped = current(&fixture, child);
+    assert!(!stopped.phase.is_live());
+    assert!(!stopped.recovery.unwrap().requires_ack);
+    assert!(stopped.unread.is_none());
+    assert!(matches!(
+        fixture.live.request(Request::ControlSession {
+            session: child,
+            expected_run: run,
+            action: SessionControlAction::ArchiveStopped
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert!(!current(&fixture, child).archived);
+    assert_eq!(current(&fixture, child).run, run);
+    assert_eq!(fs::read(&original.result_path).unwrap(), evidence);
+}
+
+#[test]
 fn public_assignment_human_takeover_return_fences_generics_and_preserves_history() {
     let fixture = OwnedFollowup::new();
     let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();

@@ -1,9 +1,63 @@
 // Controlled model plans over real native tools; not a production cleanup engine.
 use super::*;
 
+fn retains_task_ownership(run: &Value) -> bool {
+    !(run["spec"]["target"].get("Git").is_some()
+        && run["workspace"].is_null()
+        && matches!(run["status"].as_str(), Some("Succeeded" | "Failed" | "Cancelled" | "TimedOut" | "Interrupted" | "CleanupFailed")))
+}
+
 pub(super) fn plan(body: &Value, step: usize) -> Plan {
     let user = operator_provider::last_user_text(body);
     let request = user.split("User request:\n").last().unwrap();
+    if let Some(target) = request.strip_prefix("Catchup cleanup ") {
+        let parts: Vec<u64> = target.split(':').map(|part| part.parse().unwrap()).collect();
+        let (id, old, current) = (parts[0], parts[1], parts[2]);
+        return match step % 4 {
+            0 => Plan::tool("stale-watch", "watch_sessions", json!({"action":"add", "sessions":[{"session_id":id,"label":"catchup-old-run","baseline":{"run":old,"activity_revision":0,"unread_turn":null}}]})),
+            1 => Plan::tool("archive-current-not-watched", "bash", json!({"command":format!("\"$OVRCR_EXECUTABLE\" --json terminal archive-stopped {id} --expected-run {current}")})),
+            2 => Plan::tool("catchup-pending", "watch_sessions", json!({"action":"list"})),
+            _ => {
+                let results = operator_provider::tool_result_texts(body);
+                let pending = results.iter().rev().filter_map(|text| serde_json::from_str::<Value>(text).ok()).find(|value| value.get("pending_reports").is_some()).unwrap();
+                let report = pending["pending_reports"].as_array().unwrap().iter().find(|r| r["session_id"] == id).unwrap();
+                assert_eq!(report["watched_run"], old);
+                assert_eq!(report["run"], current);
+                assert_eq!(report["reason"], "run_changed");
+                assert_eq!(report["protected"], false);
+                assert!(results.iter().any(|text| text.contains("\"ok\":true")));
+                Plan::text("CATCHUP_ORIGINAL_RUN_ONLY: replacement archived by separate exact authorization; old report retained.")
+            }
+        };
+    }
+    if let Some(targets) = request.strip_prefix("Approve cleanup archive ") {
+        let targets: Vec<(u64, u64)> = targets.split(',').map(|target| {
+            let (id, run) = target.trim().split_once(':').unwrap();
+            (id.parse().unwrap(), run.parse().unwrap())
+        }).collect();
+        return match step % 3 {
+            0 => {
+                assert!(user.contains("terminal archive-stopped"), "approved execution must receive the shipped guarded procedure");
+                Plan::tool("archive-watch-refresh", "watch_sessions", json!({"action": "list"}))
+            }
+            1 => Plan::tool("archive-selected", "bash", json!({"command": format!(
+                "python3 - <<'PY'\nimport os,json,subprocess\nexe=os.environ['OVRCR_EXECUTABLE']\nselected={}\nresults=[]\nfor sid,run in selected:\n p=subprocess.run([exe,'--json','terminal','archive-stopped',str(sid),'--expected-run',str(run)],capture_output=True,text=True)\n results.append({{'id':sid,'approved_run':run,'exit':p.returncode,'stdout':p.stdout,'stderr':p.stderr}})\ndef read(*args):\n return json.loads(subprocess.check_output([exe,'--json',*args]))\nprint('CLEANUP_ARCHIVE='+json.dumps({{'results':results,'active':read('terminal','list'),'archived':read('terminal','list','--archived')}}))\nPY", serde_json::to_string(&targets).unwrap())})),
+            _ => {
+                let result = marked_tool_json(body, "CLEANUP_ARCHIVE=");
+                let mut text = String::from("Approved archive results:\n");
+                for action in result["results"].as_array().unwrap() {
+                    let archived = result["archived"].as_array().unwrap().iter().any(|row| row["id"] == action["id"] && row["run"].as_u64() == action["approved_run"].as_u64().map(|n| n+1));
+                    let outcome = if action["exit"] == 0 && archived { "verified completed" }
+                        else if action["stderr"].as_str().unwrap().contains("Conflict") { "changed/skipped" }
+                        else if action["exit"] != 0 { "refused; reconcile original action before any retry" }
+                        else { "uncertain; reconcile original action without replay" };
+                    text.push_str(&format!("Session {} run {}: {outcome}.\n", action["id"], action["approved_run"]));
+                }
+                text.push_str("Unapproved records, provider history and Workspace files preserved.");
+                Plan::text(&text)
+            }
+        };
+    }
     let option = |name: &str| {
         request
             .split_whitespace()
@@ -39,7 +93,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                 .collect::<Vec<_>>()
                 .join(" ");
             for required in [
-                "proposal-only",
+                "proposal-first",
                 "Cleanup execution unavailable",
                 "all registered Projects",
                 "24 hours",
@@ -137,7 +191,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|run| run["directory"] == row["cwd"] && !run["directory"].is_null())
+                    .any(|run| retains_task_ownership(run) && run["directory"] == row["cwd"] && !run["directory"].is_null())
                 {
                     blockers.push("task-owned Workspace");
                 }
@@ -155,7 +209,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                     "below threshold; preserve"
                 } else if !blockers.is_empty() {
                     "protected; preserve"
-                } else if row["phase"] == "stopped" {
+                } else if matches!(row["phase"].as_str(), Some("stopped" | "exited")) {
                     "propose archive stopped record"
                 } else {
                     "review required before proposing stop live Agent, then archive record"
@@ -212,14 +266,14 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|r| r["directory"] == w["path"] || r["workspace"] == w["id"])
+                    .any(|r| retains_task_ownership(r) && (r["directory"] == w["path"] || r["workspace"] == w["id"]))
                 {
                     blockers.push("task-owned Workspace");
                 }
                 text.push_str(&format!("Workspace {} Project {} path {} HEAD {}: {}; blockers={}; unmerged={}; unpublished={}.\n", w["id"], w["project"], w["path"], w["git"]["head"]["text"],
                     if blockers.is_empty() { "propose separately approved remove Workspace checkout" } else if blockers == ["provider-history location unverified"] { "separately approved remove Workspace checkout blocked pending history verification; preserve" } else { "preserve" }, blockers.join(", "), w["git"]["unmerged"]["text"], w["git"]["unpublished"]["text"]));
             }
-            text.push_str("Cleanup execution unavailable. No resources changed; branches, Retained records and provider history preserved. Operator excluded. Approval never implies Project/branch/record deletion or remote cancellation.");
+            text.push_str("No resources changed. Await approval of selected stopped-record archives. Live stop/Workspace removal: Cleanup execution unavailable. Branches, Retained records and provider history preserved. Operator excluded. Approval never implies Project/branch/record deletion or remote cancellation.");
             Plan::text(&text)
         }
     }
@@ -228,6 +282,16 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
 #[test]
 #[ignore = "requires installed Pi; real read-only cleanup preview, watches, tasks and Git"]
 fn installed_pi_operator_cleanup_preview_preserves_resources() {
+    cleanup_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Pi; approved partial archive through native tools and CLI"]
+fn installed_pi_operator_cleanup_archive_stopped_partial_approval() {
+    cleanup_case(true);
+}
+
+fn cleanup_case(archive: bool) {
     use ovrcr::protocol::{
         BranchRequest, ConversationReference, CreateSessionRequest, ExtensionConversation,
         SessionKind,
@@ -393,6 +457,11 @@ fn installed_pi_operator_cleanup_preview_preserves_resources() {
         ],
     )
     .unwrap();
+    let older_id = seeded.iter().find(|(n, _)| *n == "older").unwrap().1;
+    db.execute(
+        "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, 0)",
+        rusqlite::params![older_id.0 as i64, serde_json::to_string(&reference).unwrap()],
+    ).unwrap();
     drop(db);
     live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
     let mut owners = Vec::new();
@@ -729,9 +798,82 @@ fn installed_pi_operator_cleanup_preview_preserves_resources() {
                 .exists()
         );
     }
+    if archive {
+        let id_for = |name: &str| seeded.iter().find(|(n, _)| *n == name).unwrap().1;
+        let older = id_for("older");
+        let younger = id_for("younger");
+        let boundary = id_for("boundary");
+        let approved_run = |id| before.iter().find(|row| row["id"] == id).unwrap()["run"].as_u64().unwrap();
+        let older_run = approved_run(older.0);
+        let younger_run = approved_run(younger.0);
+        status_cli(&live, &["terminal", "reopen", &younger.0.to_string(), "--expected-run", &younger_run.to_string()]);
+        for group in live.session_groups() { live.own_group(group); }
+        driver.reopen();
+        let start = provider.requests().len();
+        driver.quick(&format!("/skill:ovrcr-cleanup Approve cleanup archive {}:{older_run},{}:{younger_run}", older.0, younger.0));
+        let result = wait_terminal(&mut driver, conversation, &provider, &live);
+        assert_eq!(provider.requests().len() - start, 3);
+        let archived = status_cli(&live, &["terminal", "list", "--archived"]);
+        let archived = archived.as_array().unwrap();
+        let record = archived.iter().find(|row| row["id"] == older.0).expect("selected exact record archived");
+        assert_eq!(record["run"], older_run + 1);
+        assert_eq!(record["recovery"]["conversation"], "cleanup-history");
+        assert_eq!(record["cwd"], before.iter().find(|row| row["id"] == older.0).unwrap()["cwd"]);
+        let active = status_cli(&live, &["terminal", "list"]);
+        assert!(active.as_array().unwrap().iter().any(|row| row["id"] == boundary.0 && row["run"].as_u64() == Some(approved_run(boundary.0))));
+        assert!(active.as_array().unwrap().iter().any(|row| row["id"] == younger.0 && row["phase"] == "running" && row["run"] == younger_run + 1));
+        let output = marked_tool_json(&provider.requests().last().unwrap().body, "CLEANUP_ARCHIVE=");
+        assert_eq!(output["results"][0]["exit"], 0);
+        assert_ne!(output["results"][1]["exit"], 0);
+        assert!(driver.screen().contains("verified completed"));
+        assert!(driver.screen().contains("changed/skipped"));
+        assert_eq!(std::fs::read_to_string(&history_file).unwrap(), "provider-owned history\n");
+        let mut expected_workspaces = workspaces_before.clone();
+        let workspace = expected_workspaces.as_array_mut().unwrap().iter_mut()
+            .find(|row| row["project"] == "fixture" && row["id"] == "work").unwrap();
+        workspace["terminal_count"] = json!(workspace["terminal_count"].as_u64().unwrap() - 1);
+        assert_eq!(status_cli(&live, &["workspace", "list"]), expected_workspaces);
+        assert_eq!(git(&live.repo, &["show-ref"]), branches_before);
+        assert!(tool_outputs_with_status(&result).iter().all(|(_, _, status)| *status == OperatorToolStatus::Succeeded));
+        eprintln!("INSTALLED_PI_ARCHIVE_PASS selected=2 completed=1 changed=1 unapproved=preserved history=preserved");
+    }
+    if archive {
+        let Response::CreatedSession(catchup) = live.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(), workspace: "work".into(), name: "catchup-old-run".into(), label: None,
+            kind: SessionKind::Agent { name: "pi".into() }, argv: vec!["/bin/sh".into()],
+        })) else { panic!("catchup fixture") };
+        live.own_group(catchup.pid.unwrap() as i32);
+        status_cli(&live, &["terminal", "close", &catchup.id.0.to_string()]);
+        status_cli(&live, &["terminal", "unarchive", &catchup.id.0.to_string()]);
+        driver.reopen();
+        driver.submit(&format!("Catchup cleanup {}:{}:{}", catchup.id.0, catchup.run.0, catchup.run.0 + 2));
+        wait_terminal(&mut driver, conversation, &provider, &live);
+        driver.wait_history(conversation, |history| history.messages.iter().any(|message| matches!(
+            &message.content, OperatorMessageContent::AsyncWakeup { text } if text.contains("catchup-old-run") && text.contains("run_changed")
+        )) && history.conversation.current_turn.as_ref().is_some_and(|turn| turn.state == OperatorTurnState::Complete));
+        let rows = status_cli(&live, &["terminal", "list", "--archived"]);
+        assert!(rows.as_array().unwrap().iter().any(|row| row["id"] == catchup.id.0 && row["run"] == catchup.run.0 + 3));
+        eprintln!("INSTALLED_PI_WATCH_CATCHUP_PASS original_run_report=true replacement_unprotected=true actual_handshake=true");
+    }
     driver.submit(STATUS_UNWATCH_REQUEST);
     wait_terminal(&mut driver, conversation, &provider, &live);
     wait_stopped(&mut driver, conversation);
+    if archive {
+        for id in [protected[0].0, protected[2].0] {
+            let row = before.iter().find(|row| row["id"] == id.0).unwrap();
+            let expected_run = ovrcr::protocol::SessionRunId(row["run"].as_u64().unwrap());
+            assert_eq!(live.request(Request::ControlSession { session: id, expected_run, action: ovrcr::protocol::SessionControlAction::Stop }), Response::Ok);
+            assert!(matches!(live.request(Request::ControlSession { session: id, expected_run, action: ovrcr::protocol::SessionControlAction::ArchiveStopped }), Response::Error { code: ovrcr::protocol::ErrorCode::Conflict, .. }), "stopped Busy/Unread results remain protected, independently of watches");
+        }
+        let task_workspace = tasks_before.as_array().unwrap().iter().find(|row| row["id"] == run["id"]).unwrap()["workspace"].as_str().unwrap();
+        let Response::CreatedSession(task_record) = live.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(), workspace: task_workspace.into(), name: "task-owned-stopped".into(), label: None,
+            kind: SessionKind::Terminal, argv: vec!["/bin/sh".into()],
+        })) else { panic!("task Workspace terminal") };
+        live.own_group(task_record.pid.unwrap() as i32);
+        assert_eq!(live.request(Request::ControlSession { session: task_record.id, expected_run: task_record.run, action: ovrcr::protocol::SessionControlAction::Stop }), Response::Ok);
+        assert!(matches!(live.request(Request::ControlSession { session: task_record.id, expected_run: task_record.run, action: ovrcr::protocol::SessionControlAction::ArchiveStopped }), Response::Error { code: ovrcr::protocol::ErrorCode::Conflict, .. }));
+    }
     provider.release();
     drop(driver);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);

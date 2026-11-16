@@ -545,6 +545,112 @@ fn stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run() {
 }
 
 #[test]
+fn approved_archive_stopped_is_exact_and_never_stops_live_work() {
+    let live = Live::binary();
+    live.ready("feature/approved-archive");
+    let created = create_terminal(&live, "approved", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    let run = created["run"].as_u64().unwrap();
+    let run_arg = run.to_string();
+    let archive = [
+        "terminal",
+        "archive-stopped",
+        &id_arg,
+        "--expected-run",
+        &run_arg,
+    ];
+    assert_eq!(json_error(&live, &archive)["error"]["code"], "Conflict");
+    assert_eq!(row(&live, id)["phase"], "running");
+    json(&live, &["kill", &id_arg, "--expected-run", &run_arg]);
+    wait_phase(&live, id, "exited");
+    let unapproved = create_terminal(&live, "unapproved", &["/bin/sh"]);
+    json(&live, &archive);
+    let archived = json(&live, &["terminal", "list", "--archived"]);
+    let record = archived
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(record["run"], run + 1);
+    assert_eq!(record["project"], created["project"]);
+    assert_eq!(record["workspace"], created["workspace"]);
+    assert_eq!(record["archived"], true);
+    assert_eq!(
+        row(&live, unapproved["id"].as_u64().unwrap())["phase"],
+        "running"
+    );
+    // A lost response is reconciled through inventory, not replayed against a new run.
+    assert_eq!(json_error(&live, &archive)["error"]["code"], "Conflict");
+    json(&live, &["terminal", "unarchive", &id_arg]);
+    json(&live, &["terminal", "reopen", &id_arg]);
+    track_groups(&live);
+    assert_eq!(json_error(&live, &archive)["error"]["code"], "Conflict");
+    assert_eq!(row(&live, id)["phase"], "running");
+}
+
+#[test]
+fn lost_archive_response_reconciles_retained_disposition_without_replay() {
+    use std::io::{self, Read, Write};
+    use std::os::unix::net::UnixStream;
+    struct LostReply(UnixStream);
+    impl Write for LostReply {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.write(bytes)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.flush()
+        }
+    }
+    impl Read for LostReply {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            // Wait for the real committed response, then lose it at the transport seam.
+            let _: ovrcr::protocol::ServerMessage =
+                ovrcr::protocol::read_frame(&mut self.0).map_err(io::Error::other)?;
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "fixture lost reply",
+            ))
+        }
+    }
+    let live = Live::binary();
+    live.ready("feature/lost-archive");
+    let created = create_terminal(&live, "lost-reply", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let run = created["run"].as_u64().unwrap();
+    json(
+        &live,
+        &["kill", &id.to_string(), "--expected-run", &run.to_string()],
+    );
+    let mut stream = UnixStream::connect(&live.socket).unwrap();
+    ovrcr::protocol::exchange_preamble(&mut stream).unwrap();
+    let outcome = ovrcr::protocol::client::request(
+        &mut LostReply(stream),
+        1,
+        Request::ControlSession {
+            session: SessionId(id),
+            expected_run: SessionRunId(run),
+            action: ovrcr::protocol::SessionControlAction::ArchiveStopped,
+        },
+    );
+    assert!(outcome.is_err());
+    let archived = json(&live, &["terminal", "list", "--archived"]);
+    let retained = archived
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert_eq!(retained["run"], run + 1);
+    assert_eq!(retained["cwd"], created["cwd"]);
+    assert_eq!(retained["name"], "lost-reply");
+    stop_server(&live);
+    live.start_binary();
+    assert_eq!(json(&live, &["terminal", "list", "--archived"]), archived);
+}
+
+#[test]
 fn caller_bound_control_refuses_replacement_runs() {
     let live = Live::binary();
     live.ready("feature/caller-bound-control");
@@ -574,6 +680,13 @@ fn caller_bound_control_refuses_replacement_runs() {
         vec!["terminal", "kill", &id_arg, "--expected-run", &run_arg],
         vec!["terminal", "reopen", &id_arg, "--expected-run", &run_arg],
         vec!["terminal", "close", &id_arg, "--expected-run", &run_arg],
+        vec![
+            "terminal",
+            "archive-stopped",
+            &id_arg,
+            "--expected-run",
+            &run_arg,
+        ],
     ] {
         assert_eq!(json_error(&live, &args)["error"]["code"], "Conflict");
         assert_eq!(row(&live, id)["phase"], "running");
@@ -669,6 +782,13 @@ fn ordinary_natural_exit_requires_ack_and_accepts_acknowledgement() {
     for args in [
         vec!["terminal", "reopen", &id_arg, "--expected-run", &run_arg],
         vec!["kill", &id_arg, "--expected-run", &run_arg],
+        vec![
+            "terminal",
+            "archive-stopped",
+            &id_arg,
+            "--expected-run",
+            &run_arg,
+        ],
     ] {
         assert_ownership_uncertain(&json_error(&live, &args));
         assert_requires_ack(&row(&live, id), true);

@@ -426,6 +426,13 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         expected_run: Option<u64>,
     },
+    /// Archive an approved stopped record only; refuse live, uncertain or protected work.
+    ArchiveStopped {
+        id: u64,
+        /// Exact run listed in the approved proposal; never refreshed implicitly.
+        #[arg(long)]
+        expected_run: u64,
+    },
     /// Return an archived record to the active list without launching.
     Unarchive {
         id: u64,

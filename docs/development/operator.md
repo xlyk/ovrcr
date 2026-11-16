@@ -120,10 +120,11 @@ Reporter health and provider-supported reads; diagnosis preserves attention and
 ownership state. Explicit control uses caller-captured `--expected-run`
 preconditions. Exact Agent reopen forbids picker fallback and ownership
 acknowledgement, and reports native attachment separately from process creation.
-`ovrcr-cleanup` is proposal-only: it uses inventory, existing watch/task metadata
-and read-only Git observations, defaults to instance-wide 24-hour stale review,
-and distinguishes protected resources and evidence gaps from candidates. There
-is no cleanup executor or mutation fallback. `terminal list --json` exposes the
+`ovrcr-cleanup` is proposal-first: it uses inventory, existing watch/task metadata
+and read-only Git observations and defaults to instance-wide 24-hour stale review.
+Only selected approved stopped-record archives execute, through caller-bound
+`ControlSession::ArchiveStopped`; live stop-and-archive and Workspace removal
+remain unavailable. No generic close fallback is permitted. `terminal list --json` exposes the
 existing content-free `assignment_control` view when available; its absence is
 not proof that work is unowned. Inventory does not expose provider-history paths,
 so an unverifiable location remains a Workspace-removal blocker.
@@ -302,6 +303,38 @@ worktree Workspaces on dedicated branches, protecting Root; shared Workspaces
 are limited to read-only research or an explicit same-branch request. The
 `watch_sessions` tool adds, lists or removes bounded Reporter watches. Removing
 a watch does not stop its session.
+
+Protocol 91 adds complete, bounded `SetWatches` protection through the existing
+authenticated Reporter/Operator worker connection. The Server's Operator owner
+keeps one current-run projection (including queued reports), not a durable watch
+store. Watch add receives acknowledgment under the same mutation lock as stopped
+archive before local registration; archive-first refuses a later same-run add.
+One catch-up exception preserves the existing coordinator behavior: fresh inventory
+that positively shows a different run queues a new old-baseline `run_changed`
+report without protecting or retargeting the replacement. Missing, archived or
+unavailable targets cannot use that exception. Already registered watches retain
+their original-run protection through pending delivery even after a run change.
+Archive admission also holds TaskManager admission before the Server mutation
+lock, then reads the existing task store/run files; this matches shutdown order.
+Scheduler admission holds admission then store; execution/completion release the
+store before any Server mutation, so neither waits in the opposite order.
+Nonterminal Git ownership and retained `workspace` references protect stopped
+records, as do matching Scratch directories. Terminal Git `workspace: null`
+means ownership was never acquired or was released: its historical path cannot
+protect a replacement. Missing/corrupt ownership evidence refuses admission.
+Ordinary close and Workspace-removal preconditions are unchanged.
+
+Removals reduce protection only after local removal. Monotonic worker revisions
+allow an exact latest update to reconcile a lost reply and refuse conflicting or
+late snapshots. Lost acknowledgment fences extension mutations until exact-worker
+stop; it cannot overwrite possible Server protection. Current-run controlled stop
+retires protection; loss keeps it, and missing state after Server restart is an
+explicit uncertainty blocker. Unrelated known watches do not block archiving.
+
+Pi attaches RPC stdin after `session_start` returns, so startup schedules the
+acknowledged projection and publishes the existing readiness contract only after
+it succeeds. The hook itself must not await the dialog. Warm turns, session switch,
+compaction and queued report delivery keep the same worker-scoped revision.
 
 Before `terminal send`, Operator captures the session `run`, numeric
 `agent.activity_revision` and opaque `unread.turn` from `terminal list --json`.

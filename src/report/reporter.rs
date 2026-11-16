@@ -253,6 +253,31 @@ impl Reporter {
         }
     }
 
+    pub fn operator_set_watches(
+        &mut self,
+        identity: ovrcr_protocol::OperatorRunIdentity,
+        update: ovrcr_protocol::OperatorWatchUpdate,
+        deadline: Instant,
+    ) -> anyhow::Result<()> {
+        identity.validate().map_err(anyhow::Error::msg)?;
+        update.validate().map_err(anyhow::Error::msg)?;
+        let revision = update.revision;
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("operator lease unavailable"))?;
+        match lease.operator_request(
+            ovrcr_protocol::OperatorWorkerCommand::SetWatches { identity, update },
+            deadline,
+        )? {
+            Response::OperatorWorker(ovrcr_protocol::OperatorWorkerResult::WatchesSet {
+                identity: owner,
+                revision: accepted,
+            }) if owner == identity && accepted == revision => Ok(()),
+            _ => anyhow::bail!("Operator watch protection refused"),
+        }
+    }
+
     pub fn operator_abort_turn(
         &mut self,
         identity: ovrcr_protocol::OperatorTurnIdentity,
