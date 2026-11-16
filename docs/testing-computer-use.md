@@ -418,6 +418,26 @@ export OVRCR_OPERATOR_GUI_TOKEN=operator-gui-owned-fixture
 
 Wait for `OPERATOR_PI_GUI_READY` before sending.
 
+For the skill picker, use the same helper in its default mode. Select a task-owned
+Workspace session, open Operator and type `GUI_SKILLS_REQUEST`; Home then insert
+`/skills ` and Enter. Capture the catalog names/purposes, search `INVENTORY`,
+then Esc: the original `/skills GUI_SKILLS_REQUEST` and target must remain.
+Reopen, search `ovrcr-status`, and choose with Enter or a row click. Capture the
+staged `/skill:ovrcr-status GUI_SKILLS_REQUEST` before Send: the conversation
+must still be idle with no model request. Send once and capture
+`SKILLS_PICKER_DONE`; the helper checks that the full selected status document
+arrived. Repeat from Browse via Quick message, including a cold singleton;
+the transition to full must retain text and target. Test outside-click cancellation,
+Up/Down, empty search results, 80×24, 60-column, 60×16 and below-floor resize
+recovery. Record screenshots and matching accessibility text for each step.
+Send `/skill:unavailable GUI_SKILLS_UNSENT` to capture the visible refusal and
+retained draft. During `REQUEST_THREE_HELD`, browse/choose another skill and
+attempt Send: busy refusal must retain the staged request. Keep the Workspace
+session input observation unchanged. On helper exit retain `fixture-requests.jsonl`
+and verify no requests from browsing/cancellation and context-before-instructions-
+before-request ordering on Send. Programmatic stale-revision and stop-unconfirmed
+fixtures remain separate from what this native walkthrough actually observes.
+
 The helper prints the fixture workspace and marker path when it starts. It does
 not interpret arbitrary requests: each turn must contain one of its exact markers,
 otherwise it answers only `FIXTURE_FOLLOWUP_DONE`. Send this sequence:

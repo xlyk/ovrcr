@@ -5173,6 +5173,7 @@ mod installed_pi {
                 "COMPACT_ONE",
                 "COMPACT_TWO",
                 "GUI_SLASH_SEED",
+                "GUI_SKILLS_REQUEST",
                 "GUI_BRANCH_ALPHA",
                 "GUI_BRANCH_BETA",
             ]
@@ -5462,6 +5463,11 @@ mod installed_pi {
                 }
                 ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
                 ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
+                ("GUI_SKILLS_REQUEST", _) => {
+                    assert!(user.contains("Selected Operator skill: ovrcr-status"));
+                    assert!(user.contains(include_str!("../pi/skills/ovrcr-status/SKILL.md")));
+                    Plan::text("SKILLS_PICKER_DONE: selected status instructions and captured target received.")
+                }
                 ("GUI_SLASH_SEED", _) => Plan::text(
                     "Seeded root turn for Operator slash commands.\n\n- Protocol version: `88`\n- Registry schema: `35`",
                 ),
@@ -8769,6 +8775,146 @@ PY"#
                 assert!(user.ends_with(&format!("User request:\n{text}")), "{user}");
                 assert!(!user.contains("Selected Operator skill:"));
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_skills_picker() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(scenario_handler(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+            ));
+            provider.seed_profile(&live.config);
+            install_personal_skill(live.root.path());
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            live.ready("skill-picker");
+            let (target, _owner) = status_agent(&live, "status-unavailable");
+            let before = status_cli(&live, &["terminal", "list"]);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.dashboard.install_focus(target);
+            if quick {
+                driver.quick("/skills GUI_SKILLS_REQUEST");
+            } else {
+                driver.open();
+                driver.submit("/skills GUI_SKILLS_REQUEST");
+            }
+            let conversation = driver.conversation();
+            let screen = driver.screen();
+            assert!(screen.contains("Operator skills"), "{screen}");
+            for skill in ovrcr_protocol::operator::skills::BUNDLED_SKILLS {
+                assert!(
+                    screen.contains(skill.name),
+                    "{} missing: {screen}",
+                    skill.name
+                );
+            }
+            assert!(!screen.contains("personal-sentinel") && !screen.contains("project-sentinel"));
+            assert!(provider.requests().is_empty());
+            assert!(conversation.current_turn.is_none());
+            driver
+                .dashboard
+                .event_action(Event::Paste("INVENTORY".into()));
+            let filtered = driver.screen();
+            assert!(
+                filtered.contains("ovrcr-status") && !filtered.contains("ovrcr-coordinator"),
+                "{filtered}"
+            );
+            driver.dashboard.key(KeyCode::Esc);
+            assert!(driver.screen().contains("/skills GUI_SKILLS_REQUEST"));
+            driver.dashboard.key(KeyCode::Enter);
+            driver
+                .dashboard
+                .event_action(Event::Paste("ovrcr-status".into()));
+            driver.dashboard.key(KeyCode::Enter);
+            driver.flush();
+            assert!(
+                driver
+                    .screen()
+                    .contains("/skill:ovrcr-status GUI_SKILLS_REQUEST")
+            );
+            assert!(provider.requests().is_empty(), "choosing must not prompt");
+            assert!(driver.conversation().current_turn.is_none());
+            assert!(
+                !live
+                    .root
+                    .path()
+                    .join("status-unavailable.identity.input")
+                    .exists()
+            );
+            driver.dashboard.key(KeyCode::Enter);
+            driver.flush();
+            let history = wait_terminal(&mut driver, conversation.id, &provider, &live);
+            wait_stopped(&mut driver, conversation.id);
+            assert!(delta_text(&history).contains("SKILLS_PICKER_DONE"));
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 1);
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-status/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"));
+            assert!(
+                user.find(document).unwrap()
+                    < user.find("User request:\nGUI_SKILLS_REQUEST").unwrap()
+            );
+            let (context, selection) = history
+                .messages
+                .iter()
+                .find_map(|message| match &message.content {
+                    OperatorMessageContent::User {
+                        text,
+                        context,
+                        skill,
+                    } if text == "GUI_SKILLS_REQUEST" => Some((context, skill)),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(context.session, Some(target));
+            assert_eq!(context.workspace_id.as_deref(), Some("work"));
+            assert_eq!(
+                context.cwd.as_deref(),
+                Some(live.workspace_path("work").as_path())
+            );
+            assert_eq!(
+                selection.as_ref().unwrap(),
+                &ovrcr_protocol::OperatorSkillSelection::named("ovrcr-status").unwrap()
+            );
+            assert!(user.contains(&serde_json::to_string(context).unwrap()));
+            assert_explicit_selection_refused(&mut driver, &provider);
+            driver.submit("/skill:unavailable GUI_SKILLS_UNSENT");
+            let screen = driver.screen();
+            assert!(
+                screen.contains("unavailable Operator skill")
+                    && screen.contains("GUI_SKILLS_UNSENT"),
+                "{screen}"
+            );
+            assert_eq!(provider.requests().len(), 1);
+            assert!(
+                !live
+                    .root
+                    .path()
+                    .join("status-unavailable.identity.input")
+                    .exists()
+            );
+            let after = status_cli(&live, &["terminal", "list"]);
+            for row in before.as_array().unwrap() {
+                assert_eq!(
+                    after
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|after| after["id"] == row["id"])
+                        .unwrap(),
+                    row
+                );
+            }
+            eprintln!(
+                "SKILLS_PICKER_PASS quick={quick} model_requests=1 selection_and_cancel_requests=0 target={}",
+                target.0
+            );
         }
     }
 

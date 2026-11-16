@@ -305,17 +305,7 @@ fn materialize_skills(paths: &PiPaths) -> Result<Vec<PathBuf>, PiError> {
     for skill in BUNDLED_SKILLS {
         // Owned documents use a deliberately small frontmatter format. Refuse a
         // broken bundle before Pi can silently omit a required skill.
-        let prefix = format!("---\nname: {}\ndescription: ", skill.name);
-        let valid_document = skill.document.strip_prefix(&prefix).is_some_and(|rest| {
-            rest.split_once("\n---\n")
-                .is_some_and(|(description, body)| {
-                    !description.trim().is_empty()
-                        && description.len() <= 1024
-                        && !description.contains('\n')
-                        && !body.trim().is_empty()
-                })
-        });
-        if !valid_document {
+        if skill.description().is_none() {
             return Err(PiError::integration("invalid bundled skill document"));
         }
         let directory = paths.profile.join(skill.name);

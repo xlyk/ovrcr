@@ -333,16 +333,25 @@ never silently follows the Dashboard selection.
 Typing a single-segment `/command` at the very start of the full Operator
 composer opens a live slash-command menu above the input rule (`Up`/`Down`
 select, `Tab` autocomplete, `Enter` run, `Esc` dismiss menu only while keeping
-the draft). Both the full composer and Quick message (`Ctrl-o`) support seven
+the draft). Both the full composer and Quick message (`Ctrl-o`) support eight
 built-in slash commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`,
-`/compact`, `/tree`), plus explicit `/skill:<name> [request]` submission.
+`/compact`, `/tree`, `/skills`), plus explicit `/skill:<name> [request]` submission.
 Multi-segment Unix paths such as `/etc/hosts` or drafts
 with leading whitespace (` /copy`) submit as normal user prompts, whereas an
 unknown single-segment `/command` is rejected locally with the draft preserved.
 In Quick message, `/copy`, `/thinking <level>`, `/model default`, exact
 `/model <provider/id>` matches and `/new` complete directly; `/session`,
 `/compact`, `/tree`, bare `/thinking`, bare `/model` and filtered
-`/model <query>` transition into the full Operator view.
+`/model <query>` and `/skills` transition into the full Operator view.
+
+`/skills [request]` opens the shipped catalog without starting model work. Type
+to search names and purposes, use Up/Down to select, then Enter or click a row
+to prepare `/skill:<name> [request]` in the shared draft. Send is a separate
+step. To keep an existing request, insert `/skills ` at its beginning (Home,
+then type or paste the prefix). Esc or a click outside the picker cancels without
+changing the draft. Quick-to-full browsing keeps the draft's captured target;
+searching and choosing do not recapture the selected Workspace. Below 60×16,
+resize to continue; the draft and picker stay intact.
 
 Send `/skill:ovrcr-status [request]` or `/skill:ovrcr-coordinator [request]`
 from either composer to select that shipped procedure. OVRCR supplies its full

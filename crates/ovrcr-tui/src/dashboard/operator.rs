@@ -4,6 +4,7 @@
 mod feed;
 mod markdown;
 mod render;
+mod skills;
 mod slash;
 mod tree;
 
@@ -57,10 +58,15 @@ pub(super) struct Hub {
 enum OperatorOverlay {
     Reasoning(ReasoningPicker),
     Model(ModelPicker),
+    Skills(skills::SkillPicker),
     Session(SessionModal),
     Tree(TreeModal),
 }
 enum PendingOperatorOverlay {
+    Skills {
+        text: String,
+        context: OperatorContext,
+    },
     Reasoning,
     Model {
         picker: ModelPicker,
@@ -71,6 +77,7 @@ enum PendingOperatorOverlay {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum OperatorOverlayKeymap {
+    SkillPicker,
     ModelPicker,
     ReasoningPicker,
     SessionModal,
@@ -843,6 +850,7 @@ impl Dashboard {
                             slash::SlashCommandKind::Thinking => {
                                 self.operator_run_thinking(args, true)
                             }
+                            slash::SlashCommandKind::Skills => self.operator_run_skills(true),
                             slash::SlashCommandKind::Model => self.operator_run_model(args, true),
                             slash::SlashCommandKind::New => self.operator_run_new(args, true),
                             slash::SlashCommandKind::Session => {
@@ -1229,6 +1237,7 @@ impl Dashboard {
 
     pub(super) fn operator_overlay_keymap(&self) -> Option<OperatorOverlayKeymap> {
         match &self.operator.overlay {
+            Some(OperatorOverlay::Skills(_)) => Some(OperatorOverlayKeymap::SkillPicker),
             Some(OperatorOverlay::Model(_)) => Some(OperatorOverlayKeymap::ModelPicker),
             Some(OperatorOverlay::Reasoning(_)) => Some(OperatorOverlayKeymap::ReasoningPicker),
             Some(OperatorOverlay::Session(_)) => Some(OperatorOverlayKeymap::SessionModal),
@@ -2205,6 +2214,7 @@ impl Dashboard {
             self.copy_notice = None;
         }
         match &self.operator.overlay {
+            Some(OperatorOverlay::Skills(_)) => return self.operator_skills_key(key),
             Some(OperatorOverlay::Model(_)) => return self.operator_model_key(key),
             Some(OperatorOverlay::Reasoning(_)) => return self.operator_reasoning_key(key),
             Some(OperatorOverlay::Session(_)) => return self.operator_session_modal_key(key),
@@ -2260,6 +2270,7 @@ impl Dashboard {
                     return match slash_specs[selected].kind {
                         slash::SlashCommandKind::Copy => self.operator_run_copy("", false),
                         slash::SlashCommandKind::Thinking => self.operator_run_thinking("", false),
+                        slash::SlashCommandKind::Skills => self.operator_run_skills(false),
                         slash::SlashCommandKind::Model => self.operator_run_model("", false),
                         slash::SlashCommandKind::New => self.operator_run_new("", false),
                         slash::SlashCommandKind::Session => self.operator_run_session("", false),
@@ -2426,6 +2437,7 @@ impl Dashboard {
                         slash::SlashCommandKind::Thinking => {
                             self.operator_run_thinking(args, false)
                         }
+                        slash::SlashCommandKind::Skills => self.operator_run_skills(false),
                         slash::SlashCommandKind::Model => self.operator_run_model(args, false),
                         slash::SlashCommandKind::New => self.operator_run_new(args, false),
                         slash::SlashCommandKind::Session => self.operator_run_session(args, false),
@@ -2477,6 +2489,17 @@ impl Dashboard {
     }
     pub(super) fn operator_paste(&mut self, text: &str) -> DashboardAction {
         self.copy_notice = None;
+        if let Some(OperatorOverlay::Skills(picker)) = &mut self.operator.overlay {
+            if paste_modal_line(
+                &mut picker.query,
+                &mut picker.cursor,
+                text,
+                MAX_MODEL_FILTER_BYTES,
+            ) {
+                picker.selected = 0;
+            }
+            return DashboardAction::Redraw;
+        }
         if let Some(picker) = self.operator.model_picker_mut() {
             if paste_modal_line(
                 &mut picker.query,
@@ -2549,6 +2572,9 @@ impl Dashboard {
         area: Rect,
     ) -> Option<DashboardAction> {
         let _theme = crate::theme::ThemeScope::enter(self.theme_tokens());
+        if matches!(self.operator.overlay, Some(OperatorOverlay::Skills(_))) {
+            return Some(self.operator_skills_mouse(mouse, area));
+        }
         if self.operator.overlay.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.copy_notice = None;
@@ -2835,6 +2861,9 @@ impl Dashboard {
                             match pending_overlay {
                                 PendingOperatorOverlay::Model { picker, notice } => {
                                     self.operator_install_model_picker(picker, notice);
+                                }
+                                PendingOperatorOverlay::Skills { text, context } => {
+                                    self.operator_install_skills(text, context);
                                 }
                                 PendingOperatorOverlay::Reasoning => {
                                     self.operator_open_reasoning();
