@@ -5075,6 +5075,8 @@ mod installed_pi {
         inflate_compaction_turn: bool,
         /// Script the private local-provider Operator coordinator walkthrough.
         coordinator: bool,
+        /// Provision only in fixtures that explicitly own their HOME/repo.
+        workspaces: bool,
     }
 
     /// Scripted operator/tool scenario shared by the installed-pi test and the
@@ -5126,7 +5128,8 @@ mod installed_pi {
                     "WORKSPACES_AGENT_RESPONSE: managed Pi received the requested probe.",
                 );
             }
-            if let Some(request) = user.split("User request:\n").last()
+            if mode.workspaces
+                && let Some(request) = user.split("User request:\n").last()
                 && let Some(action) = request
                     .strip_prefix("WORKSPACES_")
                     .and_then(|text| text.split(':').next())
@@ -6695,6 +6698,7 @@ PY"#
                 hold_compaction: true,
                 inflate_compaction_turn: true,
                 coordinator: false,
+                workspaces: false,
             },
         ));
         provider.seed_profile_with(
@@ -7120,10 +7124,14 @@ PY"#
                 format!("automatic_local_terminals = \"{policy}\"\n"),
             )
             .unwrap();
-            let provider = Provider::start(scenario_handler(
+            let provider = Provider::start(scenario_handler_mode(
                 live.repo.clone(),
                 live.root.path().join("marker"),
                 live.root.path().join("background"),
+                ScenarioMode {
+                    workspaces: true,
+                    ..ScenarioMode::default()
+                },
             ));
             provider.seed_profile(&live.config);
             provider.seed_workspace_profile(live.root.path());
@@ -7297,10 +7305,14 @@ PY"#
     fn installed_pi_operator_workspaces_refusals_preserve_resources() {
         let pi = pi_executable();
         let live = live::Live::idle().bounded();
-        let provider = Provider::start(scenario_handler(
+        let provider = Provider::start(scenario_handler_mode(
             live.repo.clone(),
             live.root.path().join("marker"),
             live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
         ));
         provider.seed_profile(&live.config);
         live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
@@ -7512,10 +7524,14 @@ PY"#
         use ovrcr::protocol::AgentProvider;
         let pi = pi_executable();
         let live = live::Live::idle().bounded();
-        let provider = Provider::start(scenario_handler(
+        let provider = Provider::start(scenario_handler_mode(
             live.repo.clone(),
             live.root.path().join("marker"),
             live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
         ));
         provider.seed_profile(&live.config);
         install_personal_skill(live.root.path());
@@ -8670,6 +8686,7 @@ PY"#
                 hold_compaction: compaction,
                 inflate_compaction_turn: compaction,
                 coordinator,
+                workspaces,
             },
         ));
         if compaction {
