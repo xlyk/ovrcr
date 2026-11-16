@@ -83,7 +83,12 @@ the text table includes it as the last column, including for archived records.
 Both the table and JSON include Last activity. It advances when an agent changes
 state or a user sends terminal input; terminal output, focus, and selection do
 not count. If no activity has been recorded, it uses the session start time when
-available.
+available. Offline retained rows may have a null timestamp; consumers must not
+invent an age. Session JSON additionally includes `assignment_control` when the
+Server has an assigned-child view: its handle, control owner/epoch/barrier and
+optional evidence retain their existing meaning. Controller, Human and Uncertain
+are all assigned work, not cleanup permission. An absent view does not prove
+unowned work; scheduled task runs are inspected separately with `run list`.
 
 `workspace get` and `workspace remove` take `--project` with `--branch` (the
 current checkout branch; slashes such as `feature/cleanup` are valid) or `--path`

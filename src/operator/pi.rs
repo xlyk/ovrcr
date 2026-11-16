@@ -1069,6 +1069,12 @@ mod tests {
                     .join("ovrcr-session-care/SKILL.md")
                     .to_str()
                     .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-cleanup/SKILL.md")
+                    .to_str()
+                    .unwrap(),
                 "--no-prompt-templates",
                 "--no-themes",
                 "--no-context-files",
@@ -1127,7 +1133,16 @@ mod tests {
             !system_prompt.contains(include_str!("../../pi/skills/ovrcr-session-care/SKILL.md")),
             "session care is read on demand"
         );
-        for asset in [&status, &reference, &workspaces, &care] {
+        let cleanup = paths.profile.join("ovrcr-cleanup/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&cleanup).unwrap(),
+            include_str!("../../pi/skills/ovrcr-cleanup/SKILL.md")
+        );
+        assert!(
+            !system_prompt.contains(include_str!("../../pi/skills/ovrcr-cleanup/SKILL.md")),
+            "cleanup is read on demand"
+        );
+        for asset in [&status, &reference, &workspaces, &care, &cleanup] {
             let metadata = fs::symlink_metadata(asset).unwrap();
             assert!(metadata.is_file());
             assert_eq!(metadata.mode() & 0o777, 0o600);

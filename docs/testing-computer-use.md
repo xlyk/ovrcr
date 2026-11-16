@@ -480,6 +480,20 @@ requests must remain unchanged. For narrower scope in a fixture with Project
 supports these exact phrases, not arbitrary rephrasings. No catalog picker or
 explicit skill command is part of this status-only walkthrough.
 
+For proposal-only cleanup, the same helper recognizes `Preview cleanup` and
+`/skill:ovrcr-cleanup Preview cleanup hours=0 project=fixture` without a new mode.
+Use the first from full Operator (default instance-wide, 24 hours), the second
+from Quick (only the named Project, request-local threshold). The helper performs
+actual shipped-instruction reads, `watch_sessions(list)`, matching-instance
+inventory and read-only Git inspections; it creates no cleanup resources for you.
+Use task-owned populated Projects/Workspaces and retain external before/after
+inventory (including archived rows and task runs), Git refs/status/HEAD and
+provider-history bytes. Capture screenshots/AX of scope, exact session/run and
+Workspace identities, blockers and **Cleanup execution unavailable**. Add
+`approve all actions` to a preview request and verify the same no-change result.
+Keep read/tool receipts and final provider requests with the native evidence;
+headless classifications alone do not prove keyboard or visible outcomes.
+
 For Workspace provisioning, use `OVRCR_OPERATOR_GUI_WORKSPACES=1` with the
 same private HOME ownership marker required by the coordinator helper. This seeds
 only the private Operator and Workspace Pi profiles; it creates no sessions.

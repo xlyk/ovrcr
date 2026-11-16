@@ -126,7 +126,7 @@ The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
 without a checkout. The bundled `ovrcr-status`, `ovrcr-workspaces`,
-`ovrcr-coordinator` and `ovrcr-session-care` skills,
+`ovrcr-coordinator`, `ovrcr-session-care` and `ovrcr-cleanup` skills,
 including supporting references, are materialized in the private Operator
 profile and advertised to Pi by their exact `--skill` paths. Pi reads the relevant
 instructions on demand. Automatic discovery stays off, so personal, Project and
@@ -196,6 +196,29 @@ retained reference, never a picker, new conversation or replayed prompt. Failed
 recovery preserves the record and evidence; awaiting native attachment remains
 visible rather than being called successful recovery. Changed runs and uncertain
 ownership are refused, not automatically acknowledged or retried on replacements.
+
+## Preview cleanup
+
+Ask “What old sessions and unused Workspaces could I clean up?” or send
+`/skill:ovrcr-cleanup` in full Operator or Quick message. General Cleanup proposals
+cover all registered Projects by default; name a Project, Workspace or session
+to narrow the scope. The default review filter is 24 hours since Last activity
+(Agent-state change or user input), with request-local overrides. Missing times
+stay unknown, and age is not proof of completion.
+
+The proposal names exact resources and session runs, observations, ages, effects
+and blockers. It separates stopped-record archive, reviewed idle live Agent
+stop-and-archive, and separately approved Workspace removal. Busy, paused,
+Unread, WaitingInput, watched, task-owned and uncertain work stays protected;
+Operator conversations are excluded. Dirty or occupied checkouts, Root, active
+tasks and provider-history dependencies block Workspace removal. Unmerged or
+unpublished work and unverifiable history locations remain visible.
+
+This version previews only: even approval returns **Cleanup execution unavailable**
+instead of falling back to generic close or remove. Preview preserves resources,
+attention state, ownership acknowledgements, watches, branches, Retained records
+and provider history. It starts no periodic checks. A precise, separate request
+to close a named session still uses session care's existing controls.
 
 ## Coordinate Workspace sessions
 
