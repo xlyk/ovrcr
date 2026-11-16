@@ -402,11 +402,30 @@ OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
 ```
 
 The three cases cover full/Quick input and visible refusals, context/instruction/
-request order, both shipped selections, bare invocation, cold checkpoint resume,
+request order, status/coordinator selections, bare invocation, cold checkpoint resume,
 reconnect, warm leased turns and compaction, exact revision refusal without model
 work, invalid required assets and recoverable requests, and ordinary slash-like
 text. They reuse the status inventory/watch fixture and local provider. Native
 keyboard/visible-outcome evidence remains separate from this Dashboard driver.
+
+Read-only session diagnosis (installed Pi, actual inventory/transcript/screen reads):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_session_care_diagnosis -- --ignored --nocapture
+```
+
+The owning status Reporter fixture also supplies Busy, idle, WaitingInput, Ready,
+unavailable reporting, natural exit and same-boot interrupted sessions. Diagnosis
+uses numeric session/run identity despite identical misleading titles. Codex
+transcripts include a clipped entry and missing history; Pi uses terminal reads
+and Oh My Pi uses screen windows. The production Dashboard submits through full
+and Quick entry points to installed Pi, whose real tools invoke the matching CLI.
+External inventory, input files and history bytes prove inspection preserves
+processes, Unread, Input requests and recovery acknowledgements. Controlled
+provider replies derive from those observations; they do not establish an
+unconstrained model's inference quality or native keyboard behavior.
 
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):

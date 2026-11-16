@@ -27,6 +27,12 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         document: include_str!("../../../../pi/skills/ovrcr-coordinator/SKILL.md"),
         assets: &[],
     },
+    BundledSkill {
+        revision: 1,
+        name: "ovrcr-session-care",
+        document: include_str!("../../../../pi/skills/ovrcr-session-care/SKILL.md"),
+        assets: &[],
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
