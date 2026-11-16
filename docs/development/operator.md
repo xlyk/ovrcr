@@ -82,6 +82,7 @@ pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --skill <operator-pi>/ovrcr-coordinator/SKILL.md
    --skill <operator-pi>/ovrcr-workspaces/SKILL.md
    --skill <operator-pi>/ovrcr-session-care/SKILL.md
+   --skill <operator-pi>/ovrcr-cleanup/SKILL.md
    --session-dir <operator-pi>/runs/<run-id>
    --session-id operator-<conversation-id>
    --append-system-prompt <policy + bundled CLI guide>
@@ -93,8 +94,8 @@ by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`
 The CLI guide is available before the first model request in full chat and Quick
 message without a repository checkout. The immutable catalog in
 `ovrcr_protocol::operator::skills::BUNDLED_SKILLS` owns the status, coordinator,
-Workspace provisioning and session-care documents and all required supporting
-assets.
+Workspace provisioning, session-care and cleanup documents and all required
+supporting assets.
 Each is compiled into the matching binary, validated and atomically materialized
 before Pi launches; invalid frontmatter, unavailable assets or unsafe paths fail
 before prompting. Owned documents use `name` then a single-line `description`
@@ -119,6 +120,13 @@ Reporter health and provider-supported reads; diagnosis preserves attention and
 ownership state. Explicit control uses caller-captured `--expected-run`
 preconditions. Exact Agent reopen forbids picker fallback and ownership
 acknowledgement, and reports native attachment separately from process creation.
+`ovrcr-cleanup` is proposal-only: it uses inventory, existing watch/task metadata
+and read-only Git observations, defaults to instance-wide 24-hour stale review,
+and distinguishes protected resources and evidence gaps from candidates. There
+is no cleanup executor or mutation fallback. `terminal list --json` exposes the
+existing content-free `assignment_control` view when available; its absence is
+not proof that work is unowned. Inventory does not expose provider-history paths,
+so an unverifiable location remains a Workspace-removal blocker.
 Each cold worker launch refreshes the
 complete bundle with mode 0600 files in private directories. Existing symlinked,
 foreign-owned or writable asset paths are refused. Warm turns, session switching

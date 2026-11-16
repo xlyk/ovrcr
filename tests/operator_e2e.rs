@@ -3965,6 +3965,10 @@ mod installed_pi {
         time::{Duration, Instant},
     };
 
+    mod cleanup {
+        include!("fixtures/operator-pi/cleanup.rs");
+    }
+
     const BUDGET: Duration = Duration::from_secs(30);
     /// The same source file the compiled Operator bundles into its system prompt.
     const BUNDLED_SKILL: &str = include_str!("../.agents/skills/ovrcr/SKILL.md");
@@ -4668,13 +4672,18 @@ mod installed_pi {
         )));
         assert_eq!(
             system.matches("<name>ovrcr-").count(),
-            4,
+            5,
             "only implemented skills are advertised"
         );
         assert!(system.contains("<name>ovrcr-session-care</name>"));
         assert!(system.contains(&format!(
             "<location>{}</location>",
             operator_profile.join("ovrcr-session-care/SKILL.md").display()
+        )));
+        assert!(system.contains("<name>ovrcr-cleanup</name>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-cleanup/SKILL.md").display()
         )));
         assert!(!system.contains("unregistered-sentinel"));
         assert!(!system.contains("project-sentinel"));
@@ -5124,6 +5133,20 @@ mod installed_pi {
                 };
             }
             let user = operator_provider::last_user_text(body);
+            if user == "CLEANUP_TASK_HOLD" {
+                return Plan::text("Task remains active during preview").holding();
+            }
+            if user
+                .split("User request:\n")
+                .last()
+                .is_some_and(|request| request.starts_with("Preview cleanup"))
+            {
+                let mut counters = counters.lock().unwrap();
+                let step = counters.entry("cleanup-preview".into()).or_default();
+                let plan = cleanup::plan(body, *step);
+                *step += 1;
+                return plan;
+            }
             if user.starts_with("WORKSPACES_AGENT_PROBE:") {
                 return Plan::text(
                     "WORKSPACES_AGENT_RESPONSE: managed Pi received the requested probe.",
