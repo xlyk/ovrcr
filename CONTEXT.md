@@ -12,6 +12,22 @@ _Avoid_: workspace, checkout as synonyms for the registered repository
 OVRCR's built-in assistant, with one instance-wide conversation shared by the Operator pane and Quick message.
 _Avoid_: workspace session, one conversation per selected project
 
+**Operator skill**:
+An OVRCR-provided procedure the Operator can select for a requested task. It supplies task guidance, not additional permission to act.
+_Avoid_: scheduled task, tool, permission grant
+
+**Explicit skill invocation**:
+A request that names an Operator skill and supplies its instructions before the Operator begins the request. Selecting a skill while composing a draft is not an invocation.
+_Avoid_: picker selection, tool execution, permission grant
+
+**Cleanup proposal**:
+A list of specific resource changes presented for the user's approval before cleanup. Finding a candidate does not authorize changing it.
+_Avoid_: automatic cleanup, standing permission
+
+**Stale-session candidate**:
+A retained session flagged for review because its Last activity is older than the chosen threshold. This does not establish that its work is finished or that it may be closed.
+_Avoid_: abandoned agent, stopped session
+
 **Retained session**:
 A session whose identity and workspace placement remain available after its process ends or the server restarts. Agent sessions retain a reference to their provider-owned conversation; both Agent and Terminal launches have retained sessions.
 _Avoid_: live process, running terminal as interchangeable terms
