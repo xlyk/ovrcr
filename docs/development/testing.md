@@ -371,6 +371,28 @@ request and tool output never enter the fifth turn's context, and authenticated
 stop proof. It does not prove subscription entitlement; account sign-in stays a
 separate user-operated `ovrcr operator setup` step.
 
+Bundled status and isolated delivery (installed Pi, real native tools and CLI):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_status -- --ignored --nocapture
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_bundled_skill -- --ignored --nocapture
+```
+
+The status overview uses both Dashboard entry points, two registered Projects
+and real PTYs with Ready, Input-request and unavailable Reporter observations.
+It observes actual skill/reference reads, matching-instance CLI inventory,
+instance-wide and narrower reports, unchanged resources and attention state,
+and cold/resumed/warm/compacted delivery. An explicitly requested coordinator
+watch keeps the worker warm; removing it leaves the Agent running. Invalid
+required documents, reference paths and writable directories must fail before
+any provider request. Personal, Project and unregistered skill sentinels stay
+undiscovered. These controlled-provider tests prove composition and resource
+effects, not an unconstrained model's choice of procedure or native keyboard use.
+
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 

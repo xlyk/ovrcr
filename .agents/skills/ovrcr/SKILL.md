@@ -14,7 +14,7 @@ export OVRCR_EXECUTABLE="$(command -v ovrcr)"
 "$OVRCR_EXECUTABLE" --version
 ```
 
-OVRCR Operator is different: `OVRCR_EXECUTABLE` is already set to the matching binary. Use it exactly as inherited; do not run that export, do not resolve a PATH-selected alternate, and do not fall back to a default instance. Preserve the inherited `OVRCR_HOME`, `OVRCR_CONFIG` and `OVRCR_SOCKET`, and use only the exact project, workspace, session and run identities captured in the message. A `cargo run` from a checkout can speak a different protocol than the server that is already running. Pass `--json` on any command whose output you will parse. Run `"$OVRCR_EXECUTABLE" <command> --help` for flags this page does not need.
+OVRCR Operator is different: `OVRCR_EXECUTABLE` is already set to the matching binary. Use it exactly as inherited; do not run that export, do not resolve a PATH-selected alternate, and do not fall back to a default instance. Preserve the inherited `OVRCR_HOME`, `OVRCR_CONFIG` and `OVRCR_SOCKET`. Status overviews cover all registered Projects by default and honor explicitly narrower requests; resolve inspected identities from current inventory and state the scope. Actions on a captured target use its exact project, workspace, session and run identities. A `cargo run` from a checkout can speak a different protocol than the server that is already running. Pass `--json` on any command whose output you will parse. Run `"$OVRCR_EXECUTABLE" <command> --help` for flags this page does not need.
 
 The full contract is `docs/cli-reference.md` in the ovrcr source repository.
 

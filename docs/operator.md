@@ -125,13 +125,29 @@ Existing OVRCR CLI guards still apply.
 The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
-without a checkout. The separate coordinator skill is materialized in the
-private Operator profile and advertised to Pi by its explicit `--skill` path.
-When coordinating work, Pi reads that file on demand. Automatic discovery stays
-off, so personal and project skills are not loaded. The CLI guide remains only
+without a checkout. The bundled `ovrcr-status` and `ovrcr-coordinator` skills,
+including supporting references, are materialized in the private Operator
+profile and advertised to Pi by their exact `--skill` paths. Pi reads the relevant
+instructions on demand. Automatic discovery stays off, so personal, Project and
+leftover unregistered skills are not loaded. Required asset failures prevent
+prompting. A warm worker keeps its bundle through follow-up turns and compaction;
+updated instructions are adopted at a later cold start without stopping live work. The CLI guide remains only
 in system prompt text; it never appears in your conversation, tool results or
 journal. Every ordinary model request, including one after Pi compacts context
 automatically, receives the guide.
+
+## Ask for an overview
+
+Ask “What needs attention across OVRCR?” in full Operator or Quick message.
+Status defaults to all registered Projects in the current instance, not just the
+captured Workspace. Ask for a particular Project, Workspace or session to narrow
+it. Each report states its scope and distinguishes observed activity from
+unavailable reporting. Live Workspace capacity counts running and paused Agents
+and Terminals against fifty slots; Operator has a separate slot.
+
+Status starts with inventory metadata. It reads session content only when the
+requested inspection needs it, preserves Unread and Input requests, and does not
+acknowledge ownership, create or control resources, or start periodic checks.
 
 ## Coordinate Workspace sessions
 

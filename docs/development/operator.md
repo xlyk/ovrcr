@@ -14,8 +14,8 @@ work lease, that process stays live across warm user turns on the same run.
 ## Package layout
 
 - `src/operator/pi.rs` — executable resolution, the dedicated profile, launch
-  command construction, the system-only CLI guide, coordinator-skill
-  materialization, extension materialization and bounded model listing.
+  command construction, the system-only CLI guide, the shipped skill catalog and
+  complete asset materialization, extension materialization and bounded model listing.
 - `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
   worker and `ovrcr operator models`.
 - `src/operator/worker.rs` — cold Start and run-scoped warm StartTurn, one live
@@ -44,8 +44,9 @@ All Operator state lives inside the instance directory (`RegistryPath::resolve`)
 | Path | Mode | Purpose |
 | --- | --- | --- |
 | `<instance>/operator-pi` | 0700 | Pi's `PI_CODING_AGENT_DIR`: native auth, models and settings |
-| `<instance>/operator-pi/ovrcr-coordinator` | 0700 | Explicitly loaded coordinator skill |
-| `<instance>/operator-pi/ovrcr-coordinator/SKILL.md` | 0600 | Bundled coordinator instructions |
+| `<instance>/operator-pi/<registered-skill>` | 0700 | Owned skill directory and supporting subdirectories |
+| `<instance>/operator-pi/<registered-skill>/SKILL.md` | 0600 | Explicitly loaded bundled instructions |
+| `<instance>/operator-pi/<registered-skill>/references/*` | 0600 | Required supporting references |
 | `<instance>/operator-pi/turns` | 0700 | One attempt directory per turn id |
 | `<instance>/operator-pi/runs/<run-id>` | 0700 | Live Pi session files for one worker run |
 | `<instance>/operator-workdir` | 0700 | Fixed pi process cwd for the whole conversation |
@@ -77,6 +78,7 @@ Managed turn (`pi.rs::rpc_command`):
 pi --mode rpc --no-extensions --no-skills --no-prompt-templates
    --no-themes --no-context-files --no-approve --offline
    --tools read,bash,edit,write,watch_sessions
+   --skill <operator-pi>/ovrcr-status/SKILL.md
    --skill <operator-pi>/ovrcr-coordinator/SKILL.md
    --session-dir <operator-pi>/runs/<run-id>
    --session-id operator-<conversation-id>
@@ -87,20 +89,30 @@ pi --mode rpc --no-extensions --no-skills --no-prompt-templates
 One `--append-system-prompt` argument carries the fixed Operator policy followed
 by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`.
 The CLI guide is available before the first model request in full chat and Quick
-message without a repository checkout. The separate coordinator skill is
-atomically materialized as a private profile file and passed through `--skill`.
-`--no-skills` remains, so Pi advertises that explicit file without discovering
-skills from the profile, project or personal home. Pi reads its body on demand
+message without a repository checkout. The catalog in `pi.rs::BUNDLED_SKILLS`
+owns the status and coordinator documents and all required supporting assets.
+Each is compiled into the matching binary, validated and atomically materialized
+before Pi launches; invalid frontmatter, unavailable assets or unsafe paths fail
+before prompting. Owned documents use `name` then a single-line `description`
+frontmatter field; Pi reads that same metadata from the exact materialized file.
+`--no-skills` remains, so Pi advertises only exact registered document paths,
+never scanning leftover directories, the profile, Project or personal home. Pi reads its body on demand
 when the task matches. The CLI guide remains only in system prompt text and never
 enters the user message or journal. Its interactive-shell
 guidance resolves `ovrcr` once, while Operator keeps the inherited
 `OVRCR_EXECUTABLE`, `OVRCR_HOME`, `OVRCR_CONFIG`, `OVRCR_SOCKET` and exactly the
-captured project/workspace/session run identities.
+captured identities for actions on the selected target. Read-only status instead
+defaults to all registered Projects in that instance, honors narrower requests
+and resolves inspected identities from current inventory.
 
-The coordinator skill source is `pi/skills/ovrcr-coordinator/SKILL.md` and is
-embedded with `include_str!`; each cold worker launch atomically writes the
-profile copy with mode 0600. Its name, description and exact private path are
-advertised to Pi.
+Sources live under `pi/skills/<registered-skill>/`. `ovrcr-status` includes
+`references/inventory.md`; the coordinator remains a separate unchanged procedure,
+not the managed-Pi orchestrator package. Each cold worker launch refreshes the
+complete bundle with mode 0600 files in private directories. Existing symlinked,
+foreign-owned or writable asset paths are refused. Warm turns, session switching
+and compaction do not rematerialize assets or reload metadata; new instructions
+wait for a later cold worker. No extra watcher, capability or persistent store is
+introduced.
 
 pi stays in the worker's process group (no `process_group(0)`), so the Server's
 lifetime Session owns pi and its tool children. `ovrcr operator models` runs in
@@ -125,7 +137,7 @@ Server.
    typed `OperatorWorkerSubmission` (`Prompt { text, context, async_wakeup }`,
    `Compact { instructions }`, or `BranchSummary { target_entry_id, instructions }`).
 2. Create the exclusive turn attempt and run directory, materialize the
-   extension and coordinator skill, then launch pi. `get_state` resolves the
+   extension and complete registered skill bundle, then launch pi. `get_state` resolves the
    fresh profile's model and thinking level; the
    session id must equal `operator-<conversation-id>`; the trusted extension must
    bind before anything else happens.
@@ -172,8 +184,8 @@ Server.
    runs inside the one conversation. Every ordinary model request, including the
    one after compaction, carries the policy and bundled CLI guide only in its
    system prompt; the compaction conversation payload and durable conversation
-   journal never contain that guidance. The coordinator skill remains a separate
-   explicit `--skill` file.
+   journal never contain that guidance. Task-specific skills remain separate
+   explicit `--skill` files; their on-demand reads are normal journaled tool results.
 7. Read the bounded `ovrcr_operator_watches` status. With an active lease, copy
    the live session into this turn's private `session.jsonl`, validate the
    session header, and fsync the copy and directory. Commit

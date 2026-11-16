@@ -468,6 +468,18 @@ remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
 confirm the same conversation is attached (startup `Current` creates nothing).
 Keep fresh screenshots and AX text for every changed state.
 
+For bundled status, the same helper recognizes the ordinary request
+`What needs attention across OVRCR?` without a special mode. Send it from full
+Operator, then from Quick message in the same fixture. Open the reply and retain
+screenshots/AX showing the stated instance-wide scope, Project/Workspace/session
+inventory and Workspace capacity separate from Operator. Expand the read receipts
+for `ovrcr-status/SKILL.md`, its `references/inventory.md`, and the matching-instance
+CLI inventory. Compare external inventory before/after: runs, Unread and Input
+requests must remain unchanged. For narrower scope in a fixture with Project
+`fixture`, use `Show status only for Project fixture.`. The scripted provider
+supports these exact phrases, not arbitrary rephrasings. No catalog picker or
+explicit skill command is part of this status-only walkthrough.
+
 For leased multi-session coordination, use the helper's
 `OVRCR_OPERATOR_GUI_COORDINATOR=1` scenario with a fresh private HOME and matching
 ownership marker. The [setup and exact request sequence](../research/operator-async-delegation-465/470-evidence.md#native-helper-instructions)
