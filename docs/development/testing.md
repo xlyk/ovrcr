@@ -412,6 +412,25 @@ The controlled provider executes `tests/fixtures/operator-pi/workspaces.py` thro
 Pi's admitted Bash tool. Assertions check actual CLI/Git/session results; these
 cases do not prove an unconstrained model's judgment or native keyboard use.
 
+Read-only session diagnosis (installed Pi, actual inventory/transcript/screen reads):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_session_care_diagnosis -- --ignored --nocapture
+```
+
+The owning status Reporter fixture also supplies Busy, idle, WaitingInput, Ready,
+unavailable reporting, natural exit and same-boot interrupted sessions. Diagnosis
+uses numeric session/run identity despite identical misleading titles. Codex
+transcripts include a clipped entry and missing history; Pi uses terminal reads
+and Oh My Pi uses screen windows. The production Dashboard submits through full
+and Quick entry points to installed Pi, whose real tools invoke the matching CLI.
+External inventory, input files and history bytes prove inspection preserves
+processes, Unread, Input requests and recovery acknowledgements. Controlled
+provider replies derive from those observations; they do not establish an
+unconstrained model's inference quality or native keyboard behavior.
+
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 

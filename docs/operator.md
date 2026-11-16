@@ -125,8 +125,8 @@ Existing OVRCR CLI guards still apply.
 The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
-without a checkout. The bundled `ovrcr-status`, `ovrcr-workspaces` and
-`ovrcr-coordinator` skills,
+without a checkout. The bundled `ovrcr-status`, `ovrcr-workspaces`,
+`ovrcr-coordinator` and `ovrcr-session-care` skills,
 including supporting references, are materialized in the private Operator
 profile and advertised to Pi by their exact `--skill` paths. Pi reads the relevant
 instructions on demand. Automatic discovery stays off, so personal, Project and
@@ -171,6 +171,21 @@ Operator inspects its actual composer and provider observations, surfaces
 unexpected setup/trust/approval questions without answering, and sends tasks
 only when requested. Partial effects are reconciled before any retry; resources
 stay available afterward.
+
+## Diagnose a session
+
+Ask “Why does session 12 appear stuck?” in full Operator or Quick message.
+`ovrcr-session-care` resolves the current Project, Workspace and session run,
+then distinguishes ongoing work, an Input request, a response ready for review,
+idle, exit/interruption and unavailable reporting. It reads only relevant content:
+Claude Code/Codex transcripts or Pi/Oh My Pi terminal observations. Missing or
+truncated content remains a gap, not proof of completion.
+
+Diagnosis reports what is known, unknown and the next supported action. It
+leaves processes, Unread, Input requests and ownership acknowledgements unchanged.
+Uncertain prior-process ownership requires human verification. This procedure is
+read-only: suggested control or conversation recovery is not performed, and it
+never substitutes a new conversation or replays an old prompt.
 
 ## Coordinate Workspace sessions
 

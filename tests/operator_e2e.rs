@@ -3973,6 +3973,7 @@ mod installed_pi {
     const COMPACTION_CONTEXT_WINDOW: u64 = 12_288;
     const STATUS_WATCH_REQUEST: &str = "Watch status-ready without sending it work.";
     const STATUS_UNWATCH_REQUEST: &str = "Stop watching status-ready; leave it running.";
+    const CARE_REQUEST: &str = "Diagnose session ";
     const STATUS_REQUEST: &str = "What needs attention across OVRCR?";
     const STATUS_PROJECT_REQUEST: &str = "Show status only for Project fixture.";
     const STATUS_WORKSPACE_REQUEST: &str =
@@ -4666,9 +4667,14 @@ mod installed_pi {
         )));
         assert_eq!(
             system.matches("<name>ovrcr-").count(),
-            3,
+            4,
             "only implemented skills are advertised"
         );
+        assert!(system.contains("<name>ovrcr-session-care</name>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-session-care/SKILL.md").display()
+        )));
         assert!(!system.contains("unregistered-sentinel"));
         assert!(!system.contains("project-sentinel"));
         let coordinator_skill = operator_profile.join("ovrcr-coordinator/SKILL.md");
@@ -5132,6 +5138,7 @@ mod installed_pi {
                 return plan;
             }
             let key = [
+                CARE_REQUEST,
                 STATUS_REQUEST,
                 STATUS_WATCH_REQUEST,
                 STATUS_UNWATCH_REQUEST,
@@ -5176,6 +5183,7 @@ mod installed_pi {
             let marker_text = marker.display().to_string();
             let workspace_text = workspace.display().to_string();
             match (key.as_str(), step) {
+                (CARE_REQUEST, _) => session_care_plan(body, step),
                 (STATUS_REQUEST | STATUS_PROJECT_REQUEST | STATUS_WORKSPACE_REQUEST | STATUS_SESSION_REQUEST, _) => status_plan(body, &key, step),
                 (STATUS_WATCH_REQUEST, 0) => {
                     let system = operator_provider::system_text(body);
@@ -5762,6 +5770,194 @@ PY"#
                 }
                 text.push_str("Inspection only; resources, Unread and Input requests unchanged.");
                 Plan::text(&text)
+            }
+        }
+    }
+
+    // Controlled provider: drive the shipped procedure with actual CLI results,
+    // not a canned diagnosis. This does not test unconstrained model inference.
+    fn session_care_plan(body: &Value, step: usize) -> Plan {
+        let user = operator_provider::last_user_text(body);
+        let id: u64 = user
+            .split(CARE_REQUEST)
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let call = format!("care-{step}");
+        match step % 5 {
+            0 => {
+                let system = operator_provider::system_text(body);
+                let path = system
+                    .split("<name>ovrcr-session-care</name>")
+                    .nth(1)
+                    .expect("session care must be advertised")
+                    .split("<location>")
+                    .nth(1)
+                    .unwrap()
+                    .split("</location>")
+                    .next()
+                    .unwrap();
+                Plan::tool(&call, "read", json!({"path": path}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                for required in [
+                    "Known",
+                    "Unknown",
+                    "Next supported action",
+                    "recovery.requires_ack",
+                    "Read-only boundary",
+                    "terminal transcript ID",
+                    "terminal screen ID",
+                ] {
+                    assert!(
+                        instructions.contains(required),
+                        "missing diagnosis instruction: {required}"
+                    );
+                }
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\ncli = os.environ['OVRCR_EXECUTABLE']\ndef get(*args):\n    return json.loads(subprocess.check_output([cli, '--json', *args], text=True))\nrow = next(r for r in get('terminal', 'list') if r['id'] == {id})\nprojects = get('project', 'list')\nworkspaces = get('workspace', 'list', '--project', row['project'])\nworkspace = next(w for w in workspaces if w['path'] == row['cwd'])\nassert any(p['name'] == row['project'] for p in projects)\nprint('CARE_INVENTORY=' + json.dumps(dict(instance=os.environ['OVRCR_HOME'], executable=cli, workspace=workspace, session=row)))\nPY"
+                    )}),
+                )
+            }
+            2 => {
+                let row = marked_tool_json(body, "CARE_INVENTORY=")["session"].clone();
+                let provider = row["agent"]["binding"]["provider"].as_str().unwrap_or("");
+                eprintln!(
+                    "CARE_READ_SELECTION id={id} observed={} provider={provider}",
+                    row["id"]
+                );
+                let command = if matches!(provider, "Codex" | "Claude") {
+                    "transcript"
+                } else if provider == "Omp" {
+                    "screen"
+                } else {
+                    "read"
+                };
+                let bounds = match command {
+                    "screen" => ", '--rows', '2', '--cols', '80'",
+                    "read" => ", '--max-lines', '40'",
+                    _ => "",
+                };
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\np = subprocess.run([os.environ['OVRCR_EXECUTABLE'], '--json', 'terminal', '{command}', '{id}'{bounds}], capture_output=True, text=True)\nprint('CARE_CONTENT=' + json.dumps(dict(session={id}, command='{command}', code=p.returncode, output=p.stdout, error=p.stderr)))\nPY"
+                    )}),
+                )
+            }
+            3 => {
+                let content = marked_tool_json(body, "CARE_CONTENT=");
+                assert_eq!(
+                    content["session"], id,
+                    "only this diagnosis's observation is evidence"
+                );
+                let fallback = content["command"] == "transcript"
+                    && (content["code"] != 0 || content["output"].as_str().unwrap().contains('…'));
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\ncli = os.environ['OVRCR_EXECUTABLE']\nfallback = None\nif {fallback}:\n    p = subprocess.run([cli, '--json', 'terminal', 'read', '{id}', '--max-lines', '40'], capture_output=True, text=True)\n    fallback = dict(code=p.returncode, output=p.stdout, error=p.stderr)\nrows = json.loads(subprocess.check_output([cli, '--json', 'terminal', 'list'], text=True))\nprint('CARE_REFRESH=' + json.dumps(dict(session=next(r for r in rows if r['id'] == {id}), fallback=fallback)))\nPY",
+                        fallback = if fallback { "True" } else { "False" }
+                    )}),
+                )
+            }
+            _ => {
+                let inventory = marked_tool_json(body, "CARE_INVENTORY=");
+                let refreshed = marked_tool_json(body, "CARE_REFRESH=");
+                let row = &refreshed["session"];
+                // The native GUI helper can inspect real reporting sessions,
+                // whose metric age advances even without a state change.
+                for key in ["id", "run", "project", "cwd"] {
+                    assert_eq!(
+                        inventory["session"][key], row[key],
+                        "diagnosis target changed"
+                    );
+                }
+                assert_eq!(
+                    inventory["session"]["agent"]["binding"],
+                    row["agent"]["binding"]
+                );
+                assert_eq!(
+                    inventory["session"]["recovery"]["conversation"],
+                    row["recovery"]["conversation"]
+                );
+                let content = marked_tool_json(body, "CARE_CONTENT=");
+                let unavailable = row["reporting_unavailable"] == true || row["agent"].is_null();
+                let condition = if matches!(
+                    row["phase"].as_str(),
+                    Some("interrupted" | "exited" | "stopped" | "paused")
+                ) {
+                    row["phase"].as_str().unwrap()
+                } else if unavailable {
+                    "unavailable reporting; activity unknown"
+                } else {
+                    row["activity"].as_str().unwrap()
+                };
+                let evidence = if content["code"] == 0 {
+                    let parsed: Value =
+                        serde_json::from_str(content["output"].as_str().unwrap()).unwrap();
+                    let text = match content["command"].as_str().unwrap() {
+                        "transcript" => parsed["entries"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|entry| entry["Assistant"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        "read" => parsed["text"].as_str().unwrap().to_owned(),
+                        "screen" => parsed["rows"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .flat_map(|row| row["cells"].as_array().unwrap())
+                            .filter_map(|cell| cell["text"].as_str())
+                            .collect::<String>(),
+                        _ => unreachable!(),
+                    };
+                    text.trim().chars().take(180).collect::<String>()
+                } else {
+                    "unavailable".into()
+                };
+                let unknown = if content["code"] != 0 {
+                    "content unavailable"
+                } else if content["output"].as_str().unwrap().contains('…') {
+                    "transcript truncated; terminal tail is partial evidence"
+                } else {
+                    "task success not established"
+                };
+                let next = if row["recovery"]["requires_ack"] == true
+                    && !matches!(row["phase"].as_str(), Some("running" | "paused"))
+                {
+                    "human ownership verification required; no acknowledgement performed"
+                } else if condition == "waiting_input" {
+                    "human answer required; Input request unchanged"
+                } else if condition == "response_ready" {
+                    "review response; Unread unchanged"
+                } else if unavailable {
+                    "reporting/recovery needs explicit investigation"
+                } else {
+                    "wait or request a supported action explicitly"
+                };
+                Plan::text(&format!(
+                    "Scope: instance {}, Project {}, Workspace {} ({}), session {id}, run {}.\nKnown: {condition}. Exit code: {}. Recovery blocker: {}.\nObserved content: {evidence}.\nUnknown: {unknown}.\nNext supported action: {next}. Inspection only; no control or recovery performed.",
+                    inventory["instance"].as_str().unwrap(),
+                    row["project"].as_str().unwrap(),
+                    inventory["workspace"]["branch"].as_str().unwrap(),
+                    inventory["workspace"]["id"],
+                    row["run"],
+                    row["exit_code"],
+                    row["recovery"]["unavailable"],
+                ))
             }
         }
     }
@@ -6642,12 +6838,20 @@ PY"#
     // file, as in server_lifecycle's hook child. Keep the supervisor connection
     // alive so inventory has stable Ready/Input/unavailable observations.
     fn status_agent(live: &live::Live, name: &str) -> (ovrcr::protocol::SessionId, UnixStream) {
+        reporter_agent(live, name, ovrcr::protocol::AgentProvider::Codex)
+    }
+
+    fn reporter_agent(
+        live: &live::Live,
+        name: &str,
+        provider: ovrcr::protocol::AgentProvider,
+    ) -> (ovrcr::protocol::SessionId, UnixStream) {
         use ovrcr::protocol::*;
         let identity = live.root.path().join(format!("{name}.identity"));
         let Response::CreatedSession(session) = live.request(Request::CreateSession(CreateSessionRequest {
             project: "fixture".into(), workspace: "work".into(), name: name.into(), label: None,
-            kind: SessionKind::Agent { name: "codex".into() },
-            argv: vec!["/bin/sh".into(), "-c".into(), "umask 077; printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(), "status-fixture".into(), identity.clone().into_os_string()],
+            kind: SessionKind::Agent { name: provider.name().into() },
+            argv: vec!["/bin/sh".into(), "-c".into(), "umask 077; printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; printf 'Observed Agent screen: %s\\n' \"$2\"; while IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$1.input\"; [ \"$line\" != fixture-exit ] || exit 7; done".into(), "status-fixture".into(), identity.clone().into_os_string(), name.into()],
         })) else { panic!("status Agent PTY creation failed") };
         live.own_group(session.pid.unwrap() as libc::pid_t);
         let deadline = Instant::now() + BUDGET;
@@ -6677,7 +6881,7 @@ PY"#
                 expected_epoch: 0,
                 pi_resume: None,
                 invocation: format!("invocation-{name}"),
-                provider: AgentProvider::Codex,
+                provider,
             }),
         )
         .unwrap();
@@ -6710,12 +6914,12 @@ PY"#
                 turn: Some("status-cycle".into()),
             }),
             match name {
-                "status-ready" => AgentObservation::Activity(ActivitySample {
+                "status-ready" | "care-transcript" => AgentObservation::Activity(ActivitySample {
                     state: AgentActivity::ResponseReady,
                     quality: SampleQuality::Confirmed,
                     turn: Some("status-cycle".into()),
                 }),
-                "status-input" => AgentObservation::Input(vec![InputRequest {
+                "status-input" | "care-truncated" => AgentObservation::Input(vec![InputRequest {
                     id: "question:status-fixture".into(),
                     kind: InputKind::Input,
                 }]),
@@ -6723,6 +6927,18 @@ PY"#
                     state: ReporterHealth::Unavailable,
                     reason: Some("fixture reporting disconnected".into()),
                 }),
+                "care-idle" | "care-omp" => AgentObservation::Activity(ActivitySample {
+                    state: AgentActivity::Idle,
+                    quality: SampleQuality::Confirmed,
+                    turn: Some("status-cycle".into()),
+                }),
+                "care-busy" | "care-interrupted" | "care-exited" | "care-missing" => {
+                    AgentObservation::Activity(ActivitySample {
+                        state: AgentActivity::Busy,
+                        quality: SampleQuality::Confirmed,
+                        turn: Some("status-cycle".into()),
+                    })
+                }
                 _ => panic!("unknown status fixture"),
             },
         ];
@@ -6761,6 +6977,48 @@ PY"#
                     Response::Ok
                 );
             }
+        }
+        if matches!(name, "care-transcript" | "care-truncated") {
+            let conversation = binding.conversation.clone();
+            let history = live.root.path().join(format!("{name}.jsonl"));
+            let text = if name == "care-truncated" {
+                format!(
+                    "Which deployment target? {}PRIVATE_CLIPPED_TAIL",
+                    "x".repeat(17_000)
+                )
+            } else {
+                "Diagnosis fixture reply: checks finished; review required.".into()
+            };
+            std::fs::write(&history, format!("{}\n{}\n",
+                json!({"type": "session_meta", "payload": {"id": conversation}}),
+                json!({"type": "event_msg", "payload": {"type": "agent_message", "message": text}}),
+            )).unwrap();
+            let retained = protocol::client::request(
+                &mut stream,
+                4,
+                Request::Supervisor(SupervisorRequest {
+                    auth: SupervisorAuth {
+                        session: session.id,
+                        lease: reservation.lease,
+                    },
+                    operation: format!("retain-{name}"),
+                    command: AgentCommand::RetainConversation {
+                        binding,
+                        reference: Box::new(ConversationReference::Codex(CodexConversation {
+                            conversation,
+                            executable: "/bin/sh".into(),
+                            history: Some(history),
+                            config_dir: live.root.path().to_owned(),
+                            options: vec![],
+                        })),
+                    },
+                }),
+            )
+            .unwrap();
+            assert_eq!(
+                retained,
+                Response::AgentOperation(AgentOperationResult::ConversationRetained)
+            );
         }
         (session.id, stream)
     }
@@ -7244,6 +7502,317 @@ PY"#
         live.join();
         eprintln!(
             "INSTALLED_PI_WORKSPACES_REFUSALS_PASS provider_requests={} cases=4 permission_input=false shutdown=verified",
+            provider.requests().len()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_session_care_diagnosis() {
+        use ovrcr::protocol::AgentProvider;
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+        ));
+        provider.seed_profile(&live.config);
+        install_personal_skill(live.root.path());
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        live.ready("care-work");
+        let (interrupted, owner) = status_agent(&live, "care-interrupted");
+        status_cli(&live, &["shutdown", "--kill"]);
+        live.join();
+        drop(owner);
+        // As in retained_sessions::prepare_interrupted_claude: only after all
+        // fixture processes stop, seed a same-boot interrupted retained run.
+        // Same boot deliberately leaves ownership uncertain, preventing display recovery.
+        let database =
+            rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        assert_eq!(
+            database
+                .execute(
+                    "UPDATE retained_sessions SET stopped = 0, failure = NULL WHERE id = ?1",
+                    [interrupted.0 as i64],
+                )
+                .unwrap(),
+            1
+        );
+        drop(database);
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        let mut owners = Vec::new();
+        let mut cases = vec![(interrupted, "care-interrupted", "interrupted", "read")];
+        for (name, native, condition, read) in [
+            ("care-busy", AgentProvider::Pi, "busy", "read"),
+            ("care-idle", AgentProvider::Pi, "idle", "read"),
+            ("care-omp", AgentProvider::Omp, "idle", "screen"),
+            (
+                "care-transcript",
+                AgentProvider::Codex,
+                "response_ready",
+                "transcript",
+            ),
+            (
+                "care-truncated",
+                AgentProvider::Codex,
+                "waiting_input",
+                "transcript",
+            ),
+            (
+                "status-unavailable",
+                AgentProvider::Codex,
+                "unavailable reporting; activity unknown",
+                "transcript",
+            ),
+            ("care-missing", AgentProvider::Codex, "busy", "transcript"),
+            ("care-exited", AgentProvider::Pi, "exited", "read"),
+        ] {
+            let (id, owner) = reporter_agent(&live, name, native);
+            owners.push(owner);
+            cases.push((id, name, condition, read));
+            // Identical misleading display titles cannot retarget the numeric request.
+            status_cli(
+                &live,
+                &["terminal", "rename", &id.0.to_string(), "finished"],
+            );
+            if name == "care-exited" {
+                status_cli(
+                    &live,
+                    &[
+                        "terminal",
+                        "send",
+                        &id.0.to_string(),
+                        "--text",
+                        "fixture-exit",
+                    ],
+                );
+                let deadline = Instant::now() + BUDGET;
+                loop {
+                    let rows = status_cli(&live, &["terminal", "list"]);
+                    if rows
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|r| r["id"] == id.0 && r["phase"] == "exited")
+                    {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "owned fixture did not exit");
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+        let before = status_cli(&live, &["terminal", "list"]);
+        let projects = status_cli(&live, &["project", "list"]);
+        let workspaces = status_cli(&live, &["workspace", "list"]);
+        let histories: Vec<_> = ["care-transcript", "care-truncated"]
+            .into_iter()
+            .map(|name| {
+                let path = live.root.path().join(format!("{name}.jsonl"));
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        let mut driver = DashboardDriver::connect(&live);
+        driver.select_fixture_workspace();
+        driver.open();
+        let conversation = driver.conversation().id;
+        for (index, (id, name, condition, read)) in cases.iter().enumerate() {
+            driver.reopen();
+            let request = format!(
+                "{CARE_REQUEST}{} without changing it. Why does it appear stuck?",
+                id.0
+            );
+            let start = provider.requests().len();
+            if index % 2 == 0 {
+                driver.submit(&request);
+            } else {
+                driver.quick(&request);
+            }
+            let history = wait_terminal(&mut driver, conversation, &provider, &live);
+            wait_stopped(&mut driver, conversation);
+            let requests = provider.requests();
+            let turn_requests = &requests[start..];
+            assert_eq!(
+                turn_requests.len(),
+                5,
+                "{name}: instructions, inventory, content, refresh, answer"
+            );
+            if index == 0 {
+                assert_normal_first_prompt(name, &turn_requests[0].body, &request);
+            } else {
+                assert!(
+                    operator_provider::last_user_text(&turn_requests[0].body).ends_with(&request)
+                );
+                assert!(
+                    operator_provider::non_system_text(&turn_requests[0].body)
+                        .contains("Inspection only; no control or recovery performed."),
+                    "resumed diagnosis retains the prior conversation"
+                );
+            }
+            assert_skill_only_in_system(
+                name,
+                &turn_requests[0].body,
+                &live.config.join("operator-pi"),
+            );
+            let body = &turn_requests.last().unwrap().body;
+            let observed = marked_tool_json(body, "CARE_INVENTORY=");
+            let expected = before
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id.0)
+                .unwrap();
+            assert_eq!(&observed["session"], expected);
+            assert_eq!(observed["instance"], live.config.to_string_lossy().as_ref());
+            assert_eq!(
+                observed["executable"],
+                live.executable.to_string_lossy().as_ref()
+            );
+            assert_eq!(observed["workspace"]["id"], "work");
+            let content = marked_tool_json(body, "CARE_CONTENT=");
+            assert_eq!(content["session"], id.0);
+            assert_eq!(content["command"], *read);
+            let refreshed = marked_tool_json(body, "CARE_REFRESH=");
+            assert_eq!(&refreshed["session"], expected);
+            let turn = history
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .identity
+                .turn;
+            let answer: String = history
+                .messages
+                .iter()
+                .filter(|message| message.turn == turn)
+                .filter_map(|message| match &message.content {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                answer.contains(&format!("Known: {condition}")),
+                "{name}: {answer}"
+            );
+            assert!(
+                answer.contains(&format!("session {}, run {}", id.0, expected["run"])),
+                "{answer}"
+            );
+            assert!(answer.contains("Unknown:") && answer.contains("Next supported action:"));
+            match *name {
+                "care-interrupted" | "care-exited" => {
+                    assert_eq!(expected["recovery"]["requires_ack"], true);
+                    assert!(
+                        answer.contains("human ownership verification required"),
+                        "{answer}"
+                    );
+                }
+                "care-transcript" => {
+                    assert!(
+                        content["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Diagnosis fixture reply")
+                    );
+                    assert!(expected["unread"].is_object());
+                    assert!(answer.contains("Unread unchanged"));
+                    assert!(
+                        answer
+                            .contains("Diagnosis fixture reply: checks finished; review required.")
+                    );
+                }
+                "care-truncated" => {
+                    assert!(content["output"].as_str().unwrap().contains('…'));
+                    assert!(
+                        !content["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("PRIVATE_CLIPPED_TAIL")
+                    );
+                    assert!(
+                        refreshed["fallback"]["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Observed Agent screen: care-truncated")
+                    );
+                    assert!(
+                        answer.contains("transcript truncated")
+                            && answer.contains("human answer required")
+                            && answer.contains("Which deployment target?")
+                    );
+                    assert!(
+                        !expected["agent"]["input_requests"]
+                            .as_array()
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+                "care-missing" | "status-unavailable" => {
+                    assert_ne!(
+                        content["code"], 0,
+                        "a nonexistent transcript must be refused"
+                    );
+                    assert!(answer.contains("content unavailable"));
+                    assert_eq!(refreshed["fallback"]["code"], 0);
+                }
+                _ => assert!(
+                    answer.contains(&format!("Observed Agent screen: {name}")),
+                    "{answer}"
+                ),
+            }
+            let outputs = tool_outputs_with_status(&history);
+            assert!(
+                outputs
+                    .iter()
+                    .all(|(_, _, status)| *status == OperatorToolStatus::Succeeded)
+            );
+            assert!(!operator_provider::non_system_text(body).contains(PERSONAL_SKILL_SENTINEL));
+            driver.reopen();
+            assert!(
+                driver.screen().contains(&format!("Known: {condition}")),
+                "{name}: diagnosis must render"
+            );
+            let after = status_cli(&live, &["terminal", "list"]);
+            let rows: Vec<_> = after
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["scope"] == "Workspace")
+                .cloned()
+                .collect();
+            assert_eq!(
+                Value::Array(rows),
+                before,
+                "{name}: process/run, attention and ownership unchanged"
+            );
+            eprintln!(
+                "INSTALLED_PI_SESSION_CARE_CASE name={name} session={} run={} quick={} condition={condition} read={read} requests=5 unchanged=true",
+                id.0,
+                expected["run"],
+                index % 2 != 0
+            );
+        }
+        assert_eq!(status_cli(&live, &["project", "list"]), projects);
+        assert_eq!(status_cli(&live, &["workspace", "list"]), workspaces);
+        for (path, bytes) in histories {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        for (_, name, _, _) in &cases {
+            let input = live.root.path().join(format!("{name}.identity.input"));
+            if *name == "care-exited" {
+                assert_eq!(std::fs::read_to_string(input).unwrap(), "fixture-exit\n");
+            } else {
+                assert!(!input.exists(), "diagnosis sent input to {name}");
+            }
+        }
+        assert!(!driver.conversation().worker_live);
+        eprintln!(
+            "INSTALLED_PI_SESSION_CARE_PASS cases={} requests={} full_and_quick=true unchanged=true",
+            cases.len(),
             provider.requests().len()
         );
     }
