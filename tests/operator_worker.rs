@@ -205,9 +205,13 @@ fn operator_cli_exposes_setup_and_models_and_hides_worker() {
         assert!(help.contains(command), "missing {command}: {help}");
     }
     assert!(!help.contains("worker"), "worker must stay hidden: {help}");
+    assert!(help.contains("/skill:<name> [request]"));
+    assert!(help.contains("/skill:ovrcr-status"));
     for removed in ["login", "logout", "status"] {
         assert!(
-            !help.contains(removed),
+            !help
+                .lines()
+                .any(|line| line.split_whitespace().next() == Some(removed)),
             "obsolete auth command {removed} remains: {help}"
         );
     }

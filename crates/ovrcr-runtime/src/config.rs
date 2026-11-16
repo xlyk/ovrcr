@@ -24,7 +24,7 @@ pub const HOME_ENV: &str = "OVRCR_HOME";
 pub const CONFIG_ENV: &str = "OVRCR_CONFIG";
 
 const APPLICATION_ID: i64 = 0x4f565243;
-pub(crate) const SCHEMA_VERSION: i64 = 35;
+pub(crate) const SCHEMA_VERSION: i64 = 36;
 
 const REGISTRY_DB: &str = "registry.sqlite3";
 const LEGACY_IDENTITY: &str = "config.toml";
@@ -485,6 +485,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     } else {
         crate::retained::operator::migrate_session_epochs(&transaction)?;
     }
+    if schema_identity(&transaction)?.1 < 36 {
+        // Older writers must not drop a journaled explicit skill selection.
+        transaction.pragma_update(None, "user_version", 36)?;
+    }
     transaction.commit().context("commit registry migration")?;
     connection.pragma_update(None, "foreign_keys", true)?;
     Ok(connection)
@@ -547,6 +551,7 @@ pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
                 | 32
                 | 33
                 | 34
+                | 35
                 | SCHEMA_VERSION
         )
     {

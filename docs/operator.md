@@ -313,13 +313,28 @@ composer opens a live slash-command menu above the input rule (`Up`/`Down`
 select, `Tab` autocomplete, `Enter` run, `Esc` dismiss menu only while keeping
 the draft). Both the full composer and Quick message (`Ctrl-o`) support seven
 built-in slash commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`,
-`/compact`, `/tree`). Multi-segment Unix paths such as `/etc/hosts` or drafts
+`/compact`, `/tree`), plus explicit `/skill:<name> [request]` submission.
+Multi-segment Unix paths such as `/etc/hosts` or drafts
 with leading whitespace (` /copy`) submit as normal user prompts, whereas an
 unknown single-segment `/command` is rejected locally with the draft preserved.
 In Quick message, `/copy`, `/thinking <level>`, `/model default`, exact
 `/model <provider/id>` matches and `/new` complete directly; `/session`,
 `/compact`, `/tree`, bare `/thinking`, bare `/model` and filtered
 `/model <query>` transition into the full Operator view.
+
+Send `/skill:ovrcr-status [request]` or `/skill:ovrcr-coordinator [request]`
+from either composer to select that shipped procedure. OVRCR supplies its full
+instructions and reference location before model work, after the captured target
+and before your distinct request. With no request, the procedure follows its
+normal flow and asks for missing required information. Selection grants no extra
+tools or permission to act.
+
+Unknown or incompatible selections fail visibly instead of becoming ordinary
+messages. Local refusal keeps the draft; a worker startup failure keeps the
+accepted request and error in the journal for an explicit retry. Busy and
+stop-unconfirmed states keep named drafts just like ordinary drafts. The selected
+identity stays in history across reconnect; worker instructions refresh only at
+a later cold start. Native Pi commands such as `/reload` are not forwarded.
 
 - `/copy` copies the latest visible assistant reply on the active branch as raw
   Markdown (OSC 52 clipboard, capped at 64 KiB) without starting a worker, or

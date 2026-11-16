@@ -156,6 +156,7 @@ fn settle_history_open(dashboard: &mut Dashboard, open: ClientMessage) {
                 ordinal: 1,
                 turn: OperatorTurnId(1),
                 content: OperatorMessageContent::User {
+                    skill: None,
                     text: "saved journal entry".into(),
                     context: OperatorContext::default(),
                 },

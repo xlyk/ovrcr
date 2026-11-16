@@ -1,4 +1,7 @@
 //! SDK-independent native Operator conversation and worker protocol.
+pub mod skills;
+pub use skills::OperatorSkillSelection;
+
 use crate::{SessionId, SessionRunId, SupervisorAuth};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -526,6 +529,8 @@ fn validate_text(value: &str) -> Result<(), String> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorMessageContent {
     User {
+        #[serde(default)]
+        skill: Option<OperatorSkillSelection>,
         text: String,
         context: OperatorContext,
     },
@@ -607,6 +612,7 @@ pub enum OperatorRequest {
         limit: u16,
     },
     Submit {
+        skill: Option<OperatorSkillSelection>,
         conversation: OperatorConversationId,
         expected_run: SessionRunId,
         text: String,
@@ -681,6 +687,7 @@ impl OperatorRequest {
                 Ok(())
             }
             Self::Submit {
+                skill,
                 conversation,
                 text,
                 context,
@@ -689,8 +696,15 @@ impl OperatorRequest {
                 if conversation.0 == 0 {
                     return Err("zero conversation identity".into());
                 }
-                validate_text(text)?;
-                if text.trim().is_empty() {
+                if let Some(skill) = skill {
+                    skill.resolve()?;
+                    if text.len() > MAX_OPERATOR_TEXT_BYTES || text.contains('\0') {
+                        return Err("invalid operator text bounds".into());
+                    }
+                } else {
+                    validate_text(text)?;
+                }
+                if text.trim().is_empty() && skill.is_none() {
                     return Err("empty operator message".into());
                 }
                 context.validate()
@@ -782,6 +796,7 @@ impl Default for OperatorSettings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerSubmission {
     Prompt {
+        skill: Option<OperatorSkillSelection>,
         text: String,
         context: OperatorContext,
         /// Pi has already started this prompt through its native async input API.

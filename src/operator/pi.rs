@@ -39,34 +39,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const BUNDLED_SKILL: &str = include_str!("../../.agents/skills/ovrcr/SKILL.md");
 const SYSTEM_PROMPT_GAP: &str = "\n\n";
 
-/// The complete owned bundle. Only these exact documents are advertised;
-/// supporting files are relative to their skill directory, never discovered.
-struct BundledSkill {
-    name: &'static str,
-    document: &'static str,
-    assets: &'static [(&'static str, &'static str)],
-}
-
-const BUNDLED_SKILLS: &[BundledSkill] = &[
-    BundledSkill {
-        name: "ovrcr-status",
-        document: include_str!("../../pi/skills/ovrcr-status/SKILL.md"),
-        assets: &[(
-            "references/inventory.md",
-            include_str!("../../pi/skills/ovrcr-status/references/inventory.md"),
-        )],
-    },
-    BundledSkill {
-        name: "ovrcr-coordinator",
-        document: include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md"),
-        assets: &[],
-    },
-    BundledSkill {
-        name: "ovrcr-session-care",
-        document: include_str!("../../pi/skills/ovrcr-session-care/SKILL.md"),
-        assets: &[],
-    },
-];
+use ovrcr_protocol::operator::skills::BUNDLED_SKILLS;
 
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
 /// never reach a message.

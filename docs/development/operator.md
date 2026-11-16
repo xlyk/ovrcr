@@ -14,8 +14,8 @@ work lease, that process stays live across warm user turns on the same run.
 ## Package layout
 
 - `src/operator/pi.rs` — executable resolution, the dedicated profile, launch
-  command construction, the system-only CLI guide, the shipped skill catalog and
-  complete asset materialization, extension materialization and bounded model listing.
+  command construction, the system-only CLI guide, complete asset materialization,
+  extension materialization and bounded model listing.
 - `src/operator/rpc.rs` — the blocking, bounded JSONL child driver shared by the
   worker and `ovrcr operator models`.
 - `src/operator/worker.rs` — cold Start and run-scoped warm StartTurn, one live
@@ -90,9 +90,9 @@ pi --mode rpc --no-extensions --no-skills --no-prompt-templates
 One `--append-system-prompt` argument carries the fixed Operator policy followed
 by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`.
 The CLI guide is available before the first model request in full chat and Quick
-message without a repository checkout. The catalog in `pi.rs::BUNDLED_SKILLS`
-owns the status, coordinator and session-care documents and all required
-supporting assets.
+message without a repository checkout. The immutable catalog in
+`ovrcr_protocol::operator::skills::BUNDLED_SKILLS` owns the status, coordinator
+and session-care documents and all required supporting assets.
 Each is compiled into the matching binary, validated and atomically materialized
 before Pi launches; invalid frontmatter, unavailable assets or unsafe paths fail
 before prompting. Owned documents use `name` then a single-line `description`
@@ -141,7 +141,7 @@ Server.
    `StartTurn` returns the next accepted user turn without changing that run.
    The returned `OperatorWorkerStart` carries the turn's captured `model` and
    `thinking_level` overrides, `checkpoint_turn`, optional `tree_target_id`, and
-   typed `OperatorWorkerSubmission` (`Prompt { text, context, async_wakeup }`,
+   typed `OperatorWorkerSubmission` (`Prompt { text, context, skill, async_wakeup }`,
    `Compact { instructions }`, or `BranchSummary { target_entry_id, instructions }`).
 2. Create the exclusive turn attempt and run directory, materialize the
    extension and complete registered skill bundle, then launch pi. `get_state` resolves the
@@ -176,6 +176,14 @@ Server.
      captured context JSON before the user text so user input can never invoke an
      untrusted native pi command. If `tree_target_id` was active on restore,
      `/ovrcr_tree_control` (`summarize: false`) positions pi's leaf first.
+     Explicit `/skill:<name> [request]` submissions instead carry a separate
+     `OperatorSkillSelection { name, revision }` through Submit, the durable User
+     opener, and authenticated worker Start/StartTurn. The Server validates exact
+     catalog membership and revision before accepting; the worker revalidates
+     before prompting and expands compiled instructions inside the context-first
+     wrapper, followed by the distinct request. The materialized document path
+     resolves supporting references. No native skill command is sent. A bare
+     selection is allowed without synthesizing request text or authority.
    - `Compact`: sends pi's `compact` RPC (with optional `customInstructions`),
      verifies the appended `compaction` entry on `session.jsonl`, and emits
      `CompactionSummary { summary, tokens_before }`.
@@ -255,6 +263,23 @@ attached to `target_branch_parent_turn` that preserve pre-switch
 `active_tip_turn` on completion, active-branch `read_operator_history`
 projection, and worker-gated `/ovrcr_tree_control` leaf restoration and
 summarization).
+
+## Explicit skill compatibility
+
+Wire protocol 89 adds optional typed selection to Submit, User journal messages
+and worker Prompt submissions. Schema 36 protects these journaled selections from
+older writers; legacy User JSON without a selection remains ordinary text, never
+reparsed as an invocation. The upgrade preserves journal/checkpoint bytes. History
+and `/tree` prompt rewind display the named invocation, not expanded instructions.
+
+The single immutable catalog lives in the protocol crate so the Dashboard,
+Server, and root worker share identities and exact compiled assets without a
+runtime dependency cycle. Filesystem delivery stays in `pi.rs`; no process or
+state owner moves. Bump an entry's revision whenever its document, metadata or
+supporting assets change. Unknown names or different revisions are refused, never
+substituted. Matching wire/executable checks and the worker's fixed binary freeze
+that catalog through warm turns and compaction; there is no runtime discovery or
+hot reload. A later cold worker adopts its matching binary's bundle.
 
 ## Workspace coordination watches
 

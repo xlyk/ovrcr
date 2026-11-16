@@ -284,6 +284,7 @@ exec '{}' --exact server::operator_tests::operator_worker_fixture --ignored --no
     fn submit(&mut self, c: &OperatorConversationSummary) -> OperatorTurn {
         let Response::Operator(OperatorResponse::Submitted(t)) =
             self.request(Request::Operator(OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: c.run,
                 text: "fixture prompt".into(),
@@ -748,6 +749,7 @@ fn user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn() {
         let result = submit_state.operator_request(
             &submit_owner,
             OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: first.identity.run,
                 text: "human report follow-up".into(),
@@ -829,6 +831,7 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
     let auth = live.ready(&c);
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "keep draft".into(),
@@ -1049,6 +1052,7 @@ fn operator_natural_exit_does_not_certify_stop_or_allow_another_turn() {
     );
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "do not replay".into(),
@@ -1263,6 +1267,7 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     assert!(!h.conversation.worker_stopped);
     assert!(matches!(
         restarted.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "do not replay uncertain work".into(),
@@ -1285,6 +1290,7 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
     // A completed model response still occupies its slot and cannot start a replacement.
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: first.identity.run,
             text: "fixture prompt".into(),
@@ -1307,6 +1313,7 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
     }
     let Response::Operator(OperatorResponse::Submitted(second)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: first.identity.run,
             text: "fixture prompt".into(),
@@ -1340,6 +1347,7 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
     for _ in 0..200 {
         assert!(matches!(
             live.request(Request::Operator(OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: SessionRunId(0),
                 text: "".into(),
@@ -1393,6 +1401,7 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
                 limit: 100,
             },
             "submit" => OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: SessionRunId(42),
                 text: "keep draft".into(),
@@ -1640,6 +1649,7 @@ fn operator_legacy_conversation_is_hidden_refuses_work_and_keeps_recovery() {
     // No new submit revives it, and Open starts a separate singleton.
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: legacy.id,
             expected_run: turn.identity.run,
             text: "revive".into(),
@@ -2255,6 +2265,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
     };
     let Response::Operator(OperatorResponse::Submitted(t1)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: c.run,
             text: "first prompt".into(),
@@ -2361,6 +2372,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
     };
     let Response::Operator(OperatorResponse::Submitted(t2)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: after_t1.run,
             text: "branch A prompt".into(),
@@ -2547,6 +2559,7 @@ fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error()
     // Turn 1 (`u1 -> a1`) and Turn 2 (`u2a -> a2a`).
     let Response::Operator(OperatorResponse::Submitted(t1)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: c.run,
             text: "root prompt".into(),
@@ -2574,6 +2587,7 @@ fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error()
     };
     let Response::Operator(OperatorResponse::Submitted(t2)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: after_t1.run,
             text: "branch A prompt".into(),

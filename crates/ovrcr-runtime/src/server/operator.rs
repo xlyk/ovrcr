@@ -315,6 +315,7 @@ impl ServerState {
             }
             OperatorRequest::Models => self.operator_models(owner).map(OperatorResponse::Models),
             OperatorRequest::Submit {
+                skill,
                 conversation,
                 expected_run,
                 text,
@@ -346,6 +347,7 @@ impl ServerState {
                                     &text,
                                     context,
                                     settings,
+                                    skill,
                                 )
                             } else {
                                 retained.submit_operator_turn(
@@ -354,6 +356,7 @@ impl ServerState {
                                     &text,
                                     context,
                                     settings,
+                                    skill,
                                 )
                             }
                         })
@@ -1356,6 +1359,7 @@ mod control_tests {
                 &owner,
                 1,
                 OperatorRequest::Submit {
+                    skill: None,
                     conversation: OperatorConversationId(1),
                     expected_run: SessionRunId(0),
                     text: String::new(),

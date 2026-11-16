@@ -730,8 +730,9 @@ impl SessionStore {
         text: &str,
         context: OperatorContext,
         settings: OperatorSettings,
+        skill: Option<ovrcr_protocol::OperatorSkillSelection>,
     ) -> Result<OperatorTurn> {
-        self.submit_operator_turn_inner(id, expected_run, text, context, settings, false)
+        self.submit_operator_turn_inner(id, expected_run, text, context, settings, skill, false)
     }
 
     /// Accepts another turn only after a completed turn explicitly kept its
@@ -743,8 +744,9 @@ impl SessionStore {
         text: &str,
         context: OperatorContext,
         settings: OperatorSettings,
+        skill: Option<ovrcr_protocol::OperatorSkillSelection>,
     ) -> Result<OperatorTurn> {
-        self.submit_operator_turn_inner(id, expected_run, text, context, settings, true)
+        self.submit_operator_turn_inner(id, expected_run, text, context, settings, skill, true)
     }
 
     pub(crate) fn submit_operator_compact_turn(
@@ -848,6 +850,7 @@ impl SessionStore {
         .map(Some)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn submit_operator_turn_inner(
         &mut self,
         id: OperatorConversationId,
@@ -855,9 +858,11 @@ impl SessionStore {
         text: &str,
         context: OperatorContext,
         settings: OperatorSettings,
+        skill: Option<ovrcr_protocol::OperatorSkillSelection>,
         warm_worker: bool,
     ) -> Result<OperatorTurn> {
         OperatorRequest::Submit {
+            skill: skill.clone(),
             conversation: id,
             expected_run,
             text: text.into(),
@@ -869,6 +874,7 @@ impl SessionStore {
             id,
             expected_run,
             OperatorMessageContent::User {
+                skill,
                 text: text.into(),
                 context,
             },
@@ -1313,12 +1319,18 @@ impl SessionStore {
             |r| r.get(0),
         )?;
         let submission = match serde_json::from_str(&raw)? {
-            OperatorMessageContent::User { text, context } => OperatorWorkerSubmission::Prompt {
+            OperatorMessageContent::User {
+                text,
+                context,
+                skill,
+            } => OperatorWorkerSubmission::Prompt {
+                skill,
                 text,
                 context,
                 async_wakeup: false,
             },
             OperatorMessageContent::AsyncWakeup { text } => OperatorWorkerSubmission::Prompt {
+                skill: None,
                 text,
                 context: OperatorContext::default(),
                 async_wakeup: true,
@@ -1621,7 +1633,21 @@ impl SessionStore {
             let parent_turn = parse_optional_turn_id(parent_raw)?;
             let user_prompt = match raw_opener {
                 Some(raw) => match serde_json::from_str::<OperatorMessageContent>(&raw) {
-                    Ok(OperatorMessageContent::User { text, context }) => Some((text, context)),
+                    Ok(OperatorMessageContent::User {
+                        text,
+                        context,
+                        skill,
+                    }) => Some((
+                        skill.map_or_else(
+                            || text.clone(),
+                            |skill| {
+                                format!("/skill:{} {}", skill.name, text)
+                                    .trim_end()
+                                    .to_owned()
+                            },
+                        ),
+                        context,
+                    )),
                     _ => None,
                 },
                 None => None,
@@ -1863,6 +1889,7 @@ mod tests {
                     thinking_level: OperatorThinkingLevel::Xhigh,
                     ..Default::default()
                 },
+                None,
             )
             .unwrap();
         let running = store.operator_conversation(conversation.id).unwrap();
@@ -1953,6 +1980,7 @@ mod tests {
                     model: model.map(str::to_owned),
                     ..Default::default()
                 },
+                None,
             )
             .unwrap()
     }
@@ -1999,6 +2027,7 @@ mod tests {
                 "continue",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         assert_eq!(second.identity.run, first.identity.run);
@@ -2035,6 +2064,7 @@ mod tests {
                     "too late",
                     OperatorContext::default(),
                     OperatorSettings::default(),
+                    None,
                 )
                 .is_err(),
             "an unleased completion cannot authorize warm dispatch during teardown"
@@ -2071,6 +2101,7 @@ mod tests {
         assert_eq!(
             wakeup.submission,
             OperatorWorkerSubmission::Prompt {
+                skill: None,
                 text: "watched session 23 is ready".into(),
                 context: OperatorContext::default(),
                 async_wakeup: true,
@@ -2102,6 +2133,7 @@ mod tests {
                     "human loses the occupied slot",
                     OperatorContext::default(),
                     OperatorSettings::default(),
+                    None,
                 )
                 .is_err()
         );
@@ -2591,6 +2623,7 @@ mod tests {
                         model: Some(invalid.into()),
                         ..Default::default()
                     },
+                    None,
                 )
                 .unwrap_err();
             assert!(
@@ -2705,6 +2738,7 @@ mod tests {
                         model: None,
                         ..Default::default()
                     },
+                    None,
                 )
                 .is_err()
         );
@@ -2719,6 +2753,7 @@ mod tests {
                     model: None,
                     ..Default::default()
                 },
+                None,
             )
             .unwrap();
         assert_eq!(fresh.identity.run.0, t.identity.run.0 + 1);
@@ -2728,6 +2763,7 @@ mod tests {
                 .unwrap()
                 .submission,
             OperatorWorkerSubmission::Prompt {
+                skill: None,
                 text: "fresh".into(),
                 context: OperatorContext::default(),
                 async_wakeup: false,
@@ -2838,6 +2874,40 @@ mod tests {
     }
 
     #[test]
+    fn schema_35_user_bytes_survive_explicit_skill_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(root.path()).unwrap();
+        let conversation = open(&mut store);
+        let turn = submit(&mut store, &conversation, None);
+        store.apply_operator_batch(&completed(&turn, 1)).unwrap();
+        let raw = r#"{"User":{"text":"/skill:ovrcr-status legacy data","context":{"project":null,"workspace":null,"workspace_id":null,"cwd":null,"session":null,"run":null}}}"#;
+        store.connection.execute("UPDATE operator_messages SET content=?1 WHERE ordinal=(SELECT MIN(ordinal) FROM operator_messages)", [raw]).unwrap();
+        store
+            .connection
+            .pragma_update(None, "user_version", 35)
+            .unwrap();
+        let before = raw_messages(&store, conversation.id);
+        let saved_checkpoint = checkpoint(&store, conversation.id);
+        drop(store);
+        let store = SessionStore::open(root.path()).unwrap();
+        assert_eq!(raw_messages(&store, conversation.id), before);
+        assert_eq!(checkpoint(&store, conversation.id), saved_checkpoint);
+        let history = store
+            .read_operator_history(conversation.id, 0, 100)
+            .unwrap();
+        assert!(
+            matches!(&history.messages[0].content, OperatorMessageContent::User { skill: None, text, .. } if text == "/skill:ovrcr-status legacy data")
+        );
+        assert_eq!(
+            store
+                .connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            36
+        );
+    }
+
+    #[test]
     fn legacy_rows_refuse_new_work_but_recovery_and_diagnostics_still_resolve() {
         let mut store = SessionStore::in_memory();
         let legacy = open(&mut store);
@@ -2869,6 +2939,7 @@ mod tests {
                         model: None,
                         ..Default::default()
                     },
+                    None,
                 )
                 .is_err()
         );
@@ -2889,7 +2960,7 @@ mod tests {
         assert_eq!(
             raw_messages(&store, legacy.id),
             vec![
-                "{\"User\":{\"text\":\"hello\",\"context\":{\"project\":null,\"workspace\":null,\"workspace_id\":null,\"cwd\":null,\"session\":null,\"run\":null}}}".to_string(),
+                "{\"User\":{\"skill\":null,\"text\":\"hello\",\"context\":{\"project\":null,\"workspace\":null,\"workspace_id\":null,\"cwd\":null,\"session\":null,\"run\":null}}}".to_string(),
                 "{\"Worker\":{\"AssistantDelta\":\"old partial\"}}".to_string(),
                 "\"Interrupted\"".to_string(),
             ]
@@ -2915,11 +2986,13 @@ mod tests {
     fn schema_28_upgrade_preserves_legacy_rows_and_evidence_exactly() {
         let root = tempfile::tempdir().unwrap();
         let legacy_user_1 = serde_json::to_string(&OperatorMessageContent::User {
+            skill: None,
             text: "legacy hello".into(),
             context: OperatorContext::default(),
         })
         .unwrap();
         let legacy_user_2 = serde_json::to_string(&OperatorMessageContent::User {
+            skill: None,
             text: "uncertain".into(),
             context: OperatorContext::default(),
         })
@@ -3249,6 +3322,7 @@ mod tests {
                         model: None,
                         ..Default::default()
                     },
+                    None,
                 )
                 .is_err()
         );
@@ -3775,6 +3849,7 @@ mod tests {
                         model: None,
                         ..Default::default()
                     },
+                    None,
                 )
                 .is_err()
         );
@@ -3789,6 +3864,7 @@ mod tests {
                         model: None,
                         ..Default::default()
                     },
+                    None,
                 )
                 .is_err()
         );
@@ -3819,6 +3895,7 @@ mod tests {
                         thinking_level: OperatorThinkingLevel::High,
                         ..Default::default()
                     },
+                    None,
                 )
                 .unwrap();
             turn_id = turn.identity.turn;
@@ -3869,7 +3946,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         assert_eq!(version, crate::config::SCHEMA_VERSION);
         let summary = store.operator_conversation(conversation_id).unwrap();
         assert_eq!(summary.session_epoch, 0);
@@ -3911,6 +3988,7 @@ mod tests {
                     thinking_level: OperatorThinkingLevel::High,
                     ..Default::default()
                 },
+                None,
             )
             .unwrap();
         store
@@ -3982,6 +4060,7 @@ mod tests {
                 "second epoch prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         let start1 = store.operator_worker_start(turn1.identity).unwrap();
@@ -4009,6 +4088,7 @@ mod tests {
                 "running prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         let running = store.operator_conversation(c.id).unwrap();
@@ -4066,6 +4146,7 @@ mod tests {
                 "first prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         let busy_err = store
@@ -4226,6 +4307,7 @@ mod tests {
                 "branch A prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         assert_eq!(
@@ -4285,6 +4367,7 @@ mod tests {
                 "branch B prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         let t3_start = store.operator_worker_start(t3.identity).unwrap();
@@ -4385,6 +4468,7 @@ mod tests {
                 "epoch1 turn1",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store.apply_operator_batch(&completed(&e1_t1, 1)).unwrap();
@@ -4399,6 +4483,7 @@ mod tests {
                 "epoch1 turn2",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store.apply_operator_batch(&completed(&e1_t2, 1)).unwrap();
@@ -4496,6 +4581,7 @@ mod tests {
                 "fail prompt",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store
@@ -4522,6 +4608,7 @@ mod tests {
                 "follow-up ok",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         let t4_parent: Option<i64> = store
@@ -4581,6 +4668,7 @@ mod tests {
                 "branch two ok",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store.apply_operator_batch(&completed(&t5, 1)).unwrap();
@@ -4637,6 +4725,7 @@ mod tests {
                 "middle error",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store
@@ -4659,6 +4748,7 @@ mod tests {
                 "second complete",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store.apply_operator_batch(&completed(&t3, 1)).unwrap();
@@ -4675,6 +4765,7 @@ mod tests {
                 "trailing interrupted",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store
@@ -4809,6 +4900,7 @@ mod tests {
                 "branch B",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store
@@ -4849,6 +4941,7 @@ mod tests {
                 "branch A",
                 OperatorContext::default(),
                 OperatorSettings::default(),
+                None,
             )
             .unwrap();
         store

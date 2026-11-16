@@ -1118,6 +1118,22 @@ impl Dashboard {
             }
             return;
         }
+        let (skill, request) = match slash::parse_draft(&text) {
+            slash::ParsedDraft::Skill { name, request } => {
+                match ovrcr_protocol::OperatorSkillSelection::named(name) {
+                    Ok(skill) => (Some(skill), request.to_owned()),
+                    Err(error) => {
+                        chat.notice = None;
+                        chat.error = Some(display_text(&error));
+                        if let SubmitOrigin::Quick { generation } = origin {
+                            self.operator_quick_failed(generation, &error);
+                        }
+                        return;
+                    }
+                }
+            }
+            _ => (None, text.clone()),
+        };
         if !chat.can_submit() {
             chat.notice = None;
             chat.error = Some(BUSY_REASON.into());
@@ -1147,9 +1163,10 @@ impl Dashboard {
                 origin,
             },
             OperatorRequest::Submit {
+                skill,
                 conversation: id,
                 expected_run,
-                text,
+                text: request,
                 context,
             },
         );
@@ -3776,6 +3793,7 @@ mod tests {
         message(
             ordinal,
             OperatorMessageContent::User {
+                skill: None,
                 text: text.into(),
                 context: OperatorContext::default(),
             },
@@ -4000,6 +4018,7 @@ mod tests {
                     message(
                         1,
                         OperatorMessageContent::User {
+                            skill: None,
                             text: "Review this.".into(),
                             context,
                         },
@@ -4101,6 +4120,73 @@ mod tests {
     }
 
     #[test]
+    fn named_skill_submission_from_both_composers_is_typed_and_keeps_context() {
+        for quick in [false, true] {
+            let mut d = dashboard();
+            opened(&mut d, summary());
+            d.drain_outbox();
+            if quick {
+                d.ctrl('o');
+            }
+            d.event_action(Event::Paste(
+                "/skill:ovrcr-status inspect this target".into(),
+            ));
+            let context = if quick {
+                d.operator.quick.as_ref().unwrap().context.clone()
+            } else {
+                d.operator.chat.as_ref().unwrap().context.clone()
+            };
+            d.key(KeyCode::Enter);
+            let out = d.drain_outbox();
+            let requests = operator_requests(&out);
+            assert_eq!(requests.len(), 1, "named Send must submit, quick={quick}");
+            let value = serde_json::to_value(requests[0]).unwrap();
+            assert_eq!(value["Submit"]["skill"]["name"], "ovrcr-status");
+            assert_eq!(value["Submit"]["skill"]["revision"], 1);
+            assert_eq!(value["Submit"]["text"], "inspect this target");
+            assert_eq!(
+                value["Submit"]["context"],
+                serde_json::to_value(context).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn named_skill_refusals_keep_the_draft_and_bare_history_names_the_procedure() {
+        for quick in [false, true] {
+            for draft in ["/skill:missing keep me", "/skill:../ovrcr-status keep me"] {
+                let mut d = dashboard();
+                opened(&mut d, summary());
+                d.drain_outbox();
+                if quick {
+                    d.ctrl('o');
+                }
+                d.event_action(Event::Paste(draft.into()));
+                d.key(KeyCode::Enter);
+                assert!(d.drain_outbox().is_empty(), "{draft}");
+                assert!(draw(&mut d, 140, 24).contains("unavailable Operator skill"));
+                assert_eq!(d.operator.chat.as_ref().unwrap().draft, draft);
+            }
+        }
+        let mut d = dashboard();
+        opened(&mut d, summary());
+        let chat = d.operator.chat.as_mut().unwrap();
+        chat.messages = vec![message(
+            1,
+            OperatorMessageContent::User {
+                text: String::new(),
+                context: OperatorContext::default(),
+                skill: Some(
+                    ovrcr_protocol::OperatorSkillSelection::named("ovrcr-coordinator").unwrap(),
+                ),
+            },
+        )];
+        chat.dirty = false;
+        chat.confirmed_tail = Some(1);
+        assert!(draw(&mut d, 140, 24).contains("/skill:ovrcr-coordinator"));
+    }
+
+    #[test]
     fn header_without_a_model_never_guesses_one() {
         let mut d = dashboard();
         opened(&mut d, summary());
@@ -4147,6 +4233,7 @@ mod tests {
                 matches!(
                     &message.request,
                     Request::Operator(OperatorRequest::Submit {
+                        skill: None,
                         conversation: Id(1),
                         expected_run: SessionRunId(1),
                         text,
@@ -4423,28 +4510,34 @@ mod tests {
 
     #[test]
     fn busy_or_stop_unconfirmed_send_preserves_the_draft_with_a_reason() {
-        for value in [busy(), stop_unconfirmed()] {
-            let mut d = dashboard();
-            let out = opened(&mut d, value);
-            d.drain_outbox();
-            assert!(!d.operator_submit_available());
-            d.operator.chat.as_mut().unwrap().draft = "keep this".into();
-            d.key(KeyCode::Enter);
-            assert!(d.drain_outbox().is_empty(), "never queues or steers");
-            let chat = d.operator.chat.as_ref().unwrap();
-            assert_eq!(chat.draft, "keep this");
-            assert_eq!(chat.error.as_deref(), Some(BUSY_REASON));
-            assert!(!chat.submitting);
+        for draft in [
+            "keep this",
+            "/skill:ovrcr-status keep this",
+            "/skill:ovrcr-coordinator",
+        ] {
+            for value in [busy(), stop_unconfirmed()] {
+                let mut d = dashboard();
+                let out = opened(&mut d, value);
+                d.drain_outbox();
+                assert!(!d.operator_submit_available());
+                d.operator.chat.as_mut().unwrap().draft = draft.into();
+                d.key(KeyCode::Enter);
+                assert!(d.drain_outbox().is_empty(), "never queues or steers");
+                let chat = d.operator.chat.as_ref().unwrap();
+                assert_eq!(chat.draft, draft);
+                assert_eq!(chat.error.as_deref(), Some(BUSY_REASON));
+                assert!(!chat.submitting);
 
-            // Quick shares the same draft and refuses with its own visible reason.
-            let _ = out;
-            d.ctrl('o');
-            d.key(KeyCode::Enter);
-            assert!(d.drain_outbox().is_empty());
-            let quick = d.operator.quick.as_ref().unwrap();
-            assert_eq!(quick.text, "keep this");
-            assert_eq!(quick.error.as_deref(), Some(BUSY_REASON));
-            assert_eq!(d.operator.chat.as_ref().unwrap().draft, "keep this");
+                // Quick shares the same draft and refuses with its own visible reason.
+                let _ = out;
+                d.ctrl('o');
+                d.key(KeyCode::Enter);
+                assert!(d.drain_outbox().is_empty());
+                let quick = d.operator.quick.as_ref().unwrap();
+                assert_eq!(quick.text, draft);
+                assert_eq!(quick.error.as_deref(), Some(BUSY_REASON));
+                assert_eq!(d.operator.chat.as_ref().unwrap().draft, draft);
+            }
         }
     }
 
@@ -4717,6 +4810,7 @@ mod tests {
                     message(
                         1,
                         OperatorMessageContent::User {
+                            skill: None,
                             text: "run it".into(),
                             context: OperatorContext::default(),
                         },
@@ -4808,6 +4902,7 @@ mod tests {
                     message(
                         1,
                         OperatorMessageContent::User {
+                            skill: None,
                             text: "go".into(),
                             context: OperatorContext::default(),
                         },
@@ -4889,6 +4984,7 @@ mod tests {
                     message(
                         1,
                         OperatorMessageContent::User {
+                            skill: None,
                             text: "Review this workspace.".into(),
                             context: OperatorContext::default(),
                         },
@@ -5695,6 +5791,7 @@ mod tests {
                     message(
                         1,
                         OperatorMessageContent::User {
+                            skill: None,
                             text: "hello".into(),
                             context: OperatorContext::default(),
                         },
