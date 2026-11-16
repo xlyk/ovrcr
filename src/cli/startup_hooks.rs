@@ -1312,6 +1312,51 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_connect_replaces_native_empty_disabled_statusline_and_installs_hooks() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = root.path().join("settings.json");
+        let hooks = root.path().join("hooks.json");
+        std::fs::write(
+            &settings,
+            r#"{"statusLine":{"command":"","enabled":false,"type":""},"verbosity":"low"}"#,
+        )
+        .unwrap();
+        let targets = || {
+            vec![
+                ("Antigravity hooks", Ok(hooks.clone())),
+                ("Antigravity settings", Ok(settings.clone())),
+            ]
+        };
+        let ovrcr_tui::ConnectStatus::Confirm(text) = preview(targets(), "/installed/ovrcr") else {
+            panic!("empty native statusLine should prompt to connect rather than refuse");
+        };
+        assert!(text.contains(settings.to_str().unwrap()), "{text}");
+        assert!(text.contains(hooks.to_str().unwrap()), "{text}");
+        assert_eq!(
+            install(targets(), "/installed/ovrcr"),
+            Ok("Antigravity status connected for new sessions".into())
+        );
+        let settings_doc: Value =
+            serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(settings_doc["verbosity"], "low");
+        assert_eq!(settings_doc["statusLine"]["type"], "command");
+        assert_eq!(settings_doc["statusLine"]["enabled"], true);
+        assert_eq!(settings_doc["statusLine"]["stack_with_default"], true);
+        assert_eq!(
+            super::super::agy::owned_statusline_renderer(
+                settings_doc["statusLine"]["command"].as_str().unwrap()
+            )
+            .unwrap(),
+            None
+        );
+        assert!(hooks.is_file());
+        assert_eq!(
+            preview(targets(), "/installed/ovrcr"),
+            ovrcr_tui::ConnectStatus::Done(Ok("Agent status is already connected".into()))
+        );
+    }
+
+    #[test]
     fn missing_settings_require_acceptance_and_valid_symlinks_keep_the_link() {
         let root = tempfile::tempdir().unwrap();
         let absent = root.path().join("new/profile/settings.json");

@@ -37,6 +37,8 @@ const REPORTERS: &[&str] = &[
     " report claude-context",
     " report claude",
     " report codex",
+    " report agy-statusline",
+    " report agy",
 ];
 
 /// Replace the `ovrcr` token in existing managed reporter commands with
@@ -101,12 +103,22 @@ fn preceding_word(prefix: &str) -> Option<(usize, usize, String)> {
     if end == 0 {
         return None;
     }
-    let mut start = end;
-    while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
-        start -= 1;
+    let line_start = prefix[..end].rfind('\n').map_or(0, |index| index + 1);
+    for start in line_start..end {
+        if !prefix.is_char_boundary(start) {
+            continue;
+        }
+        if start > line_start && !bytes[start - 1].is_ascii_whitespace() && bytes[start - 1] != b'"'
+        {
+            continue;
+        }
+        if let Some((word_end, token)) = read_word(prefix, start)
+            && word_end == end
+        {
+            return Some((start, end, token));
+        }
     }
-    let (word_end, token) = read_word(prefix, start)?;
-    (word_end == end).then_some((start, end, token))
+    None
 }
 
 fn read_word(text: &str, start: usize) -> Option<(usize, String)> {
@@ -171,28 +183,38 @@ pub(super) fn retarget_file(path: &Path, executable: &str) -> anyhow::Result<boo
 
 pub(super) fn default_hook_files() -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    if let Some(home) = std::env::var_os("HOME")
-        && let Ok(entries) = std::fs::read_dir(home)
-    {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name != ".claude"
-                && !name.starts_with(".claude-")
-                && name != ".codex"
-                && name != ".grok"
-            {
-                continue;
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_path = std::path::PathBuf::from(&home);
+        for relative in [
+            ".gemini/antigravity-cli/settings.json",
+            ".gemini/config/hooks.json",
+        ] {
+            let path = home_path.join(relative);
+            if path.is_file() {
+                files.push(path);
             }
-            for file in [
-                "settings.json",
-                "settings.local.json",
-                "config.toml",
-                "hooks.json",
-            ] {
-                let path = entry.path().join(file);
-                if path.is_file() {
-                    files.push(path);
+        }
+        if let Ok(entries) = std::fs::read_dir(&home_path) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name != ".claude"
+                    && !name.starts_with(".claude-")
+                    && name != ".codex"
+                    && name != ".grok"
+                {
+                    continue;
+                }
+                for file in [
+                    "settings.json",
+                    "settings.local.json",
+                    "config.toml",
+                    "hooks.json",
+                ] {
+                    let path = entry.path().join(file);
+                    if path.is_file() {
+                        files.push(path);
+                    }
                 }
             }
         }
@@ -730,5 +752,13 @@ mod tests {
         assert!(next.contains("echo keep /tmp/old/ovrcr"));
         assert!(!next.contains("exec '/tmp/old/ovrcr'"));
         assert_eq!(retarget_reporter_text(&next, installed), next);
+
+        let agy_source = "{\n  \"statusLine\": {\"type\": \"command\", \"command\": \"OVRCR_AGENT_STATUS=agy '/Applications/OVRCR GUI.app/Contents/MacOS/ovrcr' report agy-statusline --stdin-json --render-command 'my-status'\"},\n  \"ovrcr-agent-status\": {\"Stop\": [{\"type\": \"command\", \"command\": \"exec '/Applications/OVRCR GUI.app/Contents/MacOS/ovrcr' report agy --stdin\"}]}\n}\n";
+        let agy_next = retarget_reporter_text(agy_source, installed);
+        assert!(agy_next.contains(
+            "OVRCR_AGENT_STATUS=agy '/Users/xlyk/.local/bin/ovrcr' report agy-statusline --stdin-json --render-command 'my-status'"
+        ));
+        assert!(agy_next.contains("exec '/Users/xlyk/.local/bin/ovrcr' report agy --stdin"));
+        assert_eq!(retarget_reporter_text(&agy_next, installed), agy_next);
     }
 }

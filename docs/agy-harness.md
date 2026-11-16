@@ -25,7 +25,8 @@ The Stop hook goes in `~/.gemini/config/hooks.json`. The foreground status rende
 goes in `~/.gemini/antigravity-cli/settings.json`. Setup preserves existing hook
 groups and passes native status input through to an existing renderer. Antigravity
 saves an empty, disabled `statusLine` with its other settings; setup replaces that
-placeholder and enables it. A disabled status line with your own command stays disabled.
+placeholder, enables it, and keeps the built-in line stacked. A disabled status line
+with your own command stays disabled.
 
 ```sh
 ovrcr agent setup agy --print

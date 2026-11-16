@@ -854,6 +854,111 @@ fn doctor_reports_tested_releases_as_evidence_and_gates_no_version() {
 }
 
 #[test]
+fn agy_setup_doctor_and_default_retarget_handle_native_empty_statusline() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let bin = root.path().join("bin");
+    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let fake_agy = bin.join("agy");
+    std::fs::write(&fake_agy, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let settings_path = home.join(".gemini/antigravity-cli/settings.json");
+    let hooks_path = home.join(".gemini/config/hooks.json");
+    std::fs::write(
+        &settings_path,
+        r#"{"statusLine":{"command":"","enabled":false,"type":""},"verbosity":"low"}"#,
+    )
+    .unwrap();
+
+    let doctor_before = command(&root)
+        .env("HOME", &home)
+        .env("PATH", &bin)
+        .args(["agent", "doctor", "agy", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        doctor_before.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor_before.stderr)
+    );
+    let report_before: Value = serde_json::from_slice(&doctor_before.stdout).unwrap();
+    assert_eq!(report_before["configuration"]["status"], "needs_setup");
+    let issues = report_before["configuration"]["issues"].as_array().unwrap();
+    assert!(!issues.contains(&json!("statusline_invalid")), "{issues:?}");
+    assert!(issues.contains(&json!("statusline_reporter_missing")));
+
+    let setup_out = command(&root)
+        .env("HOME", &home)
+        .env("PATH", &bin)
+        .args(["agent", "setup", "agy", "--print"])
+        .output()
+        .unwrap();
+    assert!(
+        setup_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup_out.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&setup_out.stdout).unwrap();
+    let composed_settings = &payload["settings"]["document"];
+    let composed_hooks = &payload["hooks"]["document"];
+    assert_eq!(composed_settings["statusLine"]["type"], "command");
+    assert_eq!(composed_settings["statusLine"]["enabled"], true);
+    assert_eq!(composed_settings["statusLine"]["stack_with_default"], true);
+    assert!(
+        !composed_settings["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--render-command")
+    );
+
+    // Simulate a stale OVRCR path in both Antigravity files, then auto-retarget via HOME.
+    let exe = env!("CARGO_BIN_EXE_ovrcr");
+    let stale_settings = serde_json::to_string_pretty(composed_settings)
+        .unwrap()
+        .replace(exe, "/tmp/old installation/ovrcr");
+    let stale_hooks = serde_json::to_string_pretty(composed_hooks)
+        .unwrap()
+        .replace(exe, "/tmp/old installation/ovrcr");
+    std::fs::create_dir_all(hooks_path.parent().unwrap()).unwrap();
+    std::fs::write(&settings_path, stale_settings).unwrap();
+    std::fs::write(&hooks_path, stale_hooks).unwrap();
+
+    let retarget = command(&root)
+        .env("HOME", &home)
+        .args(["__retarget-hooks"])
+        .output()
+        .unwrap();
+    assert!(
+        retarget.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retarget.stderr)
+    );
+    assert!(
+        !std::fs::read_to_string(&settings_path)
+            .unwrap()
+            .contains("/tmp/old installation/ovrcr")
+    );
+    assert!(
+        !std::fs::read_to_string(&hooks_path)
+            .unwrap()
+            .contains("/tmp/old installation/ovrcr")
+    );
+
+    let doctor_after = command(&root)
+        .env("HOME", &home)
+        .env("PATH", &bin)
+        .args(["agent", "doctor", "agy", "--json"])
+        .output()
+        .unwrap();
+    assert!(doctor_after.status.success());
+    let report_after: Value = serde_json::from_slice(&doctor_after.stdout).unwrap();
+    assert_eq!(report_after["configuration"]["status"], "configured");
+    assert_eq!(report_after["configuration"]["issues"], json!([]));
+}
+
+#[test]
 fn retarget_hooks_rewrites_managed_reporter_paths_and_stops() {
     let root = tempfile::tempdir().unwrap();
     let settings = root.path().join("settings.json");
